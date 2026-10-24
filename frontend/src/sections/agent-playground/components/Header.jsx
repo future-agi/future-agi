@@ -91,7 +91,7 @@ export default function Header() {
             height: "30px",
             width: "54px",
             borderRadius: "100px",
-            bgcolor: "purple.o10",
+            bgcolor: "status.discovery.bg",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -99,7 +99,7 @@ export default function Header() {
           }}
         >
           <Typography
-            color={"purple.500"}
+            color={"status.discovery.fg"}
             typography={"s1"}
             fontWeight={"fontWeightMedium"}
           >
@@ -131,9 +131,6 @@ export default function Header() {
           size="medium"
           sx={{
             color: "text.primary",
-            padding: 1.5,
-            fontSize: "14px",
-            height: "40.8px",
           }}
           startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
           component="a"

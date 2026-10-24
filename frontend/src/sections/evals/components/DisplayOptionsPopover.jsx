@@ -85,14 +85,13 @@ const SortableColumnRow = ({ col, isVisible, onToggle }) => {
         {...listeners}
         size="small"
         sx={{
-          p: 0.25,
           mr: 0.25,
           color: "text.disabled",
           cursor: "grab",
           "&:active": { cursor: "grabbing" },
         }}
       >
-        <Iconify icon="mdi:drag-vertical" width={16} />
+        <Iconify icon="solar:grip-vertical-linear" width={16} />
       </IconButton>
       <FormControlLabel
         sx={{ mx: 0, flex: 1 }}
@@ -101,10 +100,10 @@ const SortableColumnRow = ({ col, isVisible, onToggle }) => {
             size="small"
             checked={isVisible}
             onChange={() => onToggle(col.field)}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" width={20} />}
+            checkedIcon={<Iconify icon="solar:check-square-bold" width={20} />}
             icon={
               <Iconify
-                icon="mdi:checkbox-blank-outline"
+                icon="solar:square-linear"
                 width={20}
                 sx={{ color: "text.disabled" }}
               />
@@ -195,7 +194,7 @@ const DisplayOptionsPopover = ({
         paper: {
           sx: {
             p: 0,
-            minWidth: 260,
+            minWidth: 320,
             maxHeight: 400,
             borderRadius: "8px",
           },
@@ -233,7 +232,7 @@ const DisplayOptionsPopover = ({
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {visibleCount} of {ALL_COLUMNS.length} visible
             </Typography>
@@ -243,11 +242,7 @@ const DisplayOptionsPopover = ({
                 onClick={onReset}
                 disabled={isDefaultState}
                 sx={{
-                  textTransform: "none",
-                  fontSize: "11px",
                   minWidth: 0,
-                  p: 0.25,
-                  px: 0.75,
                 }}
               >
                 Reset
@@ -277,11 +272,11 @@ const DisplayOptionsPopover = ({
                   checked={!hiddenColumns.includes(lockedColumn.field)}
                   disabled
                   checkedIcon={
-                    <Iconify icon="mdi:checkbox-marked" width={20} />
+                    <Iconify icon="solar:check-square-bold" width={20} />
                   }
                   icon={
                     <Iconify
-                      icon="mdi:checkbox-blank-outline"
+                      icon="solar:square-linear"
                       width={20}
                       sx={{ color: "text.disabled" }}
                     />
@@ -293,7 +288,7 @@ const DisplayOptionsPopover = ({
                 <Typography variant="body2" sx={{ fontSize: "13px", ml: 0.5 }}>
                   {lockedColumn.label}
                   <Iconify
-                    icon="mdi:lock-outline"
+                    icon="solar:lock-linear"
                     width={12}
                     sx={{
                       ml: 0.5,

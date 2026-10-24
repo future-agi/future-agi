@@ -6,7 +6,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
   Link,
 } from "@mui/material";
 import PropTypes from "prop-types";
@@ -30,6 +29,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { RESPONSE_CODES } from "src/utils/constants";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const tabItems = [
   { label: "Upload", value: "Upload", disabled: false },
@@ -61,7 +61,6 @@ const CreateKnowledgeBaseDrawerChild = ({
   handleClose,
   name,
 }) => {
-  const theme = useTheme();
   const navigate = useNavigate();
   const [currentTab, setCurrentTab] = useState("Upload");
   const { refetch: refetchKnowledgeBaseList } = useKnowledgeBaseList();
@@ -257,7 +256,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                 <Link
                   href="https://docs.futureagi.com/docs/knowledge-base"
                   underline="always"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
@@ -279,7 +278,7 @@ const CreateKnowledgeBaseDrawerChild = ({
               onClick={handleConfirmCLose}
               sx={{ position: "absolute", top: "10px", right: "12px" }}
             >
-              <Iconify icon="mingcute:close-line" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
 
@@ -324,9 +323,6 @@ const CreateKnowledgeBaseDrawerChild = ({
                   onChange={(e, value) => {
                     setCurrentTab(value);
                   }}
-                  TabIndicatorProps={{
-                    style: { backgroundColor: theme.palette.primary.main },
-                  }}
                   sx={{ borderBottom: "1px solid", borderColor: "divider" }}
                 >
                   {tabItems.map((tab) => (
@@ -335,19 +331,6 @@ const CreateKnowledgeBaseDrawerChild = ({
                       key={tab.value}
                       label={tab.label}
                       value={tab.value}
-                      sx={{
-                        paddingLeft: "24px",
-                        paddingRight: "24px",
-                        ...theme.typography["s1"],
-                        fontWeight: theme.typography["fontWeightSemiBold"],
-                        "&:not(.Mui-selected)": {
-                          color: "text.disabled", // Color for unselected tabs
-                          fontWeight: theme.typography["fontWeightMedium"],
-                        },
-                        ["&:not(:last-of-type)"]: {
-                          marginRight: "4px",
-                        },
-                      }}
                     />
                   ))}
                 </Tabs>
@@ -444,9 +427,6 @@ const CreateKnowledgeBaseDrawerChild = ({
               variant="contained"
               color="primary"
               onClick={handleSubmit(onCreate)}
-              sx={{
-                py: "8px",
-              }}
             >
               <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
                 {knowledgeId ? "Add" : "Create"}
@@ -545,18 +525,20 @@ const CreateKnowledgeBaseDrawer = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleConfirmCLose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          width: "570px",
-          borderRadius: "10px",
+          width: "640px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

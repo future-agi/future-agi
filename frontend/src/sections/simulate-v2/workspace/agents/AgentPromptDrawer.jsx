@@ -11,7 +11,12 @@ import SideDrawer from "../../components/SideDrawer";
  * them — traces back to this text, so it has to be one click away from the
  * build and from the test subject afterwards.
  */
-export default function AgentPromptDrawer({ open, onClose, label = "v1", prompt }) {
+export default function AgentPromptDrawer({
+  open,
+  onClose,
+  label = "v1",
+  prompt,
+}) {
   const [copied, setCopied] = useState(false);
   const text = prompt?.text || "";
   const lines = text ? text.split("\n").length : 0;
@@ -25,10 +30,26 @@ export default function AgentPromptDrawer({ open, onClose, label = "v1", prompt 
   return (
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", md: 640 }}>
       <Stack sx={{ height: "100%" }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            py: 1.5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 700 }}>{`Agent ${label} · prompt`}</Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography
+              sx={{ typography: "m2", fontWeight: 600 }}
+            >{`Agent ${label} · prompt`}</Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.125 }}
+            >
               {prompt?.origin || "No prompt on record"}
               {lines ? ` · ${lines} lines` : ""}
             </Typography>
@@ -36,12 +57,17 @@ export default function AgentPromptDrawer({ open, onClose, label = "v1", prompt 
           {text && (
             <Tooltip arrow title={copied ? "Copied" : "Copy prompt"}>
               <IconButton size="small" onClick={copy}>
-                <Iconify icon={copied ? "solar:check-read-linear" : "solar:copy-linear"} width={16} />
+                <Iconify
+                  icon={
+                    copied ? "solar:check-read-linear" : "solar:copy-linear"
+                  }
+                  width={16}
+                />
               </IconButton>
             </Tooltip>
           )}
           <IconButton size="small" onClick={onClose}>
-            <Iconify icon="eva:close-fill" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
 
@@ -50,22 +76,33 @@ export default function AgentPromptDrawer({ open, onClose, label = "v1", prompt 
             <Box
               component="pre"
               sx={{
-                m: 0, p: 2, borderRadius: 1, bgcolor: "background.neutral",
-                border: "1px solid", borderColor: "divider",
-                fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12.5, lineHeight: 1.65,
-                whiteSpace: "pre-wrap", wordBreak: "break-word", color: "text.primary",
+                m: 0,
+                p: 2,
+                borderRadius: 1,
+                bgcolor: "background.neutral",
+                border: "1px solid",
+                borderColor: "divider",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                fontSize: 13,
+                lineHeight: 1.65,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                color: "text.primary",
               }}
             >
               {text}
             </Box>
           ) : (
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
               This version was attached without a prompt we could read.
             </Typography>
           )}
           {text && !prompt?.submitted && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1.5 }}>
-              The tools on the World tab and the rules on the Contract tab were read from this prompt and the code around it.
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 1.5 }}
+            >
+              The tools on the World tab and the rules on the Contract tab were
+              read from this prompt and the code around it.
             </Typography>
           )}
         </Box>
@@ -78,5 +115,9 @@ AgentPromptDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   label: PropTypes.string,
-  prompt: PropTypes.shape({ text: PropTypes.string, origin: PropTypes.string, submitted: PropTypes.bool }),
+  prompt: PropTypes.shape({
+    text: PropTypes.string,
+    origin: PropTypes.string,
+    submitted: PropTypes.bool,
+  }),
 };

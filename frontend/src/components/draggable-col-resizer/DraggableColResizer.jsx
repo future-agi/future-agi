@@ -73,7 +73,7 @@ const DraggableColResizer = ({
         flexShrink: 0,
         cursor: "col-resize",
         mx: 0.25,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         transition: "background-color 120ms",
         "&:hover": { backgroundColor: "primary.main" },
         "&:active": { backgroundColor: "primary.dark" },

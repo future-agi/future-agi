@@ -145,7 +145,7 @@ const DatasetCard = ({
   };
 
   return (
-    <Paper elevation={2} sx={{ display: "flex", flexDirection: "column" }}>
+    <Paper variant="outlined" sx={{ display: "flex", flexDirection: "column" }}>
       <Box
         sx={{
           padding: "14px",
@@ -158,7 +158,7 @@ const DatasetCard = ({
         <Box sx={{ display: "flex", alignItems: "center" }}>
           <IconButton size="small" onClick={() => cloneDataset(index)}>
             <Iconify
-              icon="bxs:duplicate"
+              icon="solar:copy-linear"
               width={16}
               height={16}
               sx={{ color: "text.secondary" }}
@@ -168,7 +168,7 @@ const DatasetCard = ({
             <Iconify
               width={16}
               height={16}
-              icon="mingcute:filter-2-fill"
+              icon="solar:filter-linear"
               sx={{ color: "text.secondary" }}
             />
           </IconButton>
@@ -275,7 +275,7 @@ const DatasetCard = ({
               >
                 <IconButton size="small" onClick={() => cloneFilter(i)}>
                   <Iconify
-                    icon="bxs:duplicate"
+                    icon="solar:copy-linear"
                     width={16}
                     height={16}
                     sx={{ color: "text.secondary" }}

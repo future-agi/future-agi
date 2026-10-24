@@ -1,4 +1,3 @@
-import { alpha } from "@mui/material/styles";
 import { switchClasses } from "@mui/material/Switch";
 
 // ----------------------------------------------------------------------
@@ -19,7 +18,7 @@ export function switches(theme) {
       width: 14,
       height: 14,
       boxShadow: "none",
-      color: theme.palette.common.white,
+      color: theme.palette.control.thumb,
       ...(ownerState.size === "small" && {
         width: 10,
         height: 10,
@@ -28,7 +27,7 @@ export function switches(theme) {
     [`& .${switchClasses.track}`]: {
       opacity: 1,
       borderRadius: 14,
-      backgroundColor: alpha(theme.palette.grey[500], 0.48),
+      backgroundColor: theme.palette.control.track,
     },
     [`& .${switchClasses.switchBase}`]: {
       left: 3,
@@ -39,13 +38,11 @@ export function switches(theme) {
       [`&.${switchClasses.checked}`]: {
         transform: "translateX(13px)",
         [`& .${switchClasses.thumb}`]: {
-          // In dark mode, use dark thumb on white track for contrast
-          ...(!lightMode && {
-            color: theme.palette.grey[900],
-          }),
+          color: theme.palette.control.onChecked,
         },
         [`&+.${switchClasses.track}`]: {
           opacity: 1,
+          backgroundColor: theme.palette.control.checked,
         },
         ...(ownerState.size === "small" && {
           transform: "translateX(9px)",

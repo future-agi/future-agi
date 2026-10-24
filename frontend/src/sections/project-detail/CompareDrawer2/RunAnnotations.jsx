@@ -168,7 +168,7 @@ const RunAnnotations = ({ traceData }) => {
           borderColor: commonBorder.borderColor,
         }}
       >
-        <Typography fontWeight={700}>
+        <Typography fontWeight={600}>
           {traceData?.projectVersionName}
         </Typography>
       </Section>
@@ -196,8 +196,8 @@ const RunAnnotations = ({ traceData }) => {
                   height: "3px",
                 },
                 "&::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
               }}
             >
@@ -206,16 +206,13 @@ const RunAnnotations = ({ traceData }) => {
                 variant="outlined"
                 size="small"
                 color="primary"
-                startIcon={
-                  <Iconify icon="material-symbols:new-label-outline-rounded" />
-                }
+                startIcon={<Iconify icon="solar:tag-horizontal-linear" />}
                 onClick={() => {
                   setIsAddAnnotationOpen(true);
                   trackEvent(Events.modifyAnnotationsClicked);
                 }}
                 sx={{
                   border: commonBorder.border,
-                  borderRadius: commonBorder.borderRadius,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}
@@ -228,11 +225,10 @@ const RunAnnotations = ({ traceData }) => {
                 variant="outlined"
                 size="small"
                 color="primary"
-                startIcon={<Iconify icon="ri:edit-line" />}
+                startIcon={<Iconify icon="solar:pen-linear" />}
                 onClick={() => setOpen(true)}
                 sx={{
                   border: commonBorder.border,
-                  borderRadius: commonBorder.borderRadius,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}
@@ -255,8 +251,8 @@ const RunAnnotations = ({ traceData }) => {
                   height: "6px",
                 },
                 "& ::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
                 "& ::-webkit-scrollbar-track": {
                   background: "transparent",
@@ -290,7 +286,7 @@ const RunAnnotations = ({ traceData }) => {
               padding: theme.spacing(2),
             }}
           >
-            <Typography sx={{ fontSize: 14, fontWeight: 400 }}>
+            <Typography sx={{ fontSize: 13, fontWeight: 400 }}>
               Labels have been created but no values added yet. Configure
               annotations or add values.
             </Typography>
@@ -311,16 +307,13 @@ const RunAnnotations = ({ traceData }) => {
                 variant="outlined"
                 size="small"
                 color="primary"
-                startIcon={
-                  <Iconify icon="material-symbols:new-label-outline-rounded" />
-                }
+                startIcon={<Iconify icon="solar:tag-horizontal-linear" />}
                 onClick={() => {
                   setIsAddAnnotationOpen(true);
                   trackEvent(Events.modifyAnnotationsClicked);
                 }}
                 sx={{
                   border: commonBorder.border,
-                  borderRadius: commonBorder.borderRadius,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}
@@ -332,11 +325,10 @@ const RunAnnotations = ({ traceData }) => {
                 variant="outlined"
                 size="small"
                 color="primary"
-                startIcon={<Iconify icon="ri:edit-line" />}
+                startIcon={<Iconify icon="solar:pen-linear" />}
                 onClick={() => setOpen(true)}
                 sx={{
                   border: commonBorder.border,
-                  borderRadius: commonBorder.borderRadius,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}
@@ -361,7 +353,7 @@ const RunAnnotations = ({ traceData }) => {
               padding: theme.spacing(2),
             }}
           >
-            <Typography sx={{ fontSize: 14, fontWeight: 400 }}>
+            <Typography sx={{ fontSize: 13, fontWeight: 400 }}>
               No Annotations have been added
             </Typography>
 
@@ -381,16 +373,13 @@ const RunAnnotations = ({ traceData }) => {
                 variant="outlined"
                 size="small"
                 color="primary"
-                startIcon={
-                  <Iconify icon="material-symbols:new-label-outline-rounded" />
-                }
+                startIcon={<Iconify icon="solar:tag-horizontal-linear" />}
                 onClick={() => {
                   setIsAddAnnotationOpen(true);
                   trackEvent(Events.modifyAnnotationsClicked);
                 }}
                 sx={{
                   border: commonBorder.border,
-                  borderRadius: commonBorder.borderRadius,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
                 }}

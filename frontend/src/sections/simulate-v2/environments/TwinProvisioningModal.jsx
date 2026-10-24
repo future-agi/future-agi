@@ -1,14 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import {
-  Dialog, Box, Stack, Typography, LinearProgress,
-} from "@mui/material";
+import { Dialog, Box, Stack, Typography, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { twinById } from "../_mock/twins";
 
-const TWIN_TINT = "#7857FC";
-const SUCCESS = "#16A34A";
+const TWIN_TINT = "status.discovery.fg";
+const SUCCESS = "status.success.fg";
 
 /**
  * Four-step twin sandbox handshake. Each phase advances after its
@@ -70,12 +67,21 @@ export default function TwinProvisioningModal({ open, services, onDone }) {
       another instead of all at once. Delay per service is a
       fraction of the phase dwell.
     */
-    const perServiceDelay = Math.max(80, Math.floor(PHASES[phaseIdx].dwell / (services.length + 1)));
+    const perServiceDelay = Math.max(
+      80,
+      Math.floor(PHASES[phaseIdx].dwell / (services.length + 1)),
+    );
     services.forEach((sId, i) => {
-      const timer = setTimeout(() => {
-        if (cancelled) return;
-        setServicesDone((prev) => ({ ...prev, [`${phaseIdx}:${sId}`]: true }));
-      }, (i + 1) * perServiceDelay);
+      const timer = setTimeout(
+        () => {
+          if (cancelled) return;
+          setServicesDone((prev) => ({
+            ...prev,
+            [`${phaseIdx}:${sId}`]: true,
+          }));
+        },
+        (i + 1) * perServiceDelay,
+      );
       return timer;
     });
     /* Advance to the next phase after this one's dwell. */
@@ -100,37 +106,52 @@ export default function TwinProvisioningModal({ open, services, onDone }) {
       disableEscapeKeyDown
       PaperProps={{
         sx: {
-          borderRadius: 2, maxWidth: 560, width: "100%",
-          bgcolor: "background.paper", backgroundImage: "none",
-          border: "1px solid", borderColor: "divider",
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
         },
       }}
     >
       <Box sx={{ p: 3 }}>
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 2 }}>
-          <Box sx={{
-            width: 32, height: 32, borderRadius: 1,
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.18 : 0.1),
-            color: TWIN_TINT,
-          }}>
-            <Iconify icon="solar:server-square-bold" width={17} />
+          <Box
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: 1,
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+              bgcolor: "status.discovery.bg",
+              color: TWIN_TINT,
+            }}
+          >
+            <Iconify icon="solar:server-square-bold" width={16} />
           </Box>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "m2", fontWeight: 700 }}>Setting up the SaaS sandbox</Typography>
+            <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+              Setting up the SaaS sandbox
+            </Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              Setting up {services.length} service{services.length === 1 ? "" : "s"} · this normally takes ~30s
+              Setting up {services.length} service
+              {services.length === 1 ? "" : "s"} · this normally takes ~30s
             </Typography>
           </Box>
         </Stack>
 
         <Stack spacing={1.5}>
           {PHASES.map((phase, i) => {
-            const state = i < phaseIdx ? "done" : i === phaseIdx ? "active" : "pending";
+            const state =
+              i < phaseIdx ? "done" : i === phaseIdx ? "active" : "pending";
             return (
               <PhaseRow
                 key={phase.key}
-                phase={phase} state={state}
+                phase={phase}
+                state={state}
                 services={state === "pending" ? [] : services}
                 servicesDone={servicesDone}
                 phaseIdx={i}
@@ -143,9 +164,14 @@ export default function TwinProvisioningModal({ open, services, onDone }) {
           variant="determinate"
           value={((phaseIdx + 1) / PHASES.length) * 100}
           sx={{
-            mt: 2.5, height: 4, borderRadius: 2,
+            mt: 2.5,
+            height: 4,
+            borderRadius: 2,
             bgcolor: "background.neutral",
-            "& .MuiLinearProgress-bar": { bgcolor: TWIN_TINT, borderRadius: 2 },
+            "& .MuiLinearProgress-bar": {
+              bgcolor: "status.discovery.solid",
+              borderRadius: 2,
+            },
           }}
         />
       </Box>
@@ -159,24 +185,36 @@ TwinProvisioningModal.propTypes = {
 };
 
 function PhaseRow({ phase, state, services, servicesDone, phaseIdx }) {
-  const tint = state === "done" ? SUCCESS : state === "active" ? TWIN_TINT : "text.disabled";
+  const tint =
+    state === "done"
+      ? SUCCESS
+      : state === "active"
+        ? TWIN_TINT
+        : "text.disabled";
   return (
-    <Box sx={{
-      p: 1.5, borderRadius: 1.25, border: "1px solid",
-      borderColor: state === "active" ? alpha(TWIN_TINT, 0.35) : "divider",
-      bgcolor: (t) => state === "active"
-        ? alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.06 : 0.03)
-        : "background.paper",
-      transition: "border-color .25s ease, background-color .25s ease",
-    }}>
+    <Box
+      sx={{
+        p: 1.5,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: state === "active" ? "status.discovery.border" : "divider",
+        bgcolor:
+          state === "active" ? "status.discovery.bg" : "background.paper",
+        transition: "border-color .2s ease, background-color .2s ease",
+      }}
+    >
       <Stack direction="row" alignItems="flex-start" spacing={1.5}>
         <Box sx={{ mt: "1px", flexShrink: 0 }}>
           {state === "done" ? (
-            <Iconify icon="solar:check-circle-bold" width={15} sx={{ color: SUCCESS }} />
+            <Iconify
+              icon="solar:check-circle-bold"
+              width={16}
+              sx={{ color: SUCCESS }}
+            />
           ) : state === "active" ? (
             <Iconify
               icon="solar:refresh-circle-linear"
-              width={15}
+              width={16}
               sx={{
                 color: TWIN_TINT,
                 animation: "spin 1.2s linear infinite",
@@ -184,14 +222,21 @@ function PhaseRow({ phase, state, services, servicesDone, phaseIdx }) {
               }}
             />
           ) : (
-            <Iconify icon="solar:circle-linear" width={15} sx={{ color: "text.disabled" }} />
+            <Iconify
+              icon="solar:circle-linear"
+              width={16}
+              sx={{ color: "text.disabled" }}
+            />
           )}
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{
-            typography: "s2", fontWeight: 700,
-            color: state === "pending" ? "text.subtitle" : "text.primary",
-          }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              color: state === "pending" ? "text.subtitle" : "text.primary",
+            }}
+          >
             {phase.title}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -200,36 +245,49 @@ function PhaseRow({ phase, state, services, servicesDone, phaseIdx }) {
 
           {(state === "active" || state === "done") && services.length > 0 && (
             <Stack
-              direction="row" flexWrap="wrap" useFlexGap
-              spacing={0.75} sx={{ mt: 0.75 }}
+              direction="row"
+              flexWrap="wrap"
+              useFlexGap
+              spacing={0.75}
+              sx={{ mt: 0.75 }}
             >
               {services.map((sId) => {
                 const t = twinById(sId);
-                const done = state === "done" || servicesDone[`${phaseIdx}:${sId}`];
+                const done =
+                  state === "done" || servicesDone[`${phaseIdx}:${sId}`];
                 return (
                   <Stack
-                    key={sId} direction="row" alignItems="center" spacing={0.5}
+                    key={sId}
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
                     sx={{
-                      px: 0.75, py: 0.25, borderRadius: 0.75,
+                      px: 0.75,
+                      py: 0.25,
+                      borderRadius: "4px",
                       border: "1px solid",
-                      borderColor: (th) => done
-                        ? alpha(SUCCESS, 0.35)
-                        : th.palette.divider,
-                      bgcolor: (th) => done
-                        ? alpha(SUCCESS, th.palette.mode === "dark" ? 0.14 : 0.06)
-                        : "background.paper",
-                      transition: "background-color .25s ease, border-color .25s ease",
+                      borderColor: done ? "status.success.border" : "divider",
+                      bgcolor: done ? "status.success.bg" : "background.paper",
+                      transition:
+                        "background-color .2s ease, border-color .2s ease",
                     }}
                   >
                     <Iconify
-                      icon={done ? "solar:check-circle-bold" : (t?.icon || "solar:server-square-linear")}
+                      icon={
+                        done
+                          ? "solar:check-circle-bold"
+                          : t?.icon || "solar:server-square-linear"
+                      }
                       width={done ? 11 : 12}
                       sx={done ? { color: SUCCESS } : undefined}
                     />
-                    <Typography sx={{
-                      typography: "s3", fontWeight: 700,
-                      color: done ? SUCCESS : (t?.color || TWIN_TINT),
-                    }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: done ? SUCCESS : t?.color || TWIN_TINT,
+                      }}
+                    >
                       {t?.name || sId}
                     </Typography>
                   </Stack>
@@ -239,10 +297,17 @@ function PhaseRow({ phase, state, services, servicesDone, phaseIdx }) {
           )}
         </Box>
         {state === "done" && (
-          <Typography sx={{
-            typography: "s3", fontWeight: 700, color: SUCCESS,
-            textTransform: "uppercase", letterSpacing: 0.5, flexShrink: 0, mt: "2px",
-          }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: SUCCESS,
+              textTransform: "none",
+              letterSpacing: 0.5,
+              flexShrink: 0,
+              mt: "2px",
+            }}
+          >
             Done
           </Typography>
         )}

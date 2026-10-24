@@ -42,7 +42,7 @@ const DraggableIcon = ({ top, setTop, minTop, maxTop, offset = 130 }) => {
 
   return (
     <Icon
-      icon="lucide:grip-horizontal"
+      icon="solar:grip-horizontal-linear"
       ref={iconRef}
       onMouseDown={handleMouseDown}
       style={{

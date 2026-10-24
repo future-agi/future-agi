@@ -1,6 +1,6 @@
 import React, { Fragment, useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Tab, Tabs, Typography } from "@mui/material";
 import ResultData from "./ResultData";
 import ResultSummary from "./ResultSummary";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -51,8 +51,6 @@ const Results = ({ resultState, output }) => {
 
   const isEvalPreset = Object.keys(output?.evaluationResults || {})?.length > 0;
 
-  const theme = useTheme();
-
   const renderHeader = () => {
     if (isEvalPreset) {
       return (
@@ -62,11 +60,6 @@ const Results = ({ resultState, output }) => {
             onChange={handleChange}
             aria-label="basic tabs example"
             textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
           >
             <Tab label="Results" value="results" />
             <Tab label="Summary" value="summary" />

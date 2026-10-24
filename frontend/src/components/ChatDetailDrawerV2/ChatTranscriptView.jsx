@@ -42,10 +42,7 @@ const SkeletonBubble = ({ align, delay = 0, width }) => (
         sx={{
           borderRadius:
             align === "right" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.06)"
-              : "rgba(0,0,0,0.06)",
+          bgcolor: "action.selected",
         }}
       />
       <Skeleton
@@ -54,7 +51,7 @@ const SkeletonBubble = ({ align, delay = 0, width }) => (
         width={56}
         sx={{
           alignSelf: align === "right" ? "flex-end" : "flex-start",
-          fontSize: 10,
+          fontSize: 12,
           opacity: 0.6,
         }}
       />
@@ -113,7 +110,7 @@ const TranscriptEmpty = () => (
     spacing={1}
     sx={{ width: "100%", py: 6, color: "text.secondary" }}
   >
-    <Iconify icon="mdi:message-text-outline" width={28} />
+    <Iconify icon="solar:chat-round-line-linear" width={28} />
     <Typography typography="s2" color="text.secondary">
       No messages in this chat
     </Typography>

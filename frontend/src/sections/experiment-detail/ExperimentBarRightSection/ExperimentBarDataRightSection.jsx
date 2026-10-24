@@ -87,7 +87,7 @@ const ExperimentBarDataRightSection = ({
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
           <SvgColor
             src="/icons/datasets/diff_pencil.svg"
-            sx={{ height: "16px", width: "16px", color: "red.500" }}
+            sx={{ height: "16px", width: "16px", color: "status.danger.fg" }}
           />
           <Typography
             variant="s3"
@@ -100,7 +100,7 @@ const ExperimentBarDataRightSection = ({
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
           <SvgColor
             src="/icons/datasets/diff_pencil.svg"
-            sx={{ height: "16px", width: "16px", color: "green.500" }}
+            sx={{ height: "16px", width: "16px", color: "status.success.fg" }}
           />
           <Typography
             variant="s3"
@@ -119,9 +119,8 @@ const ExperimentBarDataRightSection = ({
           sx={{
             display: "flex",
             alignItems: "center",
-            color: disabledDiffMode ? "black.400" : "black.1000",
+            color: disabledDiffMode ? "text.disabled" : "text.primary",
             cursor: disabledDiffMode ? "not-allowed" : "pointer",
-            padding: "8px 8px",
           }}
           disabled={disabledDiffMode}
         >
@@ -161,9 +160,12 @@ const ExperimentBarDataRightSection = ({
           />
         }
         endIcon={
-          <Iconify icon="mdi:chevron-down" height={"16px"} width={"16px"} />
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            height={"16px"}
+            width={"16px"}
+          />
         }
-        sx={{ padding: "8px 12px" }}
       >
         <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
           Display
@@ -187,12 +189,8 @@ const ExperimentBarDataRightSection = ({
       <Button
         variant="outlined"
         size="medium"
-        sx={{ padding: "8px 12px" }}
         startIcon={
-          <SvgColor
-            src="/assets/icons/ic_edit_pencil.svg"
-            sx={{ height: "16px", width: "16px" }}
-          />
+          <SvgColor width={16} src="/assets/icons/ic_edit_pencil.svg" />
         }
         onClick={() => {
           initiateEditMode(experimentId);
@@ -207,21 +205,21 @@ const ExperimentBarDataRightSection = ({
         size="small"
         sx={{
           color: "text.primary",
-          borderRadius: 0.75,
           border: "1px solid",
-          height: "38px",
           width: "38px",
           borderColor: "divider",
         }}
         onClick={() => downloadExperiment()}
       >
-        <Iconify icon="material-symbols:download" color="text.primary" />
+        <Iconify
+          icon="solar:download-minimalistic-linear"
+          color="text.primary"
+        />
       </IconButton>
       <Button
         variant="contained"
         color="primary"
-        sx={{ padding: "8px 12px" }}
-        startIcon={<Iconify icon="mdi:plus" />}
+        startIcon={<Iconify icon="solar:add-linear" />}
         onClick={() => setEvaluateOpen(true)}
       >
         <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>

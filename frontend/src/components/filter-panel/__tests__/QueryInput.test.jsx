@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { act, fireEvent, render, waitFor } from "src/utils/test-utils";
-import { QueryInput } from "../FilterPanel";
+import { QueryInput } from "../QueryInput";
 
 const selectPhaseOption = async (utils, typed, nextPlaceholder) => {
   const input = utils.getByRole("combobox");

@@ -22,10 +22,30 @@ import { goalLabel } from "../_mock/scenarios";
  * and mangles SVG geometry.
  */
 const BRANCHES = [
-  { id: "tools", label: "Tools", color: "#EA580C", neutralText: true, icon: "solar:settings-minimalistic-linear" },
+  {
+    id: "tools",
+    label: "Tools",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    color: "#EA580C",
+    neutralText: true,
+    icon: "solar:settings-minimalistic-linear",
+  },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   { id: "flows", label: "Flows", color: "#2563EB", icon: "solar:route-linear" },
-  { id: "people", label: "Personas & actors", color: "#7857FC", icon: "solar:users-group-rounded-linear" },
-  { id: "guardrails", label: "Guardrails", color: "#DC2626", icon: "solar:shield-check-linear" },
+  {
+    id: "people",
+    label: "Personas & actors",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    color: "#7857FC",
+    icon: "solar:users-group-rounded-linear",
+  },
+  {
+    id: "guardrails",
+    label: "Guardrails",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    color: "#DC2626",
+    icon: "solar:shield-check-linear",
+  },
 ];
 
 const MAX_LEAVES = 5;
@@ -53,11 +73,12 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
 
   const data = {
     tools: (env.tools || []).map((t) => t.name),
-    flows: (contract.useCases || []).map((u) => goalLabel(u).replace(/ using .*/, "").replace(/^Refuse the request that would break: /, "Refuse: ")),
-    people: [
-      ...personaNames,
-      ...castOf(env, envState).map((a) => a.name),
-    ],
+    flows: (contract.useCases || []).map((u) =>
+      goalLabel(u)
+        .replace(/ using .*/, "")
+        .replace(/^Refuse the request that would break: /, "Refuse: "),
+    ),
+    people: [...personaNames, ...castOf(env, envState).map((a) => a.name)],
     guardrails: contract.hardRules || [],
   };
 
@@ -70,7 +91,12 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
   const gap = 26;
   const colX = 250;
   const leafX = 400;
-  const heights = shown.map((b) => headH + Math.min(b.items.length, MAX_LEAVES) * rowH + (b.items.length > MAX_LEAVES ? rowH : 0));
+  const heights = shown.map(
+    (b) =>
+      headH +
+      Math.min(b.items.length, MAX_LEAVES) * rowH +
+      (b.items.length > MAX_LEAVES ? rowH : 0),
+  );
   const totalH = heights.reduce((a, h) => a + h, 0) + gap * (shown.length - 1);
   const H = Math.max(260, totalH + 40);
   const W = 900;
@@ -102,7 +128,12 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
       subtitle="Everything read from your agent, as one object rather than four lists"
       sx={{ mb: 2 }}
       action={
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ flexShrink: 0 }}
+        >
           <SegmentedTabs
             value={focus || "all"}
             onChange={(_, v) => setFocus(v === "all" ? null : v)}
@@ -118,9 +149,18 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
           {/* Folds back to the one-line row it opened from — in the header, where it opened. */}
           {onClose && (
             <Button
-              size="small" variant="outlined" onClick={onClose} aria-expanded
-              startIcon={<Iconify icon="solar:alt-arrow-up-linear" width={14} />}
-              sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", whiteSpace: "nowrap" }}
+              size="small"
+              variant="outlined"
+              onClick={onClose}
+              aria-expanded
+              startIcon={
+                <Iconify icon="solar:alt-arrow-up-linear" width={14} />
+              }
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                whiteSpace: "nowrap",
+              }}
             >
               Hide
             </Button>
@@ -129,7 +169,12 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
       }
     >
       <Box sx={{ p: 2.5, overflowX: "auto" }}>
-        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ maxWidth: "100%", height: "auto", display: "block" }}>
+        <svg
+          width={W}
+          height={H}
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ maxWidth: "100%", height: "auto", display: "block" }}
+        >
           {/* agent → hub edges */}
           {placed.map((b) => (
             <path
@@ -142,13 +187,33 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
           ))}
 
           {/* the agent */}
-          <rect x={16} y={agentY - 21} width={134} height={42} rx={8}
-            fill={alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.16 : 0.08)}
-            stroke={theme.palette.primary.main} strokeWidth={1} />
-          <text x={83} y={agentY - 3} textAnchor="middle" fill={strong} fontSize={12} fontWeight={700}>
+          <rect
+            x={16}
+            y={agentY - 21}
+            width={134}
+            height={42}
+            rx={8}
+            fill={theme.palette.status.discovery.bg}
+            stroke={theme.palette.primary.main}
+            strokeWidth={1}
+          />
+          <text
+            x={83}
+            y={agentY - 3}
+            textAnchor="middle"
+            fill={strong}
+            fontSize={12}
+            fontWeight={600}
+          >
             {env.name.length > 18 ? `${env.name.slice(0, 17)}…` : env.name}
           </text>
-          <text x={83} y={agentY + 12} textAnchor="middle" fill={dim} fontSize={10}>
+          <text
+            x={83}
+            y={agentY + 12}
+            textAnchor="middle"
+            fill={dim}
+            fontSize={11}
+          >
             read from your agent
           </text>
 
@@ -159,13 +224,36 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
             return (
               <g key={b.id}>
                 {/* hub */}
-                <rect x={colX - 10} y={b.top} width={130} height={headH - 6} rx={6}
-                  fill={alpha(b.color, theme.palette.mode === "dark" ? 0.16 : 0.09)}
-                  stroke={alpha(b.color, 0.45)} strokeWidth={1} />
-                <text x={colX + 2} y={b.top + 18} fill={labelFill} fontSize={11} fontWeight={700}>
+                <rect
+                  x={colX - 10}
+                  y={b.top}
+                  width={130}
+                  height={headH - 6}
+                  rx={6}
+                  fill={alpha(
+                    b.color,
+                    theme.palette.mode === "dark" ? 0.16 : 0.09,
+                  )}
+                  stroke={alpha(b.color, 0.45)}
+                  strokeWidth={1}
+                />
+                <text
+                  x={colX + 2}
+                  y={b.top + 18}
+                  fill={labelFill}
+                  fontSize={11}
+                  fontWeight={600}
+                >
                   {b.label}
                 </text>
-                <text x={colX + 112} y={b.top + 18} textAnchor="end" fill={labelFill} fontSize={11} fontWeight={700}>
+                <text
+                  x={colX + 112}
+                  y={b.top + 18}
+                  textAnchor="end"
+                  fill={labelFill}
+                  fontSize={11}
+                  fontWeight={600}
+                >
                   {b.items.length}
                 </text>
 
@@ -176,11 +264,27 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
                     <g key={item}>
                       <path
                         d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${y}, ${leafX - 6} ${y}`}
-                        fill="none" stroke={line} strokeWidth={1}
+                        fill="none"
+                        stroke={line}
+                        strokeWidth={1}
                       />
-                      <circle cx={leafX - 3} cy={y} r={2.5} fill={alpha(b.color, 0.8)} />
-                      <text x={leafX + 8} y={y + 4} fill={dim} fontSize={11}
-                        fontFamily={b.id === "tools" ? "ui-monospace, Menlo, monospace" : "inherit"}>
+                      <circle
+                        cx={leafX - 3}
+                        cy={y}
+                        r={2.5}
+                        fill={alpha(b.color, 0.8)}
+                      />
+                      <text
+                        x={leafX + 8}
+                        y={y + 4}
+                        fill={dim}
+                        fontSize={11}
+                        fontFamily={
+                          b.id === "tools"
+                            ? "ui-monospace, Menlo, monospace"
+                            : "inherit"
+                        }
+                      >
                         {item.length > 74 ? `${item.slice(0, 73)}…` : item}
                       </text>
                     </g>
@@ -188,7 +292,12 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
                 })}
 
                 {b.items.length > MAX_LEAVES && (
-                  <text x={leafX + 8} y={b.top + headH + MAX_LEAVES * rowH + 12} fill={theme.palette.text.disabled} fontSize={11}>
+                  <text
+                    x={leafX + 8}
+                    y={b.top + headH + MAX_LEAVES * rowH + 12}
+                    fill={theme.palette.text.disabled}
+                    fontSize={11}
+                  >
                     + {b.items.length - MAX_LEAVES} more
                   </text>
                 )}
@@ -199,15 +308,31 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
       </Box>
 
       <Stack
-        direction="row" spacing={1.25} alignItems="center"
-        sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+        direction="row"
+        spacing={1.25}
+        alignItems="center"
+        sx={{
+          px: 2.5,
+          py: 1.75,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
       >
-        <Iconify icon="solar:info-circle-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+        <Iconify
+          icon="solar:info-circle-linear"
+          width={16}
+          sx={{ color: "text.tertiary", flexShrink: 0 }}
+        />
         <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1 }}>
-          Tools and guardrails are read from the source. Flows are derived from them. Personas
-          and actors are what you injected — the only part of the graph that is authored.
+          Tools and guardrails are read from the source. Flows are derived from
+          them. Personas and actors are what you injected — the only part of the
+          graph that is authored.
         </Typography>
-        <Button size="small" onClick={() => onGo?.("contract")} sx={{ typography: "s2", fontWeight: 700, color: "primary.main", flexShrink: 0 }}>
+        <Button
+          size="small"
+          onClick={() => onGo?.("contract")}
+          sx={{ color: "primary.main", flexShrink: 0 }}
+        >
           Contract
         </Button>
       </Stack>

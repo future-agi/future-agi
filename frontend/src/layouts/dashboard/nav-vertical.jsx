@@ -87,10 +87,8 @@ export default function NavVertical({ openNav, onCloseNav }) {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        /* `border.light` only exists in the light palette — in dark it was
-           undefined, which dropped the whole border. Fall back to the
-           divider so the nav keeps its edge in both themes. */
-        borderRight: (theme) => `solid 1px ${theme.palette.border?.light || theme.palette.divider}`,
+        borderRight: (theme) => `1px solid ${theme.palette.divider}`,
+        bgcolor: "background.default",
       }}
     >
       {/* Fixed Header */}
@@ -99,11 +97,11 @@ export default function NavVertical({ openNav, onCloseNav }) {
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
-          gap: "6px",
-          pt: "12px",
+          gap: "4px",
+          pt: "8px",
         }}
       >
-        <Logo sx={{ mb: "4px" }} />
+        <Logo sx={{ mb: 0 }} />
         <WorkspaceSwitcher />
         <NavSectionVertical
           data={navDashboardData}
@@ -142,8 +140,10 @@ export default function NavVertical({ openNav, onCloseNav }) {
       <Box
         sx={{
           flexShrink: 0,
-          bgcolor: "background.paper",
-          gap: 1,
+          bgcolor: "background.default",
+          borderTop: (theme) => `1px solid ${theme.palette.border.subtle}`,
+          pt: 1,
+          pb: 1,
         }}
       >
         <NavSectionVertical
@@ -166,7 +166,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          bgcolor: "background.paper",
+          bgcolor: "background.default",
           transform: settingOpen ? "translateX(0)" : "translateX(100%)",
           visibility: settingOpen ? "visible" : "hidden",
           pointerEvents: settingOpen ? "auto" : "none",
@@ -287,7 +287,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
         flexShrink: { xs: 0 },
         width: { xs: NAV.W_VERTICAL - 40 },
         position: "relative",
-        backgroundColor: "background.paper",
+        backgroundColor: "background.default",
         height: "100vh",
       }}
     >

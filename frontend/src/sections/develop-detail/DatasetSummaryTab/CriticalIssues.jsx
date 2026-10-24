@@ -46,18 +46,18 @@ const CriticalIssueRefetchStates = [
 const confidenceMapping = {
   high: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "status.danger.bg",
+    color: "status.danger.fg",
   },
   mid: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "status.danger.bg",
+    color: "status.danger.fg",
   },
   low: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "status.danger.bg",
+    color: "status.danger.fg",
   },
 };
 
@@ -227,8 +227,6 @@ const CriticalIssues = ({ mode = "develop" }) => {
               display: "flex",
               flexDirection: "row",
               gap: 1,
-              fontWeight: "fontWeightMedium",
-              borderRadius: "8px",
             }}
           >
             <SvgColor
@@ -364,10 +362,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
                     <Box display={"flex"} gap={1.5} alignItems={"flex-start"}>
                       <IconButton
                         sx={{
-                          borderRadius: "4px",
-                          height: "32px",
                           width: "32px",
-                          padding: "4px",
                           cursor: "default",
                           backgroundColor: confidenceMapping["high"]?.bgColor,
                         }}

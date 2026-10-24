@@ -24,7 +24,10 @@ export default function ScriptUpload({ env, onAdd, selected }) {
   const [extracted, setExtracted] = useState(null);
   const [checked, setChecked] = useState({});
 
-  const alreadyIn = useMemo(() => new Set(selected.map((s) => s.id)), [selected]);
+  const alreadyIn = useMemo(
+    () => new Set(selected.map((s) => s.id)),
+    [selected],
+  );
 
   const onDrop = (accepted) => {
     const next = accepted?.[0];
@@ -62,9 +65,9 @@ export default function ScriptUpload({ env, onAdd, selected }) {
           size="small"
           disabled={chosen.length === 0}
           onClick={() => onAdd(chosen)}
-          sx={{ typography: "s2", fontWeight: 700 }}
         >
-          Add {chosen.length || ""} {chosen.length === 1 ? "scenario" : "scenarios"}
+          Add {chosen.length || ""}{" "}
+          {chosen.length === 1 ? "scenario" : "scenarios"}
         </Button>
       }
     >
@@ -74,20 +77,36 @@ export default function ScriptUpload({ env, onAdd, selected }) {
             direction="row"
             alignItems="center"
             spacing={1.5}
-            sx={{ p: 2, borderRadius: 1.25, border: "1px solid", borderColor: "divider" }}
+            sx={{
+              p: 2,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
+            }}
           >
             <SvgColor
               src="/assets/icons/components/ic_script.svg"
-              sx={{ width: 24, height: 24, color: "primary.main", flexShrink: 0 }}
+              sx={{
+                width: 24,
+                height: 24,
+                color: "primary.main",
+                flexShrink: 0,
+              }}
             />
             <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{file.name}</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+                {file.name}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 {formatFileSize(file.size)}
               </Typography>
             </Box>
             <IconButton size="small" onClick={clear}>
-              <Iconify icon="solar:close-circle-linear" width={17} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:close-circle-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Stack>
         ) : (
@@ -117,52 +136,78 @@ export default function ScriptUpload({ env, onAdd, selected }) {
         {/* Nothing below until there is something to show — the dropzone above
             already says what to do, so an empty panel repeating it is noise. */}
         {(busy || extracted) && (
-        <Box sx={{ mt: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-          {busy ? (
-            <Box sx={{ px: 2, py: 1.5 }}>
-              <ThinkingBar label={`Reading ${file?.name}`} />
-            </Box>
-          ) : (
-            <>
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={2}
-                sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
-              >
-                <Box flex={1}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    {extracted.length} scenarios found in {file?.name}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    One per beat in the script · click to include
-                  </Typography>
-                </Box>
-                <Button
-                  size="small"
-                  onClick={() => setChecked(Object.fromEntries(extracted.map((r) => [r.id, true])))}
-                  sx={{ typography: "s3", minWidth: 0, px: 0.75, color: "primary.main" }}
+          <Box
+            sx={{
+              mt: 2,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              overflow: "hidden",
+            }}
+          >
+            {busy ? (
+              <Box sx={{ px: 2, py: 1.5 }}>
+                <ThinkingBar label={`Reading ${file?.name}`} />
+              </Box>
+            ) : (
+              <>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={2}
+                  sx={{
+                    px: 2,
+                    py: 1.25,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
                 >
-                  Select all
-                </Button>
-              </Stack>
-              <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-                {extracted.map((r, i) => (
-                  <ScenarioRow
-                    key={r.id}
-                    row={r}
-                    index={i}
-                    selectable
-                    checked={!!checked[r.id] || alreadyIn.has(r.id)}
-                    onToggle={() =>
-                      !alreadyIn.has(r.id) && setChecked((c) => ({ ...c, [r.id]: !c[r.id] }))
+                  <Box flex={1}>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                      {extracted.length} scenarios found in {file?.name}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      One per beat in the script · click to include
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      setChecked(
+                        Object.fromEntries(extracted.map((r) => [r.id, true])),
+                      )
                     }
-                  />
-                ))}
-              </Stack>
-            </>
-          )}
-        </Box>
+                    sx={{ minWidth: 0, color: "primary.main" }}
+                  >
+                    Select all
+                  </Button>
+                </Stack>
+                <Stack
+                  divider={
+                    <Box
+                      sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                    />
+                  }
+                >
+                  {extracted.map((r, i) => (
+                    <ScenarioRow
+                      key={r.id}
+                      row={r}
+                      index={i}
+                      selectable
+                      checked={!!checked[r.id] || alreadyIn.has(r.id)}
+                      onToggle={() =>
+                        !alreadyIn.has(r.id) &&
+                        setChecked((c) => ({ ...c, [r.id]: !c[r.id] }))
+                      }
+                    />
+                  ))}
+                </Stack>
+              </>
+            )}
+          </Box>
         )}
       </Box>
     </SectionCard>

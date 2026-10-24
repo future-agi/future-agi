@@ -1,14 +1,10 @@
-import { Box, Drawer, Grid, Typography, useTheme } from "@mui/material";
+import { Box, Drawer, Grid, Typography, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useMemo, useState } from "react";
 
 import { ShowComponent } from "../show";
 import PropTypes from "prop-types";
 import CallLogTranscript from "./CallLogTranscript";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import TestDetailDrawerScenarioTable from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerScenarioTable";
 import { StereoMultiTrackPlayer } from "src/sections/test-detail/TestDetailDrawer/AudioPlayerCustom";
 import TestDetailDrawerRightSection from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerRightSection";
@@ -23,19 +19,20 @@ import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 // import ErrorAnalysis from "src/sections/traceDetailDrawer/ErrorAnalysis";
 
 const CallLogSideDrawerChild = ({ data }) => {
   const { currentLeftTab, setCurrentLeftTab } = useCallLogsSideDrawerStore();
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
+  const annotationCovered = useDrawerCovered(annotationSidebarOpen);
   const queryClient = useQueryClient();
   const { agentDefinitionId: urlAgentDefinitionId, observeId } = useParams();
   const resolvedProjectId = observeId || data?.projectId;
   const filteredTranscript = useMemo(() => {
     return data?.transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
-  const theme = useTheme();
 
   const { scenarioId } = useMemo(() => {
     let scenarioPath = null;
@@ -160,29 +157,14 @@ const CallLogSideDrawerChild = ({ data }) => {
                 height: "100%",
               }}
             >
-              <TabWrapper sx={{ height: "38px" }}>
-                <CustomTabs
-                  textColor="primary"
+              <Box sx={{ mb: 1.5 }}>
+                <SegmentedTabs
                   value={currentLeftTab}
                   onChange={(_, value) => setCurrentLeftTab(value)}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
-                      opacity: 0.08,
-                      height: "100%",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                    },
-                  }}
                 >
-                  <CustomTab
-                    label="Transcript"
-                    value="Transcript"
-                    disabled={false}
-                    sx={{ paddingY: "4px" }}
-                  />
-                </CustomTabs>
-              </TabWrapper>
+                  <Tab label="Transcript" value="Transcript" disabled={false} />
+                </SegmentedTabs>
+              </Box>
               <ShowComponent condition={currentLeftTab === "Transcript"}>
                 <Box
                   border="1px solid"
@@ -246,8 +228,9 @@ const CallLogSideDrawerChild = ({ data }) => {
         anchor="right"
         open={annotationSidebarOpen}
         onClose={() => setAnnotationSidebarOpen(false)}
+        sx={coveredDrawerSx(annotationCovered)}
         PaperProps={{
-          sx: { width: 360, zIndex: 20 },
+          sx: { width: 480, zIndex: 20 },
         }}
         ModalProps={{
           BackdropProps: {
@@ -298,18 +281,19 @@ CallLogSideDrawerChild.propTypes = {
 const CallLogDetailDrawer = () => {
   const { callLogsSideDrawerData, setCallLogsSideDrawerData } =
     useCallLogsSideDrawerStore();
+  const covered = useDrawerCovered(!!callLogsSideDrawerData);
 
   return (
     <Drawer
       open={!!callLogsSideDrawerData}
       onClose={() => setCallLogsSideDrawerData(null)}
       anchor="right"
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "0px !important",
           backgroundColor: "background.paper",
           display: "flex",

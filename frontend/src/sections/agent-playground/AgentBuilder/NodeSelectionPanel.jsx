@@ -119,7 +119,7 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
               onDragStart={(e) => handleDragStart(e, node)}
               draggable={!disabled}
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 overflow: "hidden",
                 cursor: disabled ? "not-allowed" : "pointer",
                 "&:hover": {

@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Grid,
   Typography,
   Skeleton,
@@ -10,6 +9,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
@@ -38,30 +38,50 @@ function toNumericCost(value) {
 function getChartColors(theme) {
   if (theme.palette.mode === "dark") {
     return [
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#60A5FA",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#F87171",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#34D399",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#FBBF24",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#A78BFA",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#F472B6",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#22D3EE",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#FB7185",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#2DD4BF",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       "#F59E0B",
     ];
   }
 
   return [
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#2563EB",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#DC2626",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#059669",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#D97706",
-    "#7C3AED",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    "#7857FC",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#DB2777",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#0891B2",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#EA580C",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#0F766E",
-    "#9333EA",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    "#7857FC",
   ];
 }
 
@@ -88,13 +108,13 @@ function buildBarChartOptions(theme, categories) {
     dataLabels: {
       enabled: true,
       formatter: (val) => formatCost(val),
-      style: { fontSize: "11px", fontWeight: 600 },
+      style: { fontSize: "12px", fontWeight: 600 },
       offsetX: 5,
     },
     xaxis: {
       categories,
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => formatCost(val),
       },
     },
@@ -150,8 +170,8 @@ function buildDonutChartOptions(theme, labels) {
             name: { show: false },
             value: {
               show: true,
-              fontSize: "14px",
-              fontWeight: 700,
+              fontSize: "13px",
+              fontWeight: 600,
               formatter: (val) => formatCost(Number(val)),
             },
             total: {
@@ -206,14 +226,14 @@ function buildDonutChartOptions(theme, labels) {
         breakpoint: 600,
         options: {
           chart: { height: 300 },
-          legend: { position: "bottom", fontSize: "11px" },
+          legend: { position: "bottom", fontSize: "12px" },
           plotOptions: {
             pie: {
               customScale: 0.78,
               donut: {
                 labels: {
                   value: { fontSize: "12px" },
-                  total: { fontSize: "11px" },
+                  total: { fontSize: "12px" },
                 },
               },
             },
@@ -311,7 +331,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
           <Typography variant="subtitle1" fontWeight={600}>
             Total Cost:
           </Typography>
-          <Typography variant="h5" fontWeight={700} color="primary.main">
+          <Typography variant="h5" fontWeight={600} color="primary.main">
             {formatCost(data?.total_cost)}
           </Typography>
         </Stack>
@@ -333,16 +353,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
             sx={{ flexWrap: "wrap" }}
           >
             {GROUP_BY_OPTIONS.map((opt) => (
-              <ToggleButton
-                key={opt.value}
-                value={opt.value}
-                sx={{
-                  px: 1.5,
-                  py: 0.25,
-                  textTransform: "none",
-                  fontSize: "0.8125rem",
-                }}
-              >
+              <ToggleButton key={opt.value} value={opt.value}>
                 {opt.label}
               </ToggleButton>
             ))}
@@ -353,7 +364,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
       <Grid container spacing={3}>
         {/* Cost breakdown bar chart */}
         <Grid item xs={12} md={7}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Cost by {groupBy === "model" ? "Model" : "Provider"}
             </Typography>
@@ -382,12 +393,12 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
 
         {/* Cost distribution donut chart */}
         <Grid item xs={12} md={5}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Cost Distribution
             </Typography>
@@ -419,7 +430,7 @@ const CostAnalytics = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
       </Grid>
     </Box>

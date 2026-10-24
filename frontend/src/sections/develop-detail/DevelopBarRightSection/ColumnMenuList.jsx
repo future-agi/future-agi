@@ -154,7 +154,7 @@ const ColumnMenuItem = ({
                   ? "rotate(270deg)"
                   : "rotate(0deg)",
               }}
-              icon="material-symbols-light:keyboard-arrow-down"
+              icon="solar:alt-arrow-down-linear"
             />
           </IconButton>
         )}
@@ -192,7 +192,7 @@ const ColumnMenuItem = ({
         </IconButton>
 
         <Typography
-          fontSize={14}
+          fontSize={13}
           fontWeight={400}
           color="text.primary"
           marginLeft="4px"

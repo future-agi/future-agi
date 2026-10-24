@@ -50,21 +50,21 @@ const StatCard = ({ icon, label, value, color, bgColor }) => (
     >
       <Iconify
         icon={icon}
-        width={18}
+        width={20}
         sx={{ color: color || "text.secondary" }}
       />
     </Box>
     <Box>
       <Typography
         variant="h6"
-        sx={{ fontSize: "18px", fontWeight: 700, lineHeight: 1.2 }}
+        sx={{ fontSize: "16px", fontWeight: 600, lineHeight: 1.2 }}
       >
         {value}
       </Typography>
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ fontSize: "11px" }}
+        sx={{ fontSize: "12px" }}
       >
         {label}
       </Typography>
@@ -110,16 +110,13 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette[sev].main, 0.3),
-        bgcolor: alpha(
-          t.palette[sev].main,
-          t.palette.mode === "dark" ? 0.08 : 0.04,
-        ),
+        borderColor: "status.danger.border",
+        bgcolor: "status.danger.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       {/* Header — always visible, click to expand */}
       <Box
@@ -144,7 +141,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
             flexShrink: 0,
           })}
         >
-          <Iconify icon={group.icon} width={18} sx={{ color: `${sev}.main` }} />
+          <Iconify icon={group.icon} width={20} sx={{ color: `${sev}.main` }} />
         </Box>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -171,7 +168,6 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color={sev}
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -195,7 +191,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 }}
                 sx={{
                   ml: 0.5,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: "primary.main",
                   cursor: "pointer",
                   fontFamily: "inherit",
@@ -223,7 +219,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
 
       {/* Expandable body — actionable hints + raw examples */}
       <Collapse in={expanded} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box
           sx={{
             px: 1.5,
@@ -243,8 +239,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -289,8 +285,8 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
-                  textTransform: "uppercase",
+                  fontSize: "12px",
+                  textTransform: "none",
                   letterSpacing: "0.5px",
                   color: "text.disabled",
                 }}
@@ -314,7 +310,7 @@ const ErrorGroupCard = ({ group, defaultExpanded = false }) => {
                   >
                     <Typography
                       sx={{
-                        fontSize: "11px",
+                        fontSize: "12px",
                         fontFamily: "monospace",
                         color: "text.secondary",
                         wordBreak: "break-word",
@@ -359,16 +355,13 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
 
   return (
     <Box
-      sx={(t) => ({
+      sx={{
         border: "1px solid",
-        borderColor: alpha(t.palette.warning.main, 0.35),
-        bgcolor: alpha(
-          t.palette.warning.main,
-          t.palette.mode === "dark" ? 0.1 : 0.05,
-        ),
+        borderColor: "status.warning.border",
+        bgcolor: "status.warning.bg",
         borderRadius: 1,
         overflow: "hidden",
-      })}
+      }}
     >
       <Box
         sx={{
@@ -394,7 +387,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
         >
           <Iconify
             icon="solar:danger-triangle-linear"
-            width={18}
+            width={20}
             sx={{ color: "warning.main" }}
           />
         </Box>
@@ -422,7 +415,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           </Box>
           <Typography
@@ -446,14 +438,14 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
         </IconButton>
       </Box>
       <Collapse in={expanded} unmountOnExit>
-        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Divider sx={{ borderColor: "transparent" }} />
         <Box sx={{ px: 1.5, pb: 1.5, pt: 0.5 }}>
           <Typography
             variant="overline"
             sx={{
               display: "block",
               mb: 0.5,
-              fontSize: "10px",
+              fontSize: "12px",
               color: "text.disabled",
             }}
           >
@@ -468,7 +460,6 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                   size="small"
                   color="warning"
                   variant="outlined"
-                  sx={{ fontSize: "10px", height: 18 }}
                 />
               ))
             ) : (
@@ -484,7 +475,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
                 sx={{
                   display: "block",
                   mb: 0.5,
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: "text.disabled",
                 }}
               >
@@ -492,13 +483,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               </Typography>
               <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
                 {filledKeys.map((key) => (
-                  <Chip
-                    key={key}
-                    label={key}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "10px", height: 18 }}
-                  />
+                  <Chip key={key} label={key} size="small" variant="outlined" />
                 ))}
               </Box>
             </>
@@ -778,7 +763,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               Started
             </Typography>
@@ -791,7 +776,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Completed
               </Typography>
@@ -805,7 +790,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Status
               </Typography>
@@ -843,13 +828,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="warning"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {warningsCount} total warning
               {warningsCount !== 1 ? "s" : ""} — grouped by missing variables
@@ -876,7 +860,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the most common warning types. Rarer warning groups are
                 hidden.
@@ -919,13 +903,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                 size="small"
                 color="error"
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
             </Box>
             <Typography
               variant="caption"
               color="text.disabled"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {errorsCount} total error
               {errorsCount !== 1 ? "s" : ""} — grouped by type
@@ -955,7 +938,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               />
               <Typography
                 variant="caption"
-                sx={{ fontSize: "11px", color: "text.secondary" }}
+                sx={{ fontSize: "12px", color: "text.secondary" }}
               >
                 Showing the top {errorGroups.length} error types by frequency.
                 Rarer error types are hidden — fix the biggest groups first and

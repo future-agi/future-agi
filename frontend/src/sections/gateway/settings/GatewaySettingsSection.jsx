@@ -7,8 +7,6 @@ import {
   Stack,
   Tab,
   Tabs,
-  Card,
-  CardContent,
   Grid,
   Chip,
   Button,
@@ -33,7 +31,9 @@ import {
   Tooltip,
   CircularProgress,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { enqueueSnackbar } from "notistack";
@@ -57,6 +57,16 @@ import {
 // Gateway Settings Tab
 // ---------------------------------------------------------------------------
 
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
+
 const SettingsTab = ({ config, gateway }) => {
   const serverConfig = config?.server || {};
   const logging = config?.logging || {};
@@ -65,110 +75,95 @@ const SettingsTab = ({ config, gateway }) => {
   return (
     <Stack spacing={2}>
       {/* Server config */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Server Configuration
-          </Typography>
-          <Stack spacing={1}>
-            <InfoLine label="Host" value={serverConfig.host || "\u2014"} />
-            <InfoLine label="Port" value={serverConfig.port || "\u2014"} />
-            <InfoLine
-              label="Read Timeout"
-              value={
-                serverConfig.read_timeout ??
-                serverConfig.readTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Write Timeout"
-              value={
-                serverConfig.write_timeout ??
-                serverConfig.writeTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Idle Timeout"
-              value={
-                serverConfig.idle_timeout ??
-                serverConfig.idleTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Shutdown Timeout"
-              value={
-                serverConfig.shutdown_timeout ??
-                serverConfig.shutdownTimeout ??
-                "\u2014"
-              }
-            />
-          </Stack>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Server Configuration
+        </Typography>
+        <Stack spacing={1}>
+          <InfoLine label="Host" value={serverConfig.host || "\u2014"} />
+          <InfoLine label="Port" value={serverConfig.port || "\u2014"} />
+          <InfoLine
+            label="Read Timeout"
+            value={
+              serverConfig.read_timeout ?? serverConfig.readTimeout ?? "\u2014"
+            }
+          />
+          <InfoLine
+            label="Write Timeout"
+            value={
+              serverConfig.write_timeout ??
+              serverConfig.writeTimeout ??
+              "\u2014"
+            }
+          />
+          <InfoLine
+            label="Idle Timeout"
+            value={
+              serverConfig.idle_timeout ?? serverConfig.idleTimeout ?? "\u2014"
+            }
+          />
+          <InfoLine
+            label="Shutdown Timeout"
+            value={
+              serverConfig.shutdown_timeout ??
+              serverConfig.shutdownTimeout ??
+              "\u2014"
+            }
+          />
+        </Stack>
+      </Section>
 
       {/* Gateway info */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Gateway Info
-          </Typography>
-          <Stack spacing={1}>
-            <InfoLine label="Name" value={gateway?.name || "\u2014"} />
-            <InfoLine label="Base URL" value={gateway?.baseUrl || "\u2014"} />
-            <InfoLine label="Status" value={gateway?.status || "\u2014"} />
-            <InfoLine
-              label="Providers"
-              value={gateway?.providerCount ?? "\u2014"}
-            />
-            <InfoLine label="Models" value={gateway?.modelCount ?? "\u2014"} />
-            <InfoLine
-              label="Last Health Check"
-              value={
-                gateway?.lastHealthCheck
-                  ? new Date(gateway.lastHealthCheck).toLocaleString()
-                  : "Never"
-              }
-            />
-          </Stack>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Gateway Info
+        </Typography>
+        <Stack spacing={1}>
+          <InfoLine label="Name" value={gateway?.name || "\u2014"} />
+          <InfoLine label="Base URL" value={gateway?.baseUrl || "\u2014"} />
+          <InfoLine label="Status" value={gateway?.status || "\u2014"} />
+          <InfoLine
+            label="Providers"
+            value={gateway?.providerCount ?? "\u2014"}
+          />
+          <InfoLine label="Models" value={gateway?.modelCount ?? "\u2014"} />
+          <InfoLine
+            label="Last Health Check"
+            value={
+              gateway?.lastHealthCheck
+                ? new Date(gateway.lastHealthCheck).toLocaleString()
+                : "Never"
+            }
+          />
+        </Stack>
+      </Section>
 
       {/* Logging */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Logging
-          </Typography>
-          <Stack spacing={1}>
-            <InfoLine label="Level" value={logging.level || "\u2014"} />
-            <InfoLine label="Format" value={logging.format || "\u2014"} />
-            <InfoLine
-              label="Request Logging"
-              value={logging.request_logging?.enabled ? "Enabled" : "Disabled"}
-            />
-            <InfoLine
-              label="Include Bodies"
-              value={logging.request_logging?.include_bodies ? "Yes" : "No"}
-            />
-          </Stack>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Logging
+        </Typography>
+        <Stack spacing={1}>
+          <InfoLine label="Level" value={logging.level || "\u2014"} />
+          <InfoLine label="Format" value={logging.format || "\u2014"} />
+          <InfoLine
+            label="Request Logging"
+            value={logging.request_logging?.enabled ? "Enabled" : "Disabled"}
+          />
+          <InfoLine
+            label="Include Bodies"
+            value={logging.request_logging?.include_bodies ? "Yes" : "No"}
+          />
+        </Stack>
+      </Section>
 
       {/* Cost Tracking */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Cost Tracking
-          </Typography>
-          <InfoLine
-            label="Enabled"
-            value={costTracking.enabled ? "Yes" : "No"}
-          />
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Cost Tracking
+        </Typography>
+        <InfoLine label="Enabled" value={costTracking.enabled ? "Yes" : "No"} />
+      </Section>
 
       {/* Email Alerts */}
       <EmailAlertsCard />
@@ -201,7 +196,7 @@ const FullConfigTab = ({ config }) => {
           sx={{
             bgcolor: "warning.light",
             color: "warning.contrastText",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             px: 0.25,
           }}
         >
@@ -220,53 +215,51 @@ const FullConfigTab = ({ config }) => {
   }, [jsonStr, search]);
 
   return (
-    <Card>
-      <CardContent>
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
-          mb={2}
-        >
-          <Typography variant="h6">Full Gateway Configuration</Typography>
-          <TextField
-            size="small"
-            placeholder="Search config..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            sx={{ width: 260 }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Iconify icon="mdi:magnify" width={18} />
-                </InputAdornment>
-              ),
-              endAdornment: search.trim() ? (
-                <InputAdornment position="end">
-                  <Typography variant="caption" color="text.secondary">
-                    {matchCount} match{matchCount !== 1 ? "es" : ""}
-                  </Typography>
-                </InputAdornment>
-              ) : null,
-            }}
-          />
-        </Stack>
-        <Box
-          sx={{
-            bgcolor: "action.hover",
-            borderRadius: 1,
-            p: 2,
-            fontFamily: "monospace",
-            fontSize: "0.75rem",
-            whiteSpace: "pre-wrap",
-            overflowX: "auto",
-            maxHeight: 600,
+    <Section variant="panel">
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="center"
+        mb={2}
+      >
+        <Typography variant="h6">Full Gateway Configuration</Typography>
+        <TextField
+          size="small"
+          placeholder="Search config..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          sx={{ width: 260 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Iconify icon="solar:magnifier-linear" width={16} />
+              </InputAdornment>
+            ),
+            endAdornment: search.trim() ? (
+              <InputAdornment position="end">
+                <Typography variant="caption" color="text.secondary">
+                  {matchCount} match{matchCount !== 1 ? "es" : ""}
+                </Typography>
+              </InputAdornment>
+            ) : null,
           }}
-        >
-          {highlighted || jsonStr}
-        </Box>
-      </CardContent>
-    </Card>
+        />
+      </Stack>
+      <Box
+        sx={{
+          bgcolor: "action.hover",
+          borderRadius: 1,
+          p: 2,
+          fontFamily: "monospace",
+          fontSize: "0.75rem",
+          whiteSpace: "pre-wrap",
+          overflowX: "auto",
+          maxHeight: 600,
+        }}
+      >
+        {highlighted || jsonStr}
+      </Box>
+    </Section>
   );
 };
 
@@ -345,108 +338,108 @@ const BatchJobsTab = ({ config, gatewayId }) => {
   return (
     <Stack spacing={2}>
       {/* Batch API Config */}
-      <Card>
-        <CardContent>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-            mb={2}
+      <Section variant="panel">
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={2}
+        >
+          <Typography variant="h6">Batch API</Typography>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<Iconify icon="solar:add-linear" width={20} />}
+            onClick={() => setSubmitOpen(true)}
           >
-            <Typography variant="h6">Batch API</Typography>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<Iconify icon="mdi:plus" width={18} />}
-              onClick={() => setSubmitOpen(true)}
-            >
-              Submit Batch Job
-            </Button>
+            Submit Batch Job
+          </Button>
+        </Stack>
+        {Object.keys(batchConfig).length > 0 ? (
+          <Stack spacing={1}>
+            <InfoLine
+              label="Enabled"
+              value={batchConfig.enabled ? "Yes" : "No"}
+            />
+            <InfoLine
+              label="Max Concurrent"
+              value={
+                batchConfig.max_concurrent ??
+                batchConfig.maxConcurrent ??
+                "\u2014"
+              }
+            />
+            <InfoLine
+              label="Storage"
+              value={
+                batchConfig.storage_path ?? batchConfig.storagePath ?? "\u2014"
+              }
+            />
           </Stack>
-          {Object.keys(batchConfig).length > 0 ? (
-            <Stack spacing={1}>
-              <InfoLine
-                label="Enabled"
-                value={batchConfig.enabled ? "Yes" : "No"}
-              />
-              <InfoLine
-                label="Max Concurrent"
-                value={
-                  batchConfig.max_concurrent ??
-                  batchConfig.maxConcurrent ??
-                  "\u2014"
-                }
-              />
-              <InfoLine
-                label="Storage"
-                value={
-                  batchConfig.storage_path ??
-                  batchConfig.storagePath ??
-                  "\u2014"
-                }
-              />
-            </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Batch API configuration not found in gateway config. Jobs can
-              still be submitted directly.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            Batch API configuration not found in gateway config. Jobs can still
+            be submitted directly.
+          </Typography>
+        )}
+      </Section>
 
       {/* Tracked Jobs */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Batch Jobs
-          </Typography>
-          {trackedJobs.length === 0 ? (
-            <Stack alignItems="center" spacing={1} sx={{ py: 3 }}>
-              <Iconify
-                icon="mdi:tray-arrow-up"
-                width={40}
-                sx={{ color: "text.disabled" }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                No batch jobs submitted yet. Click &quot;Submit Batch Job&quot;
-                to get started.
-              </Typography>
-            </Stack>
-          ) : (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Batch ID</TableCell>
-                    <TableCell>Requests</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Submitted</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {trackedJobs.map((job) => (
-                    <BatchJobRow
-                      key={job.batch_id}
-                      job={job}
-                      gatewayId={gatewayId}
-                      onCancel={handleCancel}
-                      onViewDetails={setSelectedJob}
-                    />
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Batch Jobs
+        </Typography>
+        {trackedJobs.length === 0 ? (
+          <Stack alignItems="center" spacing={1} sx={{ py: 3 }}>
+            <Iconify
+              icon="solar:upload-minimalistic-linear"
+              width={40}
+              sx={{ color: "text.disabled" }}
+            />
+            <Typography variant="body2" color="text.secondary">
+              No batch jobs submitted yet. Click &quot;Submit Batch Job&quot; to
+              get started.
+            </Typography>
+          </Stack>
+        ) : (
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Batch ID</TableCell>
+                  <TableCell>Requests</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Submitted</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Actions
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {trackedJobs.map((job) => (
+                  <BatchJobRow
+                    key={job.batch_id}
+                    job={job}
+                    gatewayId={gatewayId}
+                    onCancel={handleCancel}
+                    onViewDetails={setSelectedJob}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Section>
 
       {/* Submit Dialog */}
       <Dialog
         open={submitOpen}
         onClose={() => setSubmitOpen(false)}
-        maxWidth="md"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
         fullWidth
       >
         <DialogTitle>Submit Batch Job</DialogTitle>
@@ -471,7 +464,7 @@ const BatchJobsTab = ({ config, gatewayId }) => {
                 sx={{
                   "& .MuiInputBase-input": {
                     fontFamily: "monospace",
-                    fontSize: "0.8rem",
+                    fontSize: "13px",
                   },
                 }}
               />
@@ -542,14 +535,6 @@ const BatchJobRow = ({ job, gatewayId, onCancel, onViewDetails }) => {
   const total = status?.total ?? job.total;
   const progress = total > 0 ? (completed / total) * 100 : 0;
 
-  const statusColor = {
-    pending: "default",
-    processing: "info",
-    completed: "success",
-    cancelled: "warning",
-    failed: "error",
-  };
-
   return (
     <TableRow>
       <TableCell>
@@ -560,12 +545,7 @@ const BatchJobRow = ({ job, gatewayId, onCancel, onViewDetails }) => {
       <TableCell>{total}</TableCell>
       <TableCell>
         <Stack spacing={0.5}>
-          <Chip
-            label={batchStatus}
-            size="small"
-            color={statusColor[batchStatus] || "default"}
-            variant="outlined"
-          />
+          <StatusBadge status={batchStatus} />
           {batchStatus === "processing" && (
             <LinearProgress
               variant="determinate"
@@ -580,24 +560,26 @@ const BatchJobRow = ({ job, gatewayId, onCancel, onViewDetails }) => {
           {new Date(job.submittedAt).toLocaleTimeString()}
         </Typography>
       </TableCell>
-      <TableCell align="right">
+      <TableCell sx={{ fontVariantNumeric: "tabular-nums" }} align="right">
         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
           <Tooltip title="View Details">
             <IconButton
+              className="row-hover-action"
               size="small"
               onClick={() => onViewDetails(job.batch_id)}
             >
-              <Iconify icon="mdi:eye-outline" width={18} />
+              <Iconify icon="solar:eye-linear" width={20} />
             </IconButton>
           </Tooltip>
           {(batchStatus === "pending" || batchStatus === "processing") && (
             <Tooltip title="Cancel">
               <IconButton
+                className="row-hover-action"
                 size="small"
                 color="error"
                 onClick={() => onCancel(job.batch_id)}
               >
-                <Iconify icon="mdi:close-circle-outline" width={18} />
+                <Iconify icon="solar:close-circle-linear" width={20} />
               </IconButton>
             </Tooltip>
           )}
@@ -621,7 +603,13 @@ const BatchDetailDialog = ({ gatewayId, batchId, onClose }) => {
     batch?.status === "completed" || batch?.status === "cancelled";
 
   return (
-    <Dialog open onClose={onClose} maxWidth="lg" fullWidth>
+    <Dialog
+      open
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <DialogTitle>
         <Stack
           direction="row"
@@ -644,7 +632,7 @@ const BatchDetailDialog = ({ gatewayId, batchId, onClose }) => {
             />
           </Stack>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mdi:close" width={20} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
       </DialogTitle>
@@ -734,20 +722,23 @@ const BatchDetailDialog = ({ gatewayId, batchId, onClose }) => {
                         >
                           <TableCell>{r.index}</TableCell>
                           <TableCell>
-                            <Chip
-                              label={r.status}
-                              size="small"
-                              color={
-                                r.status === "success"
-                                  ? "success"
-                                  : r.status === "error"
-                                    ? "error"
-                                    : "default"
+                            <StatusBadge
+                              status={r.status}
+                              label={String(r.status)}
+                              role={
+                                CHIP_ROLE[
+                                  r.status === "success"
+                                    ? "success"
+                                    : r.status === "error"
+                                      ? "error"
+                                      : "default"
+                                ]
                               }
-                              variant="outlined"
                             />
                           </TableCell>
-                          <TableCell>
+                          <TableCell
+                            sx={{ fontVariantNumeric: "tabular-nums" }}
+                          >
                             {r.cost != null
                               ? `$${Number(r.cost).toFixed(4)}`
                               : "\u2014"}
@@ -772,10 +763,10 @@ const BatchDetailDialog = ({ gatewayId, batchId, onClose }) => {
                             <Iconify
                               icon={
                                 expandedIdx === r.index
-                                  ? "mdi:chevron-up"
-                                  : "mdi:chevron-down"
+                                  ? "solar:alt-arrow-up-linear"
+                                  : "solar:alt-arrow-down-linear"
                               }
-                              width={18}
+                              width={20}
                             />
                           </TableCell>
                         </TableRow>
@@ -789,7 +780,7 @@ const BatchDetailDialog = ({ gatewayId, batchId, onClose }) => {
                                   p: 2,
                                   my: 1,
                                   fontFamily: "monospace",
-                                  fontSize: "0.7rem",
+                                  fontSize: "12px",
                                   whiteSpace: "pre-wrap",
                                   maxHeight: 300,
                                   overflow: "auto",
@@ -949,7 +940,7 @@ const GatewaySettingsSection = () => {
             label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
             variant: "outlined",
             size: "small",
-            icon: "mdi:refresh",
+            icon: "solar:refresh-linear",
             onClick: handleReloadConfig,
             disabled: reloadMutation.isPending,
           },

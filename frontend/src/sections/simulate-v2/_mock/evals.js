@@ -201,7 +201,7 @@ export const EVAL_CATALOG = [
     type: "Deterministic",
     appliesTo: ["sim"],
     icon: "solar:medal-ribbon-star-linear",
-    color: "#8B5CF6",
+    color: "#7857FC",
     threshold: 0.7,
   },
   {
@@ -263,7 +263,8 @@ export const EVAL_CATALOG = [
     id: "twin_end_state_match",
     name: "Clone end-state matches expected",
     category: "Clone state",
-    blurb: "After the run, the clone's state should equal the expected shape (paths, values, or a full JSON diff).",
+    blurb:
+      "After the run, the clone's state should equal the expected shape (paths, values, or a full JSON diff).",
     type: "Deterministic",
     evalKind: "twin_end_state",
     appliesTo: ["twin"],
@@ -275,7 +276,8 @@ export const EVAL_CATALOG = [
     id: "twin_write_target",
     name: "Wrote to the right place",
     category: "Clone state",
-    blurb: "Every write the agent made landed on the expected object — right channel, right doc, right record.",
+    blurb:
+      "Every write the agent made landed on the expected object — right channel, right doc, right record.",
     type: "Deterministic",
     evalKind: "twin_end_state",
     appliesTo: ["twin"],
@@ -287,7 +289,8 @@ export const EVAL_CATALOG = [
     id: "twin_no_extra_writes",
     name: "No unexpected writes",
     category: "Clone state",
-    blurb: "The agent didn't touch anything outside its assigned target — no drive-by edits or accidental sends.",
+    blurb:
+      "The agent didn't touch anything outside its assigned target — no drive-by edits or accidental sends.",
     type: "Deterministic",
     evalKind: "twin_end_state",
     appliesTo: ["twin"],
@@ -299,7 +302,8 @@ export const EVAL_CATALOG = [
     id: "twin_field_semantics",
     name: "Field values are semantically correct",
     category: "Clone state",
-    blurb: "The values written into the clone match the intent — an LLM judge reads the record and checks it makes sense against the scenario.",
+    blurb:
+      "The values written into the clone match the intent — an LLM judge reads the record and checks it makes sense against the scenario.",
     type: "LLM judge",
     evalKind: "twin_end_state",
     appliesTo: ["twin"],
@@ -311,7 +315,8 @@ export const EVAL_CATALOG = [
     id: "twin_side_effect_budget",
     name: "Side-effect budget",
     category: "Clone state",
-    blurb: "Total writes stayed under the scenario's budget — catches an agent that solved the task but by spamming ten messages first.",
+    blurb:
+      "Total writes stayed under the scenario's budget — catches an agent that solved the task but by spamming ten messages first.",
     type: "Deterministic",
     evalKind: "twin_end_state",
     appliesTo: ["twin"],
@@ -321,7 +326,14 @@ export const EVAL_CATALOG = [
   },
 ];
 
-export const EVAL_CATEGORIES = ["Outcome", "Safety", "Behaviour", "Quality", "Performance", "Clone state"];
+export const EVAL_CATEGORIES = [
+  "Outcome",
+  "Safety",
+  "Behaviour",
+  "Quality",
+  "Performance",
+  "Clone state",
+];
 
 /**
  * Filter helper — for a given environment, return the evals that
@@ -356,7 +368,11 @@ export const evalsForSurface = (surfaceId) =>
  */
 export const SIMULATION_COLUMNS = [
   { field: "task", headerName: "Task", dataType: "text" },
-  { field: "expected_outcome", headerName: "Expected outcome", dataType: "text" },
+  {
+    field: "expected_outcome",
+    headerName: "Expected outcome",
+    dataType: "text",
+  },
   { field: "persona", headerName: "Persona", dataType: "text" },
   { field: "transcript", headerName: "Transcript", dataType: "text" },
   { field: "agent_response", headerName: "Agent response", dataType: "text" },
@@ -383,28 +399,41 @@ export const SIMULATION_COLUMNS = [
  * rest of the flow already uses so a reader recognises them.
  */
 const DEFAULT_MAPPINGS = {
-  task_success:        { output: "transcript", expected: "scenario.expected_outcome" },
-  policy_adherence:    { output: "transcript", rules: "env.rules" },
-  compliance:          { output: "transcript", rules: "env.rules" },
-  pii_leakage:         { output: "transcript" },
-  hallucination:       { output: "transcript", context: "world_state" },
-  tool_correctness:    { tool_calls: "run.tool_calls", expected: "scenario.requiredTools" },
-  ui_grounding:        { events: "run.pointer_events", target: "scenario.target_element" },
-  step_efficiency:     { steps: "run.steps", expected: "scenario.reference_solution" },
+  task_success: { output: "transcript", expected: "scenario.expected_outcome" },
+  policy_adherence: { output: "transcript", rules: "env.rules" },
+  compliance: { output: "transcript", rules: "env.rules" },
+  pii_leakage: { output: "transcript" },
+  hallucination: { output: "transcript", context: "world_state" },
+  tool_correctness: {
+    tool_calls: "run.tool_calls",
+    expected: "scenario.requiredTools",
+  },
+  ui_grounding: {
+    events: "run.pointer_events",
+    target: "scenario.target_element",
+  },
+  step_efficiency: {
+    steps: "run.steps",
+    expected: "scenario.reference_solution",
+  },
   escalation_accuracy: { output: "transcript", policy: "env.rules" },
-  tone:                { output: "transcript" },
-  empathy:             { output: "transcript" },
-  latency:             { latency_metrics: "run.latency_metrics" },
-  interruption:        { events: "run.turn_events" },
-  context_carryover:   { output: "transcript", state_before: "world_state.before", state_after: "world_state.after" },
-  test_pass_rate:      { patch: "run.patch", test_results: "run.test_results" },
-  diff_quality:        { patch: "run.patch", diff_stats: "run.diff_stats" },
-  completeness:        { output: "transcript" },
-  reward_score:        { reward_events: "run.reward_events" },
-  constraint_violation:{ trajectory: "run.trajectory" },
-  rule_inference:      { output: "transcript", trajectory: "run.trajectory" },
-  reproducibility:     { output: "transcript", run_log: "run.steps" },
-  safety:              { output: "transcript", tool_calls: "run.tool_calls" },
+  tone: { output: "transcript" },
+  empathy: { output: "transcript" },
+  latency: { latency_metrics: "run.latency_metrics" },
+  interruption: { events: "run.turn_events" },
+  context_carryover: {
+    output: "transcript",
+    state_before: "world_state.before",
+    state_after: "world_state.after",
+  },
+  test_pass_rate: { patch: "run.patch", test_results: "run.test_results" },
+  diff_quality: { patch: "run.patch", diff_stats: "run.diff_stats" },
+  completeness: { output: "transcript" },
+  reward_score: { reward_events: "run.reward_events" },
+  constraint_violation: { trajectory: "run.trajectory" },
+  rule_inference: { output: "transcript", trajectory: "run.trajectory" },
+  reproducibility: { output: "transcript", run_log: "run.steps" },
+  safety: { output: "transcript", tool_calls: "run.tool_calls" },
 };
 
 export const defaultMappingFor = (id) => DEFAULT_MAPPINGS[id] || {};
@@ -452,9 +481,10 @@ export const resolveEval = (applied) => {
     return { ...base, mapping: defaultMappingFor(applied) };
   }
   const known = getEval(applied.id);
-  const mapping = applied.mapping && Object.keys(applied.mapping).length
-    ? applied.mapping
-    : defaultMappingFor(applied.id);
+  const mapping =
+    applied.mapping && Object.keys(applied.mapping).length
+      ? applied.mapping
+      : defaultMappingFor(applied.id);
   return {
     icon: "solar:shield-check-linear",
     color: "#7857FC",
@@ -466,7 +496,6 @@ export const resolveEval = (applied) => {
     mapping,
   };
 };
-
 
 /**
  * Preview data for the eval picker's create-simulate source mode.
@@ -513,7 +542,10 @@ export const simulationPreviewData = (env, envState, agentType) => {
     // Display path is scenario.columns.<name>; the key is the id the mapping
     // persists, which for this prototype is the field name itself.
     scenario_columns: Object.fromEntries(
-      SIMULATION_COLUMNS.map((c) => [c.field, { name: c.field, type: "string" }]),
+      SIMULATION_COLUMNS.map((c) => [
+        c.field,
+        { name: c.field, type: "string" },
+      ]),
     ),
     scenario_summaries: scenarios.map((sc, i) => ({
       id: sc.id || `scenario-${i}`,
@@ -532,13 +564,18 @@ export const TOOL_CALL_JUDGE_ID = "tool_correctness";
 /** Up to 8 catalogue evaluations per environment, plus the tool-call judge. */
 export const MAX_APPLIED_EVALS = 8;
 export const EVAL_CAP_NOTE = `Up to ${MAX_APPLIED_EVALS} evaluations plus the tool-call judge. Remove one to add another.`;
-export const REQUIRED_EVAL_NOTE = "A failing score fails the conversation, whatever its sub-goals say.";
+export const REQUIRED_EVAL_NOTE =
+  "A failing score fails the conversation, whatever its sub-goals say.";
 
 const idOfApplied = (e) => (typeof e === "string" ? e : e?.id);
 /** How many applied evals count toward the cap of 8. */
-export const cappedEvalCount = (applied = []) => applied.filter((e) => idOfApplied(e) !== TOOL_CALL_JUDGE_ID).length;
+export const cappedEvalCount = (applied = []) =>
+  applied.filter((e) => idOfApplied(e) !== TOOL_CALL_JUDGE_ID).length;
 /** Slots left under the cap. */
-export const evalSlotsLeft = (applied = []) => Math.max(0, MAX_APPLIED_EVALS - cappedEvalCount(applied));
+export const evalSlotsLeft = (applied = []) =>
+  Math.max(0, MAX_APPLIED_EVALS - cappedEvalCount(applied));
 /** Required evals — a failing score fails the conversation. Bare-id records are never required. */
-export const isRequiredEval = (applied) => !!(applied && typeof applied === "object" && applied.required);
-export const requiredEvalIds = (applied = []) => applied.filter(isRequiredEval).map(idOfApplied);
+export const isRequiredEval = (applied) =>
+  !!(applied && typeof applied === "object" && applied.required);
+export const requiredEvalIds = (applied = []) =>
+  applied.filter(isRequiredEval).map(idOfApplied);

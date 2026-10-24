@@ -1,19 +1,12 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Collapse,
-  Divider,
-  IconButton,
-  Typography,
-} from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Box, Button, Divider, IconButton, Typography } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import EvalsGrid from "./EvalsGrid";
 import NewTaskDrawer from "./NewTaskDrawer/NewTaskDrawer";
 import PropTypes from "prop-types";
-import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import { FilterButton, useComplexFilterBinding } from "src/components/filter";
 import { EvalTaskFilterDefinition } from "./common";
 import { getRandomId } from "src/utils/utils";
 import { useGetValidatedFilters } from "src/hooks/use-get-validated-filters";
@@ -26,7 +19,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import EditTaskDrawer from "./EditTaskDrawer/EditTaskDrawer";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
-import HeadingAndSubheading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
+import PageHeader from "src/components/page-header";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -66,6 +59,16 @@ const EvalsTasksView = ({ observeId = null }) => {
     { ...defaultFilter, id: getRandomId() },
   ]);
   const [showFilter, setShowFilter] = useState(false);
+  const filterDefinition = React.useMemo(
+    () => EvalTaskFilterDefinition(observeId),
+    [observeId],
+  );
+  const filterBinding = useComplexFilterBinding({
+    filters,
+    setFilters,
+    filterDefinition,
+    defaultFilter,
+  });
 
   const onColumnVisibilityChange = (updatedData) => {
     setColumns((cols) => {
@@ -198,30 +201,13 @@ const EvalsTasksView = ({ observeId = null }) => {
         flexDirection: "column",
       }}
     >
-      <HeadingAndSubheading
-        heading={
-          observeId === null && (
-            <Typography
-              color={"text.primary"}
-              typography={"m2"}
-              fontWeight={"fontWeightBold"}
-            >
-              Tasks
-            </Typography>
-          )
-        }
-        subHeading={
-          observeId === null && (
-            <Typography
-              typography="s1"
-              color="text.primary"
-              fontWeight={"fontWeightRegular"}
-            >
-              Create and run automated actions on your data
-            </Typography>
-          )
-        }
-      />
+      {observeId === null && (
+        <PageHeader
+          title="Tasks"
+          description="Create and run automated actions on your data"
+          sx={{ mb: 0 }}
+        />
+      )}
       <LoadingScreen
         variant="orbit"
         sx={{ flex: 1, display: shouldShowLoading ? "flex" : "none" }}
@@ -250,19 +236,11 @@ const EvalsTasksView = ({ observeId = null }) => {
               <Button
                 variant="contained"
                 color="primary"
-                sx={{
-                  px: "24px",
-                  borderRadius: "8px",
-                  height: "38px",
-                }}
                 startIcon={
                   <Iconify
-                    icon="octicon:plus-24"
+                    width={20}
+                    icon="solar:add-linear"
                     color="background.paper"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                    }}
                   />
                 }
                 onClick={() => toggleDrawer(true)}
@@ -303,100 +281,32 @@ const EvalsTasksView = ({ observeId = null }) => {
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             {selectedRowsData.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "4px",
-                  paddingLeft: 1.5,
-                  paddingY: 0.5,
-                  alignItems: "center",
-                  gap: 1,
-                  marginRight: 1.5,
-                  height: "38px",
-                }}
-              >
-                <Typography
-                  fontWeight="500"
-                  typography="s1"
-                  color={"primary.main"}
-                >
-                  {selectedRowsData.length} Selected
-                </Typography>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{
-                    borderRightWidth: "1px",
-                    marginLeft: 1,
-                    height: "20px",
-                    mt: 0.5,
-                  }}
-                />
-                {selectedRowsData.length == 1 && (
-                  <Button
-                    startIcon={
-                      <Iconify
-                        icon="lucide:pencil"
-                        color="text.disabled"
-                        sx={{ width: "14px" }}
-                      />
-                    }
-                    size="small"
-                    sx={{ color: "text.primary", fontWeight: 400 }}
-                    onClick={handleEdit}
-                    disabled={
+              <SelectionBar
+                count={selectedRowsData.length}
+                onCancel={clearSelection}
+                sx={{ mr: 1.5 }}
+                actions={[
+                  {
+                    label: "Edit",
+                    icon: "solar:pen-linear",
+                    onClick: handleEdit,
+                    hidden: selectedRowsData.length !== 1,
+                    disabled:
                       !RolePermission.OBSERVABILITY[
                         PERMISSIONS.ADD_TASKS_ALERTS
-                      ][role]
-                    }
-                  >
-                    Edit
-                  </Button>
-                )}
-                <Button
-                  startIcon={
-                    <SvgColor
-                      src="/icons/datasets/delete.svg"
-                      sx={{
-                        height: "16px",
-                        width: "16px",
-                        cursor: "pointer",
-                        bgcolor: "text.disabled",
-                      }}
-                    />
-                  }
-                  size="small"
-                  sx={{ color: "text.primary", fontWeight: 400, ml: 0.5 }}
-                  onClick={handleDelete}
-                  disabled={
-                    !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
-                      role
-                    ]
-                  }
-                >
-                  Delete
-                </Button>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{
-                    borderRightWidth: "1px",
-                    marginLeft: 0.5,
-                    height: "20px",
-                    mt: 0.5,
-                    color: "divider",
-                  }}
-                />
-                <Button
-                  size="small"
-                  sx={{ color: "text.primary", fontWeight: 400 }}
-                  onClick={clearSelection}
-                >
-                  Cancel
-                </Button>
-              </Box>
+                      ][role],
+                  },
+                  {
+                    label: "Delete",
+                    icon: "solar:trash-bin-trash-linear",
+                    onClick: handleDelete,
+                    disabled:
+                      !RolePermission.OBSERVABILITY[
+                        PERMISSIONS.ADD_TASKS_ALERTS
+                      ][role],
+                  },
+                ]}
+              />
             ) : (
               <Box
                 sx={{
@@ -405,48 +315,19 @@ const EvalsTasksView = ({ observeId = null }) => {
                   paddingX: 1.5,
                 }}
               >
-                <IconButton
-                  size="small"
-                  sx={{
-                    color: "text.primary",
-                    borderRadius: 1,
-                    paddingX: 1.3,
-                    height: "20px",
-                    marginRight: 1,
-                  }}
-                  onClick={() => setShowFilter(!showFilter)}
-                >
-                  {hasActiveFilter ? (
-                    <Badge
-                      variant="dot"
-                      color="error"
-                      overlap="circular"
-                      anchorOrigin={{ vertical: "top", horizontal: "right" }}
-                    >
-                      <SvgColor
-                        src={`/assets/icons/components/ic_newfilter.svg`}
-                        sx={{
-                          color: "text.disabled",
-                        }}
-                      />
-                    </Badge>
-                  ) : (
-                    <SvgColor
-                      src={`/assets/icons/components/ic_newfilter.svg`}
-                      sx={{
-                        width: "18px",
-                        height: "18px",
-                        color: "text.secondary",
-                      }}
-                    />
-                  )}
-                </IconButton>
+                <Box sx={{ mr: 1 }}>
+                  <FilterButton
+                    fields={filterBinding.fields}
+                    value={filterBinding.value}
+                    onChange={filterBinding.onChange}
+                    open={showFilter}
+                    onOpenChange={setShowFilter}
+                  />
+                </Box>
                 <Button
                   size="small"
                   sx={{
-                    padding: 1.3,
                     width: 25,
-                    height: 25,
                     marginRight: 1.3,
                     minWidth: 0,
                     "& .MuiButton-startIcon": {
@@ -485,8 +366,6 @@ const EvalsTasksView = ({ observeId = null }) => {
                     sx={{
                       color: "text.primary",
                       borderColor: "divider",
-                      padding: 1.5,
-                      fontSize: "14px",
                     }}
                     startIcon={
                       <SvgColor src="/assets/icons/ic_docs_single.svg" />
@@ -500,7 +379,7 @@ const EvalsTasksView = ({ observeId = null }) => {
                   <Button
                     startIcon={
                       <Iconify
-                        icon="ic:round-plus"
+                        icon="solar:add-linear"
                         color="primary"
                         width="20px"
                       />
@@ -526,16 +405,6 @@ const EvalsTasksView = ({ observeId = null }) => {
               </Box>
             )}
           </Box>
-          <Collapse in={showFilter} sx={{ mt: 0.5 }}>
-            <ComplexFilter
-              defaultFilter={defaultFilter}
-              filterDefinition={EvalTaskFilterDefinition(observeId)}
-              filters={filters}
-              setFilters={setFilters}
-              onClose={() => setShowFilter(false)}
-              projectId={observeId}
-            />
-          </Collapse>
           <EvalsGrid
             ref={gridRef}
             columns={columns}

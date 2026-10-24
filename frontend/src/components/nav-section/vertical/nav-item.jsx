@@ -5,7 +5,7 @@ import { forwardRef } from "react";
 import Box from "@mui/material/Box";
 import Link from "@mui/material/Link";
 import Tooltip from "@mui/material/Tooltip";
-import { alpha, styled } from "@mui/material/styles";
+import { styled } from "@mui/material/styles";
 import ListItemButton from "@mui/material/ListItemButton";
 import CustomTooltip from "src/components/tooltip";
 
@@ -58,24 +58,19 @@ const NavItem = forwardRef(
           }
         }}
         sx={(theme) => ({
-          paddingLeft: 0,
-          border: "solid",
-          borderWidth: active ? "1px" : "0px",
-          borderColor: active
-            ? alpha(theme.palette.primary.main, 0.1)
-            : undefined,
           width: "100%",
           px: 1,
           color: active
-            ? theme.palette.primary.dark
-            : theme.palette.text.primary,
+            ? theme.palette.text.primary
+            : theme.palette.text.secondary,
           backgroundColor: active
-            ? alpha(theme.palette.primary.main, 0.1)
+            ? theme.palette.action.selected
             : "transparent",
           "&:hover": {
+            color: theme.palette.text.primary,
             backgroundColor: active
-              ? alpha(theme.palette.primary.main, 0.1)
-              : undefined,
+              ? theme.palette.action.selected
+              : theme.palette.action.hover,
           },
         })}
       >
@@ -83,8 +78,8 @@ const NavItem = forwardRef(
           <Box component="span" className="icon">
             {React.cloneElement(icon, {
               sx: {
-                size: 20,
-                color: active ? "primary.main" : "text.primary",
+                size: 14,
+                color: active ? "text.primary" : "action.active",
               },
             })}
           </Box>
@@ -99,15 +94,12 @@ const NavItem = forwardRef(
         )}
 
         {title && (
-          <Box
-            component="span"
-            sx={{ flex: "1 1 auto", minWidth: 0, ml: 0.75 }}
-          >
+          <Box component="span" sx={{ flex: "1 1 auto", minWidth: 0, ml: 1 }}>
             <Box
               component="span"
               className="label"
               sx={{
-                color: active ? "primary.dark" : "text.primary",
+                color: "inherit",
                 display: "flex",
                 gap: 1,
                 alignItems: "center",
@@ -139,8 +131,8 @@ const NavItem = forwardRef(
             className="arrow"
             icon={
               open
-                ? "eva:arrow-ios-downward-fill"
-                : "eva:arrow-ios-forward-fill"
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
             }
           />
         )}
@@ -178,8 +170,8 @@ const NavItem = forwardRef(
           color="inherit"
           underline="none"
           sx={{
-            height: "32px",
-            minHeight: "32px",
+            height: "26px",
+            minHeight: "26px",
             ...(disabled && {
               cursor: "default",
             }),
@@ -196,8 +188,8 @@ const NavItem = forwardRef(
         color="inherit"
         underline="none"
         sx={{
-          minHeight: "32px",
-          height: "32px",
+          minHeight: "26px",
+          height: "26px",
           ...(disabled && {
             cursor: "default",
           }),
@@ -254,22 +246,23 @@ const StyledNavItem = styled(ListItemButton, {
     item: {
       marginBottom: 0,
       borderRadius: 6,
-      color: theme.palette.text.primary,
-      padding: theme.spacing(0.25, 0.75),
+      color: theme.palette.text.secondary,
+      padding: theme.spacing(0, 1),
       transition: theme.transitions.create(["background-color", "color"], {
         duration: theme.transitions.duration.shortest,
       }),
     },
     icon: {
-      width: 18,
-      height: 18,
+      width: 14,
+      height: 14,
       flexShrink: 0,
-      color: active ? theme.palette.primary.main : theme.palette.text.primary,
+      color: active ? theme.palette.text.primary : theme.palette.action.active,
     },
     label: {
       ...noWrapStyles,
       fontSize: "13px",
-      fontWeight: 500,
+      lineHeight: "20px",
+      fontWeight: 400,
       textTransform: "none",
     },
     caption: {
@@ -293,16 +286,16 @@ const StyledNavItem = styled(ListItemButton, {
     // Root item
     ...(!subItem && {
       ...baseStyles.item,
-      minHeight: 28,
+      minHeight: 26,
       "& .icon": {
         ...baseStyles.icon,
         "& > span": {
-          height: "18px",
-          width: "18px",
+          height: "14px",
+          width: "14px",
         },
         "& svg": {
-          width: "18px",
-          height: "18px",
+          width: "14px",
+          height: "14px",
         },
       },
       "& .sub-icon": {
@@ -310,10 +303,13 @@ const StyledNavItem = styled(ListItemButton, {
       },
       "& .label": {
         ...baseStyles.label,
-        fontWeight: active ? 600 : 500,
+        // Regular weight, medium only when selected: light text on a dark
+        // canvas reads heavier than its size, so the nav stays at 400.
+        fontWeight: active ? 500 : 400,
         color: "inherit",
         "& *": {
           color: "inherit",
+          fontWeight: "inherit",
         },
       },
       "& .caption": {
@@ -326,10 +322,10 @@ const StyledNavItem = styled(ListItemButton, {
         ...baseStyles.arrow,
       },
       ...(active && {
-        color: theme.palette.primary.dark,
-        backgroundColor: alpha(theme.palette.primary.main, 0.12),
+        color: theme.palette.text.primary,
+        backgroundColor: theme.palette.action.selected,
         "&:hover": {
-          backgroundColor: alpha(theme.palette.primary.main, 0.2),
+          backgroundColor: theme.palette.action.selected,
         },
       }),
       ...(opened && {
@@ -341,7 +337,7 @@ const StyledNavItem = styled(ListItemButton, {
     // Sub item
     ...(subItem && {
       ...baseStyles.item,
-      minHeight: 28,
+      minHeight: 26,
       "& .icon": {
         ...baseStyles.icon,
 
@@ -366,7 +362,7 @@ const StyledNavItem = styled(ListItemButton, {
           }),
           ...(active && {
             transform: "scale(2)",
-            backgroundColor: theme.palette.primary.main,
+            backgroundColor: theme.palette.text.primary,
           }),
         },
       },
@@ -383,7 +379,7 @@ const StyledNavItem = styled(ListItemButton, {
         ...baseStyles.arrow,
       },
       ...(active && {
-        color: theme.palette.primary.main,
+        color: theme.palette.text.primary,
       }),
     }),
 

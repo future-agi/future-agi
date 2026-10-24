@@ -39,13 +39,13 @@ const ImageCell = ({ value, onRun }) => {
           <Box
             display="flex"
             alignItems="center"
-            bgcolor="blue.o10"
+            bgcolor="status.info.bg"
             width="100%"
             height="100%"
           >
             <Typography display="flex" flexDirection="row" alignItems="center">
               NA
-              <Typography color="blue.500">
+              <Typography color="status.info.fg">
                 (Hover and click <img src={"/assets/icons/ic_run.svg"} /> to
                 run)
               </Typography>
@@ -109,13 +109,13 @@ const AudioCell = ({ value, onRun, rowIndex }) => {
           <Box
             display="flex"
             alignItems="center"
-            bgcolor="blue.o10"
+            bgcolor="status.info.bg"
             width="100%"
             height="100%"
           >
             <Typography display="flex" flexDirection="row" alignItems="center">
               NA
-              <Typography color="blue.500">
+              <Typography color="status.info.fg">
                 (Hover and click <img src={"/assets/icons/ic_run.svg"} /> to
                 run)
               </Typography>

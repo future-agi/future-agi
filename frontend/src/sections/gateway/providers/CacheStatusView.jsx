@@ -1,15 +1,7 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import {
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Stack,
-  Grid,
-  Button,
-  Divider,
-} from "@mui/material";
+import { Typography, Box, Stack, Grid, Button, Divider } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { val } from "../utils/analyticsHelpers";
@@ -75,129 +67,125 @@ const CacheStatusView = ({ config, gatewayId }) => {
   return (
     <Stack spacing={2}>
       {/* Cache config + configure button */}
-      <Card>
-        <CardContent>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-            mb={1.5}
+      <Section variant="panel">
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={1.5}
+        >
+          <Typography variant="h6">Cache Configuration</Typography>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<Iconify icon="solar:settings-linear" width={20} />}
+            onClick={() => setEditorOpen(true)}
           >
-            <Typography variant="h6">Cache Configuration</Typography>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<Iconify icon="mdi:cog" width={18} />}
-              onClick={() => setEditorOpen(true)}
-            >
-              Configure Cache
-            </Button>
-          </Stack>
-          <Stack spacing={1}>
-            <InfoLine label="Enabled" value={cache?.enabled ? "Yes" : "No"} />
-            <InfoLine
-              label="L1 Backend"
-              value={(cache?.backend || "memory").replace(/-/g, " ")}
-            />
-            <InfoLine
-              label="Default TTL"
-              value={cache?.defaultTtl ?? cache?.default_ttl ?? "\u2014"}
-            />
-            <InfoLine
-              label="Max Entries"
-              value={cache?.maxEntries ?? cache?.max_entries ?? "\u2014"}
-            />
-            <InfoLine
-              label="Semantic Cache"
-              value={
-                cache?.semantic?.enabled
-                  ? `Enabled (${cache?.semantic?.backend || "memory"})`
-                  : "Disabled"
-              }
-            />
-            <InfoLine
-              label="Edge Cache"
-              value={cache?.edge?.enabled ?? false ? "Enabled" : "Disabled"}
-            />
-          </Stack>
+            Configure Cache
+          </Button>
+        </Stack>
+        <Stack spacing={1}>
+          <InfoLine label="Enabled" value={cache?.enabled ? "Yes" : "No"} />
+          <InfoLine
+            label="L1 Backend"
+            value={(cache?.backend || "memory").replace(/-/g, " ")}
+          />
+          <InfoLine
+            label="Default TTL"
+            value={cache?.defaultTtl ?? cache?.default_ttl ?? "\u2014"}
+          />
+          <InfoLine
+            label="Max Entries"
+            value={cache?.maxEntries ?? cache?.max_entries ?? "\u2014"}
+          />
+          <InfoLine
+            label="Semantic Cache"
+            value={
+              cache?.semantic?.enabled
+                ? `Enabled (${cache?.semantic?.backend || "memory"})`
+                : "Disabled"
+            }
+          />
+          <InfoLine
+            label="Edge Cache"
+            value={cache?.edge?.enabled ?? false ? "Enabled" : "Disabled"}
+          />
+        </Stack>
 
-          {!cache?.enabled && (
-            <>
-              <Divider sx={{ my: 2 }} />
-              <Stack alignItems="center" spacing={1} sx={{ py: 2 }}>
-                <Iconify
-                  icon="mdi:cached"
-                  width={40}
-                  sx={{ color: "text.disabled" }}
-                />
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  textAlign="center"
-                >
-                  Cache is not enabled. Configure cache to reduce latency and
-                  costs by caching repeated LLM responses.
-                </Typography>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setEditorOpen(true)}
-                  startIcon={<Iconify icon="mdi:plus" width={18} />}
-                >
-                  Enable Cache
-                </Button>
-              </Stack>
-            </>
-          )}
-        </CardContent>
-      </Card>
+        {!cache?.enabled && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Stack alignItems="center" spacing={1} sx={{ py: 2 }}>
+              <Iconify
+                icon="solar:refresh-linear"
+                width={40}
+                sx={{ color: "text.disabled" }}
+              />
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                textAlign="center"
+              >
+                Cache is not enabled. Configure cache to reduce latency and
+                costs by caching repeated LLM responses.
+              </Typography>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setEditorOpen(true)}
+                startIcon={<Iconify icon="solar:add-linear" width={20} />}
+              >
+                Enable Cache
+              </Button>
+            </Stack>
+          </>
+        )}
+      </Section>
 
       {/* Cache analytics */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Cache Performance (Last 7 days)
-          </Typography>
-          <Grid container spacing={3}>
-            <Grid item xs={6} sm={3}>
-              <StatBox
-                label="Cache Hit Rate"
-                value={
-                  cacheHitRate != null
-                    ? `${Number(cacheHitRate).toFixed(1)}%`
-                    : "\u2014"
-                }
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatBox
-                label="Total Requests"
-                value={Number(totalRequests ?? 0).toLocaleString()}
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatBox
-                label="Cache Hits"
-                value={
-                  cacheHits != null
-                    ? Number(cacheHits).toLocaleString()
-                    : "\u2014"
-                }
-              />
-            </Grid>
-            <Grid item xs={6} sm={3}>
-              <StatBox
-                label="Est. Savings"
-                value={
-                  estSavings != null
-                    ? `$${Number(estSavings).toFixed(2)}`
-                    : "\u2014"
-                }
-              />
-            </Grid>
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Cache Performance (Last 7 days)
+        </Typography>
+        <Grid container spacing={3}>
+          <Grid item xs={6} sm={3}>
+            <StatBox
+              label="Cache Hit Rate"
+              value={
+                cacheHitRate != null
+                  ? `${Number(cacheHitRate).toFixed(1)}%`
+                  : "\u2014"
+              }
+            />
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid item xs={6} sm={3}>
+            <StatBox
+              label="Total Requests"
+              value={Number(totalRequests ?? 0).toLocaleString()}
+            />
+          </Grid>
+          <Grid item xs={6} sm={3}>
+            <StatBox
+              label="Cache Hits"
+              value={
+                cacheHits != null
+                  ? Number(cacheHits).toLocaleString()
+                  : "\u2014"
+              }
+            />
+          </Grid>
+          <Grid item xs={6} sm={3}>
+            <StatBox
+              label="Est. Savings"
+              value={
+                estSavings != null
+                  ? `$${Number(estSavings).toFixed(2)}`
+                  : "\u2014"
+              }
+            />
+          </Grid>
+        </Grid>
+      </Section>
 
       {/* Org Config Editor Dialog — opens to Cache tab */}
       <OrgConfigEditor

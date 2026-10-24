@@ -101,7 +101,12 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onCloseClick} maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box sx={{ padding: 2 }} width="480px">
         <DialogTitle
           sx={{
@@ -127,7 +132,7 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
               Add Dataset Manually
             </Typography>
             <IconButton onClick={onCloseClick}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text="Add multiple empty rows and columns to your dataset" />

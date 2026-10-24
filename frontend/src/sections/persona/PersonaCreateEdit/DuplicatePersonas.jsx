@@ -72,7 +72,8 @@ const DuplicatePersonas = ({ open, onClose, personaId }) => {
       onClick={(e) => e.stopPropagation()}
       open={open}
       onClose={handleClose}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
     >
       <Box sx={{ padding: 2 }}>
@@ -92,7 +93,7 @@ const DuplicatePersonas = ({ open, onClose, personaId }) => {
               Duplicate persona
             </Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text="Duplicate and create a new persona with same configurations" />

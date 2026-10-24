@@ -5,8 +5,16 @@ import PersonaInfo from "./PersonaInfo";
 
 /* A persona's details, with what you can do with it — the actions are
    offered only where the page that opened it supports them. */
-const PersonaInfoDrawer = ({ open, onClose, persona, usage, onUse, onDuplicate, onEdit }) => (
-  <SideDrawer open={open} onClose={onClose} width={560}>
+const PersonaInfoDrawer = ({
+  open,
+  onClose,
+  persona,
+  usage,
+  onUse,
+  onDuplicate,
+  onEdit,
+}) => (
+  <SideDrawer open={open} onClose={onClose} width={640}>
     <PersonaInfo
       persona={persona}
       usage={usage}

@@ -27,11 +27,6 @@ vi.mock("src/sections/project/NewProject/InstructionCodeCopy", () => ({
 vi.mock("src/sections/project/NewProject/InstructionTitle", () => ({
   default: () => null,
 }));
-vi.mock("src/sections/develop/AddDatasetDrawer/AddDatasetStyle", () => ({
-  CustomTab: () => null,
-  CustomTabs: () => null,
-  TabWrapper: () => null,
-}));
 
 import UsersEmptyScreen from "../UsersEmptyScreen";
 

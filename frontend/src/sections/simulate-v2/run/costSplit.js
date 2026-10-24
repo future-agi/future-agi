@@ -13,10 +13,12 @@ const hashId = (id) => {
 };
 
 export const COST_STAGES = [
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
   { key: "llm", label: "LLM", color: "#7857FC" },
   { key: "tts", label: "TTS", color: "#0EA5E9" },
   { key: "stt", label: "STT", color: "#F59E0B" },
   { key: "transport", label: "Transport", color: "#94A3B8" },
+  /* eslint-enable no-restricted-syntax */
 ];
 
 export function costSplitOf(t) {

@@ -4,7 +4,6 @@ import { Box, Tooltip, Typography } from "@mui/material";
 import { PAIR_CLASSES } from "../_mock/pairs";
 
 /* Red only for a regression — an exact pair that passed and fails now. */
-const RED = "#C2603F";
 
 /**
  * A scenario row's tag: its pair class against the baseline and, when the
@@ -22,22 +21,48 @@ export default function OutcomeChip({ pair }) {
     meta.tip,
     ...(pair.reasons || []).filter((r) => !/^Only in the/.test(r)),
     moved ? `Baseline ${pair.flip.a}, now ${pair.flip.b}.` : null,
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, flexShrink: 0 }}>
+    <Box
+      component="span"
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        flexShrink: 0,
+      }}
+    >
       <Tooltip arrow title={tip}>
         <Typography
           component="span"
           noWrap
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-            typography: "s3", fontWeight: 700,
-            color: bad ? RED : meta.inDelta ? "text.secondary" : "text.subtitle",
-            bgcolor: (t) => (bad ? alpha(RED, t.palette.mode === "dark" ? 0.18 : 0.1) : alpha(t.palette.text.primary, 0.06)),
+            px: 0.75,
+            py: 0.125,
+            borderRadius: "4px",
+            flexShrink: 0,
+            typography: "s3",
+            fontWeight: 600,
+            color: bad
+              ? "status.danger.fg"
+              : meta.inDelta
+                ? "text.secondary"
+                : "text.tertiary",
+            bgcolor: (t) =>
+              bad
+                ? t.palette.status.danger.bg
+                : alpha(t.palette.text.primary, 0.06),
           }}
         >
           {meta.short}
-          {moved && <Box component="span" sx={{ fontWeight: 600 }}>{` · ${pair.flip.text}`}</Box>}
+          {moved && (
+            <Box
+              component="span"
+              sx={{ fontWeight: 600 }}
+            >{` · ${pair.flip.text}`}</Box>
+          )}
         </Typography>
       </Tooltip>
       {(pair.criteria || []).length > 0 && (
@@ -49,9 +74,15 @@ export default function OutcomeChip({ pair }) {
             component="span"
             noWrap
             sx={{
-              px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-              typography: "s3", fontWeight: 600, color: "text.subtitle",
-              border: "1px dashed", borderColor: "divider",
+              px: 0.75,
+              py: 0.125,
+              borderRadius: "4px",
+              flexShrink: 0,
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              border: "1px dashed",
+              borderColor: "divider",
             }}
           >
             criteria changed

@@ -86,7 +86,7 @@ const BulkSelectRow = ({ label, state, onToggle }) => (
       variant="body2"
       noWrap
       sx={{
-        fontSize: 14,
+        fontSize: 13,
         lineHeight: "22px",
         color: "text.primary",
         flex: 1,
@@ -170,13 +170,13 @@ const DraggableColumnRow = ({ id, name, checked, onChange }) => {
           flexShrink: 0,
         }}
       >
-        <Iconify icon="mdi:dots-grid" width={14} />
+        <Iconify icon="solar:widget-4-linear" width={14} />
       </Box>
       <Typography
         variant="body2"
         noWrap
         sx={{
-          fontSize: 14,
+          fontSize: 13,
           lineHeight: "22px",
           color: "text.primary",
           flex: 1,
@@ -277,12 +277,11 @@ const ColumnConfigureDropDown = ({
       slotProps={{
         paper: {
           sx: {
-            width: placement === "right" ? 220 : 260,
+            width: placement === "right" ? 240 : 320,
             maxHeight: 400,
             ...(placement === "right" && { ml: 0.5 }),
             border: `1px solid ${theme.palette.divider}`,
-            borderRadius: "4px",
-            boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
+            borderRadius: "8px",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -303,7 +302,7 @@ const ColumnConfigureDropDown = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -313,7 +312,7 @@ const ColumnConfigureDropDown = ({
           sx={{
             "& .MuiOutlinedInput-root": {
               height: 28,
-              fontSize: 14,
+              fontSize: 13,
               "& input": {
                 py: 0,
                 px: 0.5,

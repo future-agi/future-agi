@@ -56,6 +56,7 @@ const InvoiceHistoryTable = ({ userData }) => {
       {
         headerName: "Amount",
         field: "amount",
+        cellStyle: { fontVariantNumeric: "tabular-nums" },
         flex: 1,
         sortable: false,
         valueFormatter: (params) => {
@@ -82,12 +83,13 @@ const InvoiceHistoryTable = ({ userData }) => {
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 1,
-              paddingX: theme.spacing(1.5),
-              paddingY: theme.spacing(0.5),
             }}
           >
-            <Icon icon="prime:download" width={16} height={16} />
+            <Icon
+              icon="solar:download-minimalistic-linear"
+              width={16}
+              height={16}
+            />
           </IconButton>
         ),
       },
@@ -115,7 +117,7 @@ const InvoiceHistoryTable = ({ userData }) => {
           suppressContextMenu={true}
           serverSideInitialRowCount={5}
           animateRows={true}
-          rowHeight={50}
+          rowHeight={44}
           headerHeight={50}
         />
       </Box>

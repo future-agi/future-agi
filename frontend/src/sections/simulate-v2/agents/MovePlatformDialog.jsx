@@ -1,8 +1,18 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
-import { HOSTED_PLATFORMS_BY_TYPE, PLATFORM_KEY_HELPER, PLATFORM_LOGOS, isLivePlatform } from "../environments/connectOptions";
-import { ChipCard, Field, Label, PlatformLogo } from "../environments/StartEnvironment";
+import {
+  HOSTED_PLATFORMS_BY_TYPE,
+  PLATFORM_KEY_HELPER,
+  PLATFORM_LOGOS,
+  isLivePlatform,
+} from "../environments/connectOptions";
+import {
+  ChipCard,
+  Field,
+  Label,
+  PlatformLogo,
+} from "../environments/StartEnvironment";
 import SecretRefField from "./connect/SecretRefField";
 import { keyRefOf, preflightRecord } from "../_mock/secretRefs";
 import { PROVIDER_LABELS } from "../_mock/agentRegistry";
@@ -20,8 +30,13 @@ import { PROVIDER_LABELS } from "../_mock/agentRegistry";
  * its own and builds its own environment.
  */
 export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
-  const channel = agent?.typeId === "voice_platform" || agent?.values?.contact ? "voice" : "chat";
-  const platforms = (HOSTED_PLATFORMS_BY_TYPE[channel] || []).filter((p) => !p.isOther && isLivePlatform(p));
+  const channel =
+    agent?.typeId === "voice_platform" || agent?.values?.contact
+      ? "voice"
+      : "chat";
+  const platforms = (HOSTED_PLATFORMS_BY_TYPE[channel] || []).filter(
+    (p) => !p.isOther && isLivePlatform(p),
+  );
   const fromProvider = agent?.values?.provider || null;
   const fromId = agent?.values?.agentId || "";
   const [platformId, setPlatformId] = useState(fromProvider);
@@ -29,7 +44,11 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
   const [keyRef, setKeyRef] = useState("");
   useEffect(() => {
     if (!open) return;
-    setPlatformId(platforms.some((p) => p.id === fromProvider) ? fromProvider : platforms[0]?.id || null);
+    setPlatformId(
+      platforms.some((p) => p.id === fromProvider)
+        ? fromProvider
+        : platforms[0]?.id || null,
+    );
     setAgentId("");
     setKeyRef("");
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -39,9 +58,15 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
   const samePlatform = platformId === fromProvider;
   const fromLabel = PROVIDER_LABELS[fromProvider] || "its platform";
   /* A new platform needs its own key; the same one keeps the key it has unless replaced. */
-  const savedRef = keyRefOf(keyRef, platform ? `vault://acme/sim/${platform.id}_api_key` : "");
-  const sameId = samePlatform && agentId.trim().toLowerCase() === String(fromId).toLowerCase();
-  const ready = !!platform && !!agentId.trim() && !sameId && (samePlatform || !!savedRef);
+  const savedRef = keyRefOf(
+    keyRef,
+    platform ? `vault://acme/sim/${platform.id}_api_key` : "",
+  );
+  const sameId =
+    samePlatform &&
+    agentId.trim().toLowerCase() === String(fromId).toLowerCase();
+  const ready =
+    !!platform && !!agentId.trim() && !sameId && (samePlatform || !!savedRef);
 
   const save = () => {
     const ref = savedRef || agent.values?.apiKeyRef || null;
@@ -49,8 +74,17 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
       {
         provider: platform.id,
         agentId: agentId.trim(),
-        ...(ref && { hasApiKey: true, apiKeyRef: ref, apiKeyMigrated: false, apiKeyCheck: preflightRecord(ref, platform.id) }),
-        movedPlatform: { from: { provider: fromProvider, agentId: fromId || null }, to: { provider: platform.id, agentId: agentId.trim() }, at: new Date().toISOString() },
+        ...(ref && {
+          hasApiKey: true,
+          apiKeyRef: ref,
+          apiKeyMigrated: false,
+          apiKeyCheck: preflightRecord(ref, platform.id),
+        }),
+        movedPlatform: {
+          from: { provider: fromProvider, agentId: fromId || null },
+          to: { provider: platform.id, agentId: agentId.trim() },
+          at: new Date().toISOString(),
+        },
         ...(agent.values?.disconnected && { disconnected: null }),
       },
       samePlatform
@@ -61,26 +95,50 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
 
   return (
     <Dialog
-      open={open} onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 560, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
       <Box sx={{ px: 3, pt: 2.5, pb: 2 }}>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>Move to another platform or ID</Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}>
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          Move to another platform or ID
+        </Typography>
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
+        >
           {`For when ${agent.name} moves off ${fromLabel}, or is rebuilt under a new ID. It stays this agent — its versions, runs and environments carry on. Nothing is versioned now; the next Sync reads it from where it is.`}
         </Typography>
 
         <Stack spacing={2} sx={{ mt: 2.25 }}>
           <Box>
             <Label>{`${channel === "voice" ? "Voice" : "Chat"} platform`}</Label>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
+            <Box
+              sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}
+            >
               {platforms.map((p) => (
                 <ChipCard
                   key={p.id}
-                  logo={<PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
-                  label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
+                  logo={
+                    <PlatformLogo id={p.id} name={p.name} brand={p.brand} />
+                  }
+                  label={
+                    PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name
+                  }
                   on={platformId === p.id}
-                  onClick={() => { setPlatformId(p.id); setKeyRef(""); }}
+                  onClick={() => {
+                    setPlatformId(p.id);
+                    setKeyRef("");
+                  }}
                   tag={p.id === fromProvider ? "now" : undefined}
                 />
               ))}
@@ -90,27 +148,62 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
             <>
               <Field
                 label={`New ${platform.idLabel || "agent ID"}`}
-                required mono fullWidth
+                required
+                mono
+                fullWidth
                 placeholder={platform.idPlaceholder}
-                value={agentId} onChange={setAgentId}
-                helper={sameId ? "That's the ID it has now." : samePlatform && fromId ? `Now ${fromId}.` : undefined}
+                value={agentId}
+                onChange={setAgentId}
+                helper={
+                  sameId
+                    ? "That's the ID it has now."
+                    : samePlatform && fromId
+                      ? `Now ${fromId}.`
+                      : undefined
+                }
               />
               <SecretRefField
-                label={samePlatform ? `${platform.keyLabel || "API key"} (optional)` : platform.keyLabel || "API key"}
+                label={
+                  samePlatform
+                    ? `${platform.keyLabel || "API key"} (optional)`
+                    : platform.keyLabel || "API key"
+                }
                 required={!samePlatform}
                 placeholder={`vault://acme/sim/${platform.id}_api_key`}
-                value={keyRef} onChange={setKeyRef}
-                helper={samePlatform ? `Leave empty to keep the key it uses now. ${PLATFORM_KEY_HELPER}` : `${platform.name} needs its own key. ${PLATFORM_KEY_HELPER}`}
+                value={keyRef}
+                onChange={setKeyRef}
+                helper={
+                  samePlatform
+                    ? `Leave empty to keep the key it uses now. ${PLATFORM_KEY_HELPER}`
+                    : `${platform.name} needs its own key. ${PLATFORM_KEY_HELPER}`
+                }
                 fullWidth
               />
             </>
           )}
         </Stack>
       </Box>
-      <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}>
-        <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
-        <Button size="small" variant="contained" color="primary" disabled={!ready} onClick={save} sx={{ typography: "s2", fontWeight: 700 }}>
-          {samePlatform ? "Use the new ID" : platform ? `Move to ${platform.name}` : "Move"}
+      <Stack
+        direction="row"
+        justifyContent="flex-end"
+        spacing={1}
+        sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+      >
+        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={!ready}
+          onClick={save}
+        >
+          {samePlatform
+            ? "Use the new ID"
+            : platform
+              ? `Move to ${platform.name}`
+              : "Move"}
         </Button>
       </Stack>
     </Dialog>

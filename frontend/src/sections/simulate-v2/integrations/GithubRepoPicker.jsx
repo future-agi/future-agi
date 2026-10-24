@@ -11,7 +11,12 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { githubAccountsLabel, installedRepos, scannedAgentSource, useIntegrations } from "../_mock/integrations";
+import {
+  githubAccountsLabel,
+  installedRepos,
+  scannedAgentSource,
+  useIntegrations,
+} from "../_mock/integrations";
 import { agentIdOf, agentRecordFromSource } from "../_mock/agentRegistry";
 import { useConnectedAgents } from "../store";
 import { paths } from "src/routes/paths";
@@ -28,7 +33,14 @@ const MONO = "ui-monospace, Menlo, monospace";
  * we scan it, and the person says which agent they mean — a repository can
  * hold several. Falls back to typing a URL for code that isn't on GitHub.
  */
-export default function GithubRepoPicker({ repo, agentId, onPick, onManual, showAgents = true, manualLinks = true }) {
+export default function GithubRepoPicker({
+  repo,
+  agentId,
+  onPick,
+  onManual,
+  showAgents = true,
+  manualLinks = true,
+}) {
   const integrations = useIntegrations();
   const repos = installedRepos(integrations);
   const navigate = useNavigate();
@@ -64,17 +76,20 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
             spacing={1.5}
             sx={{
               p: 1.75,
-              borderRadius: 1.25,
+              borderRadius: "8px",
               border: "1px dashed",
               borderColor: "divider",
             }}
           >
             <BrandMark brand="github" size={34} />
             <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 Install the GitHub App to pick the agent
               </Typography>
-              <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
+              <Typography
+                component="div"
+                sx={{ typography: "s3", color: "text.subtitle" }}
+              >
                 <HintLine hint="We scan the repositories you choose and find the agents in them. We ask for write access at your first draft pull request.">
                   Read only — we find the agents in your repos.
                 </HintLine>
@@ -85,8 +100,8 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
               variant="contained"
               color="primary"
               onClick={() => setInstallOpen(true)}
-              startIcon={<Iconify icon="mdi:github" width={15} />}
-              sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
+              startIcon={<Iconify icon="mdi:github" width={16} />}
+              sx={{ flexShrink: 0 }}
             >
               Install GitHub App
             </Button>
@@ -174,7 +189,8 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
 
         {/* Without the agent list, the caller asks for the branch and the
             folder next and reads only that. */}
-        {current && showAgents &&
+        {current &&
+          showAgents &&
           (scanning ? (
             <Stack
               direction="row"
@@ -215,11 +231,22 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
             </Box>
           ) : (
             <FoundAgentsList
-              agents={current.agents} agentId={agentId}
+              agents={current.agents}
+              agentId={agentId}
               onPick={(a) => onPick({ repo: current.name, agent: a })}
               /* One already in Agents opens there — never connected twice. */
-              connectedOf={(a) => connected.find((x) => x.key === agentRecordFromSource(scannedAgentSource(current, a)).key) || null}
-              onOpenConnected={(rec) => navigate(`${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`)}
+              connectedOf={(a) =>
+                connected.find(
+                  (x) =>
+                    x.key ===
+                    agentRecordFromSource(scannedAgentSource(current, a)).key,
+                ) || null
+              }
+              onOpenConnected={(rec) =>
+                navigate(
+                  `${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`,
+                )
+              }
             />
           ))}
         {manualLinks && (

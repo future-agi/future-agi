@@ -95,7 +95,7 @@ export const FormCodeEditor = ({
                 <Typography
                   position={"relative"}
                   top={-4}
-                  color={"red.500"}
+                  color={"status.danger.fg"}
                 >{`*`}</Typography>
               )}
             </Typography>
@@ -108,7 +108,7 @@ export const FormCodeEditor = ({
                 >
                   <IconButton onClick={handleFormatClick}>
                     <Iconify
-                      icon="material-symbols:format-align-left"
+                      icon="solar:notes-linear"
                       sx={{ color: "text.disabled" }}
                     />
                   </IconButton>
@@ -124,7 +124,7 @@ export const FormCodeEditor = ({
                     rest?.copyIcon
                   ) : (
                     <Iconify
-                      icon="basil:copy-outline"
+                      icon="solar:copy-linear"
                       sx={{ color: "text.disabled" }}
                     />
                   )}

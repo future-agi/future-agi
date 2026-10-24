@@ -46,6 +46,7 @@ import {
   getLegacyVoiceCallNavigationTotal,
 } from "./voiceCallDetailCursorNavigation";
 import { LIST_CURSOR_CONTINUATION_NOTICE } from "src/sections/projects/LLMTracing/listCursorPagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const BaselineVsReplayHeader = lazy(() => import("./BasLineCompare/Header"));
 
@@ -634,6 +635,8 @@ const TestDetailSideDrawerChild = ({
     totalCountIsLowerBound: navigationTotalCountIsLowerBound,
   });
 
+  const covered = useDrawerCovered(annotationSidebarOpen);
+
   if (!data || isFetching === "initial") {
     return null;
   }
@@ -787,7 +790,7 @@ const TestDetailSideDrawerChild = ({
                   backgroundColor: "background.neutral",
 
                   padding: "14px",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   border: "1px solid",
                   borderColor: "divider",
                 }}
@@ -800,7 +803,7 @@ const TestDetailSideDrawerChild = ({
                     variant="rectangular"
                     width="100%"
                     height={140}
-                    sx={{ borderRadius: 0.5 }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 ) : (
                   <AudioPlayerCustom data={mergedData} />
@@ -876,9 +879,10 @@ const TestDetailSideDrawerChild = ({
       <Drawer
         anchor="right"
         open={annotationSidebarOpen}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setAnnotationSidebarOpen(false)}
         PaperProps={{
-          sx: { width: 360, zIndex: 20 },
+          sx: { width: 480, zIndex: 20 },
         }}
         ModalProps={{
           BackdropProps: {
@@ -957,9 +961,11 @@ const TestDetailSideDrawer = ({
   const effectiveOrigin = urlOrigin || origin;
   const effectiveModule = module || "simulate";
 
+  const coveredSecond = useDrawerCovered(isDrawerOpen);
   return (
     <Drawer
       open={isDrawerOpen}
+      sx={coveredDrawerSx(coveredSecond)}
       keepMounted={hasUrlRowIndex}
       onClose={handleClose}
       anchor="right"
@@ -974,7 +980,6 @@ const TestDetailSideDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
           borderRadius: "0px !important",
           backgroundColor: "background.default",
           display: "flex",

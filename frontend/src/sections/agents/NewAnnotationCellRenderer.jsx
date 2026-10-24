@@ -96,9 +96,9 @@ const NewAnnotationCellRenderer = ({
             justifyContent: "center",
           }}
         >
-          <Iconify icon="octicon:thumbsup-24" color="purple.600" />
+          <Iconify icon="solar:like-linear" color="text.secondary" />
           <Typography typography="s2_1">{thumbsUp}</Typography>
-          <Iconify icon="octicon:thumbsdown-24" color="red.500" />
+          <Iconify icon="solar:dislike-linear" color="status.danger.fg" />
           <Typography typography="s2_1">{thumbsDown}</Typography>
         </Box>
       );
@@ -119,13 +119,13 @@ const NewAnnotationCellRenderer = ({
       >
         <ShowComponent condition={isUp}>
           <Iconify
-            icon="octicon:thumbsup-24"
-            sx={{ bgColor: "purple.o10" }}
-            color={"purple.600"}
+            icon="solar:like-linear"
+            sx={{ bgColor: "action.hover" }}
+            color={"text.secondary"}
           />
         </ShowComponent>
         <ShowComponent condition={isDown}>
-          <Iconify icon="octicon:thumbsdown-24" color={"red.500"} />
+          <Iconify icon="solar:dislike-linear" color={"status.danger.fg"} />
         </ShowComponent>
       </Box>
     );
@@ -169,9 +169,9 @@ const NewAnnotationCellRenderer = ({
                 alignItems: "center",
                 gap: 0.75,
                 border: "1px solid",
-                borderColor: "purple.o10",
+                borderColor: "divider",
                 borderRadius: "4px",
-                backgroundColor: "purple.o5",
+                backgroundColor: "action.hover",
                 px: 1,
                 py: 0.5,
                 height: "24px",
@@ -183,7 +183,7 @@ const NewAnnotationCellRenderer = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  backgroundColor: "purple.o20",
+                  backgroundColor: "action.hover",
                   borderRadius: "50%",
                   minWidth: 20,
                   height: 20,
@@ -192,8 +192,8 @@ const NewAnnotationCellRenderer = ({
               >
                 <Typography
                   typography="s2_1"
-                  color="purple.600"
-                  sx={{ fontSize: 10, lineHeight: 1 }}
+                  color="text.secondary"
+                  sx={{ fontSize: 12, lineHeight: 1 }}
                 >
                   {count}
                 </Typography>
@@ -218,9 +218,9 @@ const NewAnnotationCellRenderer = ({
                   alignItems: "center",
                   gap: 0.75,
                   border: "1px solid",
-                  borderColor: "purple.o10",
+                  borderColor: "divider",
                   borderRadius: "4px",
-                  backgroundColor: "purple.o5",
+                  backgroundColor: "action.hover",
                   px: 1,
                   py: 0.5,
                   height: "24px",
@@ -233,7 +233,7 @@ const NewAnnotationCellRenderer = ({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: "purple.o20",
+                    backgroundColor: "action.hover",
                     borderRadius: "50%",
                     minWidth: 20,
                     height: 20,
@@ -242,8 +242,8 @@ const NewAnnotationCellRenderer = ({
                 >
                   <Typography
                     typography="s2_1"
-                    color="purple.600"
-                    sx={{ fontSize: 10, lineHeight: 1 }}
+                    color="text.secondary"
+                    sx={{ fontSize: 12, lineHeight: 1 }}
                   >
                     {count}
                   </Typography>
@@ -277,9 +277,9 @@ const NewAnnotationCellRenderer = ({
             key={`${label}-${index}`}
             sx={{
               border: "1px solid",
-              borderColor: "purple.o10",
+              borderColor: "divider",
               borderRadius: "4px",
-              backgroundColor: "purple.o5",
+              backgroundColor: "action.hover",
               px: 1,
               height: "24px",
             }}
@@ -303,9 +303,9 @@ const NewAnnotationCellRenderer = ({
               key={`${label}-${index}`}
               sx={{
                 border: "1px solid",
-                borderColor: "purple.o10",
+                borderColor: "divider",
                 borderRadius: "4px",
-                backgroundColor: "purple.o5",
+                backgroundColor: "action.hover",
                 px: 1,
                 height: "24px",
               }}
@@ -334,19 +334,23 @@ const NewAnnotationCellRenderer = ({
         {Array.from({ length: filled }).map((_, index) => (
           <Iconify
             key={index}
-            icon="material-symbols:star"
+            icon="solar:star-bold"
             sx={{ fontSize: "inherit", flexShrink: 0 }}
             width={25}
-            color="#FFCD29"
+            color="status.warning.solid"
           />
         ))}
         <ShowComponent condition={noOfStars !== undefined}>
           {Array.from({ length: noOfStars - filled }).map((_, index) => (
             <Iconify
               key={index}
-              icon="material-symbols:star-outline"
+              icon="solar:star-linear"
               width={25}
-              sx={{ fontSize: "inherit", color: "#FFCD29", flexShrink: 0 }}
+              sx={{
+                fontSize: "inherit",
+                color: "status.warning.solid",
+                flexShrink: 0,
+              }}
             />
           ))}
         </ShowComponent>

@@ -107,7 +107,11 @@ const AnnotationHeaderCellRenderer = ({
             transform: "translateY(-50%)",
           }}
         >
-          <Iconify icon="eva:more-vertical-fill" width={16} height={16} />
+          <Iconify
+            icon="solar:menu-dots-vertical-linear"
+            width={16}
+            height={16}
+          />
         </IconButton>
       </ShowComponent>
 
@@ -122,7 +126,9 @@ const AnnotationHeaderCellRenderer = ({
             popover.onClose();
           }}
         >
-          <Iconify icon={isExpanded ? "eva:eye-off-fill" : "eva:eye-fill"} />
+          <Iconify
+            icon={isExpanded ? "solar:eye-closed-linear" : "solar:eye-linear"}
+          />
           {isExpanded ? "Hide responses" : "View all responses"}
         </MenuItem>
       </CustomPopover>

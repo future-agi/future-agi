@@ -1,4 +1,4 @@
-import { Box, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, Tab, Tabs } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import NavSection from "./nav-section";
 import Actions from "./actions";
@@ -32,7 +32,6 @@ const tabOptions = [
 
 export default function KnowledgeBaseSheetView() {
   const gridRef = useRef(null);
-  const theme = useTheme();
   const [selectedAll, setSelectedAll] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -203,41 +202,12 @@ export default function KnowledgeBaseSheetView() {
         {/* tasks section */}
         <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
           <Tabs
-            sx={{
-              "& .MuiTab-root": {
-                margin: "0 !important",
-                fontWeight: "fontWeightSemiBold",
-                typography: "s1",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled", // Color for unselected tabs
-                },
-              },
-              "&.Mui-selected": {
-                color: "primary.main",
-                fontWeight: "bold",
-              },
-            }}
-            textColor="primary"
-            indicatorColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             value={currentTab}
             onChange={handleChangeTab}
             aria-label="basic tabs example"
           >
             {tabOptions.map((option, index) => (
-              <Tab
-                sx={{
-                  margin: 0,
-                  px: "24px",
-                }}
-                key={index}
-                label={option.label}
-                value={option.value}
-              />
+              <Tab key={index} label={option.label} value={option.value} />
             ))}
           </Tabs>
         </Box>

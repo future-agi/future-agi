@@ -222,9 +222,6 @@ export default function EditFile({ params, onClose, onCellValueChanged }) {
             sx={{
               backgroundColor: "primary.main",
               "&:hover": { backgroundColor: "primary.main" },
-              borderRadius: "10px",
-              fontSize: "14px",
-              fontWeight: 600,
               width: "205px",
             }}
           >

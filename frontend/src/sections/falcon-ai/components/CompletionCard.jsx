@@ -26,7 +26,7 @@ export default function CompletionCard({ card }) {
         justifyContent: "space-between",
         border: 1,
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.neutral",
         p: 1.5,
         mt: 1,
@@ -41,7 +41,7 @@ export default function CompletionCard({ card }) {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.5 }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -57,8 +57,8 @@ export default function CompletionCard({ card }) {
           size="small"
           variant="outlined"
           onClick={handleNavigate}
-          startIcon={<Iconify icon="mdi:link-variant" width={16} />}
-          sx={{ textTransform: "none", flexShrink: 0, ml: 1 }}
+          startIcon={<Iconify icon="solar:link-linear" width={16} />}
+          sx={{ flexShrink: 0, ml: 1 }}
         >
           {card.action_label}
         </Button>

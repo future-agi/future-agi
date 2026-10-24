@@ -84,12 +84,12 @@ const TabContextMenu = ({
         anchorReference="anchorPosition"
         anchorPosition={{ top: anchorPosition.y, left: anchorPosition.x }}
         slotProps={{
-          paper: { sx: { minWidth: 180 } },
+          paper: { sx: { minWidth: 200 } },
         }}
       >
         <MenuItem onClick={handleRename} dense>
           <ListItemIcon>
-            <Iconify icon="mdi:pencil-outline" width={18} />
+            <Iconify icon="solar:pen-linear" width={16} />
           </ListItemIcon>
           <ListItemText primaryTypographyProps={{ variant: "body2" }}>
             Rename
@@ -98,7 +98,7 @@ const TabContextMenu = ({
 
         <MenuItem onClick={handleDuplicate} dense>
           <ListItemIcon>
-            <Iconify icon="mdi:content-copy" width={18} />
+            <Iconify icon="solar:copy-linear" width={16} />
           </ListItemIcon>
           <ListItemText primaryTypographyProps={{ variant: "body2" }}>
             Duplicate
@@ -110,8 +110,12 @@ const TabContextMenu = ({
         <MenuItem onClick={handleToggleVisibility} dense>
           <ListItemIcon>
             <Iconify
-              icon={isShared ? "mdi:lock-outline" : "mdi:account-group-outline"}
-              width={18}
+              icon={
+                isShared
+                  ? "solar:lock-linear"
+                  : "solar:users-group-rounded-linear"
+              }
+              width={16}
             />
           </ListItemIcon>
           <ListItemText primaryTypographyProps={{ variant: "body2" }}>
@@ -124,10 +128,11 @@ const TabContextMenu = ({
         <MenuItem
           onClick={() => setDeleteConfirmOpen(true)}
           dense
-          sx={{ color: "error.main" }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
         >
           <ListItemIcon sx={{ color: "inherit" }}>
-            <Iconify icon="mdi:delete-outline" width={18} />
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
           <ListItemText primaryTypographyProps={{ variant: "body2" }}>
             Delete
@@ -139,7 +144,8 @@ const TabContextMenu = ({
       <Dialog
         open={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
       >
         <DialogTitle>Delete &ldquo;{view.name}&rdquo;?</DialogTitle>
         <DialogContent>

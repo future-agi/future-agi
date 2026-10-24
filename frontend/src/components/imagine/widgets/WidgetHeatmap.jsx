@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -30,7 +31,7 @@ export default function WidgetHeatmap({ config }) {
     chart: {
       type: "heatmap",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
@@ -45,7 +46,7 @@ export default function WidgetHeatmap({ config }) {
       },
     },
     xaxis: { categories: config.categories || [] },
-    grid: { borderColor: isDark ? "#27272a" : "#f0f0f0" },
+    grid: { borderColor: theme.palette.divider },
     tooltip: { theme: isDark ? "dark" : "light" },
   };
 

@@ -575,13 +575,13 @@ const LeftControl = ({
         <li {...props}>
           <Box
             sx={{
-              fontWeight: "bold",
+              fontWeight: "600",
               color: "text.primary",
               backgroundColor: "background.default",
               width: "100%",
               px: 2,
               py: 1,
-              fontSize: 14,
+              fontSize: 13,
               cursor: "default",
             }}
           >
@@ -848,7 +848,7 @@ const LeftControl = ({
             "& .MuiAutocomplete-paper li[aria-disabled='true'][value$='-header']":
               {
                 color: "text.primary !important",
-                fontWeight: "bold !important",
+                fontWeight: "600 !important",
                 backgroundColor: "background.default !important",
                 opacity: "1 !important",
                 cursor: "default !important",

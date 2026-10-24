@@ -11,7 +11,9 @@ import { scenarioTitle } from "../../_mock/scenarios";
  * at the step the finding is about.
  */
 export default function TaskLinks({ ids, tasks, step, onOpen }) {
-  const named = (ids || []).map((id) => tasks.find((t) => t.id === id)).filter(Boolean);
+  const named = (ids || [])
+    .map((id) => tasks.find((t) => t.id === id))
+    .filter(Boolean);
   if (!named.length) return null;
 
   return (
@@ -23,14 +25,23 @@ export default function TaskLinks({ ids, tasks, step, onOpen }) {
           label={scenarioTitle(t.title)}
           /* Inside an analyzer row, which is itself a toggle — without this,
              opening the evidence also collapses the finding you opened it from. */
-          onClick={onOpen ? (e) => { e.stopPropagation(); onOpen(t, step); } : undefined}
+          onClick={
+            onOpen
+              ? (e) => {
+                  e.stopPropagation();
+                  onOpen(t, step);
+                }
+              : undefined
+          }
           icon={<Iconify icon="solar:arrow-right-up-linear" width={12} />}
           sx={{
-            height: 20, borderRadius: 0.5, maxWidth: 260,
-            border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-            color: "text.secondary", cursor: onOpen ? "pointer" : "default",
+            maxWidth: 260,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "transparent",
+            color: "text.secondary",
+            cursor: onOpen ? "pointer" : "default",
             "& .MuiChip-icon": { ml: 0.625, mr: -0.25, color: "text.disabled" },
-            "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
             "&:hover, &.MuiChip-clickable:hover, &:focus": {
               bgcolor: "transparent",
               borderColor: "text.disabled",

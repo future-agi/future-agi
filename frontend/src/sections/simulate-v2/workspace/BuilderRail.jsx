@@ -11,12 +11,25 @@ export default function BuilderRail({ running, unseen, onExpand }) {
       spacing={1.25}
       onClick={onExpand}
       sx={{
-        height: "100%", py: 1.5, cursor: "pointer",
-        borderRight: "1px solid", borderColor: "divider",
+        height: "100%",
+        py: 1.5,
+        cursor: "pointer",
+        borderRight: "1px solid",
+        borderColor: "divider",
       }}
     >
-      <Tooltip arrow placement="right" title={running ? "Builder is working — expand" : unseen > 0 ? `${unseen} new from the builder — expand` : "Expand builder"}>
-        <IconButton size="small" sx={{ color: "text.subtitle" }}>
+      <Tooltip
+        arrow
+        placement="right"
+        title={
+          running
+            ? "Builder is working — expand"
+            : unseen > 0
+              ? `${unseen} new from the builder — expand`
+              : "Expand builder"
+        }
+      >
+        <IconButton size="small" sx={{ color: "text.tertiary" }}>
           <Iconify icon="solar:double-alt-arrow-right-linear" width={16} />
         </IconButton>
       </Tooltip>
@@ -24,19 +37,31 @@ export default function BuilderRail({ running, unseen, onExpand }) {
         <Box
           sx={{
             /* Neutral, matching the builder's own header. */
-            width: 30, height: 30, borderRadius: 1, display: "grid", placeItems: "center",
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            display: "grid",
+            placeItems: "center",
             bgcolor: "action.hover",
             color: "text.primary",
           }}
         >
-          <Iconify icon="solar:chat-round-line-linear" width={15} />
+          <Iconify icon="solar:chat-round-line-linear" width={16} />
         </Box>
         {(running || unseen > 0) && (
           <Box
             sx={{
-              position: "absolute", top: -3, right: -3, width: 9, height: 9, borderRadius: "50%",
-              bgcolor: running ? "#CA8A04" : "#16A34A",
-              border: "2px solid", borderColor: "background.default",
+              position: "absolute",
+              top: -3,
+              right: -3,
+              width: 9,
+              height: 9,
+              borderRadius: "50%",
+              bgcolor: running
+                ? "status.warning.solid"
+                : "status.success.solid",
+              border: "2px solid",
+              borderColor: "background.default",
             }}
           />
         )}
@@ -44,4 +69,8 @@ export default function BuilderRail({ running, unseen, onExpand }) {
     </Stack>
   );
 }
-BuilderRail.propTypes = { running: PropTypes.bool, unseen: PropTypes.number, onExpand: PropTypes.func };
+BuilderRail.propTypes = {
+  running: PropTypes.bool,
+  unseen: PropTypes.number,
+  onExpand: PropTypes.func,
+};

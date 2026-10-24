@@ -21,15 +21,6 @@ import Iconify from "src/components/iconify";
 const chipStyles = {
   backgroundColor: "background.neutral",
   color: "text.primary",
-  borderRadius: "2px",
-  fontWeight: "fontWeightMedium",
-  fontSize: "12px",
-  height: 25,
-  "& .MuiChip-label": {
-    paddingTop: 0,
-    paddingBottom: 0,
-    lineHeight: "28px", // vertically center text
-  },
   "& .MuiChip-deleteIcon": {
     color: "text.primary",
     opacity: 1, // always visible
@@ -140,7 +131,7 @@ const LanguageMultiSelect = ({
               }}
               IconComponent={() => (
                 <Iconify
-                  icon="eva:arrow-ios-upward-fill"
+                  icon="solar:alt-arrow-up-linear"
                   sx={{
                     width: 25,
                     height: 25,
@@ -148,7 +139,7 @@ const LanguageMultiSelect = ({
                     color: "text.primary",
                     cursor: rest?.disabled ? "not-allowed" : "pointer",
                     transform: `rotateX(${open ? 0 : -180}deg)`,
-                    transition: "transform 0.5s",
+                    transition: "transform 0.2s",
                   }}
                 />
               )}
@@ -207,7 +198,6 @@ const LanguageMultiSelect = ({
                             <IconButton
                               size="small"
                               sx={{
-                                p: 0.5,
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
@@ -223,9 +213,9 @@ const LanguageMultiSelect = ({
                               }}
                             >
                               <Iconify
-                                icon="mdi:close"
-                                height={18}
-                                width={18}
+                                icon="solar:close-linear"
+                                height={20}
+                                width={20}
                                 color="text.primary"
                               />
                             </IconButton>
@@ -270,7 +260,7 @@ const LanguageMultiSelect = ({
                     alignItems: "center",
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     height: 40,
                     px: 1,
                     m: 1,
@@ -281,7 +271,11 @@ const LanguageMultiSelect = ({
                     size="small"
                     sx={{ color: "text.disabled", p: 0 }}
                   >
-                    <Iconify icon="eva:search-fill" height={20} width={20} />
+                    <Iconify
+                      icon="solar:magnifier-linear"
+                      height={20}
+                      width={16}
+                    />
                   </IconButton>
 
                   <Input
@@ -312,8 +306,8 @@ const LanguageMultiSelect = ({
                     overflow: "auto",
                     "&::-webkit-scrollbar": { width: "6px" },
                     "&::-webkit-scrollbar-thumb": {
-                      backgroundColor: "rgba(0, 0, 0, 0.3)",
-                      borderRadius: "3px",
+                      backgroundColor: "border.strong",
+                      borderRadius: "4px",
                     },
                     "&::-webkit-scrollbar-track": {
                       backgroundColor: "transparent",
@@ -345,7 +339,7 @@ const LanguageMultiSelect = ({
                           checked={data.includes(id)}
                           icon={
                             <Iconify
-                              icon="system-uicons:checkbox-empty"
+                              icon="solar:square-linear"
                               color="action.default"
                               width={24}
                               height={24}

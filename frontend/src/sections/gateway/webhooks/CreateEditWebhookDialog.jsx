@@ -105,7 +105,13 @@ const CreateEditWebhookDialog = ({
   const isValid = form.name.trim() && form.url.trim() && form.events.length > 0;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{isEdit ? "Edit Webhook" : "Create Webhook"}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
@@ -172,7 +178,7 @@ const CreateEditWebhookDialog = ({
               <Typography variant="subtitle2">Custom Headers</Typography>
               <Button
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={16} />}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
                 onClick={addHeaderRow}
               >
                 Add
@@ -203,7 +209,7 @@ const CreateEditWebhookDialog = ({
                   onClick={() => removeHeaderRow(idx)}
                   disabled={headerEntries.length === 1}
                 >
-                  <Iconify icon="mdi:close" width={18} />
+                  <Iconify icon="solar:close-linear" width={20} />
                 </IconButton>
               </Stack>
             ))}

@@ -41,7 +41,7 @@ const BottomEvalsTab = ({
     const baseCols = [
       {
         field: "name",
-        headerIcon: "gg:check-o",
+        headerIcon: "solar:check-circle-linear",
         headerName: "Evals",
         width: 258,
         minWidth: 258,
@@ -52,7 +52,7 @@ const BottomEvalsTab = ({
       },
       {
         field: "score",
-        headerIcon: "gg:check-o",
+        headerIcon: "solar:check-circle-linear",
         headerLabel: "Score",
         flex: 1,
         minWidth: 150,
@@ -151,7 +151,7 @@ const BottomEvalsTab = ({
           domLayout="autoHeight"
           className={rows.length > 0 ? "no-min-height-grid" : undefined}
           headerHeight={44}
-          rowHeight={62}
+          rowHeight={44}
           suppressContextMenu
           suppressHorizontalScroll={false}
           suppressVerticalScroll={false}

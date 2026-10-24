@@ -6,7 +6,6 @@ import {
   Tabs,
   Tab,
   TextField,
-  Badge,
   InputAdornment,
   Chip,
   Menu,
@@ -21,7 +20,7 @@ import axiosInstance, { endpoints } from "src/utils/axios";
 import useFilters from "./hooks/useFilters";
 import RequestTable from "./RequestTable";
 import RequestDetailDrawer from "./RequestDetailDrawer";
-import FilterPanel from "./FilterPanel";
+import RequestFilterButton from "./RequestFilterButton";
 import SessionExplorer from "./SessionExplorer";
 
 // ---------------------------------------------------------------------------
@@ -58,12 +57,10 @@ function activeQuickFilter(filters) {
 
 const RequestExplorerSection = () => {
   // --- URL-synced filters ---------------------------------------------------
-  const { filters, setFilter, setFilters, clearFilters, activeFilterCount } =
-    useFilters();
+  const { filters, setFilter, setFilters, clearFilters } = useFilters();
 
   // --- Local UI state -------------------------------------------------------
   const [selectedLogId, setSelectedLogId] = useState(null);
-  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search || "");
   const [exportAnchor, setExportAnchor] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -180,15 +177,6 @@ const RequestExplorerSection = () => {
     [filters],
   );
 
-  // --- Filter panel apply ---------------------------------------------------
-  const handleApplyFilters = useCallback(
-    (newFilters) => {
-      setFilters(newFilters);
-      setFilterPanelOpen(false);
-    },
-    [setFilters],
-  );
-
   // =========================================================================
   // Render
   // =========================================================================
@@ -203,7 +191,9 @@ const RequestExplorerSection = () => {
         <Button
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="mdi:download-outline" width={20} />}
+          startIcon={
+            <Iconify icon="solar:download-minimalistic-linear" width={20} />
+          }
           onClick={handleExportOpen}
           disabled={isExporting}
         >
@@ -219,13 +209,13 @@ const RequestExplorerSection = () => {
         >
           <MenuItem onClick={() => handleExport("csv")}>
             <ListItemIcon>
-              <Iconify icon="mdi:file-document-outline" width={18} />
+              <Iconify icon="solar:document-text-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
           <MenuItem onClick={() => handleExport("json")}>
             <ListItemIcon>
-              <Iconify icon="mdi:code-json" width={18} />
+              <Iconify icon="solar:code-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export JSON</ListItemText>
           </MenuItem>
@@ -243,21 +233,12 @@ const RequestExplorerSection = () => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
         />
-        <Badge badgeContent={activeFilterCount} color="primary">
-          <Button
-            variant="outlined"
-            startIcon={<Iconify icon="mdi:filter-outline" width={20} />}
-            onClick={() => setFilterPanelOpen(true)}
-            sx={{ whiteSpace: "nowrap" }}
-          >
-            Filters
-          </Button>
-        </Badge>
+        <RequestFilterButton filters={filters} onApply={setFilters} />
       </Stack>
 
       {/* ---- Quick filter chips ---- */}
@@ -310,14 +291,6 @@ const RequestExplorerSection = () => {
         logId={selectedLogId}
         open={Boolean(selectedLogId)}
         onClose={() => setSelectedLogId(null)}
-      />
-
-      {/* ---- Filter panel drawer ---- */}
-      <FilterPanel
-        open={filterPanelOpen}
-        onClose={() => setFilterPanelOpen(false)}
-        filters={filters}
-        onApply={handleApplyFilters}
       />
     </Box>
   );

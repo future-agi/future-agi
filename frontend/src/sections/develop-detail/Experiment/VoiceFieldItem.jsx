@@ -64,7 +64,7 @@ export default function VoiceFieldItem({
       >
         <HelperText
           sx={{
-            color: "red.500",
+            color: "status.danger.fg",
             typography: "s2",
           }}
           text="Voice support isn't available for the selected model."

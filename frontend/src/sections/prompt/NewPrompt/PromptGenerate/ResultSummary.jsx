@@ -166,14 +166,14 @@ const ResultSummary = ({ data }) => {
         defaultColDef={averageDefaultColDef}
         domLayout="autoHeight"
         animateRows={true}
-        rowHeight={50}
+        rowHeight={44}
       />
       <AgGridReact
         columnDefs={percentileColumns}
         rowData={percentileRows}
         alwaysShowHorizontalScroll
         theme={percentileGridTheme}
-        rowHeight={50}
+        rowHeight={44}
         defaultColDef={percentileDefaultColDef}
         domLayout="autoHeight"
         animateRows={true}

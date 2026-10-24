@@ -5,8 +5,8 @@ import Iconify from "src/components/iconify";
 
 const cardSx = {
   border: "1px solid",
-  borderColor: "orange.o20",
-  borderRadius: 0.5,
+  borderColor: "status.warning.border",
+  borderRadius: "4px",
   overflow: "hidden",
   mt: 0.5,
 };
@@ -17,13 +17,13 @@ const headerSx = {
   gap: 0.5,
   px: 1,
   py: 0.5,
-  bgcolor: "orange.o10",
+  bgcolor: "status.warning.bg",
   cursor: "pointer",
 };
 
 const bodySx = {
   p: 1,
-  bgcolor: "orange.o5",
+  bgcolor: "status.warning.bg",
   maxHeight: 200,
   overflow: "auto",
 };
@@ -45,18 +45,20 @@ const CollapsibleToolCard = ({ icon, label, body }) => {
   return (
     <Box sx={cardSx}>
       <Box data-search-skip="true" onClick={() => setOpen(!open)} sx={headerSx}>
-        <Iconify icon={icon} width={13} sx={{ color: "orange.500" }} />
+        <Iconify icon={icon} width={14} sx={{ color: "status.warning.fg" }} />
         <Typography
           typography="s2"
           fontWeight="fontWeightSemiBold"
-          sx={{ color: "orange.500", flex: 1 }}
+          sx={{ color: "status.warning.fg", flex: 1 }}
         >
           {label}
         </Typography>
         <Iconify
-          icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+          }
           width={14}
-          sx={{ color: "orange.500" }}
+          sx={{ color: "status.warning.fg" }}
         />
       </Box>
       <Collapse in={open}>
@@ -81,7 +83,7 @@ const asText = (value) =>
 
 export const ToolCallCard = ({ toolCall }) => (
   <CollapsibleToolCard
-    icon="mdi:wrench-outline"
+    icon="solar:toolbox-linear"
     label={toolCall.name}
     body={asText(toolCall.arguments)}
   />
@@ -96,7 +98,7 @@ ToolCallCard.propTypes = {
 
 export const ToolResultCard = ({ content }) => (
   <CollapsibleToolCard
-    icon="mdi:arrow-left-bottom"
+    icon="solar:arrow-left-linear"
     label="Tool result"
     body={asText(content)}
   />

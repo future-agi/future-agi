@@ -12,7 +12,6 @@ const CTooltip = styled(({ className, slotProps, size, ...props }) => (
     fontWeight: 400,
     backgroundColor: theme.palette.background.default,
     color: theme.palette.text.primary,
-    boxShadow: `0px 1px 4px ${theme.palette.divider}`,
     borderRadius: "8px",
     border: `1px solid ${theme.palette.divider}`,
   },

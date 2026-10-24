@@ -2,6 +2,7 @@ import { Box, Chip, Avatar, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
+import PageHeader from "src/components/page-header";
 import ApiKeyBar from "./ApiKeyBar";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -90,9 +91,6 @@ export default function DevKeysView() {
                 sx={{
                   ml: 1,
                   flexShrink: 0,
-                  height: 22,
-                  fontSize: 11,
-                  borderRadius: "4px",
                   color: "text.primary",
                   bgcolor: "background.neutral",
                 }}
@@ -133,8 +131,6 @@ export default function DevKeysView() {
                 sx={{
                   width: 24,
                   height: 24,
-                  color: "pink.500",
-                  bgcolor: "background.neutral",
                 }}
               />
               <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
@@ -188,22 +184,11 @@ export default function DevKeysView() {
         minHeight: 0,
       }}
     >
-      <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight="fontWeightSemiBold"
-        >
-          Keys
-        </Typography>
-        <Typography
-          typography="s1"
-          color="text.primary"
-          fontWeight="fontWeightRegular"
-        >
-          Your secret API keys are listed below. These keys are encrypted
-        </Typography>
-      </Box>
+      <PageHeader
+        title="Keys"
+        description="Your secret API keys are listed below. These keys are encrypted"
+        sx={{ mb: 0 }}
+      />
       <ApiKeyBar
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
@@ -219,7 +204,7 @@ export default function DevKeysView() {
             sorting={sorting}
             onSortingChange={setSorting}
             getRowId={(row) => row.id}
-            rowHeight={40}
+            rowHeight={36}
             emptyMessage="No keys found"
           />
           <DataTablePagination

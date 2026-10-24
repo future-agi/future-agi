@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
 import { Box, Dialog, IconButton, Stack, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useSimStore } from "../store";
 import { openQuestionsIn } from "../_mock/specChange";
@@ -14,47 +13,108 @@ import NudgeCard from "../workspace/NudgeCard";
  * answered the same way (Policy change / Not intended) and never by
  * minting an environment version. Closing it leaves them open there.
  */
-export default function RuleChangeDialog({ open, onClose, envs, version, origin }) {
+export default function RuleChangeDialog({
+  open,
+  onClose,
+  envs,
+  version,
+  origin,
+}) {
   const { state, dispatch } = useSimStore();
-  const queue = useMemo(() => (open ? openQuestionsIn(state, envs, version) : []), [open, state, envs, version]);
+  const queue = useMemo(
+    () => (open ? openQuestionsIn(state, envs, version) : []),
+    [open, state, envs, version],
+  );
   const multiEnv = (envs || []).length > 1;
 
   return (
     <Dialog
       open={!!open && queue.length > 0}
       onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 620, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 720,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1.25} sx={{ px: 2.5, pt: 2.25, pb: 1.5 }}>
-        <Box sx={{
-          width: 30, height: 30, borderRadius: 1, flexShrink: 0, display: "grid", placeItems: "center",
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05), color: "text.secondary",
-        }}>
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.25}
+        sx={{ px: 2.5, pt: 2.25, pb: 1.5 }}
+      >
+        <Box
+          sx={{
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            flexShrink: 0,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: "action.selected",
+            color: "text.secondary",
+          }}
+        >
           <Iconify icon="solar:scale-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "m3", fontWeight: 700 }}>
+          <Typography sx={{ typography: "m3", fontWeight: 600 }}>
             {`${version?.label || "This version"} · ${queue.length} rule question${queue.length === 1 ? "" : "s"}`}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-            {[origin, "Answer here or later in each environment's Needs input — nothing changes until you do"].filter(Boolean).join(" · ")}
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+          >
+            {[
+              origin,
+              "Answer here or later in each environment's Needs input — nothing changes until you do",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose} sx={{ mt: -0.5, mr: -0.5 }}>
-          <Iconify icon="eva:close-fill" width={18} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Stack>
-      <Box sx={{ borderTop: "1px solid", borderColor: "divider", maxHeight: "70vh", overflowY: "auto" }}>
+      <Box
+        sx={{
+          borderTop: "1px solid",
+          borderColor: "divider",
+          maxHeight: "70vh",
+          overflowY: "auto",
+        }}
+      >
         {queue.map(({ env, envState, impact }, i) => (
-          <Box key={impact.nudge.id} sx={{ borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
+          <Box
+            key={impact.nudge.id}
+            sx={{ borderTop: i ? "1px solid" : "none", borderColor: "divider" }}
+          >
             {multiEnv && (
-              <Typography sx={{ px: 2.5, pt: 1, typography: "s3", fontWeight: 700, color: "text.subtitle" }}>{env.name}</Typography>
+              <Typography
+                sx={{
+                  px: 2.5,
+                  pt: 1,
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.subtitle",
+                }}
+              >
+                {env.name}
+              </Typography>
             )}
             <NudgeCard
               nudge={impact.nudge}
               env={env}
               envState={envState}
-              patch={(p) => dispatch({ type: "patchEnvState", envId: env.id, patch: p })}
+              patch={(p) =>
+                dispatch({ type: "patchEnvState", envId: env.id, patch: p })
+              }
               onNavigate={onClose}
               defaultOpen={i === 0}
             />

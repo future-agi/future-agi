@@ -114,8 +114,9 @@ export default function TaskConfirmDialog({
       PaperProps={{
         sx: {
           borderRadius: "8px",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)",
-          width: "544px",
+          width: "560px",
           height: "282px",
         },
       }}
@@ -131,7 +132,7 @@ export default function TaskConfirmDialog({
               color: "text.primary",
               padding: 0,
               mt: 2.8,
-              fontSize: "14px",
+              fontSize: "13px",
               fontWeight: 500,
               mb: 1.2,
             }}
@@ -168,13 +169,6 @@ export default function TaskConfirmDialog({
             onClick={handleConfirm}
             loading={isLoading}
             color="primary"
-            sx={{
-              fontSize: "16px",
-              fontWeight: 600,
-              borderRadius: "8px",
-              textTransform: "none",
-              px: 3,
-            }}
           >
             {confirmText}
           </LoadingButton>

@@ -31,7 +31,11 @@ const PersonaAddCustomProperties = () => {
         </CustomPersonaAccordionHeader>
         <CustomPersonaAccordionContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="s1_2" color="text.secondary" fontWeight="fontWeightMedium">
+            <Typography
+              variant="s1_2"
+              color="text.secondary"
+              fontWeight="fontWeightMedium"
+            >
               Define keys and values
             </Typography>
             {fields.map((field, index) => (
@@ -63,7 +67,7 @@ const PersonaAddCustomProperties = () => {
                     color: "text.primary",
                   }}
                 >
-                  <Iconify icon="akar-icons:cross" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </Box>
             ))}
@@ -72,7 +76,6 @@ const PersonaAddCustomProperties = () => {
                 variant="outlined"
                 color="primary"
                 size="small"
-                sx={{ borderRadius: "4px" }}
                 onClick={() =>
                   append({ key: "", value: "", id: getRandomId() })
                 }

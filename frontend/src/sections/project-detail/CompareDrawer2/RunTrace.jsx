@@ -40,7 +40,7 @@ const RunTrace = ({ traceData }) => {
           paddingX: theme.spacing(2),
         }}
       >
-        <Typography fontWeight={700}>
+        <Typography fontWeight={600}>
           {traceData?.projectVersionName}
         </Typography>
       </Section>

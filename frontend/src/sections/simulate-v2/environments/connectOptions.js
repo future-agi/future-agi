@@ -41,23 +41,30 @@ export const AGENT_TYPES = [
   `chatChannels` — the chat channels one agent on that platform can be
   tested through; the one picked is recorded on the agent.
 */
+/* eslint-disable no-restricted-syntax -- ds: data colour */
 const TELNYX = { id: "telnyx", name: "Telnyx", icon: "solar:phone-calling-linear", brand: "#00C08B", idLabel: "Assistant ID", idPlaceholder: "assistant-7c1e9a42…", keyLabel: "Telnyx API key" };
 const GOOGLE_CX = { id: "google_cx", name: "Google CX Agent Studio", icon: "simple-icons:dialogflow", brand: "#FF9800", idLabel: "Agent resource name", idPlaceholder: "projects/acme/locations/global/agents/…", keyLabel: "Service account key", idNote: "Dialogflow CX agents. The resource name is on the agent's settings page." };
 const VOICEFLOW = { id: "voiceflow", name: "Voiceflow", icon: "solar:routing-2-linear", brand: "#1E1E1E", idLabel: "Project ID", idPlaceholder: "66f2c1d9e7…", keyLabel: "Voiceflow API key" };
 const AGENTFORCE = { id: "agentforce", name: "Salesforce Agentforce", icon: "simple-icons:salesforce", brand: "#00A1E0", idLabel: "Agent API name", idPlaceholder: "Service_Agent", keyLabel: "Connected app credentials" };
 const COPILOT_STUDIO = { id: "copilot_studio", name: "Microsoft Copilot Studio", icon: "simple-icons:microsoft", brand: "#5E5E5E", idLabel: "Agent schema name", idPlaceholder: "cr4f2_supportAgent", keyLabel: "Entra app credentials" };
+/* eslint-enable no-restricted-syntax */
 
 export const HOSTED_PLATFORMS_BY_TYPE = {
   voice: [
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "vapi", name: "Vapi", icon: "solar:phone-calling-rounded-linear", brand: "#12A594", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "Vapi API key" },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "retell", name: "Retell AI", icon: "solar:microphone-3-linear", brand: "#635BFF", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "Retell API key" },
     /* Bland's new agent model: agents, not pathways. */
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "bland", name: "Bland.ai", icon: "solar:phone-linear", brand: "#F26D5B", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", idNote: "Agents on Bland's agent model. A pathway agent connects once it has moved to that model.", keyLabel: "Bland API key" },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "elevenlabs", name: "ElevenLabs", icon: "solar:soundwave-linear", brand: "#111111", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "ElevenLabs API key" },
     /* Test only: LiveKit Agents is a code framework, so improvements come
        through the code. A running agent connected by its LiveKit project is
        tested and gets a suggested fix (rsiModel fixDepthOf). */
     {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       id: "livekit", name: "LiveKit", icon: "solar:server-minimalistic-linear", brand: "#1FD5F9", idLabel: "Agent name", idPlaceholder: "returns-line-agent", keyLabel: "LiveKit API key",
       idNote: "Test only — connected by its LiveKit project, it gets a suggested fix. LiveKit Agents is a code framework, so proven changes come through its code: connect the agent's repository from New agent → GitHub.",
     },
@@ -74,13 +81,17 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
      Agents SDK agent comes in as code, as do LangGraph, CrewAI and Claude
      Agent SDK agents. */
   chat: [
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "vapi", name: "Vapi", icon: "solar:chat-round-linear", brand: "#12A594", idLabel: "Assistant ID", idPlaceholder: "asst_9f2c…", keyLabel: "Vapi API key" },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     { id: "retell", name: "Retell AI", icon: "solar:chat-round-linear", brand: "#635BFF", idLabel: "Chat agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "Retell API key" },
     {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       id: "elevenlabs", name: "ElevenLabs", icon: "solar:chat-round-linear", brand: "#111111", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "ElevenLabs API key",
       chatChannels: [{ id: "chat", label: "Chat" }, { id: "whatsapp", label: "WhatsApp", icon: "simple-icons:whatsapp" }],
     },
     {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       id: "bland", name: "Bland.ai", icon: "solar:chat-round-linear", brand: "#F26D5B", idLabel: "Agent ID", idPlaceholder: "agent_9f2c…", keyLabel: "Bland API key",
       chatChannels: [{ id: "messaging", label: "Messaging" }],
     },

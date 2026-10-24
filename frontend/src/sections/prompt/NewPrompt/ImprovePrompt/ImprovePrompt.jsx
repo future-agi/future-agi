@@ -259,7 +259,11 @@ const ImprovePromptDrawer = (props) => {
           gap: theme.spacing(2),
         }}
       >
-        <Typography variant="subtitle2" color="text.primary" fontSize="0.8rem">
+        <Typography
+          variant="subtitle2"
+          color="text.primary"
+          fontSize="0.8125rem"
+        >
           Improve Existing Prompt
         </Typography>
         <Box sx={{ display: "flex", gap: 0.8, alignItems: "center" }}>
@@ -336,7 +340,7 @@ const ImprovePromptDrawer = (props) => {
             rows={3}
             sx={{
               background: action.hover,
-              borderRadius: "10px",
+              borderRadius: "8px",
               padding: "0px",
             }}
             placeholder="Enter what would you like to improve in the prompt"

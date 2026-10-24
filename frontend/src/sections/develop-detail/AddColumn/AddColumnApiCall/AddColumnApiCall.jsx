@@ -29,6 +29,7 @@ import {
 import { ShowComponent } from "src/components/show";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { transformDynamicColumnConfig } from "../common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -257,7 +258,7 @@ export const AddColumnApiCallChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit API Call" : "Add API Call"}
           </Typography>
           <IconButton
@@ -267,7 +268,7 @@ export const AddColumnApiCallChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -326,7 +327,7 @@ export const AddColumnApiCallChild = ({
           />
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Params
               </Typography>
             </AccordionSummary>
@@ -341,7 +342,7 @@ export const AddColumnApiCallChild = ({
           </Accordion>
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Headers
               </Typography>
             </AccordionSummary>
@@ -356,7 +357,7 @@ export const AddColumnApiCallChild = ({
           </Accordion>
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Request Body
               </Typography>
             </AccordionSummary>
@@ -436,10 +437,12 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
       : initialData;
   }, [columnConfig, allColumns, initialData]);
 
+  const covered = useDrawerCovered(openAddColumnApiCall);
   return (
     <Drawer
       anchor="right"
       open={openAddColumnApiCall}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -447,8 +450,7 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 1300,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

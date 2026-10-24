@@ -6,7 +6,6 @@ import {
   Avatar,
   Divider,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import React, { useEffect, useRef, useState } from "react";
 import SVGColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
@@ -41,13 +40,15 @@ const SectionHeader = ({ label, onAdd }) => (
       pb: 0.5,
     }}
   >
+    {/* Sentence-case section label, like the sidebar's group labels. */}
     <Typography
-      variant="overline"
       sx={{
-        fontSize: "11px",
-        fontWeight: 600,
-        letterSpacing: "0.08em",
-        color: "text.disabled",
+        fontSize: 12,
+        lineHeight: "16px",
+        fontWeight: 500,
+        textTransform: "none",
+        letterSpacing: 0,
+        color: "text.tertiary",
       }}
     >
       {label}
@@ -62,13 +63,13 @@ const SectionHeader = ({ label, onAdd }) => (
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 0.25,
           "&:hover": { backgroundColor: "action.hover" },
         }}
       >
         <Iconify
-          icon="eva:plus-fill"
+          icon="solar:add-linear"
           sx={{ width: 16, height: 16, color: "text.disabled" }}
         />
       </Box>
@@ -101,7 +102,7 @@ const MenuRow = ({
       alignItems: "center",
       gap: 1,
       px: 1.5,
-      py: 0.75,
+      py: 0.5,
       cursor: "pointer",
       borderRadius: "6px",
       mx: 0.5,
@@ -111,7 +112,7 @@ const MenuRow = ({
   >
     {icon}
     <Typography
-      fontWeight={500}
+      fontWeight={400}
       color="text.primary"
       typography="s2_1"
       sx={{ flex: 1 }}
@@ -120,8 +121,8 @@ const MenuRow = ({
     </Typography>
     {hasSubmenu && (
       <Iconify
-        icon="eva:chevron-right-fill"
-        sx={{ width: 18, height: 18, color: "text.secondary" }}
+        icon="solar:alt-arrow-right-linear"
+        sx={{ width: 16, height: 16, color: "text.secondary" }}
       />
     )}
   </Box>
@@ -140,7 +141,7 @@ MenuRow.propTypes = {
 // --- Avatar row (workspace / org current) ------------------------------------
 
 const AvatarRow = React.forwardRef(
-  ({ letter, label, onMouseEnter, onMouseLeave, onClick, color }, _ref) => (
+  ({ letter, label, onMouseEnter, onMouseLeave, onClick }, _ref) => (
     <Box
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -150,7 +151,7 @@ const AvatarRow = React.forwardRef(
         alignItems: "center",
         gap: 1,
         px: 1.5,
-        py: 0.75,
+        py: 0.5,
         cursor: "pointer",
         borderRadius: "6px",
         mx: 0.5,
@@ -159,19 +160,18 @@ const AvatarRow = React.forwardRef(
     >
       <Avatar
         variant="rounded"
-        sx={(theme) => ({
-          width: 28,
-          height: 28,
-          fontSize: "13px",
+        sx={{
+          width: 20,
+          height: 20,
+          borderRadius: "4px",
+          fontSize: "12px",
           fontWeight: 600,
-          backgroundColor: alpha(color || theme.palette.primary.main, 0.2),
-          color: color || theme.palette.primary.main,
-        })}
+        }}
       >
         {letter}
       </Avatar>
       <Typography
-        fontWeight={500}
+        fontWeight={400}
         color="text.primary"
         typography="s2_1"
         sx={{
@@ -184,8 +184,8 @@ const AvatarRow = React.forwardRef(
         {label}
       </Typography>
       <Iconify
-        icon="eva:chevron-right-fill"
-        sx={{ width: 18, height: 18, color: "text.secondary" }}
+        icon="solar:alt-arrow-right-linear"
+        sx={{ width: 16, height: 16, color: "text.secondary" }}
       />
     </Box>
   ),
@@ -286,10 +286,10 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 0.75,
-            borderRadius: 0.5,
+            gap: 1,
+            borderRadius: "6px",
             px: 0.75,
-            py: 0.5,
+            height: 32,
             width: "100%",
             justifyContent: collapsed ? "center" : "space-between",
           }}
@@ -297,24 +297,21 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         >
           <Avatar
             variant="rounded"
-            sx={(theme) => ({
-              width: theme.spacing(3),
-              height: theme.spacing(3),
-              backgroundColor: alpha(theme.palette.primary.main, 0.2),
-            })}
+            sx={{
+              width: 20,
+              height: 20,
+              borderRadius: "4px",
+            }}
           >
-            <Typography
-              typography="s1"
-              fontWeight="fontWeightMedium"
-              color="text.primary"
-            >
+            <Typography fontSize={11} fontWeight={600} color="text.primary">
               {wsDisplayLabel?.slice(0, 1)}
             </Typography>
           </Avatar>
 
           {!collapsed && (
             <Typography
-              typography="s1"
+              fontSize={13}
+              lineHeight="20px"
               color="text.primary"
               sx={{
                 overflow: "hidden",
@@ -352,9 +349,10 @@ const WorkspaceSwitcher = ({ collapsed }) => {
               borderRadius: "8px",
               border: "1px solid",
               borderColor: "divider",
+              // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
               boxShadow: "0 4px 12px 0 rgba(0,0,0,0.08)",
               mt: 0.5,
-              width: 260,
+              width: 240,
               py: 0.5,
             },
           },
@@ -362,7 +360,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
       >
         {/* ============ WORKSPACE section ============ */}
         <SectionHeader
-          label="WORKSPACE"
+          label="Workspace"
           onAdd={
             user?.ws_enabled &&
             (user?.organization_role === "Owner" ||
@@ -407,8 +405,8 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           <MenuRow
             icon={
               <Iconify
-                icon="eva:plus-outline"
-                sx={{ width: 20, height: 20, color: "text.secondary" }}
+                icon="solar:add-linear"
+                sx={{ width: 16, height: 16, color: "text.secondary" }}
               />
             }
             title="Invite members"
@@ -427,7 +425,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           icon={
             <Iconify
               icon="solar:settings-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Workspace settings"
@@ -454,7 +452,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
 
         {/* ============ ORGANIZATION section ============ */}
         <SectionHeader
-          label="ORGANIZATION"
+          label="Organization"
           onAdd={() => {
             setOpen(false);
             useCreateOrganizationModal.getState().setOpen(true);
@@ -465,6 +463,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <AvatarRow
           letter={orgDisplayLabel?.slice(0, 1)}
           label={orgDisplayLabel}
+          // eslint-disable-next-line no-restricted-syntax -- ds: organisation avatar colour
           color="#b8a068"
           onMouseEnter={(e) => {
             if (orgPopperTimeoutRef.current) {
@@ -489,7 +488,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           icon={
             <Iconify
               icon="solar:settings-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Organization settings"
@@ -507,7 +506,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <Divider sx={{ my: 0.5 }} />
 
         {/* ============ ACCOUNT section ============ */}
-        <SectionHeader label="ACCOUNT" />
+        <SectionHeader label="Account" />
 
         {/* User info */}
         <Box
@@ -524,7 +523,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 0.75,
+            py: 0.5,
             mx: 0.5,
             cursor: "pointer",
             borderRadius: "6px",
@@ -532,14 +531,12 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           }}
         >
           <Avatar
-            sx={(theme) => ({
-              width: 28,
-              height: 28,
-              fontSize: "13px",
+            sx={{
+              width: 24,
+              height: 24,
+              fontSize: "12px",
               fontWeight: 600,
-              backgroundColor: alpha(theme.palette.success.main, 0.2),
-              color: theme.palette.success.main,
-            })}
+            }}
           >
             {(user?.name || user?.email || "U")?.slice(0, 1).toUpperCase()}
           </Avatar>
@@ -576,7 +573,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           icon={
             <Iconify
               icon="solar:monitor-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Theme"
@@ -603,8 +600,8 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <MenuRow
           icon={
             <Iconify
-              icon="mynaui:logout"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              icon="solar:logout-linear"
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Log out"

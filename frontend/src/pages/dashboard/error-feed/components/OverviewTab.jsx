@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import {
@@ -10,6 +11,7 @@ import {
   Typography,
   alpha,
   useTheme,
+  Tab,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -17,7 +19,7 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
-import { error as errorPalette, success } from "src/theme/palette";
+import { statusColors } from "src/utils/runStatus";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/mockAdapter";
 import EvalIOPanel from "./EvalIOPanel";
@@ -25,8 +27,11 @@ import VoiceEvalPanel from "./VoiceEvalPanel";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
-import { textTone } from "src/sections/simulate-v2/components/textTone";
-import { clickable, focusRing } from "src/sections/simulate-v2/components/clickable";
+import {} from "src/sections/simulate-v2/components/textTone";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 
 const estimateTraceCost = (inputTokens = 0, outputTokens = 0) =>
   inputTokens * TOKEN_PRICE_USD.INPUT + outputTokens * TOKEN_PRICE_USD.OUTPUT;
@@ -41,8 +46,6 @@ function SectionCard({
   defaultOpen = true,
   badge,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [open, setOpen] = useState(defaultOpen);
   const isOpen = collapsible ? open : true;
 
@@ -52,7 +55,7 @@ function SectionCard({
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "background.paper",
+        bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >
@@ -60,29 +63,29 @@ function SectionCard({
         direction="row"
         alignItems="center"
         gap={0.75}
-        {...clickable(collapsible ? () => setOpen((v) => !v) : undefined, { expanded: open })}
+        {...clickable(collapsible ? () => setOpen((v) => !v) : undefined, {
+          expanded: open,
+        })}
         sx={{
           ...focusRing,
           px: 1.75,
           py: 1.1,
           borderBottom: isOpen ? "1px solid" : "none",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.018),
+          bgcolor: "action.hover",
           cursor: collapsible ? "pointer" : "default",
           userSelect: "none",
-          "&:hover": collapsible
-            ? { bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03) }
-            : {},
+          "&:hover": collapsible ? { bgcolor: "action.hover" } : {},
         }}
       >
         {icon && (
           <Iconify icon={icon} width={14} sx={{ color: "text.disabled" }} />
         )}
         <Typography
-          fontSize="11px"
+          fontSize="12px"
           fontWeight={600}
           color="text.secondary"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+          sx={{ textTransform: "none", letterSpacing: 0 }}
         >
           {title}
         </Typography>
@@ -90,8 +93,12 @@ function SectionCard({
         <Box sx={{ flex: 1 }} />
         {collapsible && (
           <Iconify
-            icon={isOpen ? "mdi:chevron-up" : "mdi:chevron-down"}
-            width={15}
+            icon={
+              isOpen
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+            width={16}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
         )}
@@ -123,12 +130,12 @@ function SparkRow({
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
-  const gridColor = isDark ? "#27272a" : "#E4E2EE";
-  const axisColor = isDark ? "#52525b" : "#C4C0D4";
-  const labelColor = isDark ? "#71717a" : "#938FA3";
-  const tooltipBg = isDark ? "#1c1c1e" : "#ffffff";
-  const tooltipBdr = isDark ? "#3f3f46" : "#e4e4e7";
-  const tooltipTxt = isDark ? "#f4f4f5" : "#18181b";
+  const gridColor = theme.palette.divider;
+  const axisColor = theme.palette.text.disabled;
+  const labelColor = theme.palette.text.tertiary;
+  const tooltipBg = theme.palette.background.paper;
+  const tooltipBdr = theme.palette.border.default;
+  const tooltipTxt = theme.palette.text.primary;
   const peakVal = seriesData.length
     ? Math.max(...seriesData.map((d) => d.y))
     : 0;
@@ -168,7 +175,7 @@ function SparkRow({
         labels: showXAxis
           ? {
               show: true,
-              style: { fontSize: "9px", colors: axisColor },
+              style: { fontSize: "12px", colors: axisColor },
               formatter: (val) => format(new Date(val), "MMM d"),
               datetimeUTC: false,
               offsetY: -2,
@@ -209,9 +216,9 @@ function SparkRow({
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
               <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;"></span>
               <span style="font-size:12px;color:${tooltipTxt};font-weight:500;">${label}</span>
-              <span style="font-size:12px;color:${tooltipTxt};font-weight:700;margin-left:auto;">${val?.toLocaleString() ?? "—"}</span>
+              <span style="font-size:12px;color:${tooltipTxt};font-weight:600;margin-left:auto;">${val?.toLocaleString() ?? "—"}</span>
             </div>
-            <div style="font-size:11px;color:${labelColor};">${dateStr}</div>
+            <div style="font-size:12px;color:${labelColor};">${dateStr}</div>
           </div>`;
         },
       },
@@ -253,15 +260,15 @@ function SparkRow({
         }}
       >
         <Typography
-          fontSize="10px"
+          fontSize="12px"
           color="text.disabled"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.05em", mb: 0.25 }}
+          sx={{ textTransform: "none", letterSpacing: 0, mb: 0.25 }}
         >
           {label}
         </Typography>
         <Typography
-          fontSize="18px"
-          fontWeight={700}
+          fontSize="16px"
+          fontWeight={600}
           color="text.primary"
           sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
         >
@@ -276,7 +283,7 @@ function SparkRow({
 
       {/* Right: peak label */}
       <Typography
-        fontSize="11px"
+        fontSize="12px"
         fontWeight={600}
         color="text.disabled"
         sx={{
@@ -328,15 +335,16 @@ function EventsUsersChart({
     0,
   );
 
-  const axisLabelColor = isDark ? "#71717a" : "#938FA3";
-  const gridColor = isDark ? "#27272a" : "#E1DFEC";
+  const axisLabelColor = theme.palette.text.tertiary;
+  const gridColor = theme.palette.divider;
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const evtColor = isDark ? "#4F8EF7" : "#2563EB";
   const usrColor = isDark ? "rgba(99,155,245,0.18)" : "rgba(147,197,253,0.55)";
 
   useEffect(() => {
     if (!eventsData?.length || !chartRef.current) return;
 
-    const annotBg = isDark ? "#111111" : "#f4f4f5";
+    const annotBg = theme.palette.background.neutral;
 
     const opts = {
       chart: {
@@ -370,7 +378,7 @@ function EventsUsersChart({
         axisBorder: { show: false },
         axisTicks: { show: false },
         labels: {
-          style: { fontSize: "10px", colors: axisLabelColor },
+          style: { fontSize: "12px", colors: axisLabelColor },
           formatter: (val) => format(new Date(val), "MMM d"),
           datetimeUTC: false,
           rotate: 0,
@@ -386,7 +394,7 @@ function EventsUsersChart({
           seriesName: "Events",
           tickAmount: 3,
           labels: {
-            style: { fontSize: "10px", colors: axisLabelColor },
+            style: { fontSize: "12px", colors: axisLabelColor },
             formatter: (v) =>
               v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v),
             offsetX: -2,
@@ -410,7 +418,7 @@ function EventsUsersChart({
       annotations: {
         xaxis: deployMarkers.map((dm) => ({
           x: new Date(dm.date).getTime(),
-          borderColor: "#F5A623",
+          borderColor: theme.palette.status.warning.solid,
           borderWidth: 1.5,
           strokeDashArray: 4,
           label: {
@@ -421,7 +429,7 @@ function EventsUsersChart({
               color: theme.palette.text.secondary,
               background: annotBg,
               cssClass: "",
-              fontSize: "9px",
+              fontSize: "12px",
               fontWeight: 600,
               padding: { top: 2, bottom: 2, left: 4, right: 4 },
             },
@@ -491,19 +499,19 @@ function EventsUsersChart({
                 }}
               />
               <Typography
-                fontSize="10px"
+                fontSize="12px"
                 color="text.disabled"
-                sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+                sx={{ textTransform: "none", letterSpacing: 0 }}
               >
                 {item.label}
               </Typography>
             </Stack>
             {loading ? (
-              <Skeleton width={28} height={14} sx={{ borderRadius: "3px" }} />
+              <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
             ) : (
               <Typography
                 fontSize="13px"
-                fontWeight={700}
+                fontWeight={600}
                 color="text.primary"
                 sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
               >
@@ -537,7 +545,7 @@ function EventsUsersChart({
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "background.paper",
+        bgcolor: "background.paper",
         overflow: "hidden",
         display: "flex",
       }}
@@ -555,9 +563,6 @@ EventsUsersChart.propTypes = {
 
 // ── Trace list (left panel) ───────────────────────────────────────────────────
 function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   if (loading) {
     return (
       <Stack gap={0}>
@@ -566,21 +571,20 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
             key={i}
             sx={{
               px: 1.5,
-              py: 1.1,
+              py: 1,
               borderBottom: "1px solid",
               borderColor: "divider",
-              borderLeft: "3px solid transparent",
             }}
           >
             <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
-              <Skeleton width="55%" height={11} sx={{ borderRadius: "3px" }} />
+              <Skeleton width="55%" height={11} sx={{ borderRadius: "4px" }} />
               <Box sx={{ flex: 1 }} />
-              <Skeleton width={36} height={10} sx={{ borderRadius: "3px" }} />
+              <Skeleton width={36} height={10} sx={{ borderRadius: "4px" }} />
             </Stack>
             <Stack direction="row" gap={1.5}>
-              <Skeleton width={50} height={10} sx={{ borderRadius: "3px" }} />
-              <Skeleton width={42} height={10} sx={{ borderRadius: "3px" }} />
-              <Skeleton width={34} height={10} sx={{ borderRadius: "3px" }} />
+              <Skeleton width={50} height={10} sx={{ borderRadius: "4px" }} />
+              <Skeleton width={42} height={10} sx={{ borderRadius: "4px" }} />
+              <Skeleton width={34} height={10} sx={{ borderRadius: "4px" }} />
             </Stack>
           </Box>
         ))}
@@ -610,48 +614,36 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
             sx={{
               ...focusRing,
               px: 1.5,
-              py: 1.1,
+              py: 1,
               cursor: "pointer",
               borderBottom: "1px solid",
               borderColor: "divider",
-              bgcolor: isSelected
-                ? isDark
-                  ? alpha("#7857FC", 0.12)
-                  : alpha("#7857FC", 0.06)
-                : "transparent",
-              borderLeft: "3px solid",
-              borderLeftColor: isSelected ? "#7857FC" : "transparent",
+              bgcolor: isSelected ? "action.selected" : "transparent",
               transition: "background 0.12s",
               "&:hover": {
-                bgcolor: isSelected
-                  ? isDark
-                    ? alpha("#7857FC", 0.15)
-                    : alpha("#7857FC", 0.08)
-                  : isDark
-                    ? alpha("#fff", 0.04)
-                    : alpha("#000", 0.03),
+                bgcolor: isSelected ? "action.focus" : "action.hover",
               },
             }}
           >
             {/* Top row: trace ID + time */}
             <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
               <Typography
-                fontSize="11px"
-                fontWeight={600}
+                fontSize="13px"
+                fontWeight={500}
                 color="text.primary"
                 sx={{ flex: 1, minWidth: 0 }}
                 noWrap
               >
                 {t.id}
               </Typography>
-              <Typography fontSize="10px" color="text.disabled" flexShrink={0}>
+              <Typography fontSize="12px" color="text.disabled" flexShrink={0}>
                 {time}
               </Typography>
             </Stack>
 
             {/* Input text */}
             <Typography
-              fontSize="11px"
+              fontSize="12px"
               color="text.secondary"
               noWrap
               sx={{ mb: 0.5 }}
@@ -663,31 +655,31 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
             <Stack direction="row" alignItems="center" gap={1}>
               <Stack direction="row" alignItems="center" gap={0.3}>
                 <Iconify
-                  icon="mdi:timer-outline"
-                  width={11}
+                  icon="solar:clock-circle-linear"
+                  width={12}
                   sx={{ color: "text.disabled" }}
                 />
-                <Typography fontSize="10px" color="text.disabled">
+                <Typography fontSize="12px" color="text.disabled">
                   {t.summary.latency_ms}ms
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
                 <Iconify
-                  icon="mdi:currency-usd"
-                  width={11}
+                  icon="solar:dollar-minimalistic-linear"
+                  width={12}
                   sx={{ color: "text.disabled" }}
                 />
-                <Typography fontSize="10px" color="text.disabled">
+                <Typography fontSize="12px" color="text.disabled">
                   ${cost}
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
                 <Iconify
-                  icon="mdi:text-box-outline"
-                  width={11}
+                  icon="solar:notes-linear"
+                  width={12}
                   sx={{ color: "text.disabled" }}
                 />
-                <Typography fontSize="10px" color="text.disabled">
+                <Typography fontSize="12px" color="text.disabled">
                   {tokens.toLocaleString()} tok
                 </Typography>
               </Stack>
@@ -715,7 +707,7 @@ function renderRichCaption(text) {
         <Box
           key={i}
           component="span"
-          sx={{ fontWeight: 700, color: "text.primary" }}
+          sx={{ fontWeight: 600, color: "text.primary" }}
         >
           {part.slice(2, -2)}
         </Box>
@@ -726,8 +718,6 @@ function renderRichCaption(text) {
 }
 
 function PatternSummary({ summary }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   // No stub fallback — un-analyzed clusters show the empty state, never fabricated cards.
   const insights = (summary?.insights ?? []).filter((i) => i && i.title);
 
@@ -750,7 +740,7 @@ function PatternSummary({ summary }) {
             borderRadius: "8px",
             px: 1.75,
             py: 1.5,
-            bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.025),
+            bgcolor: "action.hover",
             minHeight: 92,
             display: "flex",
             flexDirection: "column",
@@ -759,12 +749,12 @@ function PatternSummary({ summary }) {
         >
           {insight?.title && (
             <Typography
-              fontSize="10px"
+              fontSize="12px"
               fontWeight={600}
               color="text.disabled"
               sx={{
-                textTransform: "uppercase",
-                letterSpacing: "0.07em",
+                textTransform: "none",
+                letterSpacing: 0,
                 lineHeight: 1.2,
               }}
             >
@@ -772,8 +762,8 @@ function PatternSummary({ summary }) {
             </Typography>
           )}
           <Typography
-            fontSize="18px"
-            fontWeight={700}
+            fontSize="16px"
+            fontWeight={600}
             color="text.primary"
             sx={{
               lineHeight: 1.1,
@@ -786,7 +776,7 @@ function PatternSummary({ summary }) {
             {insight?.value ?? "—"}
           </Typography>
           <Typography
-            fontSize="11.5px"
+            fontSize="12px"
             color="text.secondary"
             sx={{ lineHeight: 1.45 }}
           >
@@ -844,8 +834,7 @@ function TraceGraphView({ traceId, mode }) {
         height: 340,
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: (theme) =>
-          theme.palette.mode === "dark" ? "#111111" : "background.paper",
+        bgcolor: "background.paper",
       }}
     >
       {mode === "path" ? (
@@ -865,27 +854,27 @@ TraceGraphView.propTypes = {
 function CompareLegend({ summary }) {
   const items = [
     summary.failed > 0 && {
-      color: "#DB2F2D",
+      color: "status.danger.solid",
       label: `${summary.failed} failed here`,
       badge: "✕",
     },
     summary.missing > 0 && {
-      color: "#5ACE6D",
+      color: "status.success.solid",
       label: `−${summary.missing} skipped path`,
       badge: "−",
     },
     summary.added > 0 && {
-      color: "#DB2F2D",
+      color: "status.danger.solid",
       label: `+${summary.added} extra step${summary.added > 1 ? "s" : ""}`,
       badge: "+",
     },
     summary.regressed > 0 && {
-      color: "#F5A623",
+      color: "status.warning.solid",
       label: `${summary.regressed} regressed`,
       badge: "Δ",
     },
     summary.shared > 0 && {
-      color: "#9AA3AF",
+      color: "status.neutral.solid",
       label: `${summary.shared} shared`,
       badge: null,
     },
@@ -893,7 +882,7 @@ function CompareLegend({ summary }) {
 
   if (!items.length) {
     return (
-      <Typography fontSize="11px" color="text.disabled">
+      <Typography fontSize="12px" color="text.disabled">
         No structural differences between the failing and working traces.
       </Typography>
     );
@@ -915,14 +904,14 @@ function CompareLegend({ summary }) {
                 minWidth: 14,
                 height: 14,
                 px: 0.4,
-                borderRadius: "7px",
+                borderRadius: "6px",
                 bgcolor: item.color,
-                color: "#fff",
+                color: "common.white",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 9,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
                 lineHeight: 1,
               }}
@@ -940,7 +929,7 @@ function CompareLegend({ summary }) {
             />
           )}
           <Typography
-            fontSize="11px"
+            fontSize="12px"
             fontWeight={600}
             color="text.secondary"
             sx={{ whiteSpace: "nowrap" }}
@@ -954,17 +943,15 @@ function CompareLegend({ summary }) {
 }
 CompareLegend.propTypes = { summary: PropTypes.object.isRequired };
 
-function CompareColumn({ title, accentColor, traceShortId, children }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+function CompareColumn({ title, role, traceShortId, children }) {
   return (
     <Box
       sx={{
         border: "1px solid",
-        borderColor: alpha(accentColor, isDark ? 0.35 : 0.4),
+        borderColor: `status.${role}.border`,
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
+        bgcolor: "action.hover",
         display: "flex",
         flexDirection: "column",
         minWidth: 0,
@@ -979,31 +966,31 @@ function CompareColumn({ title, accentColor, traceShortId, children }) {
           py: 0.75,
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: alpha(accentColor, isDark ? 0.1 : 0.06),
+          bgcolor: `status.${role}.bg`,
         }}
       >
         <Box
           sx={{
-            width: 7,
-            height: 7,
+            width: 8,
+            height: 8,
             borderRadius: "50%",
-            bgcolor: accentColor,
+            bgcolor: `status.${role}.solid`,
           }}
         />
         <Typography
-          fontSize="10.5px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           sx={{
-            color: accentColor,
-            textTransform: "uppercase",
-            letterSpacing: "0.07em",
+            color: `status.${role}.fg`,
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           {title}
         </Typography>
         {traceShortId && (
           <Typography
-            fontSize="10px"
+            fontSize="12px"
             color="text.disabled"
             sx={{
               ml: 0.25,
@@ -1019,8 +1006,7 @@ function CompareColumn({ title, accentColor, traceShortId, children }) {
         sx={{
           flex: 1,
           minHeight: 0,
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark" ? "#111111" : "background.paper",
+          bgcolor: "background.paper",
         }}
       >
         {children}
@@ -1030,7 +1016,7 @@ function CompareColumn({ title, accentColor, traceShortId, children }) {
 }
 CompareColumn.propTypes = {
   title: PropTypes.string.isRequired,
-  accentColor: PropTypes.string.isRequired,
+  role: PropTypes.oneOf(["danger", "success"]).isRequired,
   traceShortId: PropTypes.string,
   children: PropTypes.node,
 };
@@ -1087,8 +1073,8 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
       }}
     >
       <Typography fontSize="12px" color="text.disabled">
-        No matching working trace yet for this issue — backend KNN matching
-        will populate it shortly.
+        No matching working trace yet for this issue — backend KNN matching will
+        populate it shortly.
       </Typography>
     </Box>
   );
@@ -1153,14 +1139,14 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
       >
         <CompareColumn
           title="Failing trace"
-          accentColor="#DB2F2D"
+          role="danger"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
           {renderSide(failRenderGraph, failLoading, "failing trace")}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
-          accentColor="#5ACE6D"
+          role="success"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
           {renderSide(passRenderGraph, passLoading, "working trace")}
@@ -1178,11 +1164,10 @@ TraceGraphCompare.propTypes = {
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
 function RichText({ text, isFailReel: _isFailReel }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const errorColor = "#DB2F2D";
-  const okColor = "#5ACE6D";
-  const codeColor = isDark ? "#7DB1FF" : "#2563EB";
-  const boldColor = isDark ? "#ffb3b3" : "#c0322f";
+  const errorColor = statusColors(theme, "danger");
+  const okColor = statusColors(theme, "success");
+  const codeColor = statusColors(theme, "info").fg;
+  const boldColor = errorColor.fg;
 
   if (!text) return null;
   if (!Array.isArray(text)) {
@@ -1198,7 +1183,7 @@ function RichText({ text, isFailReel: _isFailReel }) {
               component="code"
               sx={{
                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "11.5px",
+                fontSize: "12px",
                 color: codeColor,
               }}
             >
@@ -1222,27 +1207,24 @@ function RichText({ text, isFailReel: _isFailReel }) {
             <Box
               key={i}
               component="strong"
-              sx={{ fontWeight: 700, color: boldColor }}
+              sx={{ fontWeight: 600, color: boldColor }}
             >
               {seg.t}
             </Box>
           );
         }
         if (!seg.hl) return <React.Fragment key={i}>{seg.t}</React.Fragment>;
-        const color = seg.hl === "error" ? errorColor : okColor;
+        const hl = seg.hl === "error" ? errorColor : okColor;
         return (
           <Box
             key={i}
             component="span"
             sx={{
-              bgcolor:
-                seg.hl === "error"
-                  ? alpha(errorColor, 0.14)
-                  : alpha(okColor, 0.14),
-              color,
+              bgcolor: hl.bg,
+              color: hl.fg,
               px: "4px",
               py: "1px",
-              borderRadius: "3px",
+              borderRadius: "4px",
               fontWeight: 500,
               display: "inline",
             }}
@@ -1261,17 +1243,14 @@ RichText.propTypes = {
 
 // Module-scoped (used outside component bodies), so read the palette export
 // rather than the theme hook.
-const FAIL_COLOR = errorPalette.main;
-const PASS_COLOR = success.main;
+const FAIL_COLOR = "status.danger.solid";
+const PASS_COLOR = "status.success.solid";
 
-function roleColor(isFailure, isDark) {
-  if (isFailure) return isDark ? "#ff9a99" : "#c0322f";
-  return isDark ? alpha("#fff", 0.42) : alpha("#000", 0.45);
+function roleColor(isFailure) {
+  return isFailure ? "status.danger.fg" : "text.tertiary";
 }
 
 function ReelStep({ step, isFailReel, isLast }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [showRaw, setShowRaw] = useState(false);
 
   const status = step.status;
@@ -1280,12 +1259,10 @@ function ReelStep({ step, isFailReel, isLast }) {
     ? FAIL_COLOR
     : status === "pass" || status === "ok"
       ? PASS_COLOR
-      : isDark
-        ? alpha("#fff", 0.28)
-        : alpha("#000", 0.28);
+      : "text.disabled";
   const raw = step.rawJson || step.raw;
   const note = step.note;
-  const rColor = roleColor(isFailure, isDark);
+  const rColor = roleColor(isFailure);
 
   const header = (
     <Stack direction="row" alignItems="baseline" gap={0.85}>
@@ -1293,10 +1270,10 @@ function ReelStep({ step, isFailReel, isLast }) {
         component="span"
         sx={{
           flexShrink: 0,
-          fontSize: "9.5px",
+          fontSize: "12px",
           fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
+          textTransform: "none",
+          letterSpacing: 0,
           color: rColor,
         }}
       >
@@ -1304,7 +1281,7 @@ function ReelStep({ step, isFailReel, isLast }) {
       </Box>
       <Typography
         component="span"
-        fontSize="12.5px"
+        fontSize="13px"
         color="text.primary"
         sx={{ lineHeight: 1.5, flex: 1, minWidth: 0 }}
       >
@@ -1315,7 +1292,7 @@ function ReelStep({ step, isFailReel, isLast }) {
           component="span"
           sx={{
             flexShrink: 0,
-            fontSize: "10px",
+            fontSize: "12px",
             fontFamily: "ui-monospace, SFMono-Regular, monospace",
             color: "text.disabled",
             whiteSpace: "nowrap",
@@ -1339,13 +1316,14 @@ function ReelStep({ step, isFailReel, isLast }) {
             width: 13,
             height: 13,
             borderRadius: "50%",
-            bgcolor: isDark ? "#0e0e10" : "#fff",
-            border: `2px solid ${FAIL_COLOR}`,
+            bgcolor: "background.paper",
+            border: "2px solid",
+            borderColor: FAIL_COLOR,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "9px",
-            fontWeight: 700,
+            fontSize: "12px",
+            fontWeight: 600,
             color: FAIL_COLOR,
             zIndex: 1,
           }}
@@ -1361,8 +1339,9 @@ function ReelStep({ step, isFailReel, isLast }) {
             width: 11,
             height: 11,
             borderRadius: "50%",
-            bgcolor: isDark ? alpha("#fff", 0.06) : "background.paper",
-            border: `2px solid ${dotColor}`,
+            bgcolor: "background.paper",
+            border: "2px solid",
+            borderColor: dotColor,
             zIndex: 1,
           }}
         />
@@ -1372,9 +1351,9 @@ function ReelStep({ step, isFailReel, isLast }) {
         <Box
           sx={{
             border: "1px solid",
-            borderColor: alpha(FAIL_COLOR, 0.4),
+            borderColor: "status.danger.border",
             borderRadius: "6px",
-            bgcolor: alpha(FAIL_COLOR, isDark ? 0.07 : 0.05),
+            bgcolor: "status.danger.bg",
             px: 1.25,
             py: 0.85,
           }}
@@ -1383,7 +1362,7 @@ function ReelStep({ step, isFailReel, isLast }) {
           {note && (
             <Typography
               component="div"
-              fontSize="11.5px"
+              fontSize="12px"
               color="text.secondary"
               sx={{ lineHeight: 1.55, mt: 0.6 }}
             >
@@ -1399,7 +1378,7 @@ function ReelStep({ step, isFailReel, isLast }) {
               {...clickable(() => setShowRaw((v) => !v), { expanded: showRaw })}
               sx={{
                 ...focusRing,
-                fontSize: "10.5px",
+                fontSize: "12px",
                 color: "text.disabled",
                 mt: 0.4,
                 cursor: "pointer",
@@ -1418,9 +1397,9 @@ function ReelStep({ step, isFailReel, isLast }) {
                 mt: 0.5,
                 p: 1,
                 borderRadius: "6px",
-                bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+                bgcolor: "action.hover",
                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "11px",
+                fontSize: "12px",
                 lineHeight: 1.5,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
@@ -1445,8 +1424,7 @@ ReelStep.propTypes = {
 
 function BreadcrumbList({ steps, isFailReel }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const accent = isFailReel ? FAIL_COLOR : PASS_COLOR;
+  const accent = statusColors(theme, isFailReel ? "danger" : "success").solid;
   if (!steps.length) {
     return (
       <Box sx={{ p: 2, textAlign: "center" }}>
@@ -1468,10 +1446,7 @@ function BreadcrumbList({ steps, isFailReel }) {
             bottom: 10,
             width: "2px",
             borderRadius: "1px",
-            background: `linear-gradient(${alpha(accent, isDark ? 0.5 : 0.4)}, ${alpha(
-              accent,
-              0.08,
-            )})`,
+            background: `linear-gradient(${alpha(accent, 0.45)}, ${alpha(accent, 0.08)})`,
           }}
         />
         {steps.map((step, i) => (
@@ -1494,21 +1469,19 @@ BreadcrumbList.propTypes = {
 function ReelColumn({
   title,
   headerMeta,
-  accentColor,
+  role,
   steps,
   isFailReel,
   emptyMessage,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Box
       sx={{
         border: "1px solid",
-        borderColor: alpha(accentColor, 0.28),
+        borderColor: `status.${role}.border`,
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.01) : "transparent",
+        bgcolor: "transparent",
         display: "flex",
         flexDirection: "column",
         minWidth: 0,
@@ -1522,8 +1495,8 @@ function ReelColumn({
           px: 1.5,
           py: 0.85,
           borderBottom: "1px solid",
-          borderColor: alpha(accentColor, 0.2),
-          bgcolor: alpha(accentColor, isDark ? 0.1 : 0.06),
+          borderColor: `status.${role}.border`,
+          bgcolor: `status.${role}.bg`,
         }}
       >
         <Box
@@ -1531,17 +1504,17 @@ function ReelColumn({
             width: 8,
             height: 8,
             borderRadius: "50%",
-            bgcolor: accentColor,
+            bgcolor: `status.${role}.solid`,
             flexShrink: 0,
           }}
         />
         <Typography
-          fontSize="11px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           sx={{
-            color: accentColor,
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
+            color: `status.${role}.fg`,
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           {title}
@@ -1549,7 +1522,7 @@ function ReelColumn({
         <Box sx={{ flex: 1 }} />
         {headerMeta && (
           <Typography
-            fontSize="10.5px"
+            fontSize="12px"
             color="text.disabled"
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -1570,12 +1543,12 @@ function ReelColumn({
             sx={{ p: 2.5, gap: 0.5 }}
           >
             <Iconify
-              icon="mdi:file-search-outline"
-              width={20}
+              icon="solar:file-search-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
             <Typography
-              fontSize="11.5px"
+              fontSize="12px"
               color="text.disabled"
               sx={{ textAlign: "center" }}
             >
@@ -1590,76 +1563,30 @@ function ReelColumn({
 ReelColumn.propTypes = {
   title: PropTypes.string.isRequired,
   headerMeta: PropTypes.string,
-  accentColor: PropTypes.string.isRequired,
+  role: PropTypes.oneOf(["danger", "success"]).isRequired,
   steps: PropTypes.array.isRequired,
   isFailReel: PropTypes.bool,
   emptyMessage: PropTypes.string,
 };
 
 function ViewModeToggle({ value, onChange }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const options = [
-    { v: "breadcrumb", label: "Breadcrumb", icon: "mdi:format-list-bulleted" },
-    { v: "agentgraph", label: "Agent Graph", icon: "mdi:graph-outline" },
-    { v: "agentpath", label: "Agent Path", icon: "mdi:sitemap-outline" },
+    { v: "breadcrumb", label: "Breadcrumb", icon: "solar:list-linear" },
+    { v: "agentgraph", label: "Agent Graph", icon: "solar:graph-linear" },
+    { v: "agentpath", label: "Agent Path", icon: "solar:graph-linear" },
   ];
   return (
-    <Box
-      sx={{
-        display: "inline-flex",
-        p: "3px",
-        borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.06),
-      }}
-    >
-      {options.map((opt) => {
-        const isActive = opt.v === value;
-        return (
-          <Stack
-            key={opt.v}
-            direction="row"
-            alignItems="center"
-            gap={0.4}
-            {...clickable(() => onChange(opt.v), { pressed: isActive })}
-            sx={{
-              ...focusRing,
-              px: 1.25,
-              py: "5px",
-              borderRadius: "6px",
-              cursor: "pointer",
-              bgcolor: isActive
-                ? isDark
-                  ? alpha("#fff", 0.1)
-                  : "#fff"
-                : "transparent",
-              boxShadow: isActive
-                ? isDark
-                  ? "none"
-                  : "0 1px 3px rgba(0,0,0,0.12)"
-                : "none",
-              transition: "all 0.15s",
-            }}
-          >
-            <Iconify
-              icon={opt.icon}
-              width={12}
-              sx={{ color: isActive ? "text.primary" : "text.disabled" }}
-            />
-            <Typography
-              fontSize="11px"
-              fontWeight={isActive ? 600 : 400}
-              sx={{
-                color: isActive ? "text.primary" : "text.disabled",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {opt.label}
-            </Typography>
-          </Stack>
-        );
-      })}
-    </Box>
+    <SegmentedTabs value={value} onChange={(_, v) => onChange(v)}>
+      {options.map((opt) => (
+        <Tab
+          key={opt.v}
+          value={opt.v}
+          label={opt.label}
+          icon={<Iconify icon={opt.icon} width={12} />}
+          iconPosition="start"
+        />
+      ))}
+    </SegmentedTabs>
   );
 }
 ViewModeToggle.propTypes = {
@@ -1667,70 +1594,41 @@ ViewModeToggle.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
+function TabDot({ color, active }) {
+  return (
+    <Box
+      sx={{
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        bgcolor: color,
+        opacity: active ? 1 : 0.5,
+      }}
+    />
+  );
+}
+TabDot.propTypes = {
+  color: PropTypes.string,
+  active: PropTypes.bool,
+};
+
 function ReelTabs({ value, onChange }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const opts = [
     { v: "fail", label: "Failing", dot: FAIL_COLOR },
     { v: "pass", label: "Working", dot: PASS_COLOR },
   ];
   return (
-    <Box
-      sx={{
-        display: "inline-flex",
-        p: "3px",
-        borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.06),
-      }}
-    >
-      {opts.map(({ v, label, dot }) => {
-        const isActive = value === v;
-        return (
-          <Stack
-            key={v}
-            direction="row"
-            alignItems="center"
-            gap={0.5}
-            {...clickable(() => onChange(v), { pressed: isActive })}
-            sx={{
-              ...focusRing,
-              px: 1.25,
-              py: "5px",
-              borderRadius: "6px",
-              cursor: "pointer",
-              bgcolor: isActive
-                ? isDark
-                  ? alpha("#fff", 0.1)
-                  : "#fff"
-                : "transparent",
-              boxShadow:
-                isActive && !isDark ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
-              transition: "all 0.15s",
-            }}
-          >
-            <Box
-              sx={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                bgcolor: dot,
-                opacity: isActive ? 1 : 0.5,
-              }}
-            />
-            <Typography
-              fontSize="11px"
-              fontWeight={isActive ? 600 : 500}
-              sx={{
-                color: isActive ? "text.primary" : "text.disabled",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {label}
-            </Typography>
-          </Stack>
-        );
-      })}
-    </Box>
+    <SegmentedTabs value={value} onChange={(_, v) => onChange(v)}>
+      {opts.map(({ v, label, dot }) => (
+        <Tab
+          key={v}
+          value={v}
+          label={label}
+          icon={<TabDot color={dot} active={value === v} />}
+          iconPosition="start"
+        />
+      ))}
+    </SegmentedTabs>
   );
 }
 ReelTabs.propTypes = {
@@ -1739,8 +1637,6 @@ ReelTabs.propTypes = {
 };
 
 function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [viewMode, setViewMode] = useState("breadcrumb");
   const [activeReel, setActiveReel] = useState("fail");
   const [splitView, setSplitView] = useState(false);
@@ -1771,13 +1667,16 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const isTraceFail = trace?.status === TRACE_STATUS.FAIL;
 
   const metaItems = [
-    shortId && { icon: "mdi:sitemap-outline", text: shortId, mono: true },
+    shortId && { icon: "solar:graph-linear", text: shortId, mono: true },
     summary.latency_ms != null && {
-      icon: "mdi:timer-outline",
+      icon: "solar:clock-circle-linear",
       text: `${summary.latency_ms}ms`,
     },
-    tokens != null && { icon: "mdi:text-box-outline", text: `${tokens} tok` },
-    cost != null && { icon: "mdi:currency-usd", text: cost.toFixed(4) },
+    tokens != null && { icon: "solar:notes-linear", text: `${tokens} tok` },
+    cost != null && {
+      icon: "solar:dollar-minimalistic-linear",
+      text: cost.toFixed(4),
+    },
   ].filter(Boolean);
 
   return (
@@ -1787,7 +1686,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
         border: "1px solid",
         borderColor: "divider",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "background.paper",
+        bgcolor: "background.paper",
       }}
     >
       {/* ── Header — matches the other section headings (icon + uppercase) ── */}
@@ -1801,20 +1700,20 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
           py: 1.1,
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.018),
+          bgcolor: "action.hover",
         }}
       >
         <Stack direction="row" alignItems="center" gap={0.75}>
           <Iconify
-            icon="mdi:file-search-outline"
+            icon="solar:file-search-linear"
             width={14}
             sx={{ color: "text.disabled" }}
           />
           <Typography
-            fontSize="11px"
+            fontSize="12px"
             fontWeight={600}
             color="text.secondary"
-            sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+            sx={{ textTransform: "none", letterSpacing: 0 }}
           >
             Trace Evidence
           </Typography>
@@ -1836,26 +1735,21 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
               <Iconify
                 icon={
                   splitView
-                    ? "mdi:view-sequential-outline"
-                    : "mdi:compare-horizontal"
+                    ? "solar:list-linear"
+                    : "solar:transfer-horizontal-linear"
                 }
-                width={13}
+                width={14}
               />
             }
             onClick={() => setSplitView((v) => !v)}
             sx={{
-              height: 28,
-              fontSize: "11.5px",
-              fontWeight: 600,
-              borderRadius: "6px",
-              textTransform: "none",
               // Dark theme: translucent lift avoids flat mismatch against header strip.
               color: "text.primary",
-              borderColor: isDark ? alpha("#fff", 0.16) : "divider",
-              bgcolor: isDark ? alpha("#fff", 0.05) : "background.paper",
+              borderColor: "divider",
+              bgcolor: "background.paper",
               "&:hover": {
-                borderColor: isDark ? alpha("#fff", 0.3) : "text.secondary",
-                bgcolor: isDark ? alpha("#fff", 0.09) : alpha("#000", 0.04),
+                borderColor: "text.secondary",
+                bgcolor: "action.selected",
               },
             }}
           >
@@ -1876,7 +1770,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             py: 0.85,
             borderBottom: "1px solid",
             borderColor: "divider",
-            bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
+            bgcolor: "action.hover",
           }}
         >
           <Stack
@@ -1894,11 +1788,11 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
               }}
             />
             <Typography
-              fontSize="10px"
-              fontWeight={700}
+              fontSize="12px"
+              fontWeight={600}
               sx={{
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
+                textTransform: "none",
+                letterSpacing: 0,
                 color: isTraceFail ? FAIL_COLOR : PASS_COLOR,
               }}
             >
@@ -1915,11 +1809,11 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             >
               <Iconify
                 icon={m.icon}
-                width={11}
+                width={12}
                 sx={{ color: "text.disabled" }}
               />
               <Typography
-                fontSize="10.5px"
+                fontSize="12px"
                 sx={{
                   color: "text.secondary",
                   fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -1975,7 +1869,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             >
               <ReelColumn
                 title="Failing trace"
-                accentColor={FAIL_COLOR}
+                role="danger"
                 steps={failReel}
                 isFailReel
                 emptyMessage="No failing-trace evidence available."
@@ -1983,7 +1877,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
               <ReelColumn
                 title="Working trace"
                 headerMeta={hasPassing ? "nearest passing run" : undefined}
-                accentColor={PASS_COLOR}
+                role="success"
                 steps={passReel}
                 isFailReel={false}
                 emptyMessage="No matching passing trace found for this issue yet."
@@ -2003,19 +1897,17 @@ TraceEvidence.propTypes = {
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
 function CoOccurringIssues({ issues }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const severityColors = {
-    critical: "#DB2F2D",
-    high: "#F5A623",
-    medium: "#F5A623",
-    low: "#5ACE6D",
+  const severityRoles = {
+    critical: "danger",
+    high: "warning",
+    medium: "warning",
+    low: "success",
   };
 
   return (
     <Stack gap={0.5}>
       {issues.map((issue) => {
-        const sColor = severityColors[issue.severity] || "#888";
+        const sRole = severityRoles[issue.severity] || "neutral";
         return (
           <Stack
             key={issue.id}
@@ -2028,14 +1920,12 @@ function CoOccurringIssues({ issues }) {
               border: "1px solid",
               borderColor: "divider",
               borderRadius: "6px",
-              bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+              bgcolor: "transparent",
               cursor: "pointer",
               transition: "all 0.15s",
               "&:hover": {
-                borderColor: alpha("#7857FC", 0.35),
-                bgcolor: isDark
-                  ? alpha("#7857FC", 0.06)
-                  : alpha("#7857FC", 0.03),
+                borderColor: "status.discovery.border",
+                bgcolor: "status.discovery.bg",
               },
             }}
           >
@@ -2048,7 +1938,7 @@ function CoOccurringIssues({ issues }) {
               >
                 {issue.title}
               </Typography>
-              <Typography fontSize="10px" color="text.disabled">
+              <Typography fontSize="12px" color="text.disabled">
                 {issue.type}
               </Typography>
             </Stack>
@@ -2056,19 +1946,14 @@ function CoOccurringIssues({ issues }) {
               label={`${Math.round(issue.co_occurrence * 100)}% co-occurrence`}
               size="small"
               sx={{
-                height: 16,
-                fontSize: "10px",
-                fontWeight: 600,
-                borderRadius: "3px",
-                bgcolor: alpha(sColor, 0.1),
-                color: textTone(sColor),
-                "& .MuiChip-label": { px: "6px" },
+                bgcolor: `status.${sRole}.bg`,
+                color: `status.${sRole}.fg`,
                 flexShrink: 0,
               }}
             />
             <Iconify
-              icon="mdi:chevron-right"
-              width={13}
+              icon="solar:alt-arrow-right-linear"
+              width={14}
               sx={{ color: "text.disabled", flexShrink: 0 }}
             />
           </Stack>
@@ -2081,9 +1966,6 @@ CoOccurringIssues.propTypes = { issues: PropTypes.array.isRequired };
 
 // ── Probable root causes ──────────────────────────────────────────────────────
 function RootCauses({ causes }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   return (
     <Stack gap={0.75}>
       {causes.map((c) => {
@@ -2098,7 +1980,7 @@ function RootCauses({ causes }) {
               borderColor: "divider",
               borderRadius: "6px",
               p: 1.25,
-              bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+              bgcolor: "transparent",
             }}
           >
             <Stack direction="row" alignItems="flex-start" gap={1}>
@@ -2142,28 +2024,24 @@ RootCauses.propTypes = { causes: PropTypes.array.isRequired };
 // ── Recommendations ──────────────────────────────────────────────────────────
 const PRIORITY_META = {
   critical: {
-    color: "#DB2F2D",
-    darkColor: "#E87876",
+    role: "danger",
     label: "Critical",
-    icon: "mdi:alert-circle",
+    icon: "solar:danger-circle-linear",
   },
   high: {
-    color: "#F5A623",
-    darkColor: "#F5A623",
+    role: "warning",
     label: "High",
-    icon: "mdi:alert-circle-outline",
+    icon: "solar:danger-circle-linear",
   },
   medium: {
-    color: "#2F7CF7",
-    darkColor: "#78AAFA",
+    role: "info",
     label: "Medium",
-    icon: "mdi:information-outline",
+    icon: "solar:info-circle-linear",
   },
   low: {
-    color: "#5ACE6D",
-    darkColor: "#5ACE6D",
+    role: "success",
     label: "Low",
-    icon: "mdi:check-circle-outline",
+    icon: "solar:check-circle-linear",
   },
 };
 // Shared sub-heading style inside expanded card
@@ -2172,10 +2050,10 @@ function RecSectionLabel({ icon, label }) {
     <Stack direction="row" alignItems="center" gap={0.5} mb={0.65}>
       <Iconify icon={icon} width={12} sx={{ color: "text.secondary" }} />
       <Typography
-        fontSize="9.5px"
-        fontWeight={700}
+        fontSize="12px"
+        fontWeight={600}
         color="text.secondary"
-        sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+        sx={{ textTransform: "none", letterSpacing: 0 }}
       >
         {label}
       </Typography>
@@ -2184,10 +2062,9 @@ function RecSectionLabel({ icon, label }) {
 }
 RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
-function RecommendationCard({ rec, rootCauses, isDark }) {
+function RecommendationCard({ rec, rootCauses }) {
   const [expanded, setExpanded] = useState(false);
-  const pmBase = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
-  const pm = { ...pmBase, color: isDark ? pmBase.darkColor : pmBase.color };
+  const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
   const linkedCause = rootCauses?.find((c) => c.rank === rec.root_cause_link);
 
   return (
@@ -2197,7 +2074,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
         borderColor: "divider",
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.025) : "background.paper",
+        bgcolor: "background.paper",
       }}
     >
       {/* Header row */}
@@ -2211,7 +2088,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
           py: 1,
           cursor: "pointer",
           "&:hover": {
-            bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.02),
+            bgcolor: "action.hover",
           },
         }}
         {...clickable(() => setExpanded((v) => !v), { expanded })}
@@ -2225,18 +2102,18 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                 py: 0.15,
                 borderRadius: "4px",
                 flexShrink: 0,
-                bgcolor: isDark ? alpha(pm.color, 0.2) : alpha(pm.color, 0.14),
+                bgcolor: `status.${pm.role}.bg`,
                 border: "1px solid",
-                borderColor: alpha(pm.color, 0.3),
+                borderColor: `status.${pm.role}.border`,
               }}
             >
               <Typography
-                fontSize="9px"
-                fontWeight={700}
+                fontSize="12px"
+                fontWeight={600}
                 sx={{
-                  color: textTone(pm.color),
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  color: `status.${pm.role}.fg`,
+                  textTransform: "none",
+                  letterSpacing: 0,
                 }}
               >
                 {pm.label}
@@ -2252,7 +2129,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             </Typography>
           </Stack>
           <Typography
-            fontSize="11px"
+            fontSize="12px"
             color="text.disabled"
             noWrap
             sx={{ mt: 0.2 }}
@@ -2261,7 +2138,11 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
           </Typography>
         </Stack>
         <Iconify
-          icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
           width={16}
           sx={{ color: "text.disabled", flexShrink: 0 }}
         />
@@ -2281,12 +2162,9 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
           <Stack gap={1.5}>
             {/* Description */}
             <Box>
-              <RecSectionLabel
-                icon="mdi:text-box-outline"
-                label="Description"
-              />
+              <RecSectionLabel icon="solar:notes-linear" label="Description" />
               <Typography
-                fontSize="11.5px"
+                fontSize="12px"
                 color="text.primary"
                 sx={{ lineHeight: 1.65 }}
               >
@@ -2297,7 +2175,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             {/* Suggested fix */}
             <Box>
               <RecSectionLabel
-                icon="mdi:wrench-outline"
+                icon="solar:toolbox-linear"
                 label="Suggested fix"
               />
               <Box
@@ -2305,13 +2183,13 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                   px: 1.25,
                   py: 1,
                   borderRadius: "6px",
-                  bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+                  bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
                 }}
               >
                 <Typography
-                  fontSize="11.5px"
+                  fontSize="12px"
                   color="text.primary"
                   sx={{
                     lineHeight: 1.65,
@@ -2328,11 +2206,11 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             {rec.insights && (
               <Box>
                 <RecSectionLabel
-                  icon="mdi:lightbulb-outline"
+                  icon="solar:lightbulb-linear"
                   label="Insights"
                 />
                 <Typography
-                  fontSize="11.5px"
+                  fontSize="12px"
                   color="text.primary"
                   sx={{ lineHeight: 1.65 }}
                 >
@@ -2344,7 +2222,10 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             {/* Evidence */}
             {rec.evidence?.length > 0 && (
               <Box>
-                <RecSectionLabel icon="mdi:magnify" label="Evidence" />
+                <RecSectionLabel
+                  icon="solar:magnifier-linear"
+                  label="Evidence"
+                />
                 <Stack gap={0.55}>
                   {rec.evidence.map((e, i) => (
                     <Stack
@@ -2364,7 +2245,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                         }}
                       />
                       <Typography
-                        fontSize="11px"
+                        fontSize="12px"
                         color="text.primary"
                         sx={{ lineHeight: 1.6 }}
                       >
@@ -2379,7 +2260,10 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             {/* Root Cause link */}
             {linkedCause && (
               <Box>
-                <RecSectionLabel icon="mdi:magnify-scan" label="Root Cause" />
+                <RecSectionLabel
+                  icon="solar:magnifier-linear"
+                  label="Root Cause"
+                />
                 <Stack
                   direction="row"
                   alignItems="flex-start"
@@ -2388,16 +2272,14 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                     px: 1.25,
                     py: 0.9,
                     borderRadius: "6px",
-                    bgcolor: isDark
-                      ? alpha("#fff", 0.03)
-                      : alpha("#000", 0.025),
+                    bgcolor: "action.hover",
                     border: "1px solid",
                     borderColor: "divider",
                   }}
                 >
                   <Typography
-                    fontSize="10px"
-                    fontWeight={700}
+                    fontSize="12px"
+                    fontWeight={600}
                     color="text.disabled"
                     sx={{ flexShrink: 0, mt: "1px" }}
                   >
@@ -2405,7 +2287,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                   </Typography>
                   <Stack gap={0.2} minWidth={0}>
                     <Typography
-                      fontSize="11.5px"
+                      fontSize="12px"
                       fontWeight={600}
                       color="text.primary"
                       noWrap
@@ -2413,7 +2295,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                       {linkedCause.title}
                     </Typography>
                     <Typography
-                      fontSize="11px"
+                      fontSize="12px"
                       color="text.secondary"
                       sx={{ lineHeight: 1.55 }}
                     >
@@ -2432,22 +2314,14 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
 RecommendationCard.propTypes = {
   rec: PropTypes.object.isRequired,
   rootCauses: PropTypes.array,
-  isDark: PropTypes.bool,
 };
 
 function Recommendations({ recs, rootCauses }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   if (!recs?.length) return null;
   return (
     <Stack gap={0.75}>
       {recs.map((rec) => (
-        <RecommendationCard
-          key={rec.id}
-          rec={rec}
-          rootCauses={rootCauses}
-          isDark={isDark}
-        />
+        <RecommendationCard key={rec.id} rec={rec} rootCauses={rootCauses} />
       ))}
     </Stack>
   );
@@ -2461,7 +2335,7 @@ Recommendations.propTypes = {
 function DeepAnalysisResults({ rootCauses, recommendations }) {
   if (!rootCauses?.length && !recommendations?.length) {
     return (
-      <Typography fontSize="11px" color="text.disabled" sx={{ py: 1 }}>
+      <Typography fontSize="12px" color="text.disabled" sx={{ py: 1 }}>
         Deep analysis completed but found no issues worth surfacing.
       </Typography>
     );
@@ -2469,15 +2343,12 @@ function DeepAnalysisResults({ rootCauses, recommendations }) {
   return (
     <Stack gap={1.75}>
       {rootCauses?.length > 0 && (
-        <SectionCard title="Probable Root Cause" icon="mdi:magnify-scan">
+        <SectionCard title="Probable Root Cause" icon="solar:magnifier-linear">
           <RootCauses causes={rootCauses} />
         </SectionCard>
       )}
       {recommendations?.length > 0 && (
-        <SectionCard
-          title="Recommendations"
-          icon="mdi:lightbulb-on-outline"
-        >
+        <SectionCard title="Recommendations" icon="solar:lightbulb-linear">
           <Recommendations recs={recommendations} rootCauses={rootCauses} />
         </SectionCard>
       )}
@@ -2494,8 +2365,6 @@ export default function OverviewTab({ _error: currentError }) {
   const [leftWidth, setLeftWidth] = useState(347);
   const containerRef = useRef(null);
   const isDraggingRef = useRef(false);
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const clusterId = currentError?.cluster_id;
   // A cluster's modality (text vs voice) decides the per-trace surface —
   // the BE derives it from the project's voice agent definition.
@@ -2567,7 +2436,7 @@ export default function OverviewTab({ _error: currentError }) {
       {(patternSummary?.insights ?? []).some((i) => i && i.title) && (
         <SectionCard
           title="Patterns across the issue"
-          icon="mdi:clipboard-text-outline"
+          icon="solar:clipboard-linear"
         >
           <PatternSummary summary={patternSummary} />
         </SectionCard>
@@ -2584,7 +2453,7 @@ export default function OverviewTab({ _error: currentError }) {
           borderColor: "divider",
           borderRadius: "8px",
           overflow: "hidden",
-          bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
+          bgcolor: "background.paper",
         }}
       >
         {/* ── LEFT PANEL: chart + trace list ── */}
@@ -2624,7 +2493,7 @@ export default function OverviewTab({ _error: currentError }) {
               borderColor: "divider",
             }}
           >
-            <Typography fontSize="11px" fontWeight={600} color="text.secondary">
+            <Typography fontSize="12px" fontWeight={600} color="text.secondary">
               Traces affected
             </Typography>
             {isOverviewLoading && !overview ? (
@@ -2633,16 +2502,16 @@ export default function OverviewTab({ _error: currentError }) {
                 height={14}
                 sx={{
                   borderRadius: "4px",
-                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                  bgcolor: "action.selected",
                 }}
               />
             ) : (
               <Typography
-                fontSize="11px"
+                fontSize="12px"
                 fontWeight={600}
                 sx={{
                   color: "text.disabled",
-                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                  bgcolor: "action.selected",
                   px: 0.75,
                   py: 0.1,
                   borderRadius: "4px",
@@ -2663,7 +2532,7 @@ export default function OverviewTab({ _error: currentError }) {
             />
             {repTotal > traces.length && (
               <Typography
-                fontSize="11px"
+                fontSize="12px"
                 color="text.disabled"
                 sx={{ px: 1.5, py: 1, textAlign: "center" }}
               >
@@ -2692,7 +2561,7 @@ export default function OverviewTab({ _error: currentError }) {
             position: "relative",
             transition: "background 0.15s",
             "&:hover": {
-              bgcolor: isDark ? alpha("#7857FC", 0.18) : alpha("#7857FC", 0.1),
+              bgcolor: "status.discovery.bg",
             },
             "&:hover .drag-dots": { opacity: 1 },
           }}
@@ -2719,7 +2588,7 @@ export default function OverviewTab({ _error: currentError }) {
                   width: 3,
                   height: 3,
                   borderRadius: "50%",
-                  bgcolor: isDark ? alpha("#fff", 0.35) : alpha("#000", 0.25),
+                  bgcolor: "action.selected",
                 }}
               />
             ))}
@@ -2758,7 +2627,7 @@ export default function OverviewTab({ _error: currentError }) {
               sx={{ height: "100%", p: 4 }}
             >
               <Iconify
-                icon="mdi:file-search-outline"
+                icon="solar:file-search-linear"
                 width={40}
                 sx={{ color: "text.disabled", mb: 1.5 }}
               />
@@ -2771,7 +2640,7 @@ export default function OverviewTab({ _error: currentError }) {
               {currentError?.source === "eval" ? (
                 <SectionCard
                   title={isVoice ? "Voice call" : "Input / Output"}
-                  icon={isVoice ? "mdi:phone-outline" : "mdi:code-tags"}
+                  icon={isVoice ? "solar:phone-linear" : "solar:code-linear"}
                   collapsible
                 >
                   {isVoice ? (

@@ -69865,7 +69865,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         icon: {
           title: "Icon",
           type: "string",
-          default: "mdi:star",
+          default: "solar:star-bold",
           maxLength: 50,
           minLength: 1,
         },

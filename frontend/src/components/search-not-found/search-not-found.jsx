@@ -1,21 +1,14 @@
 import React from "react";
 import PropTypes from "prop-types";
 
-import Paper from "@mui/material/Paper";
+import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 
 // ----------------------------------------------------------------------
 
 export default function SearchNotFound({ query, sx, ...other }) {
   return query ? (
-    <Paper
-      sx={{
-        bgcolor: "unset",
-        textAlign: "center",
-        ...sx,
-      }}
-      {...other}
-    >
+    <Box sx={{ bgcolor: "unset", textAlign: "center", ...sx }} {...other}>
       <Typography variant="h6" gutterBottom>
         Not Found
       </Typography>
@@ -25,7 +18,7 @@ export default function SearchNotFound({ query, sx, ...other }) {
         <strong>&quot;{query}&quot;</strong>.
         <br /> Try checking for typos or using complete words.
       </Typography>
-    </Paper>
+    </Box>
   ) : (
     <Typography variant="body2" sx={sx}>
       Please enter keywords

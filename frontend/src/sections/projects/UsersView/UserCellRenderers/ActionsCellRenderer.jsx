@@ -52,7 +52,7 @@ const ActionsCellRenderer = (props) => {
         size="small"
         ref={buttonRef}
         onClick={handleClick}
-        sx={{ px: 2, py: 0, borderColor: "divider" }}
+        sx={{ borderColor: "divider" }}
         startIcon={
           <SvgColor
             src="/assets/icons/action_buttons/ic_configure.svg"
@@ -60,7 +60,7 @@ const ActionsCellRenderer = (props) => {
           />
         }
       >
-        <Iconify icon="mingcute:down-line" color="text.disabled" />
+        <Iconify icon="solar:alt-arrow-down-linear" color="text.disabled" />
       </Button>
 
       <Popover
@@ -73,11 +73,11 @@ const ActionsCellRenderer = (props) => {
           sx: {
             mt: 1,
             minWidth: 220,
-            boxShadow: 0,
+            boxShadow: "none",
             p: 1,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             transform: "translateX(-32px) !important",
           },
         }}
@@ -89,10 +89,6 @@ const ActionsCellRenderer = (props) => {
               display: "flex",
               alignItems: "center",
               gap: 1,
-              fontWeight: "fontWeightRegular",
-              "&:hover, &:active": {
-                fontWeight: "fontWeightMedium",
-              },
             }}
           >
             <SvgColor src="/assets/icons/navbar/ic_llm.svg" sx={iconStyles} />
@@ -104,10 +100,6 @@ const ActionsCellRenderer = (props) => {
               display: "flex",
               alignItems: "center",
               gap: 1,
-              fontWeight: "fontWeightRegular",
-              "&:hover, &:active": {
-                fontWeight: "fontWeightMedium",
-              },
             }}
           >
             <SvgColor

@@ -6,16 +6,10 @@ import {
   ListItemText,
   TextField,
   InputAdornment,
-  Chip,
+  Typography,
   Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-
-const TYPE_COLORS = {
-  string: "info",
-  number: "warning",
-  boolean: "success",
-};
 
 const AttributeKeyList = ({
   keys,
@@ -30,9 +24,9 @@ const AttributeKeyList = ({
   return (
     <Box
       sx={{
-        width: 300,
+        width: 280,
         borderRight: 1,
-        borderColor: "divider",
+        borderColor: "border.default",
         display: "flex",
         flexDirection: "column",
       }}
@@ -48,7 +42,7 @@ const AttributeKeyList = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -76,7 +70,7 @@ const AttributeKeyList = ({
             key={key}
             selected={selectedKey === key}
             onClick={() => onSelectKey(key)}
-            sx={{ borderRadius: 1, py: 0.75 }}
+            sx={{ borderRadius: "6px", py: 0.5 }}
           >
             <ListItemText
               primary={key}
@@ -86,19 +80,21 @@ const AttributeKeyList = ({
                   : "Recent attribute"
               }
               primaryTypographyProps={{
-                variant: "body2",
-                fontWeight: selectedKey === key ? 600 : 400,
+                fontSize: 13,
+                fontWeight: selectedKey === key ? 500 : 400,
                 noWrap: true,
               }}
-              secondaryTypographyProps={{ variant: "caption" }}
+              secondaryTypographyProps={{
+                fontSize: 12,
+                color: "text.tertiary",
+              }}
             />
-            <Chip
-              label={type}
-              size="small"
-              color={TYPE_COLORS[type] || "default"}
-              variant="outlined"
-              sx={{ ml: 1, height: 20, fontSize: "0.65rem" }}
-            />
+            <Typography
+              component="span"
+              sx={{ ml: 1, fontSize: 12, color: "text.tertiary" }}
+            >
+              {type}
+            </Typography>
           </ListItemButton>
         ))}
         {keys.length === 0 && !hasMore && (

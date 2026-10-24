@@ -28,7 +28,7 @@ function FormField({ label, value, onChange, readOnly }) {
       gap={0}
       sx={{
         border: "1px solid",
-        borderColor: "whiteScale.500",
+        borderColor: "divider",
         borderRadius: (theme) => theme.spacing(0.5, 0.5, 0, 0),
         overflow: "hidden",
         ...(readOnly && { opacity: 0.6 }),
@@ -36,13 +36,10 @@ function FormField({ label, value, onChange, readOnly }) {
     >
       <Box
         sx={{
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "background.paper"
-              : "whiteScale.200",
+          bgcolor: "background.neutral",
           padding: 1,
           borderBottom: "1px solid",
-          borderColor: "whiteScale.500",
+          borderColor: "divider",
         }}
       >
         <Typography

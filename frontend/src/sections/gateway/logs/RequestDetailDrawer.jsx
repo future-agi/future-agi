@@ -21,22 +21,22 @@ import {
   TableRow,
   Skeleton,
   Tooltip,
-  Card,
-  CardContent,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
 import { formatCost } from "../utils/formatters";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DRAWER_WIDTH = { xs: "100vw", sm: "60vw" };
-const DRAWER_MIN_WIDTH = 400;
-const DRAWER_MAX_WIDTH = 800;
+const DRAWER_MIN_WIDTH = 480;
+const DRAWER_MAX_WIDTH = 960;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,14 +103,14 @@ function JsonViewer({ data, label }) {
             onClick={handleCopy}
             sx={{ position: "absolute", top: 8, right: 8 }}
           >
-            <Iconify icon="mdi:content-copy" width={18} />
+            <Iconify icon="solar:copy-linear" width={20} />
           </IconButton>
         </Tooltip>
         <pre
           style={{
             margin: 0,
             fontFamily: "monospace",
-            fontSize: "0.8rem",
+            fontSize: "13px",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
@@ -136,7 +136,7 @@ function HeadersAccordion({ title, headers }) {
     return (
       <Accordion>
         <AccordionSummary
-          expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+          expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
         >
           <Typography variant="subtitle2">{title}</Typography>
         </AccordionSummary>
@@ -152,7 +152,7 @@ function HeadersAccordion({ title, headers }) {
   return (
     <Accordion>
       <AccordionSummary
-        expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+        expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
         <Typography variant="subtitle2">{title}</Typography>
       </AccordionSummary>
@@ -167,13 +167,13 @@ function HeadersAccordion({ title, headers }) {
           <TableBody>
             {Object.entries(headers).map(([key, value]) => (
               <TableRow key={key}>
-                <TableCell sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                <TableCell sx={{ fontFamily: "monospace", fontSize: "13px" }}>
                   {key}
                 </TableCell>
                 <TableCell
                   sx={{
                     fontFamily: "monospace",
-                    fontSize: "0.8rem",
+                    fontSize: "13px",
                     wordBreak: "break-all",
                   }}
                 >
@@ -202,31 +202,31 @@ function OverviewTab({ log }) {
       key: "isStream",
       label: "Streaming",
       value: log.is_stream,
-      icon: <Iconify icon="mdi:arrow-right-bold-outline" width={18} />,
+      icon: <Iconify icon="solar:arrow-right-linear" width={20} />,
     },
     {
       key: "cacheHit",
       label: "Cache Hit",
       value: log.cache_hit,
-      icon: <Iconify icon="mdi:cached" width={18} />,
+      icon: <Iconify icon="solar:refresh-linear" width={20} />,
     },
     {
       key: "fallbackUsed",
       label: "Fallback Used",
       value: log.fallback_used,
-      icon: <Iconify icon="mdi:swap-horizontal" width={18} />,
+      icon: <Iconify icon="solar:transfer-horizontal-linear" width={20} />,
     },
     {
       key: "guardrailTriggered",
       label: "Guardrail Triggered",
       value: log.guardrail_triggered,
-      icon: <Iconify icon="mdi:shield-outline" width={18} />,
+      icon: <Iconify icon="solar:shield-linear" width={20} />,
     },
     {
       key: "isError",
       label: "Error",
       value: log.is_error,
-      icon: <Iconify icon="mdi:alert-circle-outline" width={18} />,
+      icon: <Iconify icon="solar:danger-circle-linear" width={20} />,
     },
   ];
 
@@ -405,10 +405,10 @@ function GuardrailsTab({ log }) {
             <Iconify
               icon={
                 overallAction === "block"
-                  ? "mdi:shield-off-outline"
-                  : "mdi:shield-alert-outline"
+                  ? "solar:shield-cross-linear"
+                  : "solar:shield-warning-linear"
               }
-              width={22}
+              width={20}
             />
           }
         >
@@ -420,43 +420,41 @@ function GuardrailsTab({ log }) {
 
       {/* Individual check cards */}
       {checks.map((gr, idx) => (
-        <Card key={idx} variant="outlined">
-          <CardContent>
-            <Stack spacing={1}>
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                justifyContent="space-between"
-              >
-                <Typography variant="subtitle2">{gr.name}</Typography>
-                <Chip
-                  label={gr.action}
-                  size="small"
-                  color={gr.action === "block" ? "error" : "warning"}
-                  variant="outlined"
-                />
-              </Stack>
-              {(gr.score != null || gr.confidence != null) && (
-                <Typography variant="body2" color="text.secondary">
-                  Score: {gr.score ?? gr.confidence}
-                  {gr.threshold != null ? ` / Threshold: ${gr.threshold}` : ""}
-                </Typography>
-              )}
-              {gr.latency_ms != null && (
-                <Typography variant="body2" color="text.secondary">
-                  Latency: {gr.latency_ms}ms
-                </Typography>
-              )}
-              {(gr.message || gr.details) && (
-                <Typography variant="body2" color="text.secondary">
-                  {gr.message || gr.details}
-                </Typography>
-              )}
-              <FeedbackWidget requestLogId={log.id} checkName={gr.name} />
+        <Section variant="panel" key={idx}>
+          <Stack spacing={1}>
+            <Stack
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              justifyContent="space-between"
+            >
+              <Typography variant="subtitle2">{gr.name}</Typography>
+              <Chip
+                label={gr.action}
+                size="small"
+                color={gr.action === "block" ? "error" : "warning"}
+                variant="outlined"
+              />
             </Stack>
-          </CardContent>
-        </Card>
+            {(gr.score != null || gr.confidence != null) && (
+              <Typography variant="body2" color="text.secondary">
+                Score: {gr.score ?? gr.confidence}
+                {gr.threshold != null ? ` / Threshold: ${gr.threshold}` : ""}
+              </Typography>
+            )}
+            {gr.latency_ms != null && (
+              <Typography variant="body2" color="text.secondary">
+                Latency: {gr.latency_ms}ms
+              </Typography>
+            )}
+            {(gr.message || gr.details) && (
+              <Typography variant="body2" color="text.secondary">
+                {gr.message || gr.details}
+              </Typography>
+            )}
+            <FeedbackWidget requestLogId={log.id} checkName={gr.name} />
+          </Stack>
+        </Section>
       ))}
     </Stack>
   );
@@ -489,6 +487,8 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
     tabs.push({ label: "Guardrails", value: 4 });
   }
 
+  const covered = useDrawerCovered(open);
+
   // =========================================================================
   // Render
   // =========================================================================
@@ -499,6 +499,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       open={open}
       onClose={onClose}
       sx={{
+        ...coveredDrawerSx(covered),
         "& .MuiDrawer-paper": {
           width: DRAWER_WIDTH,
           minWidth: DRAWER_MIN_WIDTH,
@@ -548,7 +549,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
         </Stack>
 
         <IconButton onClick={onClose} edge="end">
-          <Iconify icon="mdi:close" width={20} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Stack>
 
@@ -630,24 +631,23 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       )}
 
       {/* ---- Loading spinner ---- */}
-      {isLoading && (
-        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
-      )}
+      {isLoading && <LoadingScreen variant="orbit" sx={{ flex: 1 }} />}
 
       {/* ---- Detail content ---- */}
       {!isLoading && log && (
         <>
-          <Tabs
-            value={activeTab}
-            onChange={(_e, v) => setActiveTab(v)}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}
-          >
-            {tabs.map((t) => (
-              <Tab key={t.value} label={t.label} value={t.value} />
-            ))}
-          </Tabs>
+          <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
+            <Tabs
+              value={activeTab}
+              onChange={(_e, v) => setActiveTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              {tabs.map((t) => (
+                <Tab key={t.value} label={t.label} value={t.value} />
+              ))}
+            </Tabs>
+          </Box>
 
           <Box sx={{ flex: 1, overflowY: "auto" }}>
             {activeTab === 0 && <OverviewTab log={log} />}

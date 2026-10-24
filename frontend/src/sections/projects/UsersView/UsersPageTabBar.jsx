@@ -144,7 +144,7 @@ const UsersPageTabBar = ({
         <FixedTab
           tabKey={ALL_USERS_KEY}
           label={ALL_USERS_LABEL}
-          icon="mdi:account-multiple-outline"
+          icon="solar:users-group-rounded-linear"
           shortcut="1"
           isActive={activeTab === ALL_USERS_KEY}
           onClick={onTabChange}
@@ -220,7 +220,7 @@ const UsersPageTabBar = ({
             }}
           >
             <Iconify
-              icon="mdi:plus"
+              icon="solar:add-linear"
               width={16}
               sx={{ color: "text.primary" }}
             />

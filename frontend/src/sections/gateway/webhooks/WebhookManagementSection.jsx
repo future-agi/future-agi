@@ -1,3 +1,4 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -5,7 +6,6 @@ import {
   Typography,
   Button,
   Stack,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -14,7 +14,6 @@ import {
   TableRow,
   TextField,
   Skeleton,
-  Card,
   InputAdornment,
   Tab,
   Tabs,
@@ -25,6 +24,7 @@ import {
   DialogActions,
   Tooltip,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -43,6 +43,16 @@ import {
 import CreateEditWebhookDialog from "./CreateEditWebhookDialog";
 import WebhookEventLog from "./WebhookEventLog";
 import { formatDate } from "../utils/formatters";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 const TAB_SLUGS = ["endpoints", "delivery"];
 
@@ -156,7 +166,7 @@ const WebhookManagementSection = () => {
           <Skeleton width={200} height={40} />
           <Skeleton width={120} height={36} variant="rounded" />
         </Stack>
-        <Card>
+        <Section variant="panel">
           {[...Array(4)].map((_, i) => (
             <Stack
               key={i}
@@ -175,7 +185,7 @@ const WebhookManagementSection = () => {
               <Skeleton width="15%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -194,6 +204,7 @@ const WebhookManagementSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.webhooks}
         title="Webhooks"
         subtitle="Configure webhook endpoints for event notifications"
@@ -202,7 +213,7 @@ const WebhookManagementSection = () => {
             label: "Create Webhook",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setDialogOpen(true),
           },
         ]}
@@ -211,7 +222,7 @@ const WebhookManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label={`Endpoints (${webhooks?.length || 0})`} />
         <Tab label="Delivery Log" />
@@ -228,7 +239,7 @@ const WebhookManagementSection = () => {
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="eva:search-outline" width={18} />
+                  <Iconify icon="solar:magnifier-linear" width={16} />
                 </InputAdornment>
               ),
             }}
@@ -242,7 +253,7 @@ const WebhookManagementSection = () => {
               py={8}
             >
               <Iconify
-                icon="mdi:webhook"
+                icon="solar:link-circle-linear"
                 width={48}
                 sx={{ color: "text.disabled", mb: 2 }}
               />
@@ -254,7 +265,7 @@ const WebhookManagementSection = () => {
               {webhooks?.length === 0 && (
                 <Button
                   variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" width={20} />}
+                  startIcon={<Iconify icon="solar:add-linear" width={20} />}
                   onClick={() => setDialogOpen(true)}
                 >
                   Create Your First Webhook
@@ -272,7 +283,12 @@ const WebhookManagementSection = () => {
                       <TableCell>Events</TableCell>
                       <TableCell>Status</TableCell>
                       <TableCell>Created</TableCell>
-                      <TableCell align="right">Actions</TableCell>
+                      <TableCell
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                        align="right"
+                      >
+                        Actions
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -294,28 +310,17 @@ const WebhookManagementSection = () => {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Stack
-                            direction="row"
-                            spacing={0.5}
-                            flexWrap="wrap"
-                            useFlexGap
-                          >
-                            {(wh.events || []).map((evt) => (
-                              <Chip
-                                key={evt}
-                                label={evt}
-                                size="small"
-                                variant="outlined"
-                                sx={{ fontSize: "0.7rem" }}
-                              />
-                            ))}
-                          </Stack>
+                          <Typography variant="body2" color="text.secondary">
+                            {(wh.events || []).join(" \u00B7 ") || "\u2014"}
+                          </Typography>
                         </TableCell>
                         <TableCell>
-                          <Chip
-                            label={wh.is_active ? "Active" : "Inactive"}
-                            color={wh.is_active ? "success" : "default"}
-                            size="small"
+                          <StatusBadge
+                            status={wh.is_active ? "Active" : "Inactive"}
+                            label={String(wh.is_active ? "Active" : "Inactive")}
+                            role={
+                              CHIP_ROLE[wh.is_active ? "success" : "default"]
+                            }
                           />
                         </TableCell>
                         <TableCell>
@@ -323,7 +328,10 @@ const WebhookManagementSection = () => {
                             {formatDate(wh.created_at)}
                           </Typography>
                         </TableCell>
-                        <TableCell align="right">
+                        <TableCell
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                          align="right"
+                        >
                           <Stack
                             direction="row"
                             spacing={0.5}
@@ -331,18 +339,20 @@ const WebhookManagementSection = () => {
                           >
                             <Tooltip title="Test webhook">
                               <IconButton
+                                className="row-hover-action"
                                 size="small"
                                 onClick={() => handleTest(wh.id)}
                                 disabled={testMutation.isPending}
                               >
                                 <Iconify
-                                  icon="mdi:play-circle-outline"
+                                  icon="solar:play-circle-linear"
                                   width={20}
                                 />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="View events">
                               <IconButton
+                                className="row-hover-action"
                                 size="small"
                                 onClick={() => {
                                   setSelectedWebhookId(wh.id);
@@ -352,27 +362,29 @@ const WebhookManagementSection = () => {
                                   );
                                 }}
                               >
-                                <Iconify
-                                  icon="mdi:format-list-bulleted"
-                                  width={20}
-                                />
+                                <Iconify icon="solar:list-linear" width={20} />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Edit">
                               <IconButton
+                                className="row-hover-action"
                                 size="small"
                                 onClick={() => setEditWebhook(wh)}
                               >
-                                <Iconify icon="mdi:pencil-outline" width={20} />
+                                <Iconify icon="solar:pen-linear" width={20} />
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Delete">
                               <IconButton
+                                className="row-hover-action"
                                 size="small"
                                 color="error"
                                 onClick={() => setDeleteTarget(wh)}
                               >
-                                <Iconify icon="mdi:delete-outline" width={20} />
+                                <Iconify
+                                  icon="solar:trash-bin-trash-linear"
+                                  width={20}
+                                />
                               </IconButton>
                             </Tooltip>
                           </Stack>
@@ -414,7 +426,8 @@ const WebhookManagementSection = () => {
       <Dialog
         open={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
       >
         <DialogTitle>Delete Webhook</DialogTitle>
         <DialogContent>

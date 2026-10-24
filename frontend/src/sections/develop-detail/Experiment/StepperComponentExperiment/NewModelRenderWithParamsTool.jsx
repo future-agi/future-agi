@@ -145,7 +145,7 @@ const NewModelRenderWithParamsTool = ({
         borderColor: "divider",
         padding: 1.5,
         py: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       ref={modelContainerRef}
     >
@@ -158,7 +158,7 @@ const NewModelRenderWithParamsTool = ({
           buttonTitle="Select Model"
           buttonIcon={
             <Iconify
-              icon="radix-icons:box-model"
+              icon="solar:graph-linear"
               width="16px"
               height="16px"
               sx={{
@@ -220,9 +220,6 @@ const NewModelRenderWithParamsTool = ({
                 onClick={(e) => setModelAnchorEl(e.currentTarget)}
                 sx={{
                   width: 22,
-                  height: 22,
-                  padding: "3px",
-                  borderRadius: "2px",
                   backgroundColor: "background.default",
                   border: "1px solid",
                   borderColor: "divider",
@@ -245,9 +242,6 @@ const NewModelRenderWithParamsTool = ({
                 onClick={onRemove}
                 sx={{
                   width: 22,
-                  height: 22,
-                  padding: "3px",
-                  borderRadius: "2px",
                   backgroundColor: "background.default",
                   border: "1px solid",
                   borderColor: "divider",
@@ -278,7 +272,7 @@ const NewModelRenderWithParamsTool = ({
             <Skeleton
               sx={{
                 bgcolor: "background.paper",
-                borderRadius: 0.5,
+                borderRadius: "4px",
               }}
               variant="rounded"
               width="100%"
@@ -295,7 +289,7 @@ const NewModelRenderWithParamsTool = ({
                 borderColor: "divider",
                 backgroundColor: "background.paper",
                 padding: "4px 6px",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 width: "100%",
               }}
             >

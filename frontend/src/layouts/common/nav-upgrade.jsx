@@ -68,7 +68,7 @@ export default function NavUpgrade() {
           >
             <Typography
               sx={{
-                color: "pink.500",
+                color: "text.secondary",
                 fontSize: 12,
                 fontWeight: 600,
               }}
@@ -82,7 +82,7 @@ export default function NavUpgrade() {
               sx={{
                 fontWeight: 500,
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "13px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",

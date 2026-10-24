@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -29,7 +30,7 @@ export default function ColumnChart({ size }) {
     chart: {
       type: "bar",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       toolbar: {
         show: false,
       },
@@ -56,7 +57,7 @@ export default function ColumnChart({ size }) {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : "#90A4AE",
+      borderColor: theme.palette.divider,
     },
     tooltip: {
       theme: isDark ? "dark" : "light",

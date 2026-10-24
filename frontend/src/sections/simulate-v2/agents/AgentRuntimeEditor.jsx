@@ -18,7 +18,12 @@ const valid = (u) => /^(https?|wss?):\/\/\S+$/i.test(u.trim());
  * variant "embedded": the same, inside an environment's test-subject card.
  * variant "inline": the editor inside the Connection tab.
  */
-export default function AgentRuntimeEditor({ agent, current, variant = "prompt", onDone }) {
+export default function AgentRuntimeEditor({
+  agent,
+  current,
+  variant = "prompt",
+  onDone,
+}) {
   const { setAgentRuntime } = useConnectedAgents();
   const { enqueueSnackbar } = useSnackbar();
   const [value, setValue] = useState(current || "");
@@ -26,37 +31,89 @@ export default function AgentRuntimeEditor({ agent, current, variant = "prompt",
 
   const save = () => {
     setAgentRuntime(agent.key, value.trim());
-    enqueueSnackbar(`${agent.name} runs at ${value.trim()} — ready to simulate`, { variant: "success" });
+    enqueueSnackbar(
+      `${agent.name} runs at ${value.trim()} — ready to simulate`,
+      { variant: "success" },
+    );
     onDone?.();
   };
 
   const field = (
-    <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ width: "100%" }}>
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="flex-start"
+      sx={{ width: "100%" }}
+    >
       <TextField
-        size="small" fullWidth value={value} onChange={(e) => setValue(e.target.value)} autoFocus={variant === "inline"}
-        placeholder="https://your-agent.example.com/chat" error={!!value && !ok}
-        helperText={value && !ok ? "Enter a full URL starting with https://, http:// or wss://" : undefined}
+        size="small"
+        fullWidth
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        autoFocus={variant === "inline"}
+        placeholder="https://your-agent.example.com/chat"
+        error={!!value && !ok}
+        helperText={
+          value && !ok
+            ? "Enter a full URL starting with https://, http:// or wss://"
+            : undefined
+        }
         InputProps={{ sx: { typography: "s2", fontFamily: MONO } }}
-        onKeyDown={(e) => { if (e.key === "Enter" && ok) save(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && ok) save();
+        }}
       />
-      <Button size="small" variant="contained" color="primary" disabled={!ok} onClick={save} sx={{ typography: "s2", fontWeight: 700, height: 36, flexShrink: 0 }}>Save</Button>
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        disabled={!ok}
+        onClick={save}
+        sx={{ flexShrink: 0 }}
+      >
+        Save
+      </Button>
       {variant === "inline" && (
-        <Button size="small" onClick={onDone} sx={{ typography: "s2", fontWeight: 700, height: 36, color: "text.secondary", flexShrink: 0 }}>Cancel</Button>
+        <Button
+          size="small"
+          onClick={onDone}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        >
+          Cancel
+        </Button>
       )}
     </Stack>
   );
 
   if (variant === "inline") return field;
 
-  const frame = variant === "embedded"
-    ? { mt: 1.5, pt: 1.5, borderTop: "1px solid", borderColor: "divider" }
-    : { mb: 2, p: 1.75, borderRadius: 1.5, border: "1px solid", borderColor: "divider" };
+  const frame =
+    variant === "embedded"
+      ? { mt: 1.5, pt: 1.5, borderTop: "1px solid", borderColor: "divider" }
+      : {
+          mb: 2,
+          p: 1.75,
+          borderRadius: "8px",
+          border: "1px solid",
+          borderColor: "divider",
+        };
   return (
     <Box sx={frame}>
-      <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mb: 1.25 }}>
-        <Iconify icon="solar:danger-triangle-linear" width={18} sx={{ color: "#CA8A04", mt: 0.125, flexShrink: 0 }} />
+      <Stack
+        direction="row"
+        spacing={1.5}
+        alignItems="flex-start"
+        sx={{ mb: 1.25 }}
+      >
+        <Iconify
+          icon="solar:danger-triangle-linear"
+          width={20}
+          sx={{ color: "status.warning.fg", mt: 0.125, flexShrink: 0 }}
+        />
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>Add where serve() runs this agent</Typography>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            Add where serve() runs this agent
+          </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {variant === "embedded"
               ? "A simulation calls the address our adapter's serve() answers on — runs stay blocked until it has one. It applies wherever this agent is tested."
@@ -70,5 +127,8 @@ export default function AgentRuntimeEditor({ agent, current, variant = "prompt",
 }
 
 AgentRuntimeEditor.propTypes = {
-  agent: PropTypes.object.isRequired, current: PropTypes.string, variant: PropTypes.oneOf(["prompt", "embedded", "inline"]), onDone: PropTypes.func,
+  agent: PropTypes.object.isRequired,
+  current: PropTypes.string,
+  variant: PropTypes.oneOf(["prompt", "embedded", "inline"]),
+  onDone: PropTypes.func,
 };

@@ -149,9 +149,9 @@ const FilterChips = ({
                   }}
                 >
                   <Typography
+                    variant="caption"
                     sx={{
                       flexShrink: 0,
-                      fontSize: 12,
                       color: "text.secondary",
                       maxWidth: 180,
                       overflow: "hidden",
@@ -162,22 +162,22 @@ const FilterChips = ({
                     {chip.parts.field}
                   </Typography>
                   <Typography
+                    variant="caption"
                     sx={{
                       flexShrink: 0,
-                      fontSize: 11,
                       color: "text.disabled",
                     }}
                   >
                     {chip.parts.op}
                   </Typography>
                   <Typography
+                    variant="caption"
+                    fontWeight={600}
                     sx={{
                       minWidth: 0,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      fontSize: 12,
-                      fontWeight: 600,
                       color: "text.primary",
                     }}
                   >
@@ -186,13 +186,11 @@ const FilterChips = ({
                 </Box>
               }
               sx={{
-                height: 26,
                 maxWidth: "100%",
                 minWidth: 0,
                 bgcolor: "background.neutral",
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "6px",
                 transition: (theme) =>
                   theme.transitions.create(
                     ["background-color", "border-color"],
@@ -212,7 +210,6 @@ const FilterChips = ({
                 },
                 "& .MuiChip-deleteIcon": {
                   flexShrink: 0,
-                  fontSize: 14,
                   color: "text.secondary",
                   "&:hover": { color: "text.primary" },
                 },
@@ -226,7 +223,7 @@ const FilterChips = ({
           component="button"
           aria-label="Add filter"
           onClick={(e) => onAddFilter?.(e.currentTarget)}
-          sx={(theme) => ({
+          sx={{
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -235,24 +232,18 @@ const FilterChips = ({
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
-            bgcolor:
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.04)"
-                : "background.paper",
+            bgcolor: "background.paper",
             color: "text.secondary",
             cursor: "pointer",
             p: 0,
             "&:hover": {
               color: "text.primary",
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "action.hover",
+              bgcolor: "action.hover",
               borderColor: "text.disabled",
             },
-          })}
+          }}
         >
-          <Iconify icon="mdi:plus" width={14} />
+          <Iconify icon="solar:add-linear" width={14} />
         </Box>
       </Box>
 
@@ -271,8 +262,6 @@ const FilterChips = ({
           data-filter-chips-action="clear"
           onClick={onClearAll}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
             color: "text.secondary",
             minWidth: "auto",
             p: 0,
@@ -286,9 +275,6 @@ const FilterChips = ({
             size="small"
             onClick={onSave}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 600,
               color: "primary.dark",
               minWidth: "auto",
               p: 0,

@@ -68,7 +68,7 @@ const SessionCellRenderer = (params) => {
       return (
         <Box display="flex" alignItems="center" justifyContent={"flex-end"}>
           <Iconify
-            icon="radix-icons:clock"
+            icon="solar:clock-circle-linear"
             width={14}
             marginRight="7px"
             sx={{ flexShrink: 0 }}
@@ -96,7 +96,7 @@ const SessionCellRenderer = (params) => {
           gap={1}
         >
           <Iconify
-            icon="mage:dollar"
+            icon="solar:dollar-minimalistic-linear"
             color="text.primary"
             height={16}
             width={16}

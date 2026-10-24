@@ -1,17 +1,35 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, IconButton, Popover, Menu, MenuItem, Switch,
-  TextField, InputAdornment, Checkbox, Divider, Tooltip, Tab,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  ButtonBase,
+  IconButton,
+  Popover,
+  Menu,
+  MenuItem,
+  Switch,
+  TextField,
+  InputAdornment,
+  Checkbox,
+  Divider,
+  Tooltip,
+  Tab,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import { FilterPanel } from "src/components/filter-panel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { neutralCheckboxSx } from "../components/primitives";
 import {
-  VIEWS, ROW_HEIGHTS, GROUPINGS, QUICK_FILTERS, SORTS,
-  filterFields, activeFilterCount,
+  VIEWS,
+  ROW_HEIGHTS,
+  GROUPINGS,
+  QUICK_FILTERS,
+  SORTS,
+  filterFields,
+  activeFilterCount,
 } from "../_mock/compareView";
 import { clickable, focusRing } from "../components/clickable";
 
@@ -35,7 +53,14 @@ import { clickable, focusRing } from "../components/clickable";
  * is the saved view or something you have since changed.
  */
 export function SavedViews({
-  views, activeId, dirty, onApply, onSave, onUpdate, onRename, onDelete,
+  views,
+  activeId,
+  dirty,
+  onApply,
+  onSave,
+  onUpdate,
+  onRename,
+  onDelete,
 }) {
   const buttonRef = useRef(null);
   const [anchor, setAnchor] = useState(null);
@@ -56,20 +81,36 @@ export function SavedViews({
         size="small"
         ref={buttonRef}
         onClick={(e) => setAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:bookmark-linear" width={15} />}
-        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={13} />}
+        startIcon={<Iconify icon="solar:bookmark-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         sx={{
-          typography: "s2", fontWeight: 600, color: "text.secondary",
-          border: "1px solid", borderColor: "divider", maxWidth: 240,
+          color: "text.secondary",
+          border: "1px solid",
+          borderColor: "divider",
+          maxWidth: 240,
         }}
       >
-        <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <Box
+          component="span"
+          sx={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
           {active ? active.name : "All scenarios"}
         </Box>
         {dirty && (
           <Box
             component="span"
-            sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main", ml: 0.75, flexShrink: 0 }}
+            sx={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              bgcolor: "primary.main",
+              ml: 0.75,
+              flexShrink: 0,
+            }}
           />
         )}
       </Button>
@@ -77,23 +118,41 @@ export function SavedViews({
       <Menu
         open={!!anchor}
         anchorEl={anchor}
-        onClose={() => { setAnchor(null); setNaming(null); }}
-        slotProps={{ paper: { sx: { width: 300 } } }}
+        onClose={() => {
+          setAnchor(null);
+          setNaming(null);
+        }}
+        slotProps={{ paper: { sx: { width: 320 } } }}
       >
         <Typography
-          sx={{ px: 2, pt: 1, pb: 0.5, typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}
+          sx={{
+            px: 2,
+            pt: 1,
+            pb: 0.5,
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.tertiary",
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
         >
           Views
         </Typography>
 
         <MenuItem
-          onClick={() => { onApply(null); setAnchor(null); }}
+          onClick={() => {
+            onApply(null);
+            setAnchor(null);
+          }}
           sx={{ typography: "s2", py: 0.875 }}
         >
           <Iconify
             icon={activeId ? "solar:list-linear" : "solar:check-circle-bold"}
             width={16}
-            sx={{ mr: 1.25, color: activeId ? "text.subtitle" : "primary.main" }}
+            sx={{
+              mr: 1.25,
+              color: activeId ? "text.tertiary" : "primary.main",
+            }}
           />
           All scenarios
         </MenuItem>
@@ -101,15 +160,33 @@ export function SavedViews({
         {views.map((v) => (
           <MenuItem
             key={v.id}
-            onClick={() => { onApply(v.id); setAnchor(null); }}
+            onClick={() => {
+              onApply(v.id);
+              setAnchor(null);
+            }}
             sx={{ typography: "s2", py: 0.875 }}
           >
             <Iconify
-              icon={v.id === activeId ? "solar:check-circle-bold" : "solar:bookmark-linear"}
+              icon={
+                v.id === activeId
+                  ? "solar:check-circle-bold"
+                  : "solar:bookmark-linear"
+              }
               width={16}
-              sx={{ mr: 1.25, color: v.id === activeId ? "primary.main" : "text.subtitle" }}
+              sx={{
+                mr: 1.25,
+                color: v.id === activeId ? "primary.main" : "text.tertiary",
+              }}
             />
-            <Box component="span" sx={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Box
+              component="span"
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
               {v.name}
             </Box>
             <Tooltip arrow title="Rename">
@@ -121,12 +198,26 @@ export function SavedViews({
                   setAnchor(null);
                 }}
               >
-                <Iconify icon="solar:pen-linear" width={13} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:pen-linear"
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
+                />
               </IconButton>
             </Tooltip>
             <Tooltip arrow title="Delete view">
-              <IconButton size="small" onClick={(e) => { e.stopPropagation(); onDelete(v.id); }}>
-                <Iconify icon="solar:trash-bin-trash-linear" width={13} sx={{ color: "text.subtitle" }} />
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(v.id);
+                }}
+              >
+                <Iconify
+                  icon="solar:trash-bin-trash-linear"
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
+                />
               </IconButton>
             </Tooltip>
           </MenuItem>
@@ -136,16 +227,33 @@ export function SavedViews({
 
         {/* Updating only makes sense on a saved view you have since changed. */}
         {activeId && dirty && (
-          <MenuItem onClick={() => { onUpdate(activeId); setAnchor(null); }} sx={{ typography: "s2", py: 0.875 }}>
-            <Iconify icon="solar:diskette-linear" width={16} sx={{ mr: 1.25, color: "text.subtitle" }} />
+          <MenuItem
+            onClick={() => {
+              onUpdate(activeId);
+              setAnchor(null);
+            }}
+            sx={{ typography: "s2", py: 0.875 }}
+          >
+            <Iconify
+              icon="solar:diskette-linear"
+              width={16}
+              sx={{ mr: 1.25, color: "text.tertiary" }}
+            />
             Update “{active?.name}”
           </MenuItem>
         )}
         <MenuItem
-          onClick={() => { setNaming({ mode: "save", value: "" }); setAnchor(null); }}
+          onClick={() => {
+            setNaming({ mode: "save", value: "" });
+            setAnchor(null);
+          }}
           sx={{ typography: "s2", py: 0.875 }}
         >
-          <Iconify icon="solar:add-circle-linear" width={16} sx={{ mr: 1.25, color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:add-circle-linear"
+            width={16}
+            sx={{ mr: 1.25, color: "text.tertiary" }}
+          />
           Save current as new view
         </MenuItem>
       </Menu>
@@ -161,48 +269,76 @@ export function SavedViews({
         onClose={() => setNaming(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { width: 340, borderRadius: 1.5 } } }}
+        slotProps={{ paper: { sx: { width: 340, borderRadius: "8px" } } }}
       >
         <Box sx={{ p: 2.5 }}>
           <Stack direction="row" alignItems="flex-start" spacing={2}>
             <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
                 {naming?.mode === "save" ? "Save view" : "Rename view"}
               </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+              >
                 {naming?.mode === "save"
                   ? "Save the current filters and layout for quick access later."
                   : "Give this view a name that says what it shows."}
               </Typography>
             </Box>
-            <IconButton size="small" onClick={() => setNaming(null)} sx={{ mt: -0.5, mr: -0.5 }}>
-              <Iconify icon="mingcute:close-line" width={16} sx={{ color: "text.subtitle" }} />
+            <IconButton
+              size="small"
+              onClick={() => setNaming(null)}
+              sx={{ mt: -0.5, mr: -0.5 }}
+            >
+              <Iconify
+                icon="solar:close-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Stack>
 
           <TextField
-            autoFocus fullWidth size="small"
-            label={<>View name <Box component="span" sx={{ color: "error.main" }}>*</Box></>}
+            autoFocus
+            fullWidth
+            size="small"
+            label={
+              <>
+                View name{" "}
+                <Box component="span" sx={{ color: "error.main" }}>
+                  *
+                </Box>
+              </>
+            }
             placeholder="Enter your view name"
             value={naming?.value || ""}
             onChange={(e) => setNaming({ ...naming, value: e.target.value })}
-            onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+            }}
             sx={{ mt: 2.5, "& .MuiInputBase-input": { typography: "s2" } }}
           />
 
-          <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ mt: 2 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            justifyContent="flex-end"
+            sx={{ mt: 2 }}
+          >
             <Button
-              size="small" variant="outlined" color="inherit"
+              size="small"
+              variant="outlined"
+              color="inherit"
               onClick={() => setNaming(null)}
-              sx={{ typography: "s2", fontWeight: 700, borderColor: "divider", px: 2 }}
+              sx={{ borderColor: "divider" }}
             >
               Cancel
             </Button>
             <Button
-              size="small" variant="contained"
+              size="small"
+              variant="contained"
               disabled={!(naming?.value || "").trim()}
               onClick={commit}
-              sx={{ typography: "s2", fontWeight: 700, px: 2 }}
             >
               {naming?.mode === "save" ? "Save view" : "Rename"}
             </Button>
@@ -214,9 +350,14 @@ export function SavedViews({
 }
 
 SavedViews.propTypes = {
-  views: PropTypes.array, activeId: PropTypes.string, dirty: PropTypes.bool,
-  onApply: PropTypes.func, onSave: PropTypes.func, onUpdate: PropTypes.func,
-  onRename: PropTypes.func, onDelete: PropTypes.func,
+  views: PropTypes.array,
+  activeId: PropTypes.string,
+  dirty: PropTypes.bool,
+  onApply: PropTypes.func,
+  onSave: PropTypes.func,
+  onUpdate: PropTypes.func,
+  onRename: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 /**
@@ -229,35 +370,64 @@ SavedViews.propTypes = {
  * instead, because those two only concern the rows underneath them.
  */
 export default function CompareActions({
-  filters, onFilters, evals,
-  view, onView, onSaveDefault, onResetView,
+  filters,
+  onFilters,
+  evals,
+  view,
+  onView,
+  onSaveDefault,
+  onResetView,
   selectedCount,
-  onExport, onCopyLink, onRerun, onRegrade, onOptimize,
+  onExport,
+  onCopyLink,
+  onRerun,
+  onRegrade,
+  onOptimize,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const [actionsAnchor, setActionsAnchor] = useState(null);
   const [groupAnchor, setGroupAnchor] = useState(null);
   const filterCount = activeFilterCount(filters);
-  const currentGroup = GROUPINGS.find((g) => g.id === (view?.group || "none")) || GROUPINGS[0];
+  const currentGroup =
+    GROUPINGS.find((g) => g.id === (view?.group || "none")) || GROUPINGS[0];
 
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ flexShrink: 0 }}
+    >
       {/* Group by — hoisted out of the Display panel so the grouping
           axis is one click, matching the single-run traces table. */}
       <Button
         size="small"
         onClick={(e) => setGroupAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:widget-linear" width={15} />}
-        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} sx={{ color: "text.subtitle" }} />}
+        startIcon={<Iconify icon="solar:widget-linear" width={16} />}
+        endIcon={
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            width={12}
+            sx={{ color: "text.tertiary" }}
+          />
+        }
         sx={{
-          typography: "s2", fontWeight: 600, textTransform: "none",
-          color: "text.secondary", border: "1px solid", borderColor: "divider",
+          color: "text.secondary",
+          border: "1px solid",
+          borderColor: "divider",
         }}
       >
         Group by
-        <Box component="span" sx={{ mx: 0.5, color: "text.subtitle", fontWeight: 400 }}>·</Box>
-        <Box component="span" sx={{ color: "primary.main", fontWeight: 700 }}>{currentGroup.label}</Box>
+        <Box
+          component="span"
+          sx={{ mx: 0.5, color: "text.tertiary", fontWeight: 400 }}
+        >
+          ·
+        </Box>
+        <Box component="span" sx={{ color: "primary.main", fontWeight: 600 }}>
+          {currentGroup.label}
+        </Box>
       </Button>
       <Menu
         anchorEl={groupAnchor}
@@ -268,7 +438,10 @@ export default function CompareActions({
           <MenuItem
             key={g.id}
             selected={g.id === (view?.group || "none")}
-            onClick={() => { onView({ ...view, group: g.id }); setGroupAnchor(null); }}
+            onClick={() => {
+              onView({ ...view, group: g.id });
+              setGroupAnchor(null);
+            }}
             sx={{ py: 0.75, gap: 0.75 }}
           >
             <Typography sx={{ typography: "s2" }}>{g.label}</Typography>
@@ -279,11 +452,11 @@ export default function CompareActions({
       <Button
         size="small"
         onClick={(e) => setFilterAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:filter-linear" width={15} />}
+        startIcon={<Iconify icon="solar:filter-linear" width={16} />}
         sx={{
-          typography: "s2", fontWeight: 600,
           color: filterCount ? "primary.main" : "text.secondary",
-          border: "1px solid", borderColor: filterCount ? "primary.main" : "divider",
+          border: "1px solid",
+          borderColor: filterCount ? "primary.main" : "divider",
         }}
       >
         Filter{filterCount ? ` · ${filterCount}` : ""}
@@ -292,8 +465,14 @@ export default function CompareActions({
       <Button
         size="small"
         onClick={(e) => setDisplayAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:settings-minimalistic-linear" width={15} />}
-        sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider" }}
+        startIcon={
+          <Iconify icon="solar:settings-minimalistic-linear" width={16} />
+        }
+        sx={{
+          color: "text.secondary",
+          border: "1px solid",
+          borderColor: "divider",
+        }}
       >
         Display
       </Button>
@@ -301,9 +480,13 @@ export default function CompareActions({
       <Button
         size="small"
         onClick={(e) => setActionsAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:bolt-linear" width={15} />}
-        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={13} />}
-        sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", border: "1px solid", borderColor: "divider" }}
+        startIcon={<Iconify icon="solar:bolt-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+        sx={{
+          color: "text.secondary",
+          border: "1px solid",
+          borderColor: "divider",
+        }}
       >
         Actions
       </Button>
@@ -311,7 +494,7 @@ export default function CompareActions({
       {/* The platform's own filter panel — same property / operator / value
           rows, Basic and Query tabs, Add filter, Clear all, Apply — rather than
           a bespoke one that behaves almost but not quite like it. */}
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterAnchor}
         open={!!filterAnchor}
         onClose={() => setFilterAnchor(null)}
@@ -332,7 +515,7 @@ export default function CompareActions({
         open={!!actionsAnchor}
         anchorEl={actionsAnchor}
         onClose={() => setActionsAnchor(null)}
-        slotProps={{ paper: { sx: { width: 260 } } }}
+        slotProps={{ paper: { sx: { width: 320 } } }}
       >
         {/* Selection-driven actions (re-run, re-grade, send to Self improve)
             were removed with the row checkboxes — this screen is for reading
@@ -340,12 +523,18 @@ export default function CompareActions({
         <ActionItem
           icon="solar:download-minimalistic-linear"
           label="Export comparison"
-          onClick={() => { setActionsAnchor(null); onExport(); }}
+          onClick={() => {
+            setActionsAnchor(null);
+            onExport();
+          }}
         />
         <ActionItem
           icon="solar:link-linear"
           label="Copy link to this view"
-          onClick={() => { setActionsAnchor(null); onCopyLink(); }}
+          onClick={() => {
+            setActionsAnchor(null);
+            onCopyLink();
+          }}
         />
       </Menu>
     </Stack>
@@ -353,18 +542,30 @@ export default function CompareActions({
 }
 
 CompareActions.propTypes = {
-  filters: PropTypes.array, onFilters: PropTypes.func, evals: PropTypes.array,
-  view: PropTypes.object, onView: PropTypes.func,
-  onSaveDefault: PropTypes.func, onResetView: PropTypes.func,
+  filters: PropTypes.array,
+  onFilters: PropTypes.func,
+  evals: PropTypes.array,
+  view: PropTypes.object,
+  onView: PropTypes.func,
+  onSaveDefault: PropTypes.func,
+  onResetView: PropTypes.func,
   selectedCount: PropTypes.number,
-  onExport: PropTypes.func, onCopyLink: PropTypes.func,
-  onRerun: PropTypes.func, onRegrade: PropTypes.func, onOptimize: PropTypes.func,
+  onExport: PropTypes.func,
+  onCopyLink: PropTypes.func,
+  onRerun: PropTypes.func,
+  onRegrade: PropTypes.func,
+  onOptimize: PropTypes.func,
 };
 
 /** Search and Show diff: the two controls that only concern the rows below. */
 export function CompareSearchBar({ query, onQuery, view, onView }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flexShrink: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.5}
+      sx={{ flexShrink: 0 }}
+    >
       <TextField
         size="small"
         placeholder="Search scenarios, personas, findings"
@@ -374,7 +575,11 @@ export function CompareSearchBar({ query, onQuery, view, onView }) {
           sx: { typography: "s2" },
           startAdornment: (
             <InputAdornment position="start">
-              <Iconify icon="solar:magnifer-linear" width={15} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:magnifer-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </InputAdornment>
           ),
         }}
@@ -389,13 +594,19 @@ export function CompareSearchBar({ query, onQuery, view, onView }) {
           checked={view.diff}
           onChange={() => onView({ ...view, diff: !view.diff })}
         />
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>Show diff</Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          Show diff
+        </Typography>
         <Tooltip
           arrow
           title="Replaces each run's outcome with what it did differently from the baseline — tools it stopped calling, turns it added, where the conversation first diverged."
         >
           <Box sx={{ display: "flex" }}>
-            <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={14}
+              sx={{ color: "text.tertiary" }}
+            />
           </Box>
         </Tooltip>
       </Stack>
@@ -404,22 +615,33 @@ export function CompareSearchBar({ query, onQuery, view, onView }) {
 }
 
 CompareSearchBar.propTypes = {
-  query: PropTypes.string, onQuery: PropTypes.func,
-  view: PropTypes.object, onView: PropTypes.func,
+  query: PropTypes.string,
+  onQuery: PropTypes.func,
+  view: PropTypes.object,
+  onView: PropTypes.func,
 };
-
 
 function ActionItem({ icon, label, onClick, disabled }) {
   return (
-    <MenuItem onClick={onClick} disabled={disabled} sx={{ typography: "s2", py: 1 }}>
-      <Iconify icon={icon} width={16} sx={{ mr: 1.25, color: "text.subtitle" }} />
+    <MenuItem
+      onClick={onClick}
+      disabled={disabled}
+      sx={{ typography: "s2", py: 1 }}
+    >
+      <Iconify
+        icon={icon}
+        width={16}
+        sx={{ mr: 1.25, color: "text.tertiary" }}
+      />
       {label}
     </MenuItem>
   );
 }
 ActionItem.propTypes = {
-  icon: PropTypes.string, label: PropTypes.string,
-  onClick: PropTypes.func, disabled: PropTypes.bool,
+  icon: PropTypes.string,
+  label: PropTypes.string,
+  onClick: PropTypes.func,
+  disabled: PropTypes.bool,
 };
 
 /**
@@ -429,12 +651,23 @@ ActionItem.propTypes = {
  * view: this is a comparison of runs that will not exist next week, so what is
  * worth keeping is the *shape* you like reading, not this particular set.
  */
-function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetView }) {
+function DisplayPanel({
+  anchor,
+  onClose,
+  view,
+  onView,
+  onSaveDefault,
+  onResetView,
+}) {
   const set = (patch) => onView({ ...view, ...patch });
-  const toggleColumn = (id) => set({ columns: { ...view.columns, [id]: !view.columns[id] } });
-  const toggleQuick = (id) => set({
-    quick: view.quick.includes(id) ? view.quick.filter((q) => q !== id) : [...view.quick, id],
-  });
+  const toggleColumn = (id) =>
+    set({ columns: { ...view.columns, [id]: !view.columns[id] } });
+  const toggleQuick = (id) =>
+    set({
+      quick: view.quick.includes(id)
+        ? view.quick.filter((q) => q !== id)
+        : [...view.quick, id],
+    });
 
   return (
     <Popover
@@ -443,26 +676,37 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
       onClose={onClose}
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       transformOrigin={{ vertical: "top", horizontal: "right" }}
-      slotProps={{ paper: { sx: { width: 320, borderRadius: 1.5, maxHeight: 560 } } }}
+      slotProps={{
+        paper: { sx: { width: 320, borderRadius: "8px", maxHeight: 560 } },
+      }}
     >
       <Stack direction="row" spacing={0.75} sx={{ p: 1.25 }}>
         {VIEWS.map((v) => {
           const on = view.view === v.id;
           return (
             <Tooltip key={v.id} arrow title={v.blurb}>
-              <Box
-                {...clickable(() => set({ view: v.id }), { pressed: on })}
+              <ButtonBase
+                aria-pressed={on}
+                onClick={() => set({ view: v.id })}
                 sx={{
-                  flex: 1, py: 1, borderRadius: 1, cursor: "pointer", textAlign: "center",
-                  bgcolor: (t) => (on ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1) : "transparent"),
+                  flex: 1,
+                  py: 1,
+                  borderRadius: 1,
+                  flexDirection: "column",
+                  textAlign: "center",
+                  bgcolor: on ? "status.discovery.bg" : "transparent",
                   color: on ? "primary.main" : "text.secondary",
                   "&:hover": { bgcolor: on ? undefined : "action.hover" },
                   ...focusRing,
                 }}
               >
                 <Iconify icon={v.icon} width={16} />
-                <Typography sx={{ typography: "s3", fontWeight: 600, mt: 0.25 }}>{v.label}</Typography>
-              </Box>
+                <Typography
+                  sx={{ typography: "s3", fontWeight: 600, mt: 0.25 }}
+                >
+                  {v.label}
+                </Typography>
+              </ButtonBase>
             </Tooltip>
           );
         })}
@@ -472,13 +716,16 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
 
       <Section title="Rows">
         <Row label="Row height">
-          <SegmentedTabs
-            value={view.rowHeight}
-            onChange={(_, v) => set({ rowHeight: v })}
-            sx={{ "& .MuiTab-root": { minHeight: 26, px: 1 } }}
-          >
-            {ROW_HEIGHTS.map((h) => <Tab key={h.id} value={h.id} label={h.label} />)}
-          </SegmentedTabs>
+          <Box sx={{ "& .MuiTab-root": { minHeight: 26, px: 1 } }}>
+            <SegmentedTabs
+              value={view.rowHeight}
+              onChange={(_, v) => set({ rowHeight: v })}
+            >
+              {ROW_HEIGHTS.map((h) => (
+                <Tab key={h.id} value={h.id} label={h.label} />
+              ))}
+            </SegmentedTabs>
+          </Box>
         </Row>
         {/* Group by lives on the toolbar as a first-class button, so it
             is not duplicated here — two controls editing the same setting
@@ -505,14 +752,23 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
           { id: "cost", label: "Cost" },
           { id: "scorers", label: "Eval scores" },
         ].map((c) => (
-          <Check key={c.id} label={c.label} checked={!!view.columns[c.id]} onChange={() => toggleColumn(c.id)} />
+          <Check
+            key={c.id}
+            label={c.label}
+            checked={!!view.columns[c.id]}
+            onChange={() => toggleColumn(c.id)}
+          />
         ))}
       </Section>
 
       <Divider />
 
       <Section title="Charts">
-        <Check label="Score distribution" checked={view.showChart} onChange={() => set({ showChart: !view.showChart })} />
+        <Check
+          label="Score distribution"
+          checked={view.showChart}
+          onChange={() => set({ showChart: !view.showChart })}
+        />
       </Section>
 
       <Divider />
@@ -537,12 +793,32 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
         is how this team reads a comparison — so that is what is worth keeping.
       */}
       <Stack sx={{ px: 1, py: 0.75 }}>
-        <MenuItem onClick={() => { onSaveDefault(); onClose(); }} sx={{ typography: "s2", borderRadius: 0.75 }}>
-          <Iconify icon="solar:eye-linear" width={16} sx={{ mr: 1.25, color: "text.subtitle" }} />
+        <MenuItem
+          onClick={() => {
+            onSaveDefault();
+            onClose();
+          }}
+          sx={{ typography: "s2", borderRadius: "4px" }}
+        >
+          <Iconify
+            icon="solar:eye-linear"
+            width={16}
+            sx={{ mr: 1.25, color: "text.tertiary" }}
+          />
           Set as default view
         </MenuItem>
-        <MenuItem onClick={() => { onResetView(); onClose(); }} sx={{ typography: "s2", borderRadius: 0.75 }}>
-          <Iconify icon="solar:refresh-linear" width={16} sx={{ mr: 1.25, color: "text.subtitle" }} />
+        <MenuItem
+          onClick={() => {
+            onResetView();
+            onClose();
+          }}
+          sx={{ typography: "s2", borderRadius: "4px" }}
+        >
+          <Iconify
+            icon="solar:refresh-linear"
+            width={16}
+            sx={{ mr: 1.25, color: "text.tertiary" }}
+          />
           Reset view
         </MenuItem>
       </Stack>
@@ -550,16 +826,26 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
   );
 }
 DisplayPanel.propTypes = {
-  anchor: PropTypes.any, onClose: PropTypes.func,
-  view: PropTypes.object, onView: PropTypes.func,
-  onSaveDefault: PropTypes.func, onResetView: PropTypes.func,
+  anchor: PropTypes.any,
+  onClose: PropTypes.func,
+  view: PropTypes.object,
+  onView: PropTypes.func,
+  onSaveDefault: PropTypes.func,
+  onResetView: PropTypes.func,
 };
 
 function Section({ title, children }) {
   return (
     <Box sx={{ px: 2, py: 1.25 }}>
       <Typography
-        sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 0.75 }}
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+          textTransform: "none",
+          letterSpacing: 0.4,
+          mb: 0.75,
+        }}
       >
         {title}
       </Typography>
@@ -572,7 +858,11 @@ Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
 function Row({ label, children }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1.5}>
-      <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{label}</Typography>
+      <Typography
+        sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}
+      >
+        {label}
+      </Typography>
       <Box sx={{ flexShrink: 0 }}>{children}</Box>
     </Stack>
   );
@@ -583,45 +873,67 @@ Row.propTypes = { label: PropTypes.string, children: PropTypes.node };
 function Select({ value, onChange, options, placeholder = "Any" }) {
   return (
     <TextField
-      select size="small"
+      select
+      size="small"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       SelectProps={{ displayEmpty: true }}
-      sx={{ minWidth: 150, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+      sx={{
+        minWidth: 150,
+        "& .MuiInputBase-input": { typography: "s2", py: 0.5 },
+      }}
     >
-      <MenuItem value="" sx={{ typography: "s2", color: "text.subtitle" }}>{placeholder}</MenuItem>
+      <MenuItem value="" sx={{ typography: "s2" }}>
+        {placeholder}
+      </MenuItem>
       {options.map((o) => (
-        <MenuItem key={o.id} value={o.id} sx={{ typography: "s2" }}>{o.label}</MenuItem>
+        <MenuItem key={o.id} value={o.id} sx={{ typography: "s2" }}>
+          {o.label}
+        </MenuItem>
       ))}
     </TextField>
   );
 }
 Select.propTypes = {
-  value: PropTypes.string, onChange: PropTypes.func,
-  options: PropTypes.array, placeholder: PropTypes.string,
+  value: PropTypes.string,
+  onChange: PropTypes.func,
+  options: PropTypes.array,
+  placeholder: PropTypes.string,
 };
 
 function Check({ label, checked, onChange, icon }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1}
-      onClick={(e) => { if (!(e.target instanceof HTMLInputElement)) onChange(e); }}
-      sx={{ cursor: "pointer", borderRadius: 0.75, "&:hover": { bgcolor: "action.hover" } }}
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      onClick={(e) => {
+        if (!(e.target instanceof HTMLInputElement)) onChange(e);
+      }}
+      sx={{
+        cursor: "pointer",
+        borderRadius: "4px",
+        "&:hover": { bgcolor: "action.hover" },
+      }}
     >
       {/* The whole row toggles by mouse; the checkbox is the keyboard stop. */}
       <Checkbox
-        size="small" checked={checked} onChange={onChange} inputProps={{ "aria-label": label }}
+        size="small"
+        checked={checked}
+        onChange={onChange}
+        inputProps={{ "aria-label": label }}
         sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
       />
-      {icon && <Iconify icon={icon} width={14} sx={{ color: "text.subtitle" }} />}
+      {icon && (
+        <Iconify icon={icon} width={14} sx={{ color: "text.tertiary" }} />
+      )}
       <Typography sx={{ typography: "s2", flex: 1 }}>{label}</Typography>
     </Stack>
   );
 }
 Check.propTypes = {
-  label: PropTypes.string, checked: PropTypes.bool,
-  onChange: PropTypes.func, icon: PropTypes.string,
+  label: PropTypes.string,
+  checked: PropTypes.bool,
+  onChange: PropTypes.func,
+  icon: PropTypes.string,
 };
-
-
-

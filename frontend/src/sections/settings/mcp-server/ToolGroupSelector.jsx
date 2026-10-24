@@ -16,20 +16,20 @@ import Iconify from "src/components/iconify";
 import { useUpdateMCPToolGroups } from "src/api/mcp";
 
 const TOOL_GROUP_ICONS = {
-  context: "ph:compass-bold",
-  evaluations: "ph:exam-bold",
-  datasets: "ph:database-bold",
-  annotations: "ph:check-square-bold",
-  optimization: "ph:sparkle-bold",
-  observability: "ph:tree-structure-bold",
-  error_feed: "ph:warning-circle-bold",
-  experiments: "ph:flask-bold",
-  agents: "ph:robot-bold",
-  simulation: "ph:waveform-bold",
-  prompts: "ph:chat-text-bold",
-  users: "ph:users-bold",
-  usage: "ph:chart-line-up-bold",
-  docs: "ph:book-open-bold",
+  context: "solar:compass-linear",
+  evaluations: "solar:clipboard-check-linear",
+  datasets: "solar:database-linear",
+  annotations: "solar:check-square-bold",
+  optimization: "solar:stars-minimalistic-linear",
+  observability: "solar:graph-linear",
+  error_feed: "solar:danger-circle-linear",
+  experiments: "solar:test-tube-linear",
+  agents: "solar:bot-linear",
+  simulation: "solar:soundwave-linear",
+  prompts: "solar:chat-round-line-linear",
+  users: "solar:users-group-rounded-linear",
+  usage: "solar:graph-up-linear",
+  docs: "solar:book-linear",
 };
 
 const DEFAULT_TOOL_GROUPS = [
@@ -220,13 +220,13 @@ export default function ToolGroupSelector({ config }) {
       }}
     >
       <AccordionSummary
-        expandIcon={<Iconify icon="ph:caret-down-bold" width={16} />}
+        expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={16} />}
         sx={{ px: 3, py: 0.5 }}
       >
         <Box display="flex" alignItems="center" gap={1.5} flex={1} mr={2}>
           <Iconify
-            icon="ph:wrench-bold"
-            width={18}
+            icon="solar:toolbox-linear"
+            width={20}
             sx={{ color: "text.secondary" }}
           />
           <Typography
@@ -247,7 +247,6 @@ export default function ToolGroupSelector({ config }) {
             size="small"
             color={allEnabled ? "success" : "default"}
             variant="outlined"
-            sx={{ fontSize: 11, height: 22 }}
           />
           <Typography
             sx={{ typography: "s2", color: "text.disabled", ml: "auto" }}
@@ -264,7 +263,7 @@ export default function ToolGroupSelector({ config }) {
             gridTemplateColumns: "1fr 1fr",
             gap: 0,
             borderTop: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
           }}
         >
           {toolGroups.map((group) => {
@@ -279,13 +278,13 @@ export default function ToolGroupSelector({ config }) {
                   py: 1,
                   px: 1,
                   borderBottom: "1px solid",
-                  borderColor: "divider",
+                  borderColor: "border.subtle",
                   opacity: isEnabled ? 1 : 0.5,
                   transition: "opacity 0.15s",
                 }}
               >
                 <Iconify
-                  icon={TOOL_GROUP_ICONS[group.id] || "ph:wrench-bold"}
+                  icon={TOOL_GROUP_ICONS[group.id] || "solar:toolbox-linear"}
                   width={16}
                   sx={{
                     color: isEnabled ? "primary.main" : "text.disabled",
@@ -294,7 +293,7 @@ export default function ToolGroupSelector({ config }) {
                 />
                 <Typography
                   sx={{
-                    typography: "s2",
+                    typography: "s2_1",
                     fontWeight: "fontWeightMedium",
                     color: "text.primary",
                     flex: 1,
@@ -326,7 +325,6 @@ export default function ToolGroupSelector({ config }) {
                   <CircularProgress size={14} color="inherit" />
                 ) : null
               }
-              sx={{ textTransform: "none" }}
             >
               {updateMutation.isPending ? "Saving..." : "Save changes"}
             </Button>

@@ -102,8 +102,8 @@ const DateRangePill = ({ dateFilter, setDateFilter, label, sx }) => {
         ref={dateButtonRef}
         variant="outlined"
         size="small"
-        startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onClick={(e) => setDateAnchor(e.currentTarget)}
         sx={{ ...DEFAULT_PILL_SX, ...sx }}
       >
@@ -116,7 +116,7 @@ const DateRangePill = ({ dateFilter, setDateFilter, label, sx }) => {
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
-          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 140 } },
+          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 200 } },
         }}
       >
         {DATE_OPTIONS.map((opt) => (
@@ -124,7 +124,7 @@ const DateRangePill = ({ dateFilter, setDateFilter, label, sx }) => {
             key={opt.key}
             selected={dateFilter?.dateOption === opt.key}
             onClick={() => handleDateOptionChange(opt.key)}
-            sx={{ fontSize: 13, py: 0.75 }}
+            sx={{ py: 0.75 }}
           >
             {opt.label}
           </MenuItem>

@@ -173,12 +173,8 @@ const ObserveListView = forwardRef(
                 label={count}
                 size="small"
                 sx={{
-                  height: 20,
-                  fontSize: 11,
-                  fontWeight: 600,
                   bgcolor: (t) => alpha(t.palette.error.main, 0.1),
                   color: "error.main",
-                  "& .MuiChip-label": { px: 0.75 },
                 }}
               />
             );

@@ -67,7 +67,7 @@ const SearchableSelectContent = ({
           minWidth: 50,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           cursor: "pointer",
           bgcolor: "background.paper",
           "&:hover": {
@@ -95,7 +95,7 @@ const SearchableSelectContent = ({
           <CircularProgress size={10} sx={{ color: "text.disabled" }} />
         ) : (
           <Iconify
-            icon="eva:chevron-down-fill"
+            icon="solar:alt-arrow-down-linear"
             width={14}
             height={14}
             sx={{ color: "text.secondary", flexShrink: 0 }}
@@ -133,7 +133,7 @@ const SearchableSelectContent = ({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
                     width={16}
                     height={16}
                     sx={{ color: "text.disabled" }}
@@ -166,7 +166,7 @@ const SearchableSelectContent = ({
               <Box key={i} sx={{ px: 1.5, py: 0.75 }}>
                 <Skeleton
                   variant="rectangular"
-                  sx={{ borderRadius: 0.5 }}
+                  sx={{ borderRadius: "4px" }}
                   width={`${60 + (i % 3) * 15}%`}
                   height={20}
                 />
@@ -199,7 +199,6 @@ const SearchableSelectContent = ({
                     sx={{
                       px: 1.5,
                       py: 0.625,
-                      minHeight: "unset",
                       bgcolor: isSelected ? "action.selected" : "transparent",
                       "&:hover": { bgcolor: "action.hover" },
                     }}
@@ -224,7 +223,7 @@ const SearchableSelectContent = ({
                   <Box key={`skel-more-${i}`} sx={{ px: 1.5, py: 0.75 }}>
                     <Skeleton
                       variant="rectangular"
-                      sx={{ borderRadius: 0.5 }}
+                      sx={{ borderRadius: "4px" }}
                       width={`${60 + (i % 3) * 15}%`}
                       height={20}
                     />

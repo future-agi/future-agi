@@ -11,21 +11,18 @@ import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Alert from "@mui/material/Alert";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { createSkill, updateSkill, deleteSkill } from "../hooks/useFalconAPI";
 
 const INITIAL_STATE = {
   name: "",
   description: "",
-  icon: "mdi:star-outline",
+  icon: "solar:star-linear",
   instructions: "",
   trigger_phrases: [],
 };
 
 export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [form, setForm] = useState(INITIAL_STATE);
   const [phraseInput, setPhraseInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -39,7 +36,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       setForm({
         name: skill.name || "",
         description: skill.description || "",
-        icon: skill.icon || "mdi:star-outline",
+        icon: skill.icon || "solar:star-linear",
         instructions: skill.instructions || "",
         trigger_phrases: skill.trigger_phrases || [],
       });
@@ -146,7 +143,13 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
   const canSave = form.name.trim() && form.instructions.trim() && hasPhrase;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ pb: 1 }}>
         <Typography variant="h6" component="span">
           {isEdit ? "Edit Skill" : "Create Skill"}
@@ -182,7 +185,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
               onChange={handleChange("icon")}
               fullWidth
               size="small"
-              placeholder="mdi:star-outline"
+              placeholder="solar:star-linear"
               InputProps={{
                 startAdornment: (
                   <Box
@@ -193,7 +196,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
                     }}
                   >
                     <Iconify
-                      icon={form.icon || "mdi:star-outline"}
+                      icon={form.icon || "solar:star-linear"}
                       width={20}
                       sx={{ color: "text.secondary" }}
                     />
@@ -247,11 +250,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
                     size="small"
                     onDelete={() => handleRemovePhrase(phrase)}
                     sx={{
-                      fontSize: 12,
-                      height: 26,
-                      bgcolor: isDark
-                        ? alpha(theme.palette.common.white, 0.06)
-                        : alpha(theme.palette.common.black, 0.05),
+                      bgcolor: "background.neutral",
                     }}
                   />
                 ))}
@@ -273,7 +272,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
               deleting ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="mdi:delete-outline" width={18} />
+                <Iconify icon="solar:trash-bin-trash-linear" width={20} />
               )
             }
             sx={{ mr: "auto" }}

@@ -1,1 +1,1 @@
-export { default as FilterPanel, QueryInput } from "./FilterPanel";
+export { default as QueryInput } from "./QueryInput";

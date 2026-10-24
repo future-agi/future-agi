@@ -5,6 +5,7 @@ import {
   Popover,
   Skeleton,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useRef, useState } from "react";
@@ -49,12 +50,6 @@ const VersionPopoverContent = ({
                 <Chip
                   label="Default"
                   size="small"
-                  sx={{
-                    height: 16,
-                    "& .MuiChip-label": {
-                      fontSize: (theme) => theme.typography.s3.fontSize,
-                    },
-                  }}
                   color="primary"
                 />
               </ShowComponent>
@@ -64,31 +59,41 @@ const VersionPopoverContent = ({
         <ShowComponent condition={isFetchingNextPage}>
           {Array.from({ length: 2 }).map((_, index) => (
             <MenuItem key={`version-skeleton-${index}`} disabled>
-              <Skeleton variant="text" width={48} sx={{ fontSize: "0.8rem" }} />
+              <Skeleton
+                variant="text"
+                width={48}
+                sx={{ fontSize: "0.8125rem" }}
+              />
             </MenuItem>
           ))}
         </ShowComponent>
       </Box>
       <Box sx={{ borderTop: "1px solid", borderColor: "divider", p: 0.5 }}>
-        <Box
+        <ButtonBase
+          component="div"
           onClick={onCreateNew}
           sx={{
             display: "flex",
+            justifyContent: "flex-start",
+            textAlign: "left",
             alignItems: "center",
             gap: 0.5,
             color: "primary.main",
-            cursor: "pointer",
             py: 0.5,
             px: 1,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             "&:hover": { bgcolor: "action.hover" },
           }}
         >
-          <Iconify icon="mdi:plus" width={16} sx={{ color: "primary.main" }} />
+          <Iconify
+            icon="solar:add-linear"
+            width={16}
+            sx={{ color: "primary.main" }}
+          />
           <Typography variant="caption" color="primary">
             New Version
           </Typography>
-        </Box>
+        </ButtonBase>
       </Box>
     </>
   );
@@ -135,7 +140,8 @@ const VersionSelect = ({
 
   return (
     <>
-      <Box
+      <ButtonBase
+        component="div"
         ref={anchorRef}
         onClick={() => !isDisabled && setOpen(true)}
         sx={{
@@ -148,7 +154,7 @@ const VersionSelect = ({
           py: 0.5,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           cursor: isDisabled ? "default" : "pointer",
           bgcolor: "background.paper",
           "&:hover": { borderColor: "text.disabled" },
@@ -158,11 +164,11 @@ const VersionSelect = ({
           {selectedLabel}
         </Typography>
         <Iconify
-          icon="eva:chevron-down-fill"
+          icon="solar:alt-arrow-down-linear"
           width={16}
           sx={{ color: "text.secondary", flexShrink: 0 }}
         />
-      </Box>
+      </ButtonBase>
       <Popover
         open={open}
         anchorEl={anchorRef.current}
@@ -172,7 +178,7 @@ const VersionSelect = ({
         PaperProps={{
           sx: {
             mt: 0.5,
-            minWidth: 140,
+            minWidth: 200,
             maxHeight: 320,
             overflow: "hidden",
             display: "flex",

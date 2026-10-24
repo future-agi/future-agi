@@ -2,6 +2,7 @@
 import { useCallback, useMemo } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import { Box, useTheme } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
 
 /**
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
@@ -21,8 +22,8 @@ export default function DataTable({
   columnVisibility,
   onColumnVisibilityChange,
   emptyMessage = "No data found",
-  rowHeight = 44,
-  headerHeight = 40,
+  rowHeight = 36,
+  headerHeight = 32,
   enableSelection = false,
 }) {
   const theme = useTheme();
@@ -163,6 +164,12 @@ export default function DataTable({
         disableDensitySelector
         // Styling
         localeText={{ noRowsLabel: emptyMessage }}
+        // Design system empty state instead of the grid's bare text.
+        slots={{
+          noRowsOverlay: () => (
+            <EmptyContent title={emptyMessage} sx={{ height: 1 }} />
+          ),
+        }}
         sx={{
           border: "none",
           bgcolor: "background.paper",
@@ -193,10 +200,7 @@ export default function DataTable({
           },
           // Rows
           "& .MuiDataGrid-row:hover": {
-            bgcolor:
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.03)"
-                : "rgba(0,0,0,0.02)",
+            bgcolor: "action.hover",
           },
           // Clean up
           "& .MuiDataGrid-columnSeparator": { display: "none" },

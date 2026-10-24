@@ -242,19 +242,9 @@ const AddNewMonitor = ({
                     value={tabValue}
                     onChange={handleTabChange}
                     textColor="primary"
-                    TabIndicatorProps={{
-                      style: { backgroundColor: theme.palette.primary.main },
-                    }}
                     sx={{
-                      fontWeight: "fontWeightMedium",
                       "& .MuiTab-root": {
-                        color: theme.palette.text.disabled,
                         marginRight: theme.spacing(0) + "!important",
-                        typography: "s1",
-                        fontWeight: "fontWeightMedium",
-                      },
-                      "& .Mui-selected": {
-                        color: theme.palette.primary.main,
                       },
                     }}
                   >
@@ -262,14 +252,12 @@ const AddNewMonitor = ({
                       label="Alert Details"
                       sx={{
                         margin: 0,
-                        px: theme.spacing(3),
                       }}
                     />
                     <Tab
                       label="Logs"
                       sx={{
                         margin: 0,
-                        px: theme.spacing(3),
                       }}
                     />
                   </Tabs>

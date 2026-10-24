@@ -25,6 +25,7 @@ export const getPopperStyle = (position, dataType) => {
     transform: `translate(${position.x}px, ${position.y}px)`,
     backgroundColor: "var(--bg-paper)",
     borderRadius: "12px",
+    // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
     boxShadow: "0px 0px 10px rgba(240, 240, 241, 1)",
     width: "auto",
     minWidth: "200px",

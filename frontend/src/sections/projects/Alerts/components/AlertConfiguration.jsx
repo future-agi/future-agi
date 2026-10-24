@@ -20,7 +20,11 @@ import TracingControls from "../../LLMTracing/TracingControls";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import AlertsChart from "./AlertsChart";
-import { getCompareChartConfig, getSimpleLineChartConfig } from "../common";
+import {
+  alertThresholdBand,
+  getCompareChartConfig,
+  getSimpleLineChartConfig,
+} from "../common";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { getDefaultAlertConfigValues } from "./validation";
@@ -143,40 +147,34 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
               {
                 value: max,
                 y2: warningValue,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
               {
                 value: warningValue,
                 y2: criticalValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: criticalValue,
                 y2: min,
-                fillColor: "#D92D2033",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.2),
               },
             ]
           : [
               {
                 value: max,
                 y2: criticalValue,
-                fillColor: "#D92D2033",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.2),
               },
               {
                 value: criticalValue,
                 y2: warningValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: warningValue,
                 y2: min,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
             ];
 
@@ -186,13 +184,13 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             seriesName: _.startCase(_.toLower(alertType)),
             thresholds,
           },
-          { isDark },
+          { isDark, theme },
         );
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           fetchedData?.data,
           { seriesName: _.startCase(_.toLower(alertType)) },
-          { isDark },
+          { isDark, theme },
         );
       }
 
@@ -238,13 +236,20 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
             labels: {
-              style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+              style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
         }}
       />
     );
-  }, [chartKey, isDark, openSheetView, options, selectedThresHoldType, series]);
+  }, [
+    chartKey,
+    openSheetView,
+    options,
+    selectedThresHoldType,
+    series,
+    theme.palette.text.tertiary,
+  ]);
 
   useEffect(() => {
     return () => {

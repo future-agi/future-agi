@@ -36,9 +36,9 @@ const CreateNewDataset = ({ open, onClose }) => {
             zIndex: 1,
           }}
         >
-          <Iconify icon="eva:close-fill" width={24} />
+          <Iconify icon="solar:close-linear" width={24} />
         </IconButton>
-        <DialogTitle sx={{ fontWeight: "bold" }}>Create Dataset</DialogTitle>
+        <DialogTitle sx={{ fontWeight: "600" }}>Create Dataset</DialogTitle>
         <DialogContent>
           <Typography
             variant="subtitle1"
@@ -50,7 +50,7 @@ const CreateNewDataset = ({ open, onClose }) => {
             }}
           >
             <Iconify
-              icon="clarity:error-solid"
+              icon="solar:danger-circle-linear"
               color="grey"
               width={24}
               sx={{

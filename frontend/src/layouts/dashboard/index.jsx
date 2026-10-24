@@ -77,7 +77,9 @@ export default function DashboardLayout({ children }) {
         minWidth: 1200,
         display: "flex",
         flexDirection: { xs: "row", lg: "row" },
-        backgroundColor: "background.paper",
+        // The frame: sidebar and page edges on the canvas; <Main> is the
+        // inset content panel.
+        backgroundColor: "background.default",
         ...(isMini ? {} : { overflowX: "auto" }),
       };
 
@@ -93,13 +95,17 @@ export default function DashboardLayout({ children }) {
             top: 0,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "#FFD94D",
+            background: "status.warning.solid",
             padding: 0.5,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             zIndex: 1000,
           }}
         >
-          <Typography fontSize={10} fontWeight="fontWeightSemiBold">
+          <Typography
+            fontSize={12}
+            fontWeight="fontWeightSemiBold"
+            color="status.warning.onSolid"
+          >
             🚨 You are in SOS Mode, and have access to user account please be
             careful and avoid making any drastic changes 🚨
           </Typography>

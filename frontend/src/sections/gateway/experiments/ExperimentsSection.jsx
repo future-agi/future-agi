@@ -6,9 +6,6 @@ import {
   Typography,
   Stack,
   Chip,
-  Card,
-  CardContent,
-  CardActionArea,
   Skeleton,
   TextField,
   ToggleButton,
@@ -16,8 +13,10 @@ import {
   InputAdornment,
   Button,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -39,12 +38,6 @@ const STATUS_FILTERS = [
   { value: "paused", label: "Paused" },
   { value: "completed", label: "Completed" },
 ];
-
-const STATUS_COLORS = {
-  active: "success",
-  paused: "warning",
-  completed: "info",
-};
 
 const ExperimentsSection = () => {
   const { experimentId } = useParams();
@@ -185,7 +178,7 @@ const ExperimentsListView = ({ gatewayId }) => {
             label: "New Experiment",
             variant: "contained",
             size: "small",
-            icon: "eva:plus-outline",
+            icon: "solar:add-linear",
             onClick: () => setCreateOpen(true),
           },
         ]}
@@ -199,16 +192,7 @@ const ExperimentsListView = ({ gatewayId }) => {
           size="small"
         >
           {STATUS_FILTERS.map((f) => (
-            <ToggleButton
-              key={f.value}
-              value={f.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
+            <ToggleButton key={f.value} value={f.value}>
               {f.label}
             </ToggleButton>
           ))}
@@ -223,7 +207,7 @@ const ExperimentsListView = ({ gatewayId }) => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
@@ -233,7 +217,7 @@ const ExperimentsListView = ({ gatewayId }) => {
       {filtered.length === 0 ? (
         <Box display="flex" flexDirection="column" alignItems="center" py={8}>
           <Iconify
-            icon="mdi:flask-outline"
+            icon="solar:test-tube-linear"
             width={48}
             sx={{ color: "text.disabled", mb: 2 }}
           />
@@ -249,7 +233,7 @@ const ExperimentsListView = ({ gatewayId }) => {
           {experiments?.length === 0 && (
             <Button
               variant="outlined"
-              startIcon={<Iconify icon="eva:plus-outline" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={() => setCreateOpen(true)}
             >
               Create Your First Experiment
@@ -301,90 +285,81 @@ const ExperimentCard = ({
   const tokenDelta = exp.tokenDeltaPct ?? exp.token_delta_pct;
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2 }}>
-      <CardActionArea onClick={onClick} sx={{ p: 0 }}>
-        <CardContent sx={{ py: 2 }}>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="flex-start"
-          >
-            <Box>
-              <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
-                <Typography variant="subtitle1" fontWeight={600}>
-                  {exp.name}
-                </Typography>
-                <Chip
-                  label={exp.status}
-                  color={STATUS_COLORS[exp.status] || "default"}
-                  size="small"
-                />
-              </Stack>
-              <Typography variant="body2" color="text.secondary">
-                Production: {exp.source_model}
-                {" \u2192 "}
-                Shadow: {exp.shadow_model}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" mt={0.5}>
-                Sample rate: {Math.round(Number(exp.sample_rate || 0) * 100)}%
-                {" \u2022 "}
-                {Number(exp.total_comparisons || 0).toLocaleString()}{" "}
-                comparisons
-              </Typography>
-            </Box>
-
-            <Stack direction="row" spacing={1} alignItems="center">
-              {latencyDelta != null && Number(latencyDelta) !== 0 && (
-                <DeltaChip label="Latency" value={Number(latencyDelta)} />
-              )}
-              {tokenDelta != null && Number(tokenDelta) !== 0 && (
-                <DeltaChip label="Tokens" value={Number(tokenDelta)} />
-              )}
-            </Stack>
+    <Section variant="panel" onClick={onClick}>
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="flex-start"
+      >
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
+            <Typography variant="subtitle1" fontWeight={600}>
+              {exp.name}
+            </Typography>
+            <StatusBadge status={exp.status} />
           </Stack>
+          <Typography variant="body2" color="text.secondary">
+            Production: {exp.source_model}
+            {" \u2192 "}
+            Shadow: {exp.shadow_model}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" mt={0.5}>
+            Sample rate: {Math.round(Number(exp.sample_rate || 0) * 100)}%
+            {" \u2022 "}
+            {Number(exp.total_comparisons || 0).toLocaleString()} comparisons
+          </Typography>
+        </Box>
 
-          <Stack
-            direction="row"
-            spacing={1}
-            justifyContent="flex-end"
-            mt={1}
-            onClick={(e) => e.stopPropagation()}
+        <Stack direction="row" spacing={1} alignItems="center">
+          {latencyDelta != null && Number(latencyDelta) !== 0 && (
+            <DeltaChip label="Latency" value={Number(latencyDelta)} />
+          )}
+          {tokenDelta != null && Number(tokenDelta) !== 0 && (
+            <DeltaChip label="Tokens" value={Number(tokenDelta)} />
+          )}
+        </Stack>
+      </Stack>
+
+      <Stack
+        direction="row"
+        spacing={1}
+        justifyContent="flex-end"
+        mt={1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {exp.status === "active" && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => onPause(e, exp.id)}
           >
-            {exp.status === "active" && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={(e) => onPause(e, exp.id)}
-              >
-                Pause
-              </Button>
-            )}
-            {exp.status === "paused" && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={(e) => onResume(e, exp.id)}
-              >
-                Resume
-              </Button>
-            )}
-            {exp.status === "completed" && (
-              <Button
-                size="small"
-                variant="outlined"
-                color="error"
-                onClick={(e) => onDelete(e, exp.id)}
-              >
-                Delete
-              </Button>
-            )}
-            <Button size="small" variant="text">
-              View Details
-            </Button>
-          </Stack>
-        </CardContent>
-      </CardActionArea>
-    </Card>
+            Pause
+          </Button>
+        )}
+        {exp.status === "paused" && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => onResume(e, exp.id)}
+          >
+            Resume
+          </Button>
+        )}
+        {exp.status === "completed" && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            onClick={(e) => onDelete(e, exp.id)}
+          >
+            Delete
+          </Button>
+        )}
+        <Button size="small" variant="text">
+          View Details
+        </Button>
+      </Stack>
+    </Section>
   );
 };
 
@@ -392,7 +367,7 @@ const ExperimentCard = ({
 
 const DeltaChip = ({ label, value }) => {
   const isImprovement = value < 0;
-  const color = isImprovement ? "#10B981" : "#EF4444";
+  const color = isImprovement ? "status.success.fg" : "status.danger.fg";
   const arrow = isImprovement ? "\u25BC" : "\u25B2";
   return (
     <Chip
@@ -401,8 +376,6 @@ const DeltaChip = ({ label, value }) => {
       sx={{
         color,
         borderColor: color,
-        fontWeight: 500,
-        fontSize: "0.75rem",
       }}
       variant="outlined"
     />

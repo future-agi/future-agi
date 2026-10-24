@@ -21,18 +21,42 @@ export default function IssueProjectLine({ issue }) {
 
   return (
     <Stack direction="row" alignItems="center" gap={0.75} sx={{ minWidth: 0 }}>
-      <Iconify icon="solar:folder-with-files-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+      <Iconify
+        icon="solar:folder-with-files-linear"
+        width={14}
+        sx={{ color: "text.disabled", flexShrink: 0 }}
+      />
       <Tooltip title="The Observe project these traces land in" arrow>
-        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>{link.name}</Typography>
+        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+          {link.name}
+        </Typography>
       </Tooltip>
-      <Iconify icon="mdi:arrow-right" width={13} sx={{ color: "text.disabled", flexShrink: 0 }} />
+      <Iconify
+        icon="solar:arrow-right-linear"
+        width={14}
+        sx={{ color: "text.disabled", flexShrink: 0 }}
+      />
       {link.status === "linked" ? (
         <Box
           component="span"
-          {...clickable(link.agent ? () => navigate(`${paths.dashboard.agents}/connected/${link.agent.id}`) : undefined, { role: "link" })}
+          {...clickable(
+            link.agent
+              ? () =>
+                  navigate(
+                    `${paths.dashboard.agents}/connected/${link.agent.id}`,
+                  )
+              : undefined,
+            { role: "link" },
+          )}
           sx={{
-            typography: "s2", fontWeight: 600, color: "text.primary",
-            ...(link.agent && { cursor: "pointer", "&:hover": { textDecoration: "underline" }, ...focusRing }),
+            typography: "s2",
+            fontWeight: 600,
+            color: "text.primary",
+            ...(link.agent && {
+              cursor: "pointer",
+              "&:hover": { textDecoration: "underline" },
+              ...focusRing,
+            }),
           }}
         >
           {link.agent?.name || "Agent"}

@@ -9,7 +9,14 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Skeleton, CircularProgress } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Skeleton,
+  CircularProgress,
+  useTheme,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { pulse, shimmer } from "./primitives";
 
@@ -20,7 +27,15 @@ import { pulse, shimmer } from "./primitives";
  * we are standing something real up: environment boot, agent handshake, or the
  * pre-flight before a run.
  */
-export function BootSequence({ steps, stepMs = 900, onDone, accent = "#7857FC", compact }) {
+export function BootSequence({
+  steps,
+  stepMs = 900,
+  onDone,
+  accent: accentProp,
+  compact,
+}) {
+  const theme = useTheme();
+  const accent = accentProp ?? theme.palette.status.discovery.solid;
   const [current, setCurrent] = useState(0);
 
   useEffect(() => {
@@ -45,23 +60,50 @@ export function BootSequence({ steps, stepMs = 900, onDone, accent = "#7857FC", 
             spacing={1.25}
             sx={{
               opacity: done || active ? 1 : 0.38,
-              transition: "opacity .3s ease",
+              transition: "opacity .2s ease",
             }}
           >
-            <Box sx={{ width: 18, height: 18, display: "grid", placeItems: "center", flexShrink: 0 }}>
+            <Box
+              sx={{
+                width: 18,
+                height: 18,
+                display: "grid",
+                placeItems: "center",
+                flexShrink: 0,
+              }}
+            >
               {done ? (
-                <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "#16A34A" }} />
+                <Iconify
+                  icon="solar:check-circle-bold"
+                  width={16}
+                  sx={{ color: "status.success.fg" }}
+                />
               ) : active ? (
-                <CircularProgress size={13} thickness={5.5} sx={{ color: accent }} />
+                <CircularProgress
+                  size={13}
+                  thickness={5.5}
+                  sx={{ color: accent }}
+                />
               ) : (
-                <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "text.disabled" }} />
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: "text.disabled",
+                  }}
+                />
               )}
             </Box>
             <Typography
               sx={{
                 typography: "s2",
                 fontWeight: active ? 600 : 400,
-                color: done ? "text.secondary" : active ? "text.primary" : "text.disabled",
+                color: done
+                  ? "text.secondary"
+                  : active
+                    ? "text.primary"
+                    : "text.disabled",
               }}
             >
               {label}
@@ -74,8 +116,11 @@ export function BootSequence({ steps, stepMs = 900, onDone, accent = "#7857FC", 
   );
 }
 BootSequence.propTypes = {
-  steps: PropTypes.array.isRequired, stepMs: PropTypes.number,
-  onDone: PropTypes.func, accent: PropTypes.string, compact: PropTypes.bool,
+  steps: PropTypes.array.isRequired,
+  stepMs: PropTypes.number,
+  onDone: PropTypes.func,
+  accent: PropTypes.string,
+  compact: PropTypes.bool,
 };
 
 export function AnimatedEllipsis() {
@@ -84,12 +129,25 @@ export function AnimatedEllipsis() {
     const t = setInterval(() => setN((x) => (x % 3) + 1), 420);
     return () => clearInterval(t);
   }, []);
-  return <Box component="span" sx={{ color: "text.subtitle" }}>{".".repeat(n)}</Box>;
+  return (
+    <Box component="span" sx={{ color: "text.subtitle" }}>
+      {".".repeat(n)}
+    </Box>
+  );
 }
 
 /* ── full-panel provisioning splash ──────────────────────────────────────── */
 
-export function ProvisioningPanel({ title, subtitle, steps, accent = "#7857FC", onDone, icon }) {
+export function ProvisioningPanel({
+  title,
+  subtitle,
+  steps,
+  accent: accentProp,
+  onDone,
+  icon,
+}) {
+  const theme = useTheme();
+  const accent = accentProp ?? theme.palette.status.discovery.solid;
   return (
     <Stack
       alignItems="center"
@@ -107,7 +165,8 @@ export function ProvisioningPanel({ title, subtitle, steps, accent = "#7857FC", 
               height: 64 + i * 26,
               borderRadius: "50%",
               border: "1px solid",
-              borderColor: (t) => alpha(accent, t.palette.mode === "dark" ? 0.22 : 0.16),
+              borderColor: (t) =>
+                alpha(accent, t.palette.mode === "dark" ? 0.22 : 0.16),
               animation: `${pulse} 2.4s ease-in-out infinite`,
               animationDelay: `${i * 0.35}s`,
             }}
@@ -115,8 +174,13 @@ export function ProvisioningPanel({ title, subtitle, steps, accent = "#7857FC", 
         ))}
         <Box
           sx={{
-            width: 64, height: 64, borderRadius: 2, display: "grid", placeItems: "center",
-            bgcolor: (t) => alpha(accent, t.palette.mode === "dark" ? 0.18 : 0.1),
+            width: 64,
+            height: 64,
+            borderRadius: 2,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: (t) =>
+              alpha(accent, t.palette.mode === "dark" ? 0.18 : 0.1),
             color: accent,
             border: () => `1px solid ${alpha(accent, 0.28)}`,
           }}
@@ -126,9 +190,15 @@ export function ProvisioningPanel({ title, subtitle, steps, accent = "#7857FC", 
       </Box>
 
       <Box sx={{ textAlign: "center" }}>
-        <Typography sx={{ typography: "m2", fontWeight: 600 }}>{title}</Typography>
+        <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+          {title}
+        </Typography>
         {subtitle && (
-          <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.5 }}>{subtitle}</Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.subtitle", mt: 0.5 }}
+          >
+            {subtitle}
+          </Typography>
         )}
       </Box>
 
@@ -139,15 +209,27 @@ export function ProvisioningPanel({ title, subtitle, steps, accent = "#7857FC", 
   );
 }
 ProvisioningPanel.propTypes = {
-  title: PropTypes.string, subtitle: PropTypes.string, steps: PropTypes.array,
-  accent: PropTypes.string, onDone: PropTypes.func, icon: PropTypes.string,
+  title: PropTypes.string,
+  subtitle: PropTypes.string,
+  steps: PropTypes.array,
+  accent: PropTypes.string,
+  onDone: PropTypes.func,
+  icon: PropTypes.string,
 };
 
 /* ── shaped skeletons ────────────────────────────────────────────────────── */
 
 export function EnvironmentCardSkeleton() {
   return (
-    <Box sx={{ p: 2.5, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        p: 2.5,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+      }}
+    >
       <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1.5 }}>
         <Skeleton variant="rounded" width={40} height={40} />
         <Box flex={1}>
@@ -168,13 +250,31 @@ export function EnvironmentCardSkeleton() {
 
 export function RowSkeleton({ rows = 6 }) {
   return (
-    <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+    <Stack
+      divider={
+        <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+      }
+    >
       {Array.from({ length: rows }).map((_, i) => (
-        <Stack key={i} direction="row" alignItems="center" spacing={2} sx={{ px: 2, py: 1.5 }}>
+        <Stack
+          key={i}
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{ px: 2, py: 1.5 }}
+        >
           <Skeleton variant="circular" width={22} height={22} />
           <Box flex={1}>
-            <Skeleton variant="text" width={`${40 + ((i * 13) % 35)}%`} height={16} />
-            <Skeleton variant="text" width={`${25 + ((i * 7) % 30)}%`} height={12} />
+            <Skeleton
+              variant="text"
+              width={`${40 + ((i * 13) % 35)}%`}
+              height={16}
+            />
+            <Skeleton
+              variant="text"
+              width={`${25 + ((i * 7) % 30)}%`}
+              height={12}
+            />
           </Box>
           <Skeleton variant="rounded" width={48} height={20} />
         </Stack>
@@ -186,12 +286,17 @@ RowSkeleton.propTypes = { rows: PropTypes.number };
 
 /* ── inline "thinking" bar, for generation flows ─────────────────────────── */
 
-export function ThinkingBar({ label = "Thinking", accent = "#7857FC" }) {
+export function ThinkingBar({ label = "Thinking", accent: accentProp }) {
+  const theme = useTheme();
+  const accent = accentProp ?? theme.palette.status.discovery.solid;
   return (
     <Stack direction="row" alignItems="center" spacing={1.25} sx={{ py: 1 }}>
       <Box
         sx={{
-          width: 90, height: 4, borderRadius: 2, overflow: "hidden",
+          width: 90,
+          height: 4,
+          borderRadius: 2,
+          overflow: "hidden",
           background: `linear-gradient(90deg, ${alpha(accent, 0.12)} 0%, ${alpha(accent, 0.55)} 50%, ${alpha(accent, 0.12)} 100%)`,
           backgroundSize: "320px 100%",
           animation: `${shimmer} 1.3s linear infinite`,

@@ -52,7 +52,13 @@ const CreateExperimentDialog = ({ open, onClose, onSubmit, isLoading }) => {
     form.shadow_provider.trim();
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Create Shadow Experiment</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} mt={1}>

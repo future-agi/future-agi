@@ -5,7 +5,6 @@ import {
   MenuItem,
   Popover,
   Skeleton,
-  styled,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -44,29 +43,6 @@ const AgentDefinitionPopover = lazy(
 const AgentDefinitionVersionPopover = lazy(
   () => import("./TestRuns/AgenetDefinitionVersionPopover"),
 );
-
-const CustomBackButton = styled(Button)(({ theme }) => ({
-  borderWidth: "1px",
-  borderColor: theme.palette.action.hover,
-  borderRadius: "4px",
-}));
-
-const TestsDropdownButton = styled(Button)(({ theme }) => ({
-  minWidth: 227,
-  height: 40,
-  justifyContent: "space-between",
-  textTransform: "none",
-  border: "1px solid",
-  borderColor: theme.palette.divider,
-  borderRadius: theme.spacing(0.5),
-  backgroundColor: theme.palette.background.paper,
-  color: theme.palette.text.primary,
-  padding: theme.spacing(0.375, 1.5),
-  "&:hover": {
-    backgroundColor: theme.palette.background.default,
-    borderColor: theme.palette.text.disabled,
-  },
-}));
 
 const SavingStatus = {
   SAVING: "SAVING",
@@ -213,16 +189,15 @@ const TestDetailHeader = () => {
       <Box display="flex" alignItems="center" justifyContent="space-between">
         {/* Left Section - Back Button and Project Selector */}
         <Box display="flex" alignItems="center" gap={theme.spacing(2)}>
-          <CustomBackButton
+          <Button
+            color="inherit"
             variant="outlined"
             sx={{
               color: "text.primary",
-              padding: theme.spacing(0.125, 1.5),
-              fontWeight: "fontWeightMedium",
             }}
             startIcon={
               <Iconify
-                icon="formkit:left"
+                icon="solar:arrow-left-linear"
                 width={16}
                 height={16}
                 color={"text.primary"}
@@ -231,23 +206,26 @@ const TestDetailHeader = () => {
             onClick={handleBack}
           >
             Back
-          </CustomBackButton>
+          </Button>
 
-          <TestsDropdownButton
+          <Button
+            variant="outlined"
+            color="inherit"
             ref={testSelectDropDownRef}
+            sx={{ minWidth: 240, justifyContent: "space-between" }}
             onClick={() => setTestSelectDropDownOpen(true)}
             endIcon={
               isLoadingTests ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="eva:chevron-down-fill" />
+                <Iconify icon="solar:alt-arrow-down-linear" />
               )
             }
           >
             <Typography variant="body2" noWrap>
               {testData?.name || "Select a test run"}
             </Typography>
-          </TestsDropdownButton>
+          </Button>
           <Typography typography="s2" color="text.disabled">
             {savingStatus === SavingStatus.SAVING
               ? "Saving..."
@@ -311,7 +289,7 @@ const TestDetailHeader = () => {
                       <Skeleton
                         variant="rectangular"
                         sx={{
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                         }}
                         width={`${70 + (i % 3) * 10}%`}
                         height={24}
@@ -355,7 +333,7 @@ const TestDetailHeader = () => {
                           <Skeleton
                             variant="rectangular"
                             sx={{
-                              borderRadius: 0.5,
+                              borderRadius: "4px",
                             }}
                             width={`${70 + (i % 3) * 10}%`}
                             height={24}
@@ -557,13 +535,7 @@ const TestDetailHeader = () => {
               size="small"
               onClick={handleEvalClick}
               startIcon={
-                <Iconify
-                  sx={{
-                    height: "16px",
-                    width: "16px",
-                  }}
-                  icon="material-symbols:check-circle-outline"
-                />
+                <Iconify width={16} icon="solar:check-circle-linear" />
               }
             >
               Evals ({testData?.evals?.length})

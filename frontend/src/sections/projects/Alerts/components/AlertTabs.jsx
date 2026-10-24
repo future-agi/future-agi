@@ -12,12 +12,10 @@ function AlertTab({ selected, onClick, index, title, completed }) {
       onClick={onClick}
       sx={{
         border: "1px solid",
-        borderRadius: theme.spacing(0.5),
-        padding: theme.spacing(0.5),
         borderColor: completed
-          ? "green.500"
+          ? "status.success.solid"
           : selected
-            ? "blue.500"
+            ? "primary.main"
             : "divider",
         width: "100%",
         display: "flex",
@@ -31,7 +29,7 @@ function AlertTab({ selected, onClick, index, title, completed }) {
           sx={{
             height: theme.spacing(3.5),
             width: theme.spacing(3.5),
-            backgroundColor: completed ? "green.o10" : tagBackground,
+            backgroundColor: completed ? "status.success.bg" : tagBackground,
             ...(completed && {
               display: "flex",
               justifyContent: "center",
@@ -45,7 +43,7 @@ function AlertTab({ selected, onClick, index, title, completed }) {
               sx={{
                 height: 15,
                 width: 15,
-                bgcolor: "green.700",
+                bgcolor: "status.success.fg",
               }}
             />
           ) : (

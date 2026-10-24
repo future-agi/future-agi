@@ -81,7 +81,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
         backgroundColor: "background.default",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         display: "flex",
         flexDirection: "column",
         gap: "12px",
@@ -146,7 +146,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                   flexShrink: 0,
                   cursor: "pointer",
                   paddingX: 0.5,
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     activeSeries === index
                       ? getUniqueColorPalette(index).solid
@@ -195,6 +195,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                 id: "optimization-result-graph",
                 type: "line",
                 background: "transparent",
+                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
                 foreColor: isDark ? "#a1a1aa" : undefined,
                 toolbar: {
                   show: false,

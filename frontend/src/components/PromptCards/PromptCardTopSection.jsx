@@ -80,7 +80,7 @@ const RoleSelection = ({
           gap: 1,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: theme.spacing(0.75, 1.5),
           cursor: onRoleChange ? "pointer" : "default", // show pointer if menu is clickable
           backgroundColor: open ? "divider" : "transparent", // optional: highlight when open
@@ -113,9 +113,9 @@ const RoleSelection = ({
         onClose={handleClose}
         sx={{
           "& .MuiPopover-paper": {
-            borderRadius: "4px !important",
+            borderRadius: "8px !important",
             padding: 1,
-            minWidth: "120px",
+            minWidth: "200px",
             border: "1px solid",
             borderColor: "divider",
           },
@@ -132,9 +132,7 @@ const RoleSelection = ({
               }}
               sx={{
                 typography: "s1",
-                fontWeight: "fontWeightRegular",
                 "&.Mui-selected": {
-                  fontWeight: "fontWeightMedium",
                   backgroundColor: "background.neutral",
                   "&.Mui-focusVisible": {
                     backgroundColor: "background.neutral",
@@ -176,7 +174,6 @@ function PromptMenu({
         ref={attachmentAnchorEl}
         disabled={disabled}
         size="small"
-        sx={{ p: 0 }}
       >
         <SvgColor
           sx={{
@@ -286,7 +283,6 @@ const PromptTopSection = ({
         <ShowComponent condition={sortable}>
           <IconButton
             sx={{
-              padding: 0,
               cursor: "grab",
               "&:active": { cursor: "grabbing" },
             }}
@@ -327,7 +323,6 @@ const PromptTopSection = ({
           <CustomTooltip show title="Improve Prompt" arrow size="small">
             <IconButton
               size="small"
-              sx={{ p: 0 }}
               onClick={onImprovePrompt}
               disabled={disabled}
             >
@@ -342,7 +337,6 @@ const PromptTopSection = ({
           <CustomTooltip show title="Attach files" arrow size="small">
             <IconButton
               size="small"
-              sx={{ p: 0 }}
               onClick={() => setOpenMenu(true)}
               ref={attachmentAnchorEl}
               disabled={disabled}
@@ -386,7 +380,6 @@ const PromptTopSection = ({
           <CustomTooltip show title="Delete" arrow size="small">
             <IconButton
               size="small"
-              sx={{ p: 0 }}
               onClick={onDelete}
               disabled={disabled}
               color="text.primary"

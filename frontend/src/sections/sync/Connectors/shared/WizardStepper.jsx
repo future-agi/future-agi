@@ -69,7 +69,7 @@ export function WizardStepIcon(props) {
     <WizardStepIconRoot ownerState={{ active }} className={className}>
       {completed ? (
         <Iconify
-          icon="eva:checkmark-fill"
+          icon="solar:check-linear"
           className="WizardStepIcon-completedIcon"
           width={24}
           height={24}

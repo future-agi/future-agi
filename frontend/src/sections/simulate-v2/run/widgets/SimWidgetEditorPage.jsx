@@ -2,9 +2,27 @@ import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  Box, Breadcrumbs, Button, Checkbox, Chip, Divider, FormControl, IconButton,
-  InputAdornment, Link, ListItemIcon, ListItemText, Menu, MenuItem, Select, Stack,
-  Tab, Tabs, TextField, Tooltip, Typography,
+  Box,
+  Breadcrumbs,
+  Button,
+  Checkbox,
+  Chip,
+  Divider,
+  FormControl,
+  IconButton,
+  InputAdornment,
+  Link,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Select,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Tooltip,
+  Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -79,7 +97,7 @@ const SECTION_HOVER_SX = {
   mx: -1,
   transition: "background-color 0.15s",
   "&:hover": {
-    bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(145, 107, 255, 0.12)" : "rgba(105, 65, 198, 0.08)"),
+    bgcolor: "status.discovery.bg",
     "& .section-title": { color: "primary.main" },
   },
 };
@@ -88,15 +106,34 @@ function SectionHeader({ title, required, onClick, disabled, tip }) {
   return (
     <Tooltip title={tip} placement="left" arrow>
       <Stack
-        direction="row" justifyContent="space-between" alignItems="center"
+        direction="row"
+        justifyContent="space-between"
+        alignItems="center"
         {...clickable(disabled ? undefined : onClick, { disabled })}
-        sx={{ ...SECTION_HOVER_SX, ...(disabled && { cursor: "default" }), ...focusRing }}
+        sx={{
+          ...SECTION_HOVER_SX,
+          ...(disabled && { cursor: "default" }),
+          ...focusRing,
+        }}
       >
-        <Typography className="section-title" variant="body2" fontWeight="fontWeightSemiBold" sx={{ transition: "color 0.15s" }}>
+        <Typography
+          className="section-title"
+          variant="body2"
+          fontWeight="fontWeightSemiBold"
+          sx={{ transition: "color 0.15s" }}
+        >
           {title}
-          {required && <Typography component="span" color="error.main">*</Typography>}
+          {required && (
+            <Typography component="span" color="error.main">
+              *
+            </Typography>
+          )}
         </Typography>
-        <Iconify icon="mdi:plus" width={18} sx={{ color: disabled ? "text.disabled" : "text.secondary" }} />
+        <Iconify
+          icon="solar:add-linear"
+          width={20}
+          sx={{ color: disabled ? "text.disabled" : "text.secondary" }}
+        />
       </Stack>
     </Tooltip>
   );
@@ -113,7 +150,9 @@ SectionHeader.propTypes = {
 const xAxisLabel = (v) => {
   const opt = X_AXIS_OPTIONS.find((o) => o.value === v);
   if (opt) return opt.label;
-  const attr = String(v).startsWith("attr:") ? SIM_ATTRIBUTES.find((a) => `attr:${a.id}` === v) : null;
+  const attr = String(v).startsWith("attr:")
+    ? SIM_ATTRIBUTES.find((a) => `attr:${a.id}` === v)
+    : null;
   return attr ? `By ${attr.name.toLowerCase()}` : v;
 };
 
@@ -129,7 +168,8 @@ export default function SimWidgetEditorPage() {
   const theme = useTheme();
   const { state } = useSimStore();
   const { envState } = useEnvState(envId);
-  const env = getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
+  const env =
+    getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
   const layout = useRunLayout({ surface: env?.surface || "generic" });
 
   const runs = useMemo(() => simRunsWithTasks(env, envState), [env, envState]);
@@ -139,7 +179,8 @@ export default function SimWidgetEditorPage() {
 
   const isNew = widgetId === "new";
   const customWidget = layout.customWidgets.find((w) => w.id === widgetId);
-  const builtinPanel = !isNew && !customWidget ? PANELS.find((p) => p.id === widgetId) : null;
+  const builtinPanel =
+    !isNew && !customWidget ? PANELS.find((p) => p.id === widgetId) : null;
 
   /* ── editor state ── */
   const [initialized, setInitialized] = useState(false);
@@ -164,8 +205,19 @@ export default function SimWidgetEditorPage() {
   const [moreAnchor, setMoreAnchor] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle");
-  const [picker, setPicker] = useState({ open: false, anchor: null, mode: "metric", index: null, metricIndex: null });
-  const [valuePicker, setValuePicker] = useState({ anchor: null, scope: null, index: null, metricIndex: null });
+  const [picker, setPicker] = useState({
+    open: false,
+    anchor: null,
+    mode: "metric",
+    index: null,
+    metricIndex: null,
+  });
+  const [valuePicker, setValuePicker] = useState({
+    anchor: null,
+    scope: null,
+    index: null,
+    metricIndex: null,
+  });
 
   /* Load whatever this widget is: a saved custom widget, an edited or shipped
      built-in, or a blank new one. */
@@ -178,7 +230,10 @@ export default function SimWidgetEditorPage() {
     else if (builtinPanel) {
       const override = layout.getOverride(builtinPanel.id);
       if (override?.simQuery) {
-        saved = { title: override.title || builtinPanel.title, ...override.simQuery };
+        saved = {
+          title: override.title || builtinPanel.title,
+          ...override.simQuery,
+        };
       } else {
         const q = builtinQuery(builtinPanel.id, catalog) || {};
         saved = { title: builtinPanel.title, ...q };
@@ -194,7 +249,8 @@ export default function SimWidgetEditorPage() {
         const d = defaultAxisConfig();
         const a = saved.axis_config;
         setAxisConfig({
-          ...d, ...a,
+          ...d,
+          ...a,
           leftY: { ...d.leftY, ...(a.leftY || {}) },
           rightY: { ...d.rightY, ...(a.rightY || {}) },
           xAxis: { ...d.xAxis, ...(a.xAxis || {}) },
@@ -202,14 +258,29 @@ export default function SimWidgetEditorPage() {
         });
       }
       if (saved.display) setDisplay(saved.display);
-      if (Array.isArray(saved.visible_series)) setVisibleSeries(new Set(saved.visible_series));
+      if (Array.isArray(saved.visible_series))
+        setVisibleSeries(new Set(saved.visible_series));
     }
     setInitialized(true);
-  }, [initialized, env, runs.length, customWidget, builtinPanel, layout, catalog]);
+  }, [
+    initialized,
+    env,
+    runs.length,
+    customWidget,
+    builtinPanel,
+    layout,
+    catalog,
+  ]);
 
-  const result = useMemo(() => runSimQuery(query, runs, currentRun?.id, catalog), [query, runs, currentRun, catalog]);
+  const result = useMemo(
+    () => runSimQuery(query, runs, currentRun?.id, catalog),
+    [query, runs, currentRun, catalog],
+  );
   /* Runs a range can reach: every run up to and including the one open. */
-  const availableRuns = useMemo(() => runsInRange(runs, "all", runId).length, [runs, runId]);
+  const availableRuns = useMemo(
+    () => runsInRange(runs, "all", runId).length,
+    [runs, runId],
+  );
   const previewSeries = result.series;
   const buckets = result.buckets;
   const colorFor = useSeriesColors(previewSeries, display);
@@ -226,8 +297,12 @@ export default function SimWidgetEditorPage() {
     if (firstLoad && visibleSeries) return; // keep a saved selection
     /* Tables and metric cards show every series; only plotted charts are
        trimmed to the top ten. */
-    if (chartType === "table" || chartType === "metric") { setVisibleSeries(null); return; }
-    if (previewSeries.length > MAX_DEFAULT_SERIES) setVisibleSeries(new Set(topSeriesKeys(previewSeries)));
+    if (chartType === "table" || chartType === "metric") {
+      setVisibleSeries(null);
+      return;
+    }
+    if (previewSeries.length > MAX_DEFAULT_SERIES)
+      setVisibleSeries(new Set(topSeriesKeys(previewSeries)));
     else setVisibleSeries(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesSig, initialized]);
@@ -239,37 +314,78 @@ export default function SimWidgetEditorPage() {
   const isMetricCard = chartType === "metric";
   const isHorizontal = chartType === "bar" || chartType === "stacked_bar";
   const hasBreakdown = query.breakdowns.length > 0;
-  const showSplit = previewSeries.length > 0 && !isMetricCard && !isHorizontal && !isTable && !isPie;
+  const showSplit =
+    previewSeries.length > 0 &&
+    !isMetricCard &&
+    !isHorizontal &&
+    !isTable &&
+    !isPie;
 
   const setQ = (patch) => setQuery((q) => ({ ...q, ...patch }));
-  const updateAxis = (axis, key, val) => setAxisConfig((prev) => ({ ...prev, [axis]: { ...prev[axis], [key]: val } }));
-  const setSeriesAxis = (si, side) => setAxisConfig((prev) => {
-    const seriesAxis = { ...prev.seriesAxis, [si]: side };
-    return { ...prev, seriesAxis, rightY: { ...prev.rightY, visible: Object.values(seriesAxis).includes("right") } };
-  });
+  const updateAxis = (axis, key, val) =>
+    setAxisConfig((prev) => ({
+      ...prev,
+      [axis]: { ...prev[axis], [key]: val },
+    }));
+  const setSeriesAxis = (si, side) =>
+    setAxisConfig((prev) => {
+      const seriesAxis = { ...prev.seriesAxis, [si]: side };
+      return {
+        ...prev,
+        seriesAxis,
+        rightY: {
+          ...prev.rightY,
+          visible: Object.values(seriesAxis).includes("right"),
+        },
+      };
+    });
 
   /* ── splitter drag ── */
   const dragStart = useRef(null);
-  const handleDragStart = useCallback((e) => {
-    e.preventDefault();
-    dragStart.current = { y: e.clientY, h: chartHeight };
-    setIsDragging(true);
-    const move = (ev) => {
-      const next = Math.max(0, Math.min(700, dragStart.current.h + (ev.clientY - dragStart.current.y)));
-      setChartHeight(next);
-      setViewMode(next === 0 ? "table" : next >= 600 ? "chart" : next >= 300 ? "split-chart" : "split-table");
-    };
-    const up = () => {
-      setIsDragging(false);
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  }, [chartHeight]);
+  const handleDragStart = useCallback(
+    (e) => {
+      e.preventDefault();
+      dragStart.current = { y: e.clientY, h: chartHeight };
+      setIsDragging(true);
+      const move = (ev) => {
+        const next = Math.max(
+          0,
+          Math.min(
+            700,
+            dragStart.current.h + (ev.clientY - dragStart.current.y),
+          ),
+        );
+        setChartHeight(next);
+        setViewMode(
+          next === 0
+            ? "table"
+            : next >= 600
+              ? "chart"
+              : next >= 300
+                ? "split-chart"
+                : "split-table",
+        );
+      };
+      const up = () => {
+        setIsDragging(false);
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    },
+    [chartHeight],
+  );
 
   /* ── picker ── */
-  const openPicker = (e, mode, index = null, metricIndex = null) => setPicker({ open: true, anchor: e.currentTarget, mode, index, metricIndex });
+  const openPicker = (e, mode, index = null, metricIndex = null) =>
+    setPicker({
+      open: true,
+      anchor: e.currentTarget,
+      mode,
+      index,
+      metricIndex,
+    });
   const closePicker = () => setPicker((p) => ({ ...p, open: false }));
   const pickerItems = useMemo(() => {
     if (picker.mode === "metric") {
@@ -277,7 +393,9 @@ export default function SimWidgetEditorPage() {
     }
     /* Tool attributes (tool name / status) only exist on tool-call rows, so
        they are offered only when a tool metric is on the widget. */
-    const hasToolMetric = query.metrics.some((m) => catalog.find((c) => c.id === m.id)?.grain === "tool");
+    const hasToolMetric = query.metrics.some(
+      (m) => catalog.find((c) => c.id === m.id)?.grain === "tool",
+    );
     return SIM_ATTRIBUTES.map((a) => ({
       ...a,
       type: "custom_attribute",
@@ -291,26 +409,30 @@ export default function SimWidgetEditorPage() {
       const def = catalog.find((c) => c.id === opt.id);
       const next = metricFromCatalog(def);
       const metrics = [...query.metrics];
-      if (index != null) metrics[index] = { ...next, filters: metrics[index]?.filters || [] };
+      if (index != null)
+        metrics[index] = { ...next, filters: metrics[index]?.filters || [] };
       else metrics.push(next);
       setQ({ metrics });
     } else if (mode === "breakdown") {
       const breakdowns = [...query.breakdowns];
       if (index != null) breakdowns[index] = { id: opt.id, name: opt.name };
-      else breakdowns.splice(0, breakdowns.length, { id: opt.id, name: opt.name });
+      else
+        breakdowns.splice(0, breakdowns.length, { id: opt.id, name: opt.name });
       setQ({ breakdowns });
       setVisibleSeries(null);
     } else if (mode === "filter") {
       const filters = [...query.filters];
       const f = { id: opt.id, name: opt.name, operator: "is", value: [] };
-      if (index != null) filters[index] = f; else filters.push(f);
+      if (index != null) filters[index] = f;
+      else filters.push(f);
       setQ({ filters });
     } else if (mode === "metric_filter") {
       const metrics = [...query.metrics];
       const m = { ...metrics[metricIndex] };
       const mf = [...(m.filters || [])];
       const f = { id: opt.id, name: opt.name, operator: "is", value: [] };
-      if (index != null) mf[index] = f; else mf.push(f);
+      if (index != null) mf[index] = f;
+      else mf.push(f);
       m.filters = mf;
       metrics[metricIndex] = m;
       setQ({ metrics });
@@ -326,12 +448,19 @@ export default function SimWidgetEditorPage() {
       metrics[metricIndex] = m;
       setQ({ metrics });
     } else {
-      setQ({ filters: query.filters.map((f, fi) => (fi === i ? { ...f, ...patch } : f)) });
+      setQ({
+        filters: query.filters.map((f, fi) =>
+          fi === i ? { ...f, ...patch } : f,
+        ),
+      });
     }
   };
-  const activeValueFilter = valuePicker.scope === "metric"
-    ? query.metrics[valuePicker.metricIndex]?.filters?.[valuePicker.index]
-    : valuePicker.scope === "global" ? query.filters[valuePicker.index] : null;
+  const activeValueFilter =
+    valuePicker.scope === "metric"
+      ? query.metrics[valuePicker.metricIndex]?.filters?.[valuePicker.index]
+      : valuePicker.scope === "global"
+        ? query.filters[valuePicker.index]
+        : null;
 
   /* ── save / delete / duplicate ── */
   const snapshot = () => ({
@@ -349,11 +478,21 @@ export default function SimWidgetEditorPage() {
     setSaveStatus("saving");
     const snap = snapshot();
     if (builtinPanel) {
-      layout.patchOverride(builtinPanel.id, { title: snap.title, simQuery: snap });
+      layout.patchOverride(builtinPanel.id, {
+        title: snap.title,
+        simQuery: snap,
+      });
     } else if (customWidget) {
-      layout.updateCustomWidget(customWidget.id, { kind: "sim_query", ...snap });
+      layout.updateCustomWidget(customWidget.id, {
+        kind: "sim_query",
+        ...snap,
+      });
     } else {
-      layout.addCustomWidget({ id: `sim-${Math.random().toString(36).slice(2, 10)}`, kind: "sim_query", ...snap });
+      layout.addCustomWidget({
+        id: `sim-${Math.random().toString(36).slice(2, 10)}`,
+        kind: "sim_query",
+        ...snap,
+      });
     }
     setSaveStatus("saved");
     setTimeout(() => navigate(analyticsUrl), SAVED_NAV_DELAY_MS);
@@ -374,15 +513,25 @@ export default function SimWidgetEditorPage() {
     });
   };
 
-  const aggColumnLabel = getAggColumnLabel(query.metrics, [...ALL_AGGREGATIONS, ...DATASET_EXTRA_AGGREGATIONS]);
+  const aggColumnLabel = getAggColumnLabel(query.metrics, [
+    ...ALL_AGGREGATIONS,
+    ...DATASET_EXTRA_AGGREGATIONS,
+  ]);
   const csvRows = () => [
     ["Metric", aggColumnLabel, ...buckets.map((b) => b.label)],
     ...previewSeries.map((s) => {
       const agg = s.total ?? getSeriesScalar(s.data, s.aggregation);
-      return [s.name, agg == null ? "—" : agg.toFixed(2), ...s.data.map((pt) => (pt.y != null ? pt.y : ""))];
+      return [
+        s.name,
+        agg == null ? "—" : agg.toFixed(2),
+        ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
+      ];
     }),
   ];
-  const toCsv = () => csvRows().map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const toCsv = () =>
+    csvRows()
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
 
   if (!env) {
     return (
@@ -400,32 +549,91 @@ export default function SimWidgetEditorPage() {
     : "Run";
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        bgcolor: "background.paper",
+      }}
+    >
       {/* ── Header ── */}
-      <Stack direction="row" alignItems="center" sx={{ px: 2, py: 1, borderBottom: `1px solid ${theme.palette.divider}`, gap: 1, minHeight: 48 }}>
-        <Breadcrumbs separator={<Iconify icon="mdi:chevron-right" width={14} />} sx={{ flexShrink: 0 }}>
-          <Link underline="hover" color="text.secondary" sx={{ cursor: "pointer", fontSize: "13px" }} onClick={() => navigate(paths.dashboard.simulate.environmentStep(envId, "runs"))}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        sx={{
+          px: 2,
+          py: 1,
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          gap: 1,
+          minHeight: 48,
+        }}
+      >
+        <Breadcrumbs
+          separator={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
+          sx={{ flexShrink: 0 }}
+        >
+          <Link
+            underline="hover"
+            color="text.secondary"
+            sx={{ cursor: "pointer", fontSize: "13px" }}
+            onClick={() =>
+              navigate(paths.dashboard.simulate.environmentStep(envId, "runs"))
+            }
+          >
             {env.name}
           </Link>
-          <Link underline="hover" color="text.secondary" sx={{ cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap" }} onClick={() => navigate(analyticsUrl)}>
+          <Link
+            underline="hover"
+            color="text.secondary"
+            sx={{ cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap" }}
+            onClick={() => navigate(analyticsUrl)}
+          >
             {runLabel} · Analytics
           </Link>
         </Breadcrumbs>
-        <Iconify icon="mdi:chevron-right" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+        <Iconify
+          icon="solar:alt-arrow-right-linear"
+          width={14}
+          sx={{ color: "text.disabled", flexShrink: 0 }}
+        />
 
         {editingName ? (
           <TextField
             value={chartName}
             onChange={(e) => setChartName(e.target.value)}
             onBlur={() => setEditingName(false)}
-            onKeyDown={(e) => { if (e.key === "Enter") setEditingName(false); }}
-            autoFocus size="small" variant="outlined" placeholder="Untitled widget"
-            sx={{ minWidth: 200, maxWidth: 350, "& .MuiOutlinedInput-input": { py: 0.5, fontSize: "14px", fontWeight: 500 } }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setEditingName(false);
+            }}
+            autoFocus
+            size="small"
+            variant="outlined"
+            placeholder="Untitled widget"
+            sx={{
+              minWidth: 200,
+              maxWidth: 350,
+              "& .MuiOutlinedInput-input": {
+                py: 0.5,
+                fontSize: "13px",
+                fontWeight: 500,
+              },
+            }}
           />
         ) : (
           <Typography
             {...clickable(() => setEditingName(true))}
-            sx={{ fontSize: "14px", fontWeight: 500, cursor: "pointer", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", "&:hover": { color: "primary.main" }, ...focusRing }}
+            sx={{
+              fontSize: "13px",
+              fontWeight: 500,
+              cursor: "pointer",
+              maxWidth: 300,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              "&:hover": { color: "primary.main" },
+              ...focusRing,
+            }}
           >
             {chartName || "Untitled widget"}
           </Typography>
@@ -436,19 +644,50 @@ export default function SimWidgetEditorPage() {
             <TruncatedTooltipText text={trimmedDescription}>
               {(measureRef) => (
                 <Stack
-                  direction="row" alignItems="center" gap={0.5} 
+                  direction="row"
+                  alignItems="center"
+                  gap={0.5}
                   {...clickable(() => setDescOpen(true))}
-                  sx={{ minWidth: 0, maxWidth: 260, px: 0.75, py: 0.25, borderRadius: 1, color: "text.secondary", cursor: "pointer", "&:hover": { bgcolor: "action.hover", color: "text.primary" }, ...focusRing }}
+                  sx={{
+                    minWidth: 0,
+                    maxWidth: 260,
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: 1,
+                    color: "text.secondary",
+                    cursor: "pointer",
+                    "&:hover": {
+                      bgcolor: "action.hover",
+                      color: "text.primary",
+                    },
+                    ...focusRing,
+                  }}
                 >
-                  <Iconify icon="mdi:text-box-outline" width={14} sx={{ flexShrink: 0 }} />
-                  <Typography ref={measureRef} noWrap sx={{ fontSize: "13px", minWidth: 0 }}>{trimmedDescription}</Typography>
+                  <Iconify
+                    icon="solar:notes-linear"
+                    width={14}
+                    sx={{ flexShrink: 0 }}
+                  />
+                  <Typography
+                    ref={measureRef}
+                    noWrap
+                    sx={{ fontSize: "13px", minWidth: 0 }}
+                  >
+                    {trimmedDescription}
+                  </Typography>
                 </Stack>
               )}
             </TruncatedTooltipText>
           ) : (
             <Button
-              size="small" startIcon={<Iconify icon="mdi:plus" width={14} />} onClick={() => setDescOpen(true)}
-              sx={{ flexShrink: 0, fontSize: "13px", fontWeight: 400, color: "text.disabled", "&:hover": { color: "text.secondary" } }}
+              size="small"
+              startIcon={<Iconify icon="solar:add-linear" width={14} />}
+              onClick={() => setDescOpen(true)}
+              sx={{
+                flexShrink: 0,
+                color: "text.disabled",
+                "&:hover": { color: "text.secondary" },
+              }}
             >
               Add description
             </Button>
@@ -463,27 +702,62 @@ export default function SimWidgetEditorPage() {
         />
 
         <Box sx={{ flex: 1 }} />
-        <IconButton size="small" aria-label="More actions" onClick={(e) => setMoreAnchor(e.currentTarget)} sx={{ color: "text.secondary" }}>
-          <Iconify icon="mdi:dots-horizontal" width={20} />
+        <IconButton
+          size="small"
+          aria-label="More actions"
+          onClick={(e) => setMoreAnchor(e.currentTarget)}
+          sx={{ color: "text.secondary" }}
+        >
+          <Iconify icon="solar:menu-dots-linear" width={20} />
         </IconButton>
         <Menu
-          anchorEl={moreAnchor} open={!!moreAnchor} onClose={() => setMoreAnchor(null)}
+          anchorEl={moreAnchor}
+          open={!!moreAnchor}
+          onClose={() => setMoreAnchor(null)}
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
           {!isNew && (
-            <MenuItem onClick={() => { setMoreAnchor(null); setConfirmDelete(true); }} sx={{ color: "error.main" }}>
-              <ListItemIcon><Iconify icon="mdi:delete-outline" width={18} sx={{ color: "error.main" }} /></ListItemIcon>
+            <MenuItem
+              onClick={() => {
+                setMoreAnchor(null);
+                setConfirmDelete(true);
+              }}
+              // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+              sx={{ color: "status.danger.fg" }}
+            >
+              <ListItemIcon>
+                <Iconify
+                  icon="solar:trash-bin-trash-linear"
+                  width={16}
+                  sx={{ color: "error.main" }}
+                />
+              </ListItemIcon>
               <ListItemText>{builtinPanel ? "Hide" : "Delete"}</ListItemText>
             </MenuItem>
           )}
-          <MenuItem onClick={() => { setMoreAnchor(null); setTimeout(() => setEditingName(true), 150); }}>
-            <ListItemIcon><Iconify icon="mdi:pencil-outline" width={18} /></ListItemIcon>
+          <MenuItem
+            onClick={() => {
+              setMoreAnchor(null);
+              setTimeout(() => setEditingName(true), 150);
+            }}
+          >
+            <ListItemIcon>
+              <Iconify icon="solar:pen-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Rename</ListItemText>
           </MenuItem>
-          <MenuItem disabled={!query.metrics.length} onClick={() => { setMoreAnchor(null); handleDuplicate(); }}>
-            <ListItemIcon><Iconify icon="mdi:content-copy" width={18} /></ListItemIcon>
+          <MenuItem
+            disabled={!query.metrics.length}
+            onClick={() => {
+              setMoreAnchor(null);
+              handleDuplicate();
+            }}
+          >
+            <ListItemIcon>
+              <Iconify icon="solar:copy-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Duplicate</ListItemText>
           </MenuItem>
           <Divider />
@@ -491,7 +765,9 @@ export default function SimWidgetEditorPage() {
             disabled={!previewSeries.length}
             onClick={() => {
               setMoreAnchor(null);
-              const url = URL.createObjectURL(new Blob([toCsv()], { type: "text/csv" }));
+              const url = URL.createObjectURL(
+                new Blob([toCsv()], { type: "text/csv" }),
+              );
               const a = document.createElement("a");
               a.href = url;
               a.download = `${chartName || "widget"}.csv`;
@@ -499,16 +775,34 @@ export default function SimWidgetEditorPage() {
               URL.revokeObjectURL(url);
             }}
           >
-            <ListItemIcon><Iconify icon="mdi:download-outline" width={18} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon="solar:download-minimalistic-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
-          <MenuItem disabled={!previewSeries.length} onClick={() => { setMoreAnchor(null); navigator.clipboard?.writeText(toCsv()); }}>
-            <ListItemIcon><Iconify icon="mdi:content-copy" width={18} /></ListItemIcon>
+          <MenuItem
+            disabled={!previewSeries.length}
+            onClick={() => {
+              setMoreAnchor(null);
+              navigator.clipboard?.writeText(toCsv());
+            }}
+          >
+            <ListItemIcon>
+              <Iconify icon="solar:copy-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Copy CSV</ListItemText>
           </MenuItem>
           {builtinPanel && layout.getOverride(builtinPanel.id)?.simQuery && (
-            <MenuItem onClick={() => { setMoreAnchor(null); layout.resetOverride(builtinPanel.id); navigate(analyticsUrl); }}>
-              <ListItemIcon><Iconify icon="mdi:restore" width={18} /></ListItemIcon>
+            <MenuItem
+              onClick={() => {
+                setMoreAnchor(null);
+                layout.resetOverride(builtinPanel.id);
+                navigate(analyticsUrl);
+              }}
+            >
+              <ListItemIcon>
+                <Iconify icon="solar:restart-linear" width={16} />
+              </ListItemIcon>
               <ListItemText>Reset to default</ListItemText>
             </MenuItem>
           )}
@@ -517,16 +811,28 @@ export default function SimWidgetEditorPage() {
           open={confirmDelete}
           onClose={() => setConfirmDelete(false)}
           title={builtinPanel ? "Hide Widget" : "Delete Widget"}
-          content={builtinPanel
-            ? `Hide "${chartName || "this widget"}" from the analytics tab? You can bring it back from Hidden.`
-            : `Are you sure you want to delete "${chartName || "this widget"}"? This action cannot be undone.`}
-          action={(
-            <Button variant="contained" color="error" size="small" onClick={handleDelete}>
+          content={
+            builtinPanel
+              ? `Hide "${chartName || "this widget"}" from the analytics tab? You can bring it back from Hidden.`
+              : `Are you sure you want to delete "${chartName || "this widget"}"? This action cannot be undone.`
+          }
+          action={
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={handleDelete}
+            >
               {builtinPanel ? "Hide" : "Delete"}
             </Button>
-          )}
+          }
         />
-        <Button onClick={() => navigate(analyticsUrl)} sx={{ color: "text.primary", fontWeight: 500 }}>Close</Button>
+        <Button
+          onClick={() => navigate(analyticsUrl)}
+          sx={{ color: "text.primary" }}
+        >
+          Close
+        </Button>
         <Tooltip title={query.metrics.length ? "" : "Add at least one metric"}>
           <span>
             <Button
@@ -534,9 +840,17 @@ export default function SimWidgetEditorPage() {
               onClick={handleSave}
               disabled={!query.metrics.length || saveStatus !== "idle"}
               color={saveStatus === "saved" ? "success" : "primary"}
-              startIcon={saveStatus === "saved" ? <Iconify icon="mdi:check" width={18} /> : undefined}
+              startIcon={
+                saveStatus === "saved" ? (
+                  <Iconify icon="solar:check-linear" width={20} />
+                ) : undefined
+              }
             >
-              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
+              {saveStatus === "saving"
+                ? "Saving..."
+                : saveStatus === "saved"
+                  ? "Saved"
+                  : "Save"}
             </Button>
           </span>
         </Tooltip>
@@ -545,7 +859,17 @@ export default function SimWidgetEditorPage() {
       {/* ── Main ── */}
       <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* Left: chart area */}
-        <Box sx={{ flex: 1, p: 2, display: "flex", flexDirection: "column", gap: 2, overflow: "auto", minWidth: 0 }}>
+        <Box
+          sx={{
+            flex: 1,
+            p: 2,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            overflow: "auto",
+            minWidth: 0,
+          }}
+        >
           <Stack direction="row" alignItems="center" gap={1.5} flexWrap="wrap">
             {/* A range can only reach back as far as the runs that exist up to
                 this one: "Last 10 runs" with 3 runs is greyed out, and the
@@ -555,11 +879,17 @@ export default function SimWidgetEditorPage() {
               value={query.range}
               onSelect={(range) => setQ({ range })}
               theme={theme}
-              isDisabled={(v) => v !== "this" && v !== "all" && Number(v) > availableRuns}
-              titleFor={(v) => (v !== "this" && v !== "all" && Number(v) > availableRuns
-                ? `Only ${availableRuns} run${availableRuns === 1 ? "" : "s"} so far`
-                : undefined)}
-              renderLabel={(p) => (p.value === "all" ? `All runs (${availableRuns})` : p.label)}
+              isDisabled={(v) =>
+                v !== "this" && v !== "all" && Number(v) > availableRuns
+              }
+              titleFor={(v) =>
+                v !== "this" && v !== "all" && Number(v) > availableRuns
+                  ? `Only ${availableRuns} run${availableRuns === 1 ? "" : "s"} so far`
+                  : undefined
+              }
+              renderLabel={(p) =>
+                p.value === "all" ? `All runs (${availableRuns})` : p.label
+              }
             />
             <Box sx={{ flex: 1, minWidth: 0 }} />
             <FormControl size="small" sx={{ minWidth: 80 }}>
@@ -570,10 +900,16 @@ export default function SimWidgetEditorPage() {
                 renderValue={(v) => xAxisLabel(v)}
                 MenuProps={{ PaperProps: { sx: { maxHeight: 420 } } }}
               >
-                {X_AXIS_OPTIONS.map((g) => <MenuItem key={g.value} value={g.value}>{g.label}</MenuItem>)}
+                {X_AXIS_OPTIONS.map((g) => (
+                  <MenuItem key={g.value} value={g.value}>
+                    {g.label}
+                  </MenuItem>
+                ))}
                 <Divider />
                 {SIM_ATTRIBUTES.map((a) => (
-                  <MenuItem key={a.id} value={attributeAxisValue(a.id)}>By {a.name.toLowerCase()}</MenuItem>
+                  <MenuItem key={a.id} value={attributeAxisValue(a.id)}>
+                    By {a.name.toLowerCase()}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -586,7 +922,10 @@ export default function SimWidgetEditorPage() {
                   const ct = CHART_TYPES.find((t) => t.value === val);
                   return (
                     <Stack direction="row" alignItems="center" gap={0.5}>
-                      <Iconify icon={ct?.icon || "mdi:chart-line"} width={16} />
+                      <Iconify
+                        icon={ct?.icon || "solar:graph-up-linear"}
+                        width={16}
+                      />
                       {ct?.label || val}
                     </Stack>
                   );
@@ -596,12 +935,26 @@ export default function SimWidgetEditorPage() {
                   const prev = i > 0 ? CHART_TYPES[i - 1] : null;
                   const pieDisabled = ct.value === "pie" && !hasBreakdown;
                   return [
-                    prev && prev.group !== ct.group && <Divider key={`div-${i}`} />,
-                    <MenuItem key={ct.value} value={ct.value} disabled={pieDisabled}>
+                    prev && prev.group !== ct.group && (
+                      <Divider key={`div-${i}`} />
+                    ),
+                    <MenuItem
+                      key={ct.value}
+                      value={ct.value}
+                      disabled={pieDisabled}
+                    >
                       <Stack direction="row" alignItems="center" gap={0.5}>
                         <Iconify icon={ct.icon} width={16} />
                         {ct.label}
-                        {pieDisabled && <Typography variant="caption" color="text.disabled" sx={{ ml: 1 }}>add a breakdown</Typography>}
+                        {pieDisabled && (
+                          <Typography
+                            variant="caption"
+                            color="text.disabled"
+                            sx={{ ml: 1 }}
+                          >
+                            add a breakdown
+                          </Typography>
+                        )}
                       </Stack>
                     </MenuItem>,
                   ].filter(Boolean);
@@ -612,28 +965,67 @@ export default function SimWidgetEditorPage() {
 
           {approxNote && (
             <Stack
-              direction="row" alignItems="flex-start" gap={1}
-              sx={{ px: 1.5, py: 1, borderRadius: 1, border: `1px solid ${theme.palette.divider}`, bgcolor: "action.hover" }}
+              direction="row"
+              alignItems="flex-start"
+              gap={1}
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderRadius: 1,
+                border: `1px solid ${theme.palette.divider}`,
+                bgcolor: "action.hover",
+              }}
             >
-              <Iconify icon="mdi:information-outline" width={16} sx={{ color: "text.secondary", mt: "2px", flexShrink: 0 }} />
-              <Typography variant="body2" sx={{ fontSize: "13px", color: "text.secondary" }}>
-                Closest query to the built-in chart. {approxNote} Saving replaces the built-in with this widget; Reset to default brings it back.
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={16}
+                sx={{ color: "text.secondary", mt: "2px", flexShrink: 0 }}
+              />
+              <Typography
+                variant="body2"
+                sx={{ fontSize: "13px", color: "text.secondary" }}
+              >
+                Closest query to the built-in chart. {approxNote} Saving
+                replaces the built-in with this widget; Reset to default brings
+                it back.
               </Typography>
             </Stack>
           )}
 
           {/* Chart + view toggles + series table */}
-          <Box sx={{ flex: 1, minHeight: 420, border: `1px solid ${theme.palette.divider}`, borderRadius: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 420,
+              border: `1px solid ${theme.palette.divider}`,
+              borderRadius: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
             {showSplit ? (
               <>
                 {chartHeight > 0 && (
-                  <Box sx={{ height: chartHeight, flexShrink: 0, p: 1.5, pb: 0 }}>
-                    <SimWidgetChart series={previewSeries} buckets={buckets} chartType={chartType} axisConfig={axisConfig} visible={visibleKeys} display={display} />
+                  <Box
+                    sx={{ height: chartHeight, flexShrink: 0, p: 1.5, pb: 0 }}
+                  >
+                    <SimWidgetChart
+                      series={previewSeries}
+                      buckets={buckets}
+                      chartType={chartType}
+                      axisConfig={axisConfig}
+                      visible={visibleKeys}
+                      display={display}
+                    />
                   </Box>
                 )}
                 <ViewModeBar
                   viewMode={viewMode}
-                  onSelect={(mode, height) => { setViewMode(mode); setChartHeight(height); }}
+                  onSelect={(mode, height) => {
+                    setViewMode(mode);
+                    setChartHeight(height);
+                  }}
                   onDragStart={handleDragStart}
                   isDragging={isDragging}
                   theme={theme}
@@ -655,16 +1047,54 @@ export default function SimWidgetEditorPage() {
               </>
             ) : (
               <Box sx={{ flex: 1, p: 1.5, minHeight: 0 }}>
-                <SimWidgetChart series={previewSeries} buckets={buckets} chartType={chartType} axisConfig={axisConfig} visible={visibleKeys} display={display} />
+                <SimWidgetChart
+                  series={previewSeries}
+                  buckets={buckets}
+                  chartType={chartType}
+                  axisConfig={axisConfig}
+                  visible={visibleKeys}
+                  display={display}
+                />
               </Box>
             )}
             {isPie && previewSeries.length > 0 && (
-              <Box sx={{ display: "flex", borderTop: `1px solid ${theme.palette.divider}` }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  borderTop: `1px solid ${theme.palette.divider}`,
+                }}
+              >
                 {query.metrics.map((m, i) => (
-                  <Box key={i} sx={{ flex: 1, textAlign: "center", py: 2, px: 1.5, borderRight: i < query.metrics.length - 1 ? `1px solid ${theme.palette.divider}` : "none" }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, fontSize: "13px" }}>{LETTER_LABELS[i]} {m.name}</Typography>
-                    <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "11px", display: "block" }}>
-                      {m.aggregation} · {previewSeries.filter((s) => s.metricIndex === i).length} slices
+                  <Box
+                    key={i}
+                    sx={{
+                      flex: 1,
+                      textAlign: "center",
+                      py: 2,
+                      px: 1.5,
+                      borderRight:
+                        i < query.metrics.length - 1
+                          ? `1px solid ${theme.palette.divider}`
+                          : "none",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 600, fontSize: "13px" }}
+                    >
+                      {LETTER_LABELS[i]} {m.name}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        fontSize: "12px",
+                        display: "block",
+                      }}
+                    >
+                      {m.aggregation} ·{" "}
+                      {previewSeries.filter((s) => s.metricIndex === i).length}{" "}
+                      slices
                     </Typography>
                   </Box>
                 ))}
@@ -674,18 +1104,32 @@ export default function SimWidgetEditorPage() {
         </Box>
 
         {/* Right: Query / Chart */}
-        <Box sx={{ width: 320, minWidth: 320, borderLeft: `1px solid ${theme.palette.divider}`, display: "flex", flexDirection: "column", overflow: "auto" }}>
-          <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)} sx={{ px: 2, minHeight: 40 }}>
-            <Tab label="Query" sx={{ minHeight: 40, textTransform: "none" }} />
-            <Tab label="Chart" sx={{ minHeight: 40, textTransform: "none" }} />
-          </Tabs>
+        <Box
+          sx={{
+            width: 320,
+            minWidth: 320,
+            borderLeft: `1px solid ${theme.palette.divider}`,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "auto",
+          }}
+        >
+          <Box sx={{ px: 2 }}>
+            <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)}>
+              <Tab label="Query" />
+              <Tab label="Chart" />
+            </Tabs>
+          </Box>
           <Divider />
           {rightTab === 0 && (
-            <Box sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box
+              sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+            >
               {/* Metric */}
               <Box>
                 <SectionHeader
-                  title="Metric" required
+                  title="Metric"
+                  required
                   tip="Choose what to measure and track."
                   disabled={query.metrics.length >= MAX_METRICS}
                   onClick={(e) => openPicker(e, "metric")}
@@ -693,55 +1137,124 @@ export default function SimWidgetEditorPage() {
                 {query.metrics.map((m, i) => {
                   const def = catalog.find((c) => c.id === m.id);
                   return (
-                    <Box key={i} sx={{ mt: 1, p: 1.5, border: `1px solid ${theme.palette.divider}`, borderRadius: 1, "&:hover .metric-hover-action": { opacity: 1 } }}>
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .metric-hover-action": { opacity: 1 },
+                      }}
+                    >
                       <Stack direction="row" alignItems="center" gap={1}>
                         <Chip
-                          label={LETTER_LABELS[i]} size="small" variant="outlined"
-                          sx={{ minWidth: 24, height: 24, fontSize: "12px", fontWeight: 600, "& .MuiChip-label": { px: "0px !important" } }}
+                          label={LETTER_LABELS[i]}
+                          size="small"
+                          variant="outlined"
+                          sx={{ minWidth: 24 }}
                         />
-                        <Iconify icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"} width={16} sx={{ color: "text.secondary" }} />
+                        <Iconify
+                          icon={
+                            METRIC_TYPE_ICONS[m.type] || "solar:settings-linear"
+                          }
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
                         <Typography
-                          variant="body2" noWrap title={m.name}
-                          sx={{ flex: 1, cursor: "pointer", maxWidth: 160, "&:hover": { color: "primary.main" }, ...focusRing }}
+                          variant="body2"
+                          noWrap
+                          title={m.name}
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            maxWidth: 160,
+                            "&:hover": { color: "primary.main" },
+                            ...focusRing,
+                          }}
                           {...clickable((e) => openPicker(e, "metric", i))}
                         >
                           {m.name}
                         </Typography>
                         <Tooltip title="Add filter to this metric">
                           <IconButton
-                            className="metric-hover-action" size="small"
-                            onClick={(e) => openPicker(e, "metric_filter", null, i)}
-                            sx={{ opacity: m.filters?.length ? 1 : 0, transition: "opacity 0.15s", color: m.filters?.length ? "primary.main" : "text.secondary" }}
+                            className="metric-hover-action"
+                            size="small"
+                            onClick={(e) =>
+                              openPicker(e, "metric_filter", null, i)
+                            }
+                            sx={{
+                              opacity: m.filters?.length ? 1 : 0,
+                              transition: "opacity 0.15s",
+                              color: m.filters?.length
+                                ? "primary.main"
+                                : "text.secondary",
+                            }}
                           >
-                            <Iconify icon="mdi:filter-outline" width={16} />
+                            <Iconify icon="solar:filter-linear" width={16} />
                           </IconButton>
                         </Tooltip>
                         <IconButton
-                          className="metric-hover-action" size="small" aria-label={`Remove ${m.name}`}
-                          onClick={() => { setQ({ metrics: query.metrics.filter((_, j) => j !== i) }); setVisibleSeries(null); }}
+                          className="metric-hover-action"
+                          size="small"
+                          aria-label={`Remove ${m.name}`}
+                          onClick={() => {
+                            setQ({
+                              metrics: query.metrics.filter((_, j) => j !== i),
+                            });
+                            setVisibleSeries(null);
+                          }}
                           sx={{ opacity: 0, transition: "opacity 0.15s" }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                       <AggregationPicker
                         value={m.aggregation}
-                        onChange={(val) => setQ({ metrics: query.metrics.map((x, j) => (j === i ? { ...x, aggregation: val } : x)) })}
+                        onChange={(val) =>
+                          setQ({
+                            metrics: query.metrics.map((x, j) =>
+                              j === i ? { ...x, aggregation: val } : x,
+                            ),
+                          })
+                        }
                         theme={theme}
-                        allowedAggregations={def?.allowed || m.allowedAggregations || undefined}
-                        extraOptions={def?.category === "evals" ? DATASET_EXTRA_AGGREGATIONS : undefined}
+                        allowedAggregations={
+                          def?.allowed || m.allowedAggregations || undefined
+                        }
+                        extraOptions={
+                          def?.category === "evals"
+                            ? DATASET_EXTRA_AGGREGATIONS
+                            : undefined
+                        }
                       />
                       {(m.filters || []).map((mf, fi) => (
                         <FilterRow
-                          key={fi} filter={mf} compact
-                          onPickAttr={(e) => openPicker(e, "metric_filter", fi, i)}
+                          key={fi}
+                          filter={mf}
+                          compact
+                          onPickAttr={(e) =>
+                            openPicker(e, "metric_filter", fi, i)
+                          }
                           onRemove={() => {
                             const metrics = [...query.metrics];
-                            metrics[i] = { ...m, filters: m.filters.filter((_, k) => k !== fi) };
+                            metrics[i] = {
+                              ...m,
+                              filters: m.filters.filter((_, k) => k !== fi),
+                            };
                             setQ({ metrics });
                           }}
-                          onOperator={(operator) => updateFilter("metric", fi, { operator }, i)}
-                          onPickValues={(e) => setValuePicker({ anchor: e.currentTarget, scope: "metric", index: fi, metricIndex: i })}
+                          onOperator={(operator) =>
+                            updateFilter("metric", fi, { operator }, i)
+                          }
+                          onPickValues={(e) =>
+                            setValuePicker({
+                              anchor: e.currentTarget,
+                              scope: "metric",
+                              index: fi,
+                              metricIndex: i,
+                            })
+                          }
                           theme={theme}
                         />
                       ))}
@@ -752,14 +1265,30 @@ export default function SimWidgetEditorPage() {
 
               {/* Filter */}
               <Box>
-                <SectionHeader title="Filter" tip="Filter to include or exclude specific tasks." onClick={(e) => openPicker(e, "filter")} />
+                <SectionHeader
+                  title="Filter"
+                  tip="Filter to include or exclude specific tasks."
+                  onClick={(e) => openPicker(e, "filter")}
+                />
                 {query.filters.map((f, i) => (
                   <FilterRow
-                    key={i} filter={f}
+                    key={i}
+                    filter={f}
                     onPickAttr={(e) => openPicker(e, "filter", i)}
-                    onRemove={() => setQ({ filters: query.filters.filter((_, j) => j !== i) })}
-                    onOperator={(operator) => updateFilter("global", i, { operator })}
-                    onPickValues={(e) => setValuePicker({ anchor: e.currentTarget, scope: "global", index: i, metricIndex: null })}
+                    onRemove={() =>
+                      setQ({ filters: query.filters.filter((_, j) => j !== i) })
+                    }
+                    onOperator={(operator) =>
+                      updateFilter("global", i, { operator })
+                    }
+                    onPickValues={(e) =>
+                      setValuePicker({
+                        anchor: e.currentTarget,
+                        scope: "global",
+                        index: i,
+                        metricIndex: null,
+                      })
+                    }
                     theme={theme}
                   />
                 ))}
@@ -774,17 +1303,38 @@ export default function SimWidgetEditorPage() {
                   onClick={(e) => openPicker(e, "breakdown")}
                 />
                 {query.breakdowns.map((b, i) => (
-                  <Box key={i} sx={{ mt: 1, p: 1.5, border: `1px solid ${theme.palette.divider}`, borderRadius: 1, "&:hover .breakdown-hover-action": { opacity: 1 } }}>
+                  <Box
+                    key={i}
+                    sx={{
+                      mt: 1,
+                      p: 1.5,
+                      border: `1px solid ${theme.palette.divider}`,
+                      borderRadius: 1,
+                      "&:hover .breakdown-hover-action": { opacity: 1 },
+                    }}
+                  >
                     <Stack direction="row" alignItems="center" gap={1}>
-                      <Iconify icon={METRIC_TYPE_ICONS.custom_attribute} width={16} sx={{ color: "text.secondary" }} />
+                      <Iconify
+                        icon={METRIC_TYPE_ICONS.custom_attribute}
+                        width={16}
+                        sx={{ color: "text.secondary" }}
+                      />
                       <Typography
-                        variant="body2" sx={{ flex: 1, cursor: "pointer", "&:hover": { color: "primary.main" }, ...focusRing }}
+                        variant="body2"
+                        sx={{
+                          flex: 1,
+                          cursor: "pointer",
+                          "&:hover": { color: "primary.main" },
+                          ...focusRing,
+                        }}
                         {...clickable((e) => openPicker(e, "breakdown", i))}
                       >
                         {b.name}
                       </Typography>
                       <IconButton
-                        className="breakdown-hover-action" size="small" aria-label={`Remove ${b.name}`}
+                        className="breakdown-hover-action"
+                        size="small"
+                        aria-label={`Remove ${b.name}`}
                         onClick={() => {
                           setQ({ breakdowns: [] });
                           setVisibleSeries(null);
@@ -792,7 +1342,7 @@ export default function SimWidgetEditorPage() {
                         }}
                         sx={{ opacity: 0, transition: "opacity 0.15s" }}
                       >
-                        <Iconify icon="mdi:close" width={14} />
+                        <Iconify icon="solar:close-linear" width={14} />
                       </IconButton>
                     </Stack>
                   </Box>
@@ -809,7 +1359,15 @@ export default function SimWidgetEditorPage() {
                 axisConfig={axisConfig}
                 onUpdateAxis={updateAxis}
                 onSetSeriesAxis={setSeriesAxis}
-                onResetAxis={(axis) => setAxisConfig((prev) => ({ ...prev, [axis]: axis === "leftY" ? defaultLeftYAxis() : defaultRightYAxis() }))}
+                onResetAxis={(axis) =>
+                  setAxisConfig((prev) => ({
+                    ...prev,
+                    [axis]:
+                      axis === "leftY"
+                        ? defaultLeftYAxis()
+                        : defaultRightYAxis(),
+                  }))
+                }
                 theme={theme}
               />
             </Box>
@@ -821,19 +1379,44 @@ export default function SimWidgetEditorPage() {
         open={picker.open}
         anchorEl={picker.anchor}
         mode={picker.mode}
-        categories={picker.mode === "metric" ? SIM_METRIC_CATEGORIES : SIM_ATTRIBUTE_CATEGORIES}
+        categories={
+          picker.mode === "metric"
+            ? SIM_METRIC_CATEGORIES
+            : SIM_ATTRIBUTE_CATEGORIES
+        }
         items={pickerItems}
         onSelect={handlePickerSelect}
         onClose={closePicker}
       />
       <SimFilterValuePicker
         anchorEl={valuePicker.anchor}
-        values={activeValueFilter ? distinctAttributeValues(activeValueFilter.id, runs) : []}
+        values={
+          activeValueFilter
+            ? distinctAttributeValues(activeValueFilter.id, runs)
+            : []
+        }
         selected={activeValueFilter?.value || []}
-        onClose={() => setValuePicker({ anchor: null, scope: null, index: null, metricIndex: null })}
+        onClose={() =>
+          setValuePicker({
+            anchor: null,
+            scope: null,
+            index: null,
+            metricIndex: null,
+          })
+        }
         onApply={(value) => {
-          updateFilter(valuePicker.scope, valuePicker.index, { value }, valuePicker.metricIndex);
-          setValuePicker({ anchor: null, scope: null, index: null, metricIndex: null });
+          updateFilter(
+            valuePicker.scope,
+            valuePicker.index,
+            { value },
+            valuePicker.metricIndex,
+          );
+          setValuePicker({
+            anchor: null,
+            scope: null,
+            index: null,
+            metricIndex: null,
+          });
         }}
       />
     </Box>
@@ -841,42 +1424,98 @@ export default function SimWidgetEditorPage() {
 }
 
 /* ── filter row (global + per-metric) ── */
-function FilterRow({ filter, compact, onPickAttr, onRemove, onOperator, onPickValues, theme }) {
+function FilterRow({
+  filter,
+  compact,
+  onPickAttr,
+  onRemove,
+  onOperator,
+  onPickValues,
+  theme,
+}) {
   return (
     <Box
-      sx={compact
-        ? { mt: 1, pl: 1, borderLeft: `2px solid ${theme.palette.primary.main}` }
-        : { mt: 1, p: 1.5, border: `1px solid ${theme.palette.divider}`, borderRadius: 1, "&:hover .filter-hover-action": { opacity: 1 } }}
+      sx={
+        compact
+          ? {
+              mt: 1,
+              pl: 1,
+              borderLeft: `2px solid ${theme.palette.primary.main}`,
+            }
+          : {
+              mt: 1,
+              p: 1.5,
+              border: `1px solid ${theme.palette.divider}`,
+              borderRadius: 1,
+              "&:hover .filter-hover-action": { opacity: 1 },
+            }
+      }
     >
       <Stack direction="row" alignItems="center" gap={compact ? 0.5 : 1}>
-        <Iconify icon={compact ? "mdi:filter-outline" : METRIC_TYPE_ICONS.custom_attribute} width={compact ? 14 : 16} sx={{ color: compact ? "primary.main" : "text.secondary" }} />
+        <Iconify
+          icon={
+            compact ? "solar:filter-linear" : METRIC_TYPE_ICONS.custom_attribute
+          }
+          width={compact ? 14 : 16}
+          sx={{ color: compact ? "primary.main" : "text.secondary" }}
+        />
         <Typography
           variant={compact ? "caption" : "body2"}
-          sx={{ flex: 1, fontWeight: compact ? 500 : undefined, cursor: "pointer", "&:hover": { color: "primary.main" }, ...focusRing }}
+          sx={{
+            flex: 1,
+            fontWeight: compact ? 500 : undefined,
+            cursor: "pointer",
+            "&:hover": { color: "primary.main" },
+            ...focusRing,
+          }}
           {...clickable(onPickAttr)}
         >
           {filter.name || "Select attribute"}
         </Typography>
         <IconButton
-          className="filter-hover-action" size="small" onClick={onRemove} aria-label={`Remove filter ${filter.name}`}
-          sx={compact ? { p: 0.25 } : { opacity: 0, transition: "opacity 0.15s" }}
+          className="filter-hover-action"
+          size="small"
+          onClick={onRemove}
+          aria-label={`Remove filter ${filter.name}`}
+          sx={
+            compact ? { p: 0.25 } : { opacity: 0, transition: "opacity 0.15s" }
+          }
         >
-          <Iconify icon="mdi:close" width={compact ? 12 : 14} />
+          <Iconify icon="solar:close-linear" width={compact ? 12 : 14} />
         </IconButton>
       </Stack>
-      <Stack direction="row" alignItems="center" gap={1} sx={{ mt: compact ? 0.5 : 1 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={1}
+        sx={{ mt: compact ? 0.5 : 1 }}
+      >
         <FormControl size="small" sx={{ minWidth: 70 }}>
-          <Select value={filter.operator} onChange={(e) => onOperator(e.target.value)} variant="standard" sx={{ fontSize: compact ? "12px" : "13px" }}>
-            {SIM_FILTER_OPERATORS.map((op) => <MenuItem key={op.value} value={op.value}>{op.label}</MenuItem>)}
+          <Select
+            value={filter.operator}
+            onChange={(e) => onOperator(e.target.value)}
+            variant="standard"
+            sx={{ fontSize: compact ? "12px" : "13px" }}
+          >
+            {SIM_FILTER_OPERATORS.map((op) => (
+              <MenuItem key={op.value} value={op.value}>
+                {op.label}
+              </MenuItem>
+            ))}
           </Select>
         </FormControl>
         <Typography
           variant={compact ? "caption" : "body2"}
           {...clickable(onPickValues)}
           sx={{
-            flex: 1, cursor: "pointer", color: filter.value?.length ? "text.primary" : "text.disabled",
-            borderBottom: `1px solid ${theme.palette.divider}`, pb: 0.25,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            flex: 1,
+            cursor: "pointer",
+            color: filter.value?.length ? "text.primary" : "text.disabled",
+            borderBottom: `1px solid ${theme.palette.divider}`,
+            pb: 0.25,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
             "&:hover": { borderColor: "primary.main" },
             ...focusRing,
           }}
@@ -903,54 +1542,175 @@ FilterRow.propTypes = {
 };
 
 /* ── series table — same markup as the dashboards editor's ── */
-function SeriesTable({ series, buckets, visible, setVisible, search, setSearch, colorFor, aggColumnLabel, leftY, theme }) {
+function SeriesTable({
+  series,
+  buckets,
+  visible,
+  setVisible,
+  search,
+  setSearch,
+  colorFor,
+  aggColumnLabel,
+  leftY,
+  theme,
+}) {
   const allIdx = series.map((_, i) => i);
   const isOn = (s) => !visible || visible.has(s.key);
   const allChecked = !visible || visible.size === series.length;
-  const someChecked = !!visible && visible.size > 0 && visible.size < series.length;
+  const someChecked =
+    !!visible && visible.size > 0 && visible.size < series.length;
   const toggle = (s) => {
     const cur = visible || new Set(series.map((x) => x.key));
     const next = new Set(cur);
-    if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
+    if (next.has(s.key)) next.delete(s.key);
+    else next.add(s.key);
     setVisible(next.size === series.length ? null : next);
   };
   const rows = allIdx
-    .filter((i) => !search.trim() || series[i].name.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => (series[b].total ?? -Infinity) - (series[a].total ?? -Infinity));
-  const head = { padding: "8px 12px", color: theme.palette.text.secondary, fontSize: "12px", position: "sticky", top: 0, background: theme.palette.background.paper, borderBottom: `1px solid ${theme.palette.divider}` };
-  const fmt = (v, unit) => formatValueWithConfig(v, unit && !leftY.unit ? { ...leftY, ...getUnitRendering(unit) } : leftY);
+    .filter(
+      (i) =>
+        !search.trim() ||
+        series[i].name.toLowerCase().includes(search.toLowerCase()),
+    )
+    .sort(
+      (a, b) => (series[b].total ?? -Infinity) - (series[a].total ?? -Infinity),
+    );
+  const head = {
+    padding: "8px 12px",
+    color: theme.palette.text.secondary,
+    fontSize: "12px",
+    position: "sticky",
+    top: 0,
+    background: theme.palette.background.paper,
+    borderBottom: `1px solid ${theme.palette.divider}`,
+  };
+  const fmt = (v, unit) =>
+    formatValueWithConfig(
+      v,
+      unit && !leftY.unit ? { ...leftY, ...getUnitRendering(unit) } : leftY,
+    );
 
   return (
-    <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1.5, borderBottom: `1px solid ${theme.palette.divider}` }}>
+    <Box
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <Box
+        sx={{
+          px: 2,
+          py: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          borderBottom: `1px solid ${theme.palette.divider}`,
+        }}
+      >
         <TextField
-          size="small" placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)}
-          InputProps={{ startAdornment: <InputAdornment position="start"><Iconify icon="eva:search-fill" width={16} sx={{ color: "text.disabled" }} /></InputAdornment> }}
-          sx={{ flex: 1, maxWidth: 300, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+          size="small"
+          placeholder="Search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Iconify
+                  icon="solar:magnifier-linear"
+                  width={16}
+                  sx={{ color: "text.disabled" }}
+                />
+              </InputAdornment>
+            ),
+          }}
+          sx={{
+            flex: 1,
+            maxWidth: 300,
+            "& .MuiOutlinedInput-root": { fontSize: "13px" },
+          }}
         />
       </Box>
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", tableLayout: "auto" }}>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: "13px",
+            tableLayout: "auto",
+          }}
+        >
           <thead>
             <tr>
-              <th style={{ ...head, textAlign: "left", fontWeight: 500, left: 0, zIndex: 3, minWidth: 220 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <th
+                style={{
+                  ...head,
+                  textAlign: "left",
+                  fontWeight: 500,
+                  left: 0,
+                  zIndex: 3,
+                  minWidth: 220,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
                   <Checkbox
-                    size="small" checked={allChecked} indeterminate={someChecked}
+                    size="small"
+                    checked={allChecked}
+                    indeterminate={someChecked}
                     onChange={() => setVisible(allChecked ? new Set() : null)}
                     sx={{ p: 0, mr: 0.25 }}
                   />
-                  <span style={{ fontWeight: 600, color: theme.palette.text.primary }}>Metric</span>
-                  <span style={{ color: theme.palette.text.disabled }}>{series.length}</span>
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      color: theme.palette.text.primary,
+                    }}
+                  >
+                    Metric
+                  </span>
+                  <span style={{ color: theme.palette.text.disabled }}>
+                    {series.length}
+                  </span>
                 </span>
               </th>
-              <th style={{ ...head, textAlign: "right", fontWeight: 500, minWidth: 90, borderLeft: `1px solid ${theme.palette.divider}`, zIndex: 2 }}>
+              <th
+                style={{
+                  ...head,
+                  textAlign: "right",
+                  fontWeight: 500,
+                  minWidth: 90,
+                  borderLeft: `1px solid ${theme.palette.divider}`,
+                  zIndex: 2,
+                }}
+              >
                 {aggColumnLabel}
               </th>
               {buckets.map((b) => (
-                <th key={b.key} style={{ ...head, textAlign: "right", fontWeight: 400, whiteSpace: "nowrap", minWidth: 80, zIndex: 2 }}>
+                <th
+                  key={b.key}
+                  style={{
+                    ...head,
+                    textAlign: "right",
+                    fontWeight: 400,
+                    whiteSpace: "nowrap",
+                    minWidth: 80,
+                    zIndex: 2,
+                  }}
+                >
                   {b.label}
-                  <div style={{ color: theme.palette.text.disabled, fontSize: 11 }}>{b.sub}</div>
+                  <div
+                    style={{ color: theme.palette.text.disabled, fontSize: 12 }}
+                  >
+                    {b.sub}
+                  </div>
                 </th>
               ))}
             </tr>
@@ -963,26 +1723,79 @@ function SeriesTable({ series, buckets, visible, setVisible, search, setSearch, 
                  single-run view would give if the range were one run. */
               const agg = s.total;
               return (
-                <tr key={s.key} style={{ borderBottom: `1px solid ${theme.palette.divider}` }}>
-                  <td style={{ padding: "8px 12px", position: "sticky", left: 0, background: theme.palette.background.paper, zIndex: 1, cursor: "pointer" }} onClick={(e) => { if (!(e.target instanceof HTMLInputElement)) toggle(s); }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <tr
+                  key={s.key}
+                  style={{ borderBottom: `1px solid ${theme.palette.divider}` }}
+                >
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      position: "sticky",
+                      left: 0,
+                      background: theme.palette.background.paper,
+                      zIndex: 1,
+                      cursor: "pointer",
+                    }}
+                    onClick={(e) => {
+                      if (!(e.target instanceof HTMLInputElement)) toggle(s);
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
                       {/* The cell toggles by mouse; the checkbox is the keyboard stop. */}
                       <Checkbox
-                        size="small" checked={isOn(s)} onChange={() => toggle(s)} inputProps={{ "aria-label": `Show ${s.name}` }}
+                        size="small"
+                        checked={isOn(s)}
+                        onChange={() => toggle(s)}
+                        inputProps={{ "aria-label": `Show ${s.name}` }}
                         sx={{ p: 0, color, "&.Mui-checked": { color } }}
                       />
-                      <span style={{ color: theme.palette.text.primary, fontWeight: 500, fontSize: "13px" }}>{s.name}</span>
+                      <span
+                        style={{
+                          color: theme.palette.text.primary,
+                          fontWeight: 500,
+                          fontSize: "13px",
+                        }}
+                      >
+                        {s.name}
+                      </span>
                     </span>
                   </td>
-                  <td style={{ textAlign: "right", padding: "8px 12px", color: theme.palette.text.primary, fontWeight: 500, fontVariantNumeric: "tabular-nums", borderLeft: `1px solid ${theme.palette.divider}` }}>
+                  <td
+                    style={{
+                      textAlign: "right",
+                      padding: "8px 12px",
+                      color: theme.palette.text.primary,
+                      fontWeight: 500,
+                      fontVariantNumeric: "tabular-nums",
+                      borderLeft: `1px solid ${theme.palette.divider}`,
+                    }}
+                  >
                     {agg == null ? "—" : fmt(agg, s.unit)}
                   </td>
                   {s.data.map((pt, ci) => (
-                    <td key={ci} style={{ textAlign: "right", padding: "8px 12px", color: theme.palette.text.primary, fontVariantNumeric: "tabular-nums" }}>
+                    <td
+                      key={ci}
+                      style={{
+                        textAlign: "right",
+                        padding: "8px 12px",
+                        color: theme.palette.text.primary,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {pt.y != null
                         ? pt.y >= 1000
-                          ? pt.y.toLocaleString(undefined, { maximumFractionDigits: 0 })
-                          : pt.y % 1 === 0 ? pt.y : pt.y.toFixed(2)
+                          ? pt.y.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })
+                          : pt.y % 1 === 0
+                            ? pt.y
+                            : pt.y.toFixed(2)
                         : "-"}
                     </td>
                   ))}

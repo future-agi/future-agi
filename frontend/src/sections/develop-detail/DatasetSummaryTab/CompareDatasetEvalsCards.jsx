@@ -1,7 +1,7 @@
-import { Box } from "@mui/material";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import DatasetCompareEvalSummary from "./DatasetCompareEvalSummary";
 import DatasetComparePromptSummary from "./DatasetComparePromptSummary";
@@ -40,29 +40,18 @@ const CompareDatasetEvalsCards = (props) => {
       }}
     >
       <Box display="flex" justifyContent={"space-between"}>
-        <TabWrapper>
-          <CustomTabs
-            textColor="primary"
-            value={currentTab}
-            onChange={changeTab}
-            TabIndicatorProps={{
-              style: {
-                opacity: 0,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs value={currentTab} onChange={changeTab}>
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
       </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <ShowComponent condition={currentTab === "evals"}>

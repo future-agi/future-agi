@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { Tooltip, Box, Stack, Typography, Tab } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { setupGaps } from "../_mock/setupGaps";
@@ -47,13 +46,13 @@ import SettingsPanel from "../workspace/SettingsPanel";
   they came from. No standalone Agents / Test-subject tab.
 */
 const TABS = [
-  { id: "overview",  label: "Overview",         needs: null },
+  { id: "overview", label: "Overview", needs: null },
   /* Open from the start of a build — each shows its own part being written. */
-  { id: "world",     label: "World",            needs: null },
-  { id: "contract",  label: "Contract",         needs: null },
-  { id: "scenarios", label: "Scenarios",        needs: "build",     badge: "scenarios" },
-  { id: "evals",     label: "Evaluations",      needs: null,        badge: "evals" },
-  { id: "settings",  label: "Settings",         needs: null },
+  { id: "world", label: "World", needs: null },
+  { id: "contract", label: "Contract", needs: null },
+  { id: "scenarios", label: "Scenarios", needs: "build", badge: "scenarios" },
+  { id: "evals", label: "Evaluations", needs: null, badge: "evals" },
+  { id: "settings", label: "Settings", needs: null },
 ];
 
 /*
@@ -96,8 +95,18 @@ function liveTab(done) {
 }
 
 export default function DerivedPanels({
-  env, envState, patch, source, done, running, onBuilderTurn, onTabChange,
-  onBuilderPrompt, onStartRun, scenarioProgress, contractProgress,
+  env,
+  envState,
+  patch,
+  source,
+  done,
+  running,
+  onBuilderTurn,
+  onTabChange,
+  onBuilderPrompt,
+  onStartRun,
+  scenarioProgress,
+  contractProgress,
 }) {
   const [tab, setTab] = useState(() => firstReadyTab(done));
   const [touched, setTouched] = useState(false);
@@ -163,11 +172,38 @@ export default function DerivedPanels({
   };
 
   /* Panels see the world of the pinned environment version. */
-  const worldEnv = useMemo(() => withPinnedWorld(env, envState), [env, envState]);
-  const rendered = useMemo(() => renderPanel(current.id, {
-    env: worldEnv, envState, patch, source, onBuilderTurn, onGo: go, onBuilderPrompt, onStartRun, contractProgress, done,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [current.id, worldEnv, envState, patch, source, onBuilderTurn, onBuilderPrompt, onStartRun, contractProgress, done]);
+  const worldEnv = useMemo(
+    () => withPinnedWorld(env, envState),
+    [env, envState],
+  );
+  const rendered = useMemo(
+    () =>
+      renderPanel(current.id, {
+        env: worldEnv,
+        envState,
+        patch,
+        source,
+        onBuilderTurn,
+        onGo: go,
+        onBuilderPrompt,
+        onStartRun,
+        contractProgress,
+        done,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }),
+    [
+      current.id,
+      worldEnv,
+      envState,
+      patch,
+      source,
+      onBuilderTurn,
+      onBuilderPrompt,
+      onStartRun,
+      contractProgress,
+      done,
+    ],
+  );
 
   if (!env) return null;
 
@@ -176,112 +212,143 @@ export default function DerivedPanels({
       {/* ── tabs ── */}
       <Box
         sx={{
-          flexShrink: 0, borderBottom: "1px solid", borderColor: "divider",
+          flexShrink: 0,
+          borderBottom: "1px solid",
+          borderColor: "divider",
           /* Muted while loading — tabs are visible so you know what's coming,
              but not competing with the illustration below for attention. */
           opacity: isLoading ? 0.5 : 1,
-          transition: "opacity 0.3s ease",
+          transition: "opacity 0.2s ease",
           pointerEvents: isLoading ? "none" : "auto",
         }}
       >
-        <CustomTabs
-          value={current.id}
-          onChange={(_, v) => { setTab(v); setTouched(true); }}
-          variant="scrollable"
-          scrollButtons={false}
-          sx={{ minHeight: 42, px: 1, "& .MuiTab-root": { typography: "s2", minHeight: 42 } }}
-        >
-          {(() => {
-            /*
+        <Box sx={{ px: 1 }}>
+          <CustomTabs
+            value={current.id}
+            onChange={(_, v) => {
+              setTab(v);
+              setTouched(true);
+            }}
+            variant="scrollable"
+            scrollButtons={false}
+          >
+            {(() => {
+              /*
               Collect this env's blocking setup gaps once so every tab
               can ask "do you own any of the missing pieces?" in
               constant time. Blocking gaps get an amber dot; the tab
               tooltip lists what's missing so the user knows what to
               open the tab for.
             */
-            const gaps = primed ? setupGaps(env, envState) : [];
-            const gapsByTab = {};
-            gaps.forEach((g) => {
-              if (g.status !== "blocking") return;
-              const tabId = GAP_AREA_TO_TAB[g.area];
-              if (!tabId) return;
-              (gapsByTab[tabId] = gapsByTab[tabId] || []).push(g);
-            });
-            return TABS.map((t) => {
-              /* Hide the numeric tab badges while the builder is
+              const gaps = primed ? setupGaps(env, envState) : [];
+              const gapsByTab = {};
+              gaps.forEach((g) => {
+                if (g.status !== "blocking") return;
+                const tabId = GAP_AREA_TO_TAB[g.area];
+                if (!tabId) return;
+                (gapsByTab[tabId] = gapsByTab[tabId] || []).push(g);
+              });
+              return TABS.map((t) => {
+                /* Hide the numeric tab badges while the builder is
                  streaming stages — the counts are moving targets
                  mid-build (scenarios are being generated *right now*)
                  so surfacing them reads as if the env is done. Badges
                  come back once running settles to false. */
-              /* Scenarios is the exception: its count is the progress of the
+                /* Scenarios is the exception: its count is the progress of the
                  stage writing them, so it ticks up live. */
-              const count = primed && (!running || t.badge === "scenarios") ? badgeCountFor(t.badge, envState) : null;
-              const locked = !ready(t);
-              const gapItems = gapsByTab[t.id];
-              const tabLabel = (
-                <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>
-                    {t.label}
-                  </Typography>
-                  {count != null && count > 0 && (
-                    <Typography component="span" sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                      {count}
+                const count =
+                  primed && (!running || t.badge === "scenarios")
+                    ? badgeCountFor(t.badge, envState)
+                    : null;
+                const locked = !ready(t);
+                const gapItems = gapsByTab[t.id];
+                const tabLabel = (
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Typography
+                      component="span"
+                      sx={{ typography: "s2", color: "inherit" }}
+                    >
+                      {t.label}
                     </Typography>
-                  )}
-                  {gapItems?.length > 0 && (
-                    /*
+                    {count != null && count > 0 && (
+                      <Typography
+                        component="span"
+                        sx={{
+                          typography: "s3",
+                          color: "text.subtitle",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {count}
+                      </Typography>
+                    )}
+                    {gapItems?.length > 0 && (
+                      /*
                       Soft-tinted numeric badge — same "unread count"
                       semantics, calmer look: red-on-red-tint rather
                       than a solid red pill. Enough presence to catch
                       the eye without shouting.
                     */
-                    <Box
-                      sx={{
-                        display: "grid", placeItems: "center", flexShrink: 0,
-                        minWidth: 16, height: 16, px: "5px",
-                        borderRadius: "8px",
-                        bgcolor: (th) => alpha("#DC2626", th.palette.mode === "dark" ? 0.2 : 0.12),
-                        color: "#DC2626",
-                        typography: "s3", fontWeight: 700, lineHeight: 1,
-                        fontVariantNumeric: "tabular-nums",
-                        fontSize: 10,
-                      }}
-                    >
-                      {gapItems.length}
-                    </Box>
-                  )}
-                </Stack>
-              );
-              return (
-                <Tab
-                  key={t.id}
-                  value={t.id}
-                  disabled={locked}
-                  sx={{ minHeight: 42 }}
-                  label={gapItems?.length > 0 ? (
-                    <Tooltip
-                      arrow
-                      title={
-                        <Box>
-                          <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.375 }}>
-                            Needs your input before you can run:
-                          </Typography>
-                          {gapItems.map((g) => (
-                            <Typography key={g.id} sx={{ typography: "s3", opacity: 0.9 }}>
-                              · {g.title}
-                            </Typography>
-                          ))}
-                        </Box>
-                      }
-                    >
-                      {tabLabel}
-                    </Tooltip>
-                  ) : tabLabel}
-                />
-              );
-            });
-          })()}
-        </CustomTabs>
+                      <Box
+                        sx={{
+                          display: "grid",
+                          placeItems: "center",
+                          flexShrink: 0,
+                          minWidth: 16,
+                          height: 16,
+                          px: "5px",
+                          borderRadius: "8px",
+                          bgcolor: "status.danger.bg",
+                          color: "status.danger.fg",
+                          typography: "s3",
+                          fontWeight: 600,
+                          lineHeight: 1,
+                          fontVariantNumeric: "tabular-nums",
+                          fontSize: 12,
+                        }}
+                      >
+                        {gapItems.length}
+                      </Box>
+                    )}
+                  </Stack>
+                );
+                return (
+                  <Tab
+                    key={t.id}
+                    value={t.id}
+                    disabled={locked}
+                    label={
+                      gapItems?.length > 0 ? (
+                        <Tooltip
+                          arrow
+                          title={
+                            <Box>
+                              <Typography sx={{ typography: "s3", mb: 0.375 }}>
+                                Needs your input before you can run:
+                              </Typography>
+                              {gapItems.map((g) => (
+                                <Typography
+                                  key={g.id}
+                                  sx={{ typography: "s3", opacity: 0.9 }}
+                                >
+                                  · {g.title}
+                                </Typography>
+                              ))}
+                            </Box>
+                          }
+                        >
+                          {tabLabel}
+                        </Tooltip>
+                      ) : (
+                        tabLabel
+                      )
+                    }
+                  />
+                );
+              });
+            })()}
+          </CustomTabs>
+        </Box>
       </Box>
 
       {/* ── body ── */}
@@ -291,7 +358,9 @@ export default function DerivedPanels({
             {current.id === "scenarios" && scenarioProgress?.streaming && (
               <ScenarioStreamStrip progress={scenarioProgress} />
             )}
-            {isEditable(current.id) && !scenarioProgress?.streaming && <EditableHint />}
+            {isEditable(current.id) && !scenarioProgress?.streaming && (
+              <EditableHint />
+            )}
             {rendered}
           </>
         )}
@@ -330,19 +399,59 @@ function ScenarioStreamStrip({ progress }) {
   return (
     <Box sx={{ pt: 2, pb: 0.5 }}>
       <Stack direction="row" alignItems="baseline" spacing={1} flexWrap="wrap">
-        <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {`Writing scenarios · ${shown} of ${total}`}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {`${proved} proved${rewritten ? ` · ${rewritten} rewritten` : ""}`}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {"Each is checked as it's written — ready, solvable, not vacuous — and kept only once it passes."}
+          {
+            "Each is checked as it's written — ready, solvable, not vacuous — and kept only once it passes."
+          }
         </Typography>
       </Stack>
-      <Box sx={{ mt: 1, height: 3, borderRadius: 2, bgcolor: "divider", overflow: "hidden", position: "relative" }}>
-        <Box sx={{ position: "absolute", inset: 0, width: `${pct(shown)}%`, bgcolor: "text.disabled", opacity: 0.45, transition: "width 0.3s ease" }} />
-        <Box sx={{ position: "absolute", inset: 0, width: `${pct(proved)}%`, bgcolor: "text.secondary", transition: "width 0.3s ease" }} />
+      <Box
+        sx={{
+          mt: 1,
+          height: 3,
+          borderRadius: 2,
+          bgcolor: "divider",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            width: `${pct(shown)}%`,
+            bgcolor: "text.disabled",
+            opacity: 0.45,
+            transition: "width 0.2s ease",
+          }}
+        />
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            width: `${pct(proved)}%`,
+            bgcolor: "text.secondary",
+            transition: "width 0.2s ease",
+          }}
+        />
       </Box>
     </Box>
   );
@@ -362,14 +471,79 @@ function badgeCountFor(kind, envState) {
 }
 
 function renderPanel(id, ctx) {
-  const { env, envState, patch, source, onGo, onBuilderPrompt, onStartRun, contractProgress, done } = ctx;
+  const {
+    env,
+    envState,
+    patch,
+    source,
+    onGo,
+    onBuilderPrompt,
+    onStartRun,
+    contractProgress,
+    done,
+  } = ctx;
   switch (id) {
-    case "world":     return <WorldPanel env={env} envState={envState} patch={patch} onGo={onGo} buildProgress={contractProgress} buildDone={done} />;
-    case "contract":  return <RlContractPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode buildProgress={contractProgress} buildDone={done} />;
-    case "scenarios": return <ScenariosStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode onBuilderPrompt={onBuilderPrompt} onStartRun={onStartRun} />;
-    case "evals":     return <EvalsStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
-    case "settings":  return <SettingsPanel env={env} envState={envState} patch={patch} />;
-    default:          return <OverviewPanel env={env} envState={envState} patch={patch} onGo={onGo} agentConnected={!!envState?.agent} source={source} buildMode contractProgress={contractProgress} buildDone={done} />;
+    case "world":
+      return (
+        <WorldPanel
+          env={env}
+          envState={envState}
+          patch={patch}
+          onGo={onGo}
+          buildProgress={contractProgress}
+          buildDone={done}
+        />
+      );
+    case "contract":
+      return (
+        <RlContractPanel
+          env={env}
+          envState={envState}
+          patch={patch}
+          onGo={onGo}
+          buildMode
+          buildProgress={contractProgress}
+          buildDone={done}
+        />
+      );
+    case "scenarios":
+      return (
+        <ScenariosStep
+          env={env}
+          envState={envState}
+          patch={patch}
+          onGo={onGo}
+          buildMode
+          onBuilderPrompt={onBuilderPrompt}
+          onStartRun={onStartRun}
+        />
+      );
+    case "evals":
+      return (
+        <EvalsStep
+          env={env}
+          envState={envState}
+          patch={patch}
+          onGo={onGo}
+          buildMode
+        />
+      );
+    case "settings":
+      return <SettingsPanel env={env} envState={envState} patch={patch} />;
+    default:
+      return (
+        <OverviewPanel
+          env={env}
+          envState={envState}
+          patch={patch}
+          onGo={onGo}
+          agentConnected={!!envState?.agent}
+          source={source}
+          buildMode
+          contractProgress={contractProgress}
+          buildDone={done}
+        />
+      );
   }
 }
 
@@ -379,15 +553,25 @@ function renderPanel(id, ctx) {
 function EditableHint() {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1}
+      direction="row"
+      alignItems="center"
+      spacing={1}
       sx={{
-        px: 1, py: 1.25, borderBottom: "1px solid", borderColor: "divider",
+        px: 1,
+        py: 1.25,
+        borderBottom: "1px solid",
+        borderColor: "divider",
         flexShrink: 0,
       }}
     >
-      <Iconify icon="solar:pen-linear" width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+      <Iconify
+        icon="solar:pen-linear"
+        width={14}
+        sx={{ color: "text.subtitle", flexShrink: 0 }}
+      />
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-        Edit directly, or ask the builder on the left — “add a scenario where the caller is aggressive”.
+        Edit directly, or ask the builder on the left — “add a scenario where
+        the caller is aggressive”.
       </Typography>
     </Stack>
   );

@@ -288,7 +288,7 @@ const LinkedTracesContent = () => {
           columnDefs={columnDefs}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
-          rowHeight={40}
+          rowHeight={36}
           theme={agTheme}
           rowSelection="single"
           paginationPageSizeSelector={false}
@@ -303,7 +303,7 @@ const LinkedTracesContent = () => {
           suppressSizeToFit={true}
           suppressAutoSize={true}
           animateRows={true}
-          headerHeight={40}
+          headerHeight={32}
           groupHeaderHeight={40}
           tooltipShowDelay={0}
           tooltipHideDelay={2000}

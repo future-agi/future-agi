@@ -12,9 +12,13 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Tooltip, Typography, keyframes } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { browserAppOf } from "../../_mock/runStream";
-import BrowserApp, { deriveState, focusOf, CURSOR, urlFor } from "./BrowserApps";
+import BrowserApp, {
+  deriveState,
+  focusOf,
+  CURSOR,
+  urlFor,
+} from "./BrowserApps";
 import { PersonaBadge } from "../../components/primitives";
-import { textTone } from "../../components/textTone";
 import CloneStage from "./CloneStage";
 import { endedReasonFor } from "../../_mock/endedReason";
 
@@ -39,8 +43,12 @@ function StageShell({ children, sx }) {
   return (
     <Box
       sx={{
-        flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-        bgcolor: "background.neutral", ...sx,
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        bgcolor: "background.neutral",
+        ...sx,
       }}
     >
       {children}
@@ -74,11 +82,19 @@ export function VoiceStage({ task, stepIndex, live, agentVersion }) {
         direction="row"
         alignItems="center"
         spacing={2}
-        sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}
+        sx={{
+          px: 2.5,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+        }}
       >
         <Party
           label={task.persona?.name || "Caller"}
-          sub={task.persona?.voice ? `Caller · ${task.persona.voice}` : "Caller"}
+          sub={
+            task.persona?.voice ? `Caller · ${task.persona.voice}` : "Caller"
+          }
           icon="solar:user-linear"
           color={null}
           speaking={live && current?.role === "customer"}
@@ -101,7 +117,11 @@ export function VoiceStage({ task, stepIndex, live, agentVersion }) {
       <Box ref={scrollRef} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
         <Stack spacing={1.5}>
           {visible.map((s, i) => (
-            <Turn key={s.id} turn={s} latest={live && i === visible.length - 1} />
+            <Turn
+              key={s.id}
+              turn={s}
+              latest={live && i === visible.length - 1}
+            />
           ))}
           {live && next && <TypingIndicator role={next.role} />}
           <CallEnded task={task} live={live} voice />
@@ -111,7 +131,10 @@ export function VoiceStage({ task, stepIndex, live, agentVersion }) {
   );
 }
 VoiceStage.propTypes = {
-  task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool, agentVersion: PropTypes.string,
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+  agentVersion: PropTypes.string,
 };
 
 /*
@@ -122,59 +145,101 @@ VoiceStage.propTypes = {
 */
 function Party({ label, sub, icon, color, accent, speaking, right }) {
   return (
-    <Stack direction={right ? "row-reverse" : "row"} alignItems="center" spacing={1.25} sx={{ width: 160 }}>
-      <Box sx={{ position: "relative", display: "grid", placeItems: "center", flexShrink: 0 }}>
+    <Stack
+      direction={right ? "row-reverse" : "row"}
+      alignItems="center"
+      spacing={1.25}
+      sx={{ width: 160 }}
+    >
+      <Box
+        sx={{
+          position: "relative",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+        }}
+      >
         {speaking && (
           <Box
             sx={{
-              position: "absolute", width: 44, height: 44, borderRadius: "50%",
+              position: "absolute",
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
               border: "2px solid",
-              borderColor: (t) => alpha(accent ? t.palette.primary.main : t.palette.text.disabled, 0.45),
+              borderColor: (t) =>
+                alpha(
+                  accent ? t.palette.primary.main : t.palette.text.disabled,
+                  0.45,
+                ),
               animation: `${clickRing} 1.4s ease-out infinite`,
             }}
           />
         )}
         <Box
           sx={{
-            width: 36, height: 36, borderRadius: "50%", display: "grid", placeItems: "center",
-            bgcolor: accent
-              ? (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1)
-              : "background.neutral",
-            color: accent ? "primary.main" : "text.subtitle",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            display: "grid",
+            placeItems: "center",
+            bgcolor: accent ? "status.discovery.bg" : "background.neutral",
+            color: accent ? "primary.main" : "text.tertiary",
             border: "1px solid",
-            borderColor: (t) => alpha(accent ? t.palette.primary.main : t.palette.text.disabled, 0.3),
+            borderColor: (t) =>
+              alpha(
+                accent ? t.palette.primary.main : t.palette.text.disabled,
+                0.3,
+              ),
           }}
         >
-          <Iconify icon={icon} width={18} />
+          <Iconify icon={icon} width={20} />
         </Box>
       </Box>
       <Box minWidth={0} sx={{ textAlign: right ? "right" : "left" }}>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>{label}</Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{sub}</Typography>
+        <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+          {label}
+        </Typography>
+        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+          {sub}
+        </Typography>
       </Box>
     </Stack>
   );
 }
 Party.propTypes = {
-  label: PropTypes.string, sub: PropTypes.string, icon: PropTypes.string,
-  color: PropTypes.string, accent: PropTypes.bool,
-  speaking: PropTypes.bool, right: PropTypes.bool,
+  label: PropTypes.string,
+  sub: PropTypes.string,
+  icon: PropTypes.string,
+  color: PropTypes.string,
+  accent: PropTypes.bool,
+  speaking: PropTypes.bool,
+  right: PropTypes.bool,
 };
 
 function Waveform({ active, agent }) {
   const bars = [0.5, 0.8, 0.35, 1, 0.6, 0.9, 0.45, 0.75, 0.55, 0.95, 0.4, 0.7];
   return (
-    <Stack direction="row" alignItems="center" spacing={0.375} sx={{ height: 28 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.375}
+      sx={{ height: 28 }}
+    >
       {bars.map((h, i) => (
         <Box
           key={i}
           sx={{
-            width: 3, height: 24, borderRadius: 2,
+            width: 3,
+            height: 24,
+            borderRadius: 2,
             bgcolor: agent ? "primary.main" : "text.disabled",
             opacity: active ? 0.9 : 0.25,
             transformOrigin: "center",
             transform: active ? undefined : "scaleY(0.2)",
-            animation: active ? `${bar} ${0.7 + (i % 4) * 0.16}s ease-in-out infinite` : "none",
+            animation: active
+              ? `${bar} ${0.7 + (i % 4) * 0.16}s ease-in-out infinite`
+              : "none",
             animationDelay: `${i * 0.06}s`,
           }}
         />
@@ -186,7 +251,7 @@ Waveform.propTypes = { active: PropTypes.bool, agent: PropTypes.bool };
 
 /* Who said it. An actor is a third party with its own goal — never the
    caller — so it is named, and its turn is drawn apart from the caller's. */
-function Turn({ turn, latest }) {
+function Turn({ turn }) {
   const isAgent = turn.role === "agent";
   const isActor = turn.role === "actor";
   /* The line the scenario failed on — where the agent gave in. */
@@ -199,37 +264,81 @@ function Turn({ turn, latest }) {
     >
       <Box
         sx={{
-          maxWidth: "76%", px: 1.75, py: 1.125, borderRadius: 1.5,
+          maxWidth: "76%",
+          px: 1.75,
+          py: 1.125,
+          borderRadius: "8px",
           border: isActor ? "1px dashed" : "1px solid",
-          borderColor: (t) => failed ? alpha("#DC2626", 0.6)
-            : isAgent ? alpha(t.palette.primary.main, 0.3) : isActor ? t.palette.text.disabled : t.palette.divider,
-          bgcolor: (t) => isAgent
-            ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.06)
-            : "background.paper",
-          ...(latest && { boxShadow: (t) => `0 0 0 3px ${alpha(isAgent ? t.palette.primary.main : t.palette.text.disabled, 0.1)}` }),
+          borderColor: (t) =>
+            failed
+              ? "status.danger.border"
+              : isAgent
+                ? alpha(t.palette.primary.main, 0.3)
+                : isActor
+                  ? t.palette.text.disabled
+                  : t.palette.divider,
+          bgcolor: isAgent ? "status.discovery.bg" : "background.paper",
         }}
       >
         {isActor ? (
-          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.25 }}>
-            <Iconify icon="solar:users-group-rounded-linear" width={12} sx={{ color: "text.subtitle" }} />
-            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ mb: 0.25 }}
+          >
+            <Iconify
+              icon="solar:users-group-rounded-linear"
+              width={12}
+              sx={{ color: "text.tertiary" }}
+            />
+            <Typography
+              sx={{ typography: "s3", fontWeight: 600, color: "text.tertiary" }}
+            >
               {turn.actorName || "Actor"} · actor
             </Typography>
           </Stack>
         ) : (
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.25 }}>
-            <Typography sx={{ typography: "s3", fontWeight: 700, color: isAgent ? "primary.main" : "text.subtitle" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ mb: 0.25 }}
+          >
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: isAgent ? "primary.main" : "text.tertiary",
+              }}
+            >
               {isAgent ? "Agent" : "Caller"}
             </Typography>
             {failed && (
-              <Stack direction="row" alignItems="center" spacing={0.375} sx={{ color: "#DC2626" }}>
-                <Iconify icon="solar:close-circle-bold" width={11} />
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "inherit" }}>Failed here</Typography>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.375}
+                sx={{ color: "status.danger.fg" }}
+              >
+                <Iconify icon="solar:close-circle-bold" width={12} />
+                <Typography
+                  sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+                >
+                  Failed here
+                </Typography>
               </Stack>
             )}
           </Stack>
         )}
-        <Typography sx={{ typography: "s2", ...(isActor && { fontStyle: "italic", color: "text.secondary" }) }}>{turn.text}</Typography>
+        <Typography
+          sx={{
+            typography: "s2",
+            ...(isActor && { fontStyle: "italic", color: "text.secondary" }),
+          }}
+        >
+          {turn.text}
+        </Typography>
       </Box>
     </Stack>
   );
@@ -243,39 +352,69 @@ const SETTLED = ["grading", "passed", "failed", "flaky", "unmeasured"];
 function CallEnded({ task, live, voice }) {
   if (live || !SETTLED.includes(task.status)) return null;
   const { raw, label, tone } = endedReasonFor(task, { voice });
-  const color = { warn: "#CA8A04", error: "#DC2626" }[tone] || "text.subtitle";
+  const color =
+    { warn: "status.warning.fg", error: "status.danger.fg" }[tone] ||
+    "text.tertiary";
   return (
     <Stack direction="row" alignItems="center" spacing={1.25} sx={{ pt: 0.5 }}>
       <Box sx={{ flex: 1, borderTop: "1px solid", borderColor: "divider" }} />
       <Tooltip arrow title={`Reported by the pipeline as “${raw}”`}>
         <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color }}>
-          <Iconify icon={voice ? "solar:end-call-linear" : "solar:chat-round-check-linear"} width={13} />
-          <Typography sx={{ typography: "s3", fontWeight: 600, color: tone === "warn" ? "text.secondary" : "inherit" }}>{label}</Typography>
+          <Iconify
+            icon={
+              voice ? "solar:end-call-linear" : "solar:chat-round-check-linear"
+            }
+            width={14}
+          />
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: tone === "warn" ? "text.secondary" : "inherit",
+            }}
+          >
+            {label}
+          </Typography>
         </Stack>
       </Tooltip>
       <Box sx={{ flex: 1, borderTop: "1px solid", borderColor: "divider" }} />
     </Stack>
   );
 }
-CallEnded.propTypes = { task: PropTypes.object, live: PropTypes.bool, voice: PropTypes.bool };
+CallEnded.propTypes = {
+  task: PropTypes.object,
+  live: PropTypes.bool,
+  voice: PropTypes.bool,
+};
 
 function TypingIndicator({ role }) {
   const isAgent = role === "agent";
   return (
-    <Stack direction="row" sx={{ justifyContent: isAgent ? "flex-end" : "flex-start" }}>
+    <Stack
+      direction="row"
+      sx={{ justifyContent: isAgent ? "flex-end" : "flex-start" }}
+    >
       <Stack
-        direction="row" spacing={0.5} alignItems="center"
+        direction="row"
+        spacing={0.5}
+        alignItems="center"
         sx={{
-          px: 1.5, py: 1, borderRadius: 1.5,
-          border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+          px: 1.5,
+          py: 1,
+          borderRadius: "8px",
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
         }}
       >
         {[0, 1, 2].map((i) => (
           <Box
             key={i}
             sx={{
-              width: 5, height: 5, borderRadius: "50%",
-              bgcolor: isAgent ? "primary.main" : "text.subtitle",
+              width: 5,
+              height: 5,
+              borderRadius: "50%",
+              bgcolor: isAgent ? "primary.main" : "text.tertiary",
               animation: `${bar} 1s ease-in-out infinite`,
               animationDelay: `${i * 0.16}s`,
             }}
@@ -297,14 +436,29 @@ export function ChatStage({ task, stepIndex, live }) {
   return (
     <StageShell>
       <Stack
-        direction="row" alignItems="center" spacing={1.5}
-        sx={{ px: 2.5, py: 1.75, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{
+          px: 2.5,
+          py: 1.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+        }}
       >
         <PersonaBadge persona={task.persona} />
         <Box flex={1} />
         <Stack direction="row" alignItems="center" spacing={0.625}>
-          <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: live ? "#16A34A" : "text.subtitle" }} />
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Box
+            sx={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              bgcolor: live ? "status.success.solid" : "text.tertiary",
+            }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {live ? "session active" : "session closed"}
           </Typography>
         </Stack>
@@ -313,7 +467,11 @@ export function ChatStage({ task, stepIndex, live }) {
       <Box ref={scrollRef} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
         <Stack spacing={1.5}>
           {visible.map((s, i) => (
-            <Turn key={s.id} turn={s} latest={live && i === visible.length - 1} />
+            <Turn
+              key={s.id}
+              turn={s}
+              latest={live && i === visible.length - 1}
+            />
           ))}
           {live && next && <TypingIndicator role={next.role} />}
           <CallEnded task={task} live={live} voice={false} />
@@ -322,7 +480,11 @@ export function ChatStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-ChatStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
+ChatStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── browser ─────────────────────────────────────────────────────────────── */
 
@@ -345,62 +507,136 @@ export function BrowserStage({ task, stepIndex, live }) {
 
   return (
     <StageShell>
-      <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", p: 2 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          p: 2,
+        }}
+      >
         {/* browser chrome */}
         <Box
           sx={{
-            flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-            borderRadius: 1.5, overflow: "hidden",
-            border: "1px solid", borderColor: "divider",
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderRadius: "8px",
+            overflow: "hidden",
+            border: "1px solid",
+            borderColor: "divider",
             bgcolor: "background.paper",
-            boxShadow: (t) => `0 8px 30px ${alpha("#000", t.palette.mode === "dark" ? 0.4 : 0.08)}`,
           }}
         >
           <Stack
-            direction="row" alignItems="center" spacing={1.25}
-            sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{
+              px: 1.5,
+              py: 1,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.neutral",
+            }}
           >
             <Stack direction="row" spacing={0.625}>
+              {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
               {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
-                <Box key={c} sx={{ width: 9, height: 9, borderRadius: "50%", bgcolor: c, opacity: 0.85 }} />
+                <Box
+                  key={c}
+                  sx={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: "50%",
+                    bgcolor: c,
+                    opacity: 0.85,
+                  }}
+                />
               ))}
             </Stack>
             <Box
               sx={{
-                flex: 1, px: 1.25, py: 0.5, borderRadius: 0.75,
-                border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+                flex: 1,
+                px: 1.25,
+                py: 0.5,
+                borderRadius: "4px",
+                border: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
               }}
             >
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                }}
+              >
                 {urlFor(app, state)}
               </Typography>
             </Box>
             {live && (
               <Stack direction="row" alignItems="center" spacing={0.5}>
-                <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "#DC2626", animation: `${blink} 1.4s infinite` }} />
-                <Typography sx={{ typography: "s3", color: "#DC2626", fontWeight: 700 }}>REC</Typography>
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: "status.danger.solid",
+                    animation: `${blink} 1.4s infinite`,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "status.danger.fg",
+                    fontWeight: 600,
+                  }}
+                >
+                  REC
+                </Typography>
               </Stack>
             )}
           </Stack>
 
           {/* wireframe viewport with the agent's cursor */}
-          <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
             <BrowserApp app={app} state={state} focus={focus} />
 
             {live && (
               <Box
                 sx={{
                   position: "absolute",
-                  left: `${pos.x}%`, top: `${pos.y}%`,
-                  transition: "left .55s cubic-bezier(.4,0,.2,1), top .55s cubic-bezier(.4,0,.2,1)",
-                  pointerEvents: "none", zIndex: 3,
+                  left: `${pos.x}%`,
+                  top: `${pos.y}%`,
+                  transition:
+                    "left .55s cubic-bezier(.4,0,.2,1), top .55s cubic-bezier(.4,0,.2,1)",
+                  pointerEvents: "none",
+                  zIndex: 3,
                 }}
               >
                 {current?.action === "click" && (
                   <Box
                     sx={{
-                      position: "absolute", left: -12, top: -12, width: 26, height: 26,
-                      borderRadius: "50%", border: "2px solid", borderColor: "primary.main",
+                      position: "absolute",
+                      left: -12,
+                      top: -12,
+                      width: 26,
+                      height: 26,
+                      borderRadius: "50%",
+                      border: "2px solid",
+                      borderColor: "primary.main",
                       animation: `${clickRing} .9s ease-out infinite`,
                     }}
                   />
@@ -408,7 +644,10 @@ export function BrowserStage({ task, stepIndex, live }) {
                 <Iconify
                   icon="solar:cursor-bold"
                   width={20}
-                  sx={{ color: "primary.main", filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}
+                  sx={{
+                    color: "primary.main",
+                    filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))",
+                  }}
                 />
               </Box>
             )}
@@ -418,29 +657,73 @@ export function BrowserStage({ task, stepIndex, live }) {
         {/* action log — what the agent believes it is doing */}
         <Box
           sx={{
-            mt: 1.5, maxHeight: 132, overflow: "auto",
-            borderRadius: 1.25, border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+            mt: 1.5,
+            maxHeight: 132,
+            overflow: "auto",
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
           }}
           ref={scrollRef}
         >
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
             {visible.slice(-6).map((s) => (
-              <Stack key={s.id} direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 0.875 }}>
+              <Stack
+                key={s.id}
+                direction="row"
+                alignItems="center"
+                spacing={1.25}
+                sx={{ px: 1.5, py: 0.875 }}
+              >
                 <Box
                   sx={{
-                    px: 0.75, height: 18, borderRadius: 0.5, display: "grid", placeItems: "center", flexShrink: 0,
-                    bgcolor: (t) => alpha("#EA580C", t.palette.mode === "dark" ? 0.18 : 0.1),
-                    color: "#EA580C",
+                    px: 0.75,
+                    height: 18,
+                    borderRadius: "4px",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                    bgcolor: "status.warning.bg",
+                    color: "status.warning.fg",
                   }}
                 >
-                  <Typography sx={{ typography: "s3", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace", color: "text.primary" }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      color: "text.primary",
+                    }}
+                  >
                     {s.action}
                   </Typography>
                 </Box>
-                <Typography noWrap sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary", flex: 1 }}>
-                  {s.target}{s.value ? ` = "${s.value}"` : ""}
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    color: "text.secondary",
+                    flex: 1,
+                  }}
+                >
+                  {s.target}
+                  {s.value ? ` = "${s.value}"` : ""}
                 </Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", maxWidth: 220, display: { xs: "none", lg: "block" } }}>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    maxWidth: 220,
+                    display: { xs: "none", lg: "block" },
+                  }}
+                >
                   {s.thought}
                 </Typography>
               </Stack>
@@ -451,8 +734,11 @@ export function BrowserStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-BrowserStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
-
+BrowserStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── tools ───────────────────────────────────────────────────────────────── */
 
@@ -470,40 +756,76 @@ export function ToolStage({ task, stepIndex, live }) {
               <Box
                 key={s.id}
                 sx={{
-                  borderRadius: 1.25, overflow: "hidden",
+                  borderRadius: "8px",
+                  overflow: "hidden",
                   border: "1px solid",
-                  borderColor: pending ? alpha("#DB2777", 0.4) : "divider",
+                  borderColor: pending ? "status.discovery.border" : "divider",
                   bgcolor: "background.paper",
                 }}
               >
                 <Stack
-                  direction="row" alignItems="center" spacing={1.25}
-                  sx={{ px: 1.75, py: 1.125, borderBottom: "1px solid", borderColor: "divider" }}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1.25}
+                  sx={{
+                    px: 1.75,
+                    py: 1.125,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
                 >
-                  <Iconify icon="solar:settings-minimalistic-linear" width={15} sx={{ color: "#DB2777", flexShrink: 0 }} />
-                  <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
+                  <Iconify
+                    icon="solar:settings-minimalistic-linear"
+                    width={16}
+                    sx={{ color: "status.discovery.fg", flexShrink: 0 }}
+                  />
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
                     {s.tool}
                   </Typography>
                   <Box flex={1} />
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
                     {pending ? "running…" : `${s.ms}ms`}
                   </Typography>
                 </Stack>
                 <Box sx={{ px: 1.75, py: 1.25 }}>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.375 }}>arguments</Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.tertiary", mb: 0.375 }}
+                  >
+                    arguments
+                  </Typography>
                   <Typography
                     sx={{
-                      typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                      color: "text.secondary", mb: 1, wordBreak: "break-all",
+                      typography: "s3",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      color: "text.secondary",
+                      mb: 1,
+                      wordBreak: "break-all",
                     }}
                   >
                     {JSON.stringify(s.args)}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.375 }}>result</Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.tertiary", mb: 0.375 }}
+                  >
+                    result
+                  </Typography>
                   <Typography
                     sx={{
-                      typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                      color: pending ? "text.subtitle" : "#16A34A",
+                      typography: "s3",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      color: pending ? "text.tertiary" : "status.success.fg",
                     }}
                   >
                     {pending ? "…" : s.result}
@@ -517,7 +839,11 @@ export function ToolStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-ToolStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
+ToolStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── terminal ────────────────────────────────────────────────────────────── */
 
@@ -530,9 +856,15 @@ export function TerminalStage({ task, stepIndex, live }) {
       <Box
         ref={scrollRef}
         sx={{
-          flex: 1, minHeight: 0, overflow: "auto", p: 2, borderRadius: 1.5,
-          bgcolor: (t) => t.palette.mode === "dark" ? "#0a0a0a" : "#18181b",
-          border: "1px solid", borderColor: "divider",
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          p: 2,
+          borderRadius: "8px",
+          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+          bgcolor: (t) => (t.palette.mode === "dark" ? "#0a0a0a" : "#18181b"),
+          border: "1px solid",
+          borderColor: "divider",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         }}
       >
@@ -541,18 +873,52 @@ export function TerminalStage({ task, stepIndex, live }) {
           return (
             <Box key={s.id} sx={{ mb: 1.5 }}>
               <Stack direction="row" spacing={1}>
-                <Typography sx={{ typography: "s2", color: "#16A34A", fontFamily: "inherit", flexShrink: 0 }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "status.success.fg",
+                    fontFamily: "inherit",
+                    flexShrink: 0,
+                  }}
+                >
                   $
                 </Typography>
-                <Typography sx={{ typography: "s2", color: "#fafafa", fontFamily: "inherit", wordBreak: "break-all" }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    color: "#fafafa",
+                    fontFamily: "inherit",
+                    wordBreak: "break-all",
+                  }}
+                >
                   {s.cmd}
                   {pending && (
-                    <Box component="span" sx={{ ml: 0.5, color: "#fafafa", animation: `${blink} 1s step-end infinite` }}>▊</Box>
+                    <Box
+                      component="span"
+                      sx={{
+                        ml: 0.5,
+                        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                        color: "#fafafa",
+                        animation: `${blink} 1s step-end infinite`,
+                      }}
+                    >
+                      ▊
+                    </Box>
                   )}
                 </Typography>
               </Stack>
               {!pending && (
-                <Typography sx={{ typography: "s2", color: "#a1a1aa", fontFamily: "inherit", pl: 2, whiteSpace: "pre-wrap" }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    color: "#a1a1aa",
+                    fontFamily: "inherit",
+                    pl: 2,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
                   {s.out}
                 </Typography>
               )}
@@ -563,7 +929,11 @@ export function TerminalStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-TerminalStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
+TerminalStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── email ───────────────────────────────────────────────────────────────── */
 
@@ -571,11 +941,19 @@ export function EmailStage({ task, stepIndex, live }) {
   const scrollRef = useAutoScroll(stepIndex);
   const visible = task.steps.slice(0, stepIndex + 1);
   const kindMeta = {
-    read: { icon: "solar:letter-opened-linear", color: "#0891B2", label: "Read" },
-    parse: { icon: "solar:file-text-linear", color: "#CA8A04", label: "Parse" },
-    check: { icon: "solar:shield-check-linear", color: "#7857FC", label: "Check" },
-    compose: { icon: "solar:pen-new-square-linear", color: "#EA580C", label: "Compose" },
-    send: { icon: "solar:plain-linear", color: "#16A34A", label: "Send" },
+    read: { icon: "solar:letter-opened-linear", role: "info", label: "Read" },
+    parse: { icon: "solar:file-text-linear", role: "warning", label: "Parse" },
+    check: {
+      icon: "solar:shield-check-linear",
+      role: "discovery",
+      label: "Check",
+    },
+    compose: {
+      icon: "solar:pen-new-square-linear",
+      role: "neutral",
+      label: "Compose",
+    },
+    send: { icon: "solar:plain-linear", role: "success", label: "Send" },
   };
 
   return (
@@ -592,27 +970,56 @@ export function EmailStage({ task, stepIndex, live }) {
                 <Stack alignItems="center" sx={{ flexShrink: 0 }}>
                   <Box
                     sx={{
-                      width: 30, height: 30, borderRadius: "50%", display: "grid", placeItems: "center",
-                      bgcolor: (t) => alpha(meta.color, t.palette.mode === "dark" ? 0.18 : 0.1),
-                      color: meta.color,
-                      border: `1px solid ${alpha(meta.color, 0.3)}`,
+                      width: 30,
+                      height: 30,
+                      borderRadius: "50%",
+                      display: "grid",
+                      placeItems: "center",
+                      bgcolor: `status.${meta.role}.bg`,
+                      color: `status.${meta.role}.fg`,
+                      border: "1px solid",
+                      borderColor: `status.${meta.role}.border`,
                     }}
                   >
-                    <Iconify icon={meta.icon} width={15} />
+                    <Iconify icon={meta.icon} width={16} />
                   </Box>
-                  {!last && <Box sx={{ flex: 1, width: "2px", bgcolor: "divider", my: 0.5, minHeight: 18 }} />}
+                  {!last && (
+                    <Box
+                      sx={{
+                        flex: 1,
+                        width: "2px",
+                        bgcolor: "divider",
+                        my: 0.5,
+                        minHeight: 18,
+                      }}
+                    />
+                  )}
                 </Stack>
                 <Box sx={{ pb: 2.25, flex: 1, minWidth: 0 }}>
                   <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <Typography sx={{ typography: "s3", fontWeight: 700, color: textTone(meta.color) }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: `status.${meta.role}.fg`,
+                      }}
+                    >
                       {meta.label}
                     </Typography>
                     {pending && (
-                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>in progress…</Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        in progress…
+                      </Typography>
                     )}
                   </Stack>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{s.subject}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{s.note}</Typography>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {s.subject}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {s.note}
+                  </Typography>
                 </Box>
               </Stack>
             );
@@ -622,7 +1029,11 @@ export function EmailStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-EmailStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
+EmailStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── simulation ──────────────────────────────────────────────────────────── */
 
@@ -647,19 +1058,34 @@ export function SimStage({ task, stepIndex, live }) {
 
   return (
     <StageShell>
-      <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", p: 2 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          p: 2,
+        }}
+      >
         {/* viewport */}
         <Box
           sx={{
-            flex: 1, minHeight: 0, position: "relative", overflow: "hidden",
-            borderRadius: 1.5, border: "1px solid", borderColor: "divider",
+            flex: 1,
+            minHeight: 0,
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             bgcolor: (t) => (t.palette.mode === "dark" ? "#0d0d12" : "#f4f4f7"),
           }}
         >
           {/* ground grid */}
           <Box
             sx={{
-              position: "absolute", inset: 0,
+              position: "absolute",
+              inset: 0,
               backgroundImage: (t) => {
                 const line = alpha(t.palette.text.primary, 0.07);
                 return `linear-gradient(${line} 1px, transparent 1px), linear-gradient(90deg, ${line} 1px, transparent 1px)`;
@@ -671,9 +1097,14 @@ export function SimStage({ task, stepIndex, live }) {
           {/* goal */}
           <Box
             sx={{
-              position: "absolute", left: "78%", top: "46%",
-              width: 26, height: 26, borderRadius: "50%",
-              border: "2px dashed", borderColor: alpha("#16A34A", 0.7),
+              position: "absolute",
+              left: "78%",
+              top: "46%",
+              width: 26,
+              height: 26,
+              borderRadius: "50%",
+              border: "2px dashed",
+              borderColor: "status.success.border",
             }}
           />
 
@@ -681,51 +1112,89 @@ export function SimStage({ task, stepIndex, live }) {
           <Box
             sx={{
               position: "absolute",
-              left: `${pos.x}%`, top: `${pos.y}%`,
-              transition: "left .6s cubic-bezier(.4,0,.2,1), top .6s cubic-bezier(.4,0,.2,1)",
+              left: `${pos.x}%`,
+              top: `${pos.y}%`,
+              transition:
+                "left .6s cubic-bezier(.4,0,.2,1), top .6s cubic-bezier(.4,0,.2,1)",
             }}
           >
             {live && (
               <Box
                 sx={{
-                  position: "absolute", left: -10, top: -10, width: 34, height: 34,
-                  borderRadius: "50%", border: "2px solid", borderColor: alpha("#8B5CF6", 0.5),
+                  position: "absolute",
+                  left: -10,
+                  top: -10,
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  border: "2px solid",
+                  borderColor: "status.discovery.border",
                   animation: `${clickRing} 1.5s ease-out infinite`,
                 }}
               />
             )}
             <Box
               sx={{
-                width: 14, height: 14, borderRadius: 0.75, bgcolor: "#8B5CF6",
-                boxShadow: `0 0 14px ${alpha("#8B5CF6", 0.8)}`,
+                width: 14,
+                height: 14,
+                borderRadius: "4px",
+                bgcolor: "primary.main",
+                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                boxShadow: `0 0 14px ${alpha("#7857FC", 0.8)}`,
               }}
             />
           </Box>
 
           {/* episode + reward readout */}
           <Stack
-            direction="row" alignItems="center" spacing={1.5}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
             sx={{
-              position: "absolute", left: 12, right: 12, bottom: 12,
-              px: 1.5, py: 1, borderRadius: 1,
+              position: "absolute",
+              left: 12,
+              right: 12,
+              bottom: 12,
+              px: 1.5,
+              py: 1,
+              borderRadius: 1,
               bgcolor: (t) => alpha(t.palette.background.paper, 0.85),
-              border: "1px solid", borderColor: "divider",
+              border: "1px solid",
+              borderColor: "divider",
               backdropFilter: "blur(6px)",
             }}
           >
-            <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+            >
               step {Math.max(0, stepIndex) + 1}/{task.steps.length}
             </Typography>
-            <Box sx={{ flex: 1, height: 5, borderRadius: 3, bgcolor: "background.neutral", overflow: "hidden" }}>
+            <Box
+              sx={{
+                flex: 1,
+                height: 5,
+                borderRadius: 3,
+                bgcolor: "background.neutral",
+                overflow: "hidden",
+              }}
+            >
               <Box
                 sx={{
-                  height: "100%", width: `${reward * 100}%`, bgcolor: "#8B5CF6",
+                  height: "100%",
+                  width: `${reward * 100}%`,
+                  bgcolor: "primary.main",
                   transition: "width .5s ease",
                 }}
               />
             </Box>
             <Typography
-              sx={{ typography: "s2", fontWeight: 700, color: "#8B5CF6", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                color: "primary.main",
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
             >
               {reward.toFixed(2)}
             </Typography>
@@ -736,28 +1205,70 @@ export function SimStage({ task, stepIndex, live }) {
         <Box
           ref={scrollRef}
           sx={{
-            mt: 1.5, maxHeight: 132, overflow: "auto",
-            borderRadius: 1.25, border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+            mt: 1.5,
+            maxHeight: 132,
+            overflow: "auto",
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
           }}
         >
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
             {visible.slice(-6).map((s) => (
-              <Stack key={s.id} direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 0.875 }}>
+              <Stack
+                key={s.id}
+                direction="row"
+                alignItems="center"
+                spacing={1.25}
+                sx={{ px: 1.5, py: 0.875 }}
+              >
                 <Box
                   sx={{
-                    px: 0.75, height: 18, borderRadius: 0.5, display: "grid", placeItems: "center", flexShrink: 0,
-                    bgcolor: (t) => alpha("#8B5CF6", t.palette.mode === "dark" ? 0.18 : 0.1),
-                    color: "#8B5CF6",
+                    px: 0.75,
+                    height: 18,
+                    borderRadius: "4px",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                    bgcolor: "status.discovery.bg",
+                    color: "primary.main",
                   }}
                 >
-                  <Typography sx={{ typography: "s3", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
                     {s.action}
                   </Typography>
                 </Box>
-                <Typography noWrap sx={{ flex: 1, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary" }}>
+                <Typography
+                  noWrap
+                  sx={{
+                    flex: 1,
+                    typography: "s3",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    color: "text.secondary",
+                  }}
+                >
                   {s.obs}
                 </Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", maxWidth: 220, display: { xs: "none", lg: "block" } }}>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    maxWidth: 220,
+                    display: { xs: "none", lg: "block" },
+                  }}
+                >
                   {s.note}
                 </Typography>
               </Stack>
@@ -768,7 +1279,11 @@ export function SimStage({ task, stepIndex, live }) {
     </StageShell>
   );
 }
-SimStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
+SimStage.propTypes = {
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+};
 
 /* ── router ──────────────────────────────────────────────────────────────── */
 
@@ -792,16 +1307,40 @@ const STAGES = {
   CloneStage is chosen over the modality-based STAGES when the caller
   passes twinBacking.
 */
-export default function Stage({ stage, task, stepIndex, live, twinBacking, agentVersion }) {
+export default function Stage({
+  stage,
+  task,
+  stepIndex,
+  live,
+  twinBacking,
+  agentVersion,
+}) {
   if (!task) return null;
   if (twinBacking?.services?.length) {
-    return <CloneStage task={task} stepIndex={stepIndex} live={live} twinBacking={twinBacking} />;
+    return (
+      <CloneStage
+        task={task}
+        stepIndex={stepIndex}
+        live={live}
+        twinBacking={twinBacking}
+      />
+    );
   }
   const Cmp = STAGES[stage] || VoiceStage;
-  return <Cmp task={task} stepIndex={stepIndex} live={live} agentVersion={agentVersion} />;
+  return (
+    <Cmp
+      task={task}
+      stepIndex={stepIndex}
+      live={live}
+      agentVersion={agentVersion}
+    />
+  );
 }
 Stage.propTypes = {
-  stage: PropTypes.string, task: PropTypes.object,
-  stepIndex: PropTypes.number, live: PropTypes.bool,
-  twinBacking: PropTypes.object, agentVersion: PropTypes.string,
+  stage: PropTypes.string,
+  task: PropTypes.object,
+  stepIndex: PropTypes.number,
+  live: PropTypes.bool,
+  twinBacking: PropTypes.object,
+  agentVersion: PropTypes.string,
 };

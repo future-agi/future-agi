@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import {
   Box,
@@ -49,8 +50,11 @@ export default function DatasetMetricChart({
 
           <Grid item xs={3}>
             <Paper
-              elevation={1}
+              elevation={0}
               sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
                 m: "10px",
                 padding: "20px",
                 display: "flex",

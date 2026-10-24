@@ -152,7 +152,7 @@ const DateTimeRangePicker = ({
           disableRipple
         >
           {dateOption === "Custom" && startDate && endDate ? (
-            <Iconify icon="uil:calender" height={16} width={16} />
+            <Iconify icon="solar:calendar-linear" height={16} width={16} />
           ) : null}
           {startDate && endDate && dateOption === "Custom"
             ? `${startDate} - ${endDate}`

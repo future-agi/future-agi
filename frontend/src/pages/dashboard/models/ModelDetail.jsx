@@ -1,4 +1,5 @@
-import { Box, Card, LinearProgress, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, LinearProgress, Tab, Tabs } from "@mui/material";
+import Section from "src/components/section";
 import React, { useContext, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -86,8 +87,6 @@ const ModelDetail = () => {
   const loadingModelDetails =
     isLoadingDatasetOptions || isLoadingModelDetails || isLoadingOptimization;
 
-  const theme = useTheme();
-
   useEffect(() => {
     if (error) {
       navigate("/dashboard/models");
@@ -137,7 +136,8 @@ const ModelDetail = () => {
           paddingX: "20px",
         }}
       >
-        <Card
+        <Section
+          variant="panel"
           sx={{
             width: "100%",
             minHeight: selectedTab !== "config" ? "calc(100vh - 90px)" : "",
@@ -153,11 +153,6 @@ const ModelDetail = () => {
               onChange={handleChange}
               aria-label="basic tabs example"
               textColor="primary"
-              TabIndicatorProps={{
-                style: {
-                  backgroundColor: theme.palette.primary.main,
-                },
-              }}
             >
               <Tab label="Performance" value="performance" />
               <Tab label="Custom Metrics" value="custom-metrics" />
@@ -183,7 +178,7 @@ const ModelDetail = () => {
             </Tabs>
           </Box>
           {renderOutlet(selectedTab == "config")}
-        </Card>
+        </Section>
       </Box>
       {renderOutlet(selectedTab !== "config")}
     </>

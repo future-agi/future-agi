@@ -1,4 +1,4 @@
-import { Box, Button, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, Button, Tab, Tabs } from "@mui/material";
 import React, { useEffect, useRef } from "react";
 import PageHeadings from "../develop-detail/Common/PageHeadings";
 import PropTypes from "prop-types";
@@ -50,7 +50,6 @@ ContextConsumer.propTypes = {
 };
 
 const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
-  const theme = useTheme();
   const setVisibleSectionRef = useRef(null);
   const navigate = useNavigate();
   const tabItems = [
@@ -126,9 +125,6 @@ const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "38px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"
@@ -152,9 +148,6 @@ const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
                 });
               }
             }}
-            TabIndicatorProps={{
-              style: { backgroundColor: theme.palette.primary.main },
-            }}
             sx={{ borderBottom: "1px solid", borderColor: "divider" }}
           >
             {tabItems.map((tab) => (
@@ -166,12 +159,6 @@ const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
                 sx={{
                   paddingLeft: "24px",
                   paddingRight: "24px",
-                  ...theme.typography["s1"],
-                  fontWeight: theme.typography["fontWeightSemiBold"],
-                  "&:not(.Mui-selected)": {
-                    color: "text.disabled", // Color for unselected tabs
-                    fontWeight: theme.typography["fontWeightMedium"],
-                  },
                   ["&:not(:last-of-type)"]: {
                     marginRight: "4px",
                   },

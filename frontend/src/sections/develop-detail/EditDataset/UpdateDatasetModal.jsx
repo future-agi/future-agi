@@ -104,7 +104,13 @@ const UpdateDatasetModal = ({ open, onClose }) => {
   const currentDataset = data?.find((d) => d.datasetId === dataset)?.name;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           gap: "10px",
@@ -120,11 +126,11 @@ const UpdateDatasetModal = ({ open, onClose }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography color={"text.primary"} fontWeight={700} fontSize="18px">
+          <Typography color={"text.primary"} fontWeight={600} fontSize="16px">
             Update Dataset Details
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

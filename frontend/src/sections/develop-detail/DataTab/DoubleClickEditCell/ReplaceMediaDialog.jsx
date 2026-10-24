@@ -111,7 +111,7 @@ export default function ReplaceMediaDialog({
       sx={{}}
       PaperProps={{
         sx: {
-          minWidth: "500px",
+          minWidth: "560px",
           minHeight: "300px",
           padding: theme.spacing(2),
           display: "flex",
@@ -174,9 +174,6 @@ export default function ReplaceMediaDialog({
             onChange={(e, value) => {
               setCurrentTab(value);
             }}
-            TabIndicatorProps={{
-              style: { backgroundColor: theme.palette.primary.main },
-            }}
             sx={{ borderBottom: "1px solid", borderColor: "divider" }}
           >
             {tabItems.map((tab) => (
@@ -185,19 +182,6 @@ export default function ReplaceMediaDialog({
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
-                sx={{
-                  paddingLeft: "24px",
-                  paddingRight: "24px",
-                  ...theme.typography["s1"],
-                  fontWeight: theme.typography["fontWeightSemiBold"],
-                  "&:not(.Mui-selected)": {
-                    color: "text.disabled", // Color for unselected tabs
-                    fontWeight: theme.typography["fontWeightMedium"],
-                  },
-                  ["&:not(:last-of-type)"]: {
-                    marginRight: "4px",
-                  },
-                }}
               />
             ))}
           </Tabs>
@@ -246,15 +230,14 @@ export default function ReplaceMediaDialog({
                 size="small"
                 startIcon={
                   <SvgColor
+                    width={16}
                     src={`/assets/icons/components/ic_delete.svg`}
-                    sx={{ width: 16, height: 16, color: "text.primary" }}
+                    sx={{ color: "text.primary" }}
                   />
                 }
                 onClick={() => reset({ file: [] })}
                 sx={{
                   color: "text.primary",
-                  fontSize: "12px",
-                  fontWeight: 400,
                   lineHeight: "18px",
                   ml: "auto",
                 }}
@@ -285,7 +268,6 @@ export default function ReplaceMediaDialog({
                   sx={{
                     paddingY: (theme) => theme.spacing(0.75),
                     paddingX: (theme) => theme.spacing(3),
-                    borderRadius: (theme) => theme.spacing(1),
                     background: (theme) => theme.palette.background.paper,
                     color: "text.primary",
                     borderColor: "text.disabled",

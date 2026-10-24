@@ -18,8 +18,6 @@ const SANDBOX_MOCKS = {
   salesforce: SalesforceSandboxMock,
 };
 
-const CLONE_TINT = "#7857FC";
-
 const pulse = keyframes`
   0%,100% { box-shadow: 0 0 0 2px rgba(120,87,252,0.25); }
   50%     { box-shadow: 0 0 0 8px rgba(120,87,252,0.08); }
@@ -62,75 +60,113 @@ export default function CloneStage({ task, stepIndex, twinBacking }) {
   /* Which service the agent is touching *right now*. Tracks the most
      recent visible event so the tab auto-follows the agent. Falls
      back to the first service before any writes land. */
-  const currentService = visibleEvents[visibleEvents.length - 1]?.service || services[0];
+  const currentService =
+    visibleEvents[visibleEvents.length - 1]?.service || services[0];
   const [activeService, setActiveService] = useState(currentService);
   useEffect(() => {
-    if (currentService && currentService !== activeService) setActiveService(currentService);
+    if (currentService && currentService !== activeService)
+      setActiveService(currentService);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentService]);
 
   /* Feed a synthetic envState to the SandboxMocks — it has this run
      pre-committed so the mock's liveSandboxContentFor sees the writes
      already landed and renders them into the surface. */
-  const syntheticEnvState = useMemo(() => syntheticStateFor(twinBacking, task, visibleEvents), [twinBacking, task, visibleEvents]);
+  const syntheticEnvState = useMemo(
+    () => syntheticStateFor(twinBacking, task, visibleEvents),
+    [twinBacking, task, visibleEvents],
+  );
 
   const activeTwin = twinById(activeService);
   const SandboxMock = SANDBOX_MOCKS[activeService];
-  const writesForActive = visibleEvents.filter((e) => e.service === activeService);
+  const writesForActive = visibleEvents.filter(
+    (e) => e.service === activeService,
+  );
 
   return (
-    <Box sx={{
-      flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-      bgcolor: "background.neutral",
-    }}>
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        bgcolor: "background.neutral",
+      }}
+    >
       {/* service switcher */}
       {services.length > 1 && (
-        <Stack direction="row" spacing={0.75} sx={{
-          px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider",
-          bgcolor: "background.paper", flexWrap: "wrap", useFlexGap: true,
-        }}>
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{
+            px: 2.5,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            flexWrap: "wrap",
+            useFlexGap: true,
+          }}
+        >
           {services.map((sId) => {
             const twin = twinById(sId);
             const on = sId === activeService;
-            const writes = visibleEvents.filter((e) => e.service === sId).length;
+            const writes = visibleEvents.filter(
+              (e) => e.service === sId,
+            ).length;
             const isCurrent = sId === currentService;
             return (
               <Chip
-                key={sId} size="small"
+                key={sId}
+                size="small"
                 onClick={() => setActiveService(sId)}
-                icon={<TwinLogo twin={twin} width={13} sx={{ ml: "6px !important" }} />}
+                icon={
+                  <TwinLogo
+                    twin={twin}
+                    width={13}
+                    sx={{ ml: "6px !important" }}
+                  />
+                }
                 label={
                   <Stack direction="row" alignItems="center" spacing={0.5}>
                     <span>{twin?.name || sId}</span>
                     {writes > 0 && (
-                      <Typography sx={{
-                        typography: "s3", fontWeight: 700, color: "inherit", opacity: 0.7,
-                        fontVariantNumeric: "tabular-nums",
-                      }}>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "inherit",
+                          opacity: 0.7,
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
                         {writes}
                       </Typography>
                     )}
                   </Stack>
                 }
                 sx={{
-                  height: 26, borderRadius: 999, cursor: "pointer",
+                  cursor: "pointer",
                   border: "1px solid",
-                  borderColor: (th) => on
-                    ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.5 : 0.35)
-                    : th.palette.divider,
-                  bgcolor: (th) => on
-                    ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.14 : 0.06)
-                    : "background.paper",
+                  borderColor: (th) =>
+                    on
+                      ? alpha(
+                          th.palette.text.primary,
+                          th.palette.mode === "dark" ? 0.5 : 0.35,
+                        )
+                      : th.palette.divider,
+                  bgcolor: on ? "action.selected" : "background.paper",
                   color: "text.primary",
-                  animation: isCurrent ? `${pulse} 1.6s ease-in-out infinite` : "none",
+                  animation: isCurrent
+                    ? `${pulse} 1.6s ease-in-out infinite`
+                    : "none",
                   "& .MuiChip-label": {
-                    pl: 0.5, pr: 1, typography: "s2", fontWeight: 700,
+                    pl: 0.5,
+                    pr: 1,
+                    typography: "s2",
                     color: "text.primary",
                   },
                   "&:hover": {
-                    bgcolor: (th) => on
-                      ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.18 : 0.08)
-                      : alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.04),
+                    bgcolor: on ? "action.selected" : "action.hover",
                   },
                 }}
               />
@@ -141,53 +177,91 @@ export default function CloneStage({ task, stepIndex, twinBacking }) {
 
       {/* active sandbox */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
-        <Stack direction="row" alignItems="center" spacing={1.25} sx={{ mb: 1.25 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.25}
+          sx={{ mb: 1.25 }}
+        >
           <TwinLogo twin={activeTwin} width={18} />
-          <Typography sx={{ typography: "s1_2", fontWeight: 700 }}>
+          <Typography sx={{ typography: "s1_2", fontWeight: 600 }}>
             {activeTwin?.name || "Sandbox"}
           </Typography>
-          <Typography sx={{
-            typography: "s3", color: "text.subtitle",
-            fontFamily: "ui-monospace, Menlo, monospace",
-          }} noWrap>
-            {twinBacking?.endpoints?.[activeService]?.replace(/^https?:\/\//, "")}
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}
+            noWrap
+          >
+            {twinBacking?.endpoints?.[activeService]?.replace(
+              /^https?:\/\//,
+              "",
+            )}
           </Typography>
           <Box flex={1} />
           {writesForActive.length > 0 && (
-            <Typography sx={{
-              typography: "s3", fontWeight: 700, color: "text.subtitle",
-              textTransform: "uppercase", letterSpacing: 0.3,
-            }}>
-              {writesForActive.length} write{writesForActive.length === 1 ? "" : "s"} this run
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.tertiary",
+                textTransform: "none",
+                letterSpacing: 0.3,
+              }}
+            >
+              {writesForActive.length} write
+              {writesForActive.length === 1 ? "" : "s"} this run
             </Typography>
           )}
         </Stack>
 
-        {SandboxMock
-          ? <SandboxMock workspace="Default Workspace" envState={syntheticEnvState} />
-          : <GenericSandboxMock twin={activeTwin} />}
+        {SandboxMock ? (
+          <SandboxMock
+            workspace="Default Workspace"
+            envState={syntheticEnvState}
+          />
+        ) : (
+          <GenericSandboxMock twin={activeTwin} />
+        )}
 
         {/* activity feed — every event so far, most recent first */}
         <Box sx={{ mt: 2.5 }}>
-          <Typography sx={{
-            typography: "s3", fontWeight: 700, color: "text.subtitle",
-            textTransform: "uppercase", letterSpacing: 0.4, mb: 1,
-          }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+              mb: 1,
+            }}
+          >
             Activity · agent writes as they land
           </Typography>
           {visibleEvents.length === 0 ? (
-            <Box sx={{
-              p: 2, borderRadius: 1, border: "1px dashed",
-              borderColor: "divider", textAlign: "center",
-            }}>
-              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: 1,
+                border: "1px dashed",
+                borderColor: "divider",
+                textAlign: "center",
+              }}
+            >
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
                 Waiting for the agent&apos;s first write…
               </Typography>
             </Box>
           ) : (
             <Stack spacing={0.5}>
               {[...visibleEvents].reverse().map((e, idx) => (
-                <ActivityRow key={`${e.turn}-${idx}`} event={e} latest={idx === 0} />
+                <ActivityRow
+                  key={`${e.turn}-${idx}`}
+                  event={e}
+                  latest={idx === 0}
+                />
               ))}
             </Stack>
           )}
@@ -208,42 +282,65 @@ CloneStage.propTypes = {
 function ActivityRow({ event, latest }) {
   const twin = twinById(event.service);
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25}
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
       sx={{
-        px: 1.25, py: 1, borderRadius: 0.875,
-        border: "1px solid", borderColor: latest ? alpha(CLONE_TINT, 0.35) : "divider",
-        bgcolor: (t) => latest
-          ? alpha(CLONE_TINT, t.palette.mode === "dark" ? 0.1 : 0.05)
-          : "background.paper",
+        px: 1.25,
+        py: 1,
+        borderRadius: "6px",
+        border: "1px solid",
+        borderColor: latest ? "status.discovery.border" : "divider",
+        bgcolor: latest ? "status.discovery.bg" : "background.paper",
         animation: latest ? `${eventIn} 240ms ease-out` : "none",
       }}
     >
       <TwinLogo twin={twin} width={14} />
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, minWidth: 60,
-        fontVariantNumeric: "tabular-nums", color: "text.subtitle",
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          minWidth: 60,
+          fontVariantNumeric: "tabular-nums",
+          color: "text.tertiary",
+        }}
+      >
         T{event.turn + 1}
       </Typography>
       <Iconify
         icon={event.isWrite ? "solar:pen-linear" : "solar:eye-linear"}
         width={12}
-        sx={{ color: event.isWrite ? "#16A34A" : "text.subtitle", flexShrink: 0 }}
+        sx={{
+          color: event.isWrite ? "status.success.fg" : "text.tertiary",
+          flexShrink: 0,
+        }}
       />
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, minWidth: 70, color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.3,
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          minWidth: 70,
+          color: "text.tertiary",
+          textTransform: "none",
+          letterSpacing: 0.3,
+        }}
+      >
         {event.isWrite ? "wrote" : "read"}
       </Typography>
       <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
         {event.summary}
       </Typography>
       {event.target && (
-        <Typography noWrap sx={{
-          typography: "s3", color: "text.subtitle",
-          fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0,
-        }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            flexShrink: 0,
+          }}
+        >
           {event.target}
         </Typography>
       )}
@@ -262,7 +359,8 @@ ActivityRow.propTypes = { event: PropTypes.object, latest: PropTypes.bool };
   read vs. write from action verbs in the subTask label so the
   activity feed can render a proper "wrote / read" pill.
 */
-const WRITE_VERBS = /\b(reply|post|send|create|update|add|apply|comment|move|assign|refund|revoke|attach|log|open|forward|dm|label|draft|highlight|insert|accept|reject|decline|nudge|carry|resolve|classify|retry|note|route|welcome)\b/i;
+const WRITE_VERBS =
+  /\b(reply|post|send|create|update|add|apply|comment|move|assign|refund|revoke|attach|log|open|forward|dm|label|draft|highlight|insert|accept|reject|decline|nudge|carry|resolve|classify|retry|note|route|welcome)\b/i;
 
 function eventsFromTask(task, services) {
   if (!task) return [];
@@ -287,14 +385,17 @@ function eventsFromTask(task, services) {
            combos that didn't declare per-step attribution)
     */
     const namedService = catalog.find(({ id, twin }) => {
-      const nameHit = twin?.name && new RegExp(`\\b${escapeReg(twin.name)}\\b`, "i").test(label);
+      const nameHit =
+        twin?.name &&
+        new RegExp(`\\b${escapeReg(twin.name)}\\b`, "i").test(label);
       const idHit = new RegExp(`\\b${escapeReg(id)}\\b`, "i").test(label);
       return nameHit || idHit;
     })?.id;
-    const service = namedService
-      || task.twinService
-      || services[i % Math.max(services.length, 1)]
-      || primaryService;
+    const service =
+      namedService ||
+      task.twinService ||
+      services[i % Math.max(services.length, 1)] ||
+      primaryService;
     const isWrite = WRITE_VERBS.test(label);
     return {
       turn: i,

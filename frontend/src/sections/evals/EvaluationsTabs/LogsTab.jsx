@@ -1,13 +1,5 @@
-import {
-  Box,
-  Button,
-  Typography,
-  IconButton,
-  Chip,
-  Skeleton,
-  alpha,
-  useTheme,
-} from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Box, Button, Typography, IconButton, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -63,15 +55,9 @@ const EvaluateArrayCellRenderer = ({ value }) => {
           overflow: "hidden",
         }}
       >
-        {value?.map((item) => (
-          <Chip
-            key={item}
-            label={item}
-            size="small"
-            variant="outlined"
-            color="primary"
-          />
-        ))}
+        <Typography variant="s2" sx={{ color: "text.primary" }}>
+          {value?.join(" · ")}
+        </Typography>
       </Box>
     </Box>
   );
@@ -194,7 +180,7 @@ const CustomCellRender = (props) => {
       >
         <Box
           sx={{
-            color: "error.main",
+            color: "status.danger.fg",
             opacity: 1,
             flex: 1,
             display: "flex",
@@ -384,8 +370,6 @@ const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
     props;
 
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const colDef = props?.column?.colDef;
   const refButton = useRef(null);
 
@@ -406,14 +390,14 @@ const CustomDevelopDetailColumn = (props) => {
 
   const renderIcon = () => {
     if (colDef?.headerName === "image_url") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else if (col.origin_type === "run_prompt") {
       return <Iconify icon="token:rune" sx={{ color: "info.main" }} />;
     } else if (col.origin_type === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "#22B3B7" }}
+          icon="solar:check-circle-linear"
+          sx={{ color: "status.success.fg" }}
         />
       );
     } else if (
@@ -422,30 +406,30 @@ const CustomDevelopDetailColumn = (props) => {
     ) {
       return (
         <Iconify
-          icon="icon-park-outline:smart-optimization"
+          icon="solar:magic-stick-3-linear"
           sx={{ color: "primary.main" }}
         />
       );
     } else if (col.origin_type === "annotation_label") {
-      return <Iconify icon="jam:write" />;
+      return <Iconify icon="solar:pen-linear" />;
     } else if (col.data_type === "text") {
-      return <Iconify icon="material-symbols:notes" />;
+      return <Iconify icon="solar:notes-linear" />;
     } else if (col.data_type === "array") {
-      return <Iconify icon="material-symbols:data-array" />;
+      return <Iconify icon="solar:brackets-linear" />;
     } else if (col.data_type === "integer") {
-      return <Iconify icon="material-symbols:tag" />;
+      return <Iconify icon="solar:hashtag-linear" />;
     } else if (col.data_type === "float") {
       return <Iconify icon="tabler:decimal" />;
     } else if (col.data_type === "boolean") {
       return <Iconify icon="material-symbols:toggle-on-outline" />;
     } else if (col.data_type === "datetime") {
-      return <Iconify icon="tabler:calendar" />;
+      return <Iconify icon="solar:calendar-linear" />;
     } else if (col.data_type === "json") {
-      return <Iconify icon="material-symbols:data-object" />;
+      return <Iconify icon="solar:braces-linear" />;
     } else if (col.data_type === "image") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else {
-      return <Iconify icon="material-symbols:notes" />;
+      return <Iconify icon="solar:notes-linear" />;
     }
   };
 
@@ -454,16 +438,13 @@ const CustomDevelopDetailColumn = (props) => {
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
-      // Same color as evaluation
-      return isDark ? alpha("#22B3B7", 0.16) : "#EEFDFE";
+      return "status.success.bg";
     } else if (originType === "run_prompt") {
-      return isDark ? alpha("#2F7CF7", 0.18) : "#EEF4FF";
+      return "status.info.bg";
     } else if (originType === "optimisation") {
-      return isDark
-        ? alpha(theme.palette.primary.main, 0.16)
-        : "primary.lighter";
+      return "status.discovery.bg";
     } else if (originType === "annotation_label") {
-      return isDark ? alpha("#FF85C0", 0.16) : "#FFE2FE";
+      return "status.warning.bg";
     }
     return "background.default";
   };
@@ -482,13 +463,13 @@ const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={700} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={600} fontSize="13px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>
@@ -980,60 +961,8 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }}
         >
           {selected?.length ? (
-            <Box
-              sx={{
-                padding: "6px 16px",
-                gap: "16px",
-                borderRadius: "8px",
-                // border: "1px solid rgba(225, 223, 236, 1)",
-                display: "flex",
-                justifyContent: "flex-end",
-                alignItems: "center",
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  lineHeight: "22px",
-                  color: "rgba(120, 87, 252, 1)",
-                  paddingRight: "16px",
-                  borderRight: "2px solid rgba(225, 223, 236, 1)",
-                }}
-              >
-                {selected?.length || 0} Selected
-              </Typography>
-
-              {/* <Typography
-                                sx={{
-                                    fontSize: "14px",
-                                    fontWeight: 600,
-                                    color: "text.secondary",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "5px",
-                                    cursor: "pointer",
-                                }}
-                                onClick={() => setOpenDelete(true)}
-                            >
-                                <Iconify icon="solar:trash-bin-trash-bold" />
-                                Delete
-                            </Typography> */}
-
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  cursor: "pointer",
-                }}
-                onClick={closeModal}
-              >
-                Cancel
-              </Typography>
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <SelectionBar count={selected.length} onCancel={closeModal} />
             </Box>
           ) : (
             <></>
@@ -1064,10 +993,10 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
             px: 1.5,
             py: 0.75,
             fontSize: 12,
-            color: "warning.main",
-            bgcolor: "warning.lighter",
+            color: "status.warning.fg",
+            bgcolor: "status.warning.bg",
             borderBottom: "1px solid",
-            borderColor: "warning.light",
+            borderColor: "status.warning.border",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",

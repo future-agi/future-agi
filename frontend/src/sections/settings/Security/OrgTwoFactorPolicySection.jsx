@@ -201,16 +201,10 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
             pr: 1.5,
             py: 1,
             mt: 2,
-            backgroundColor:
-              theme.palette.mode === "dark"
-                ? "rgba(255, 193, 7, 0.08)"
-                : "warning.lighter",
+            backgroundColor: "status.warning.bg",
             borderRadius: 1,
             border: "1px solid",
-            borderColor:
-              theme.palette.mode === "dark"
-                ? "rgba(255, 193, 7, 0.3)"
-                : "warning.light",
+            borderColor: "status.warning.border",
           }}
         >
           <SvgColor
@@ -218,15 +212,13 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
             sx={{
               width: "20px",
               height: "20px",
-              color:
-                theme.palette.mode === "dark" ? "warning.light" : "#7D5E2F",
+              color: "status.warning.fg",
             }}
           />
           <Typography
             variant="s2"
             sx={{
-              color:
-                theme.palette.mode === "dark" ? "warning.light" : "#7D5E2F",
+              color: "status.warning.fg",
               fontWeight: "fontWeightMedium",
               lineHeight: 1.5,
             }}

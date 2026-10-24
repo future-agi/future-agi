@@ -9,8 +9,7 @@ export default function CardWrapper({ children, title, sx = {}, expanded }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
-        boxShadow: "4px 4px 12px 0px #0000000A",
+        borderRadius: "8px",
         /*
           `height: 220px` capped every card regardless of what was in it, so a
           card scrolled internally and sliced its own content — the metric that

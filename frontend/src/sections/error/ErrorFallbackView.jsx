@@ -163,7 +163,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
             overflow: "hidden",
             "& .star": {
               position: "absolute",
-              background: "#fafafa",
+              background: "text.disabled",
               borderRadius: "50%",
             },
             "& .star-far": {
@@ -397,7 +397,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
         {/* Headline */}
         <Typography
           color="text.secondary"
-          fontSize={{ xs: "24px", sm: "32px" }}
+          fontSize={{ xs: "24px", sm: "24px" }}
           fontWeight={600}
           lineHeight={1.3}
           fontFamily="IBM Plex Sans"
@@ -412,7 +412,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="15px"
+          fontSize="13px"
           fontStyle="italic"
           lineHeight={1.6}
         >
@@ -431,15 +431,11 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
             maxWidth: "380px",
             fontFamily: "monospace",
             fontSize: "12px",
-            boxShadow: (theme) =>
-              theme.palette.mode === "dark"
-                ? "0 0 0 1px rgba(255, 255, 255, 0.03), 0 4px 20px -4px rgba(0, 0, 0, 0.5)"
-                : "0 1px 3px rgba(0,0,0,0.08)",
           }}
         >
           <Typography
             fontFamily="monospace"
-            fontSize="11px"
+            fontSize="12px"
             color="text.disabled"
             mb={1}
           >
@@ -474,7 +470,7 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="15px"
+          fontSize="13px"
         >
           We hit an exception while performing your action. If this keeps
           happening, our ground control team is standing by at{" "}
@@ -492,18 +488,10 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
         <Box display="flex" gap={2} justifyContent="center" flexWrap="wrap">
           <Button
             onClick={resetErrorBoundary}
-            sx={{
-              textTransform: "none",
-              borderRadius: "8px",
-              px: "24px",
-              py: "6px",
-              boxShadow: 0,
-              fontWeight: 600,
-            }}
             variant="contained"
             color="primary"
           >
-            <Iconify icon="pajamas:retry" width="10px" height="10px" />
+            <Iconify icon="solar:refresh-linear" width="10px" height="10px" />
             <Typography
               fontSize="12px"
               fontFamily="IBM Plex Sans"
@@ -518,17 +506,14 @@ const ErrorFallbackView = ({ resetErrorBoundary }) => {
               navigate("/dashboard/develop");
               window.location.reload();
             }}
-            sx={{
-              textTransform: "none",
-              borderRadius: "8px",
-              px: "24px",
-              py: "6px",
-              boxShadow: 0,
-            }}
             variant="contained"
             color="primary"
           >
-            <Iconify icon="ion:chevron-back" width="15px" height="15px" />
+            <Iconify
+              icon="solar:alt-arrow-left-linear"
+              width="15px"
+              height="15px"
+            />
             <Typography
               fontSize="12px"
               fontFamily="IBM Plex Sans"

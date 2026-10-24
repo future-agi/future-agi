@@ -45,16 +45,14 @@ const Kbd = ({ children }) => (
       minWidth: 20,
       height: 20,
       px: 0.5,
-      borderRadius: 0.5,
-      bgcolor: (theme) =>
-        theme.palette.mode === "dark" ? "action.hover" : "action.disabled",
+      borderRadius: "4px",
+      bgcolor: "action.hover",
       border: "1px solid",
       borderColor: "divider",
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: 600,
       fontFamily: "inherit",
-      color: (theme) =>
-        theme.palette.mode === "dark" ? "primary.contrastText" : "text.primary",
+      color: "text.primary",
       lineHeight: 1,
     }}
   >
@@ -90,7 +88,6 @@ function ShortcutsHelp({ onClose }) {
           borderRadius: 2,
           p: 2.5,
           width: 280,
-          boxShadow: 8,
         }}
       >
         <Box
@@ -104,15 +101,15 @@ function ShortcutsHelp({ onClose }) {
           <Stack direction="row" spacing={0.75} alignItems="center">
             <Iconify
               icon="solar:keyboard-bold-duotone"
-              width={18}
+              width={20}
               color="primary.main"
             />
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography variant="subtitle2" fontWeight={600}>
               Keyboard Shortcuts
             </Typography>
           </Stack>
-          <IconButton size="small" onClick={onClose} sx={{ p: 0.25 }}>
-            <Iconify icon="mingcute:close-line" width={16} />
+          <IconButton size="small" onClick={onClose}>
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Box>
         <Stack spacing={1}>
@@ -238,7 +235,7 @@ export default function AnnotationSidebarContent({
                 disabled={isFetching}
                 startIcon={
                   <Iconify
-                    icon="mingcute:refresh-2-line"
+                    icon="solar:refresh-linear"
                     width={16}
                     sx={{
                       animation: isFetching
@@ -251,7 +248,7 @@ export default function AnnotationSidebarContent({
                     }}
                   />
                 }
-                sx={{ fontSize: 12, px: 1, py: 0.5, minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Refresh
               </Button>
@@ -275,7 +272,7 @@ export default function AnnotationSidebarContent({
                 <Iconify icon="solar:keyboard-bold-duotone" width={20} />
               </IconButton>
               <IconButton size="small" onClick={onClose}>
-                <Iconify icon="mingcute:close-line" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Stack>
           </Box>
@@ -319,7 +316,7 @@ export default function AnnotationSidebarContent({
             {onAddLabel && (
               <Button
                 size="small"
-                startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
                 onClick={onAddLabel}
                 sx={{ mt: 1 }}
               >
@@ -343,7 +340,7 @@ export default function AnnotationSidebarContent({
             {onAddLabel && (
               <Button
                 size="small"
-                startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
                 onClick={onAddLabel}
                 sx={{ alignSelf: "flex-start" }}
               >
@@ -629,33 +626,22 @@ function QueueAnnotationSection({
           mb: 2,
           px: 1,
           py: 0.75,
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.neutral",
         }}
       >
         <Iconify
           icon="solar:clipboard-list-linear"
-          width={18}
+          width={20}
           color="primary.main"
         />
         <Typography variant="subtitle2" color="text.primary" sx={{ flex: 1 }}>
           {queue.name}
         </Typography>
         {isCompleted && (
-          <Chip
-            label="Submitted"
-            size="small"
-            color="success"
-            variant="soft"
-            sx={{ height: 20, fontSize: 10 }}
-          />
+          <Chip label="Submitted" size="small" color="success" variant="soft" />
         )}
-        <Chip
-          label={sourceLabel}
-          size="small"
-          variant="outlined"
-          sx={{ height: 20, fontSize: 10 }}
-        />
+        <Chip label={sourceLabel} size="small" variant="outlined" />
       </Box>
 
       {queue.instructions && (
@@ -723,25 +709,21 @@ function QueueAnnotationSection({
                 position: "absolute",
                 top: 4,
                 right: 4,
-                p: 0.25,
                 color: "text.disabled",
                 "&:hover": { color: "text.secondary" },
               }}
             >
-              <Iconify icon="mingcute:close-line" width={14} />
+              <Iconify icon="solar:close-linear" width={14} />
             </IconButton>
           </Box>
         ) : (
           <Button
             size="small"
-            startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+            startIcon={<Iconify icon="solar:add-linear" width={14} />}
             onClick={() => setShowNotes(true)}
             sx={{
               alignSelf: "flex-start",
               color: "text.secondary",
-              fontSize: 12,
-              fontWeight: 500,
-              px: 0.5,
               "&:hover": { color: "text.primary", bgcolor: "transparent" },
             }}
           >
@@ -769,7 +751,7 @@ function QueueAnnotationSection({
               alignItems: "center",
               gap: 0.25,
               opacity: 0.7,
-              fontSize: 10,
+              fontSize: 12,
             }}
           >
             <Kbd>{"\u2318"}</Kbd>

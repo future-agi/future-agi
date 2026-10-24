@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { Box, Checkbox, ListItemText, MenuItem, Select, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Checkbox,
+  ListItemText,
+  MenuItem,
+  Select,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { personaTaskOptions } from "../_mock/personaScenarios";
 
@@ -42,17 +51,31 @@ const countHint = (mode, per) => {
 
 /* The select's own text matches the footer copy beside it (s2), rather than
    the input default, so the controls don't outweigh the sentence. */
-const SELECT_SX = { typography: "s2", height: 32, "& .MuiSelect-select": { typography: "s2", py: 0.5 } };
+const SELECT_SX = {
+  typography: "s2",
+  height: 32,
+  "& .MuiSelect-select": { typography: "s2", py: 0.5 },
+};
 
-export default function PersonaTaskPlan({ env, envState, plan, onChange, labels = false }) {
-  const options = useMemo(() => personaTaskOptions(env, envState), [env, envState]);
+export default function PersonaTaskPlan({
+  env,
+  envState,
+  plan,
+  onChange,
+  labels = false,
+}) {
+  const options = useMemo(
+    () => personaTaskOptions(env, envState),
+    [env, envState],
+  );
   const set = (patch) => onChange({ ...plan, ...patch });
   const full = labels ? { width: "100%" } : {};
   const hasCount = plan.mode === "same" || plan.mode === "spread";
 
   const modeSelect = (
     <Select
-      size="small" value={plan.mode}
+      size="small"
+      value={plan.mode}
       onChange={(e) => set({ mode: e.target.value })}
       sx={{ ...SELECT_SX, minWidth: 188, ...full }}
     >
@@ -66,28 +89,59 @@ export default function PersonaTaskPlan({ env, envState, plan, onChange, labels 
 
   const second = hasCount ? (
     <Select
-      size="small" value={plan.per}
+      size="small"
+      value={plan.per}
       onChange={(e) => set({ per: e.target.value })}
       sx={{ ...SELECT_SX, minWidth: 60, ...full }}
     >
-      {[1, 2, 3].map((n) => <MenuItem key={n} value={n} sx={{ typography: "s2" }}>{n}</MenuItem>)}
+      {[1, 2, 3].map((n) => (
+        <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+          {n}
+        </MenuItem>
+      ))}
     </Select>
   ) : plan.mode === "pick" ? (
     <Select
-      size="small" multiple displayEmpty value={plan.taskKeys}
+      size="small"
+      multiple
+      displayEmpty
+      value={plan.taskKeys}
       onChange={(e) => set({ taskKeys: e.target.value })}
-      renderValue={(v) => (v.length ? `${v.length} task${v.length === 1 ? "" : "s"}` : "Choose tasks")}
+      renderValue={(v) =>
+        v.length
+          ? `${v.length} task${v.length === 1 ? "" : "s"}`
+          : "Choose tasks"
+      }
       MenuProps={{ PaperProps: { sx: { maxHeight: 360, maxWidth: 440 } } }}
-      sx={{ ...SELECT_SX, minWidth: 128, color: plan.taskKeys.length ? "text.primary" : "text.subtitle", ...full }}
+      sx={{
+        ...SELECT_SX,
+        minWidth: 128,
+        color: plan.taskKeys.length ? "text.primary" : "text.subtitle",
+        ...full,
+      }}
     >
       {options.map((o) => (
-        <MenuItem key={o.key} value={o.key} sx={{ py: 0.5, alignItems: "flex-start" }}>
-          <Checkbox size="small" checked={plan.taskKeys.includes(o.key)} sx={{ p: 0.5, mr: 1 }} />
+        <MenuItem
+          key={o.key}
+          value={o.key}
+          sx={{ py: 0.5, alignItems: "flex-start" }}
+        >
+          <Checkbox
+            size="small"
+            checked={plan.taskKeys.includes(o.key)}
+            sx={{ p: 0.5, mr: 1 }}
+          />
           <ListItemText
             primary={o.title}
             secondary={o.kind}
-            primaryTypographyProps={{ typography: "s2", sx: { whiteSpace: "normal" } }}
-            secondaryTypographyProps={{ typography: "s3", color: "text.subtitle" }}
+            primaryTypographyProps={{
+              typography: "s2",
+              sx: { whiteSpace: "normal" },
+            }}
+            secondaryTypographyProps={{
+              typography: "s3",
+              color: "text.subtitle",
+            }}
           />
         </MenuItem>
       ))}
@@ -104,10 +158,23 @@ export default function PersonaTaskPlan({ env, envState, plan, onChange, labels 
         {second && (
           <Box flex={1} minWidth={0}>
             {hasCount ? (
-              <Tooltip title={countHint(plan.mode, plan.per)} placement="top" arrow>
-                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ cursor: "help", mb: 0.75, width: "fit-content" }}>
+              <Tooltip
+                title={countHint(plan.mode, plan.per)}
+                placement="top"
+                arrow
+              >
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{ cursor: "help", mb: 0.75, width: "fit-content" }}
+                >
                   <Label sx={{ mb: 0 }}>Tasks per persona</Label>
-                  <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
+                  <Iconify
+                    icon="solar:info-circle-linear"
+                    width={14}
+                    sx={{ color: "text.subtitle" }}
+                  />
                 </Stack>
               </Tooltip>
             ) : (
@@ -122,14 +189,35 @@ export default function PersonaTaskPlan({ env, envState, plan, onChange, labels 
 
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>Tasks</Typography>
+      <Typography
+        sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}
+      >
+        Tasks
+      </Typography>
       {modeSelect}
       {second}
       {hasCount && (
         <Tooltip title={countHint(plan.mode, plan.per)} placement="top" arrow>
-          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ cursor: "help" }}>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>per persona</Typography>
-            <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ cursor: "help" }}
+          >
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                whiteSpace: "nowrap",
+              }}
+            >
+              per persona
+            </Typography>
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={14}
+              sx={{ color: "text.subtitle" }}
+            />
           </Stack>
         </Tooltip>
       )}
@@ -138,13 +226,32 @@ export default function PersonaTaskPlan({ env, envState, plan, onChange, labels 
 }
 
 PersonaTaskPlan.propTypes = {
-  env: PropTypes.object, envState: PropTypes.object,
-  plan: PropTypes.shape({ mode: PropTypes.string, per: PropTypes.number, taskKeys: PropTypes.array }).isRequired,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  plan: PropTypes.shape({
+    mode: PropTypes.string,
+    per: PropTypes.number,
+    taskKeys: PropTypes.array,
+  }).isRequired,
   onChange: PropTypes.func.isRequired,
   labels: PropTypes.bool,
 };
 
 function Label({ children, sx }) {
-  return <Typography sx={{ typography: "s3", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "text.subtitle", mb: 0.75, ...sx }}>{children}</Typography>;
+  return (
+    <Typography
+      sx={{
+        typography: "s3",
+        fontWeight: 600,
+        textTransform: "none",
+        letterSpacing: 0.5,
+        color: "text.subtitle",
+        mb: 0.75,
+        ...sx,
+      }}
+    >
+      {children}
+    </Typography>
+  );
 }
 Label.propTypes = { children: PropTypes.node, sx: PropTypes.object };

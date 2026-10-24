@@ -15,13 +15,15 @@ const OPTIONS = [
   {
     id: "playground",
     title: "Playground",
-    description: "Build and run multi-step AI agent workflows on a drag-and-drop canvas",
+    description:
+      "Build and run multi-step AI agent workflows on a drag-and-drop canvas",
     iconSrc: "/assets/icons/navbar/ic_agents.svg",
   },
   {
     id: "connect",
     title: "Connect or build an agent",
-    description: "From code (GitHub or an upload), a third-party platform, or built in Future AGI — to test and improve it",
+    description:
+      "From code (GitHub or an upload), a third-party platform, or built in Future AGI — to test and improve it",
     iconSrc: "/assets/icons/settings/Integrations_new.svg",
   },
 ];
@@ -44,7 +46,9 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
     navigate,
     setCurrentAgent,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agent-playground", "graphs"] });
+      queryClient.invalidateQueries({
+        queryKey: ["agent-playground", "graphs"],
+      });
     },
   });
 
@@ -62,8 +66,8 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
         size="small"
         loading={isPending}
         onClick={popover.onOpen}
-        startIcon={<SvgColor src="/assets/icons/ic_add.svg" sx={{ height: 20, width: 20 }} />}
-        endIcon={<Iconify icon="eva:chevron-down-fill" width={18} />}
+        startIcon={<SvgColor src="/assets/icons/ic_add.svg" width={20} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
         New agent
       </LoadingButton>
@@ -79,15 +83,31 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
             key={option.id}
             disabled={option.id === "playground" && !canCreatePlayground}
             onClick={() => handleSelect(option.id)}
-            sx={{ alignItems: "flex-start", gap: 1.5, p: 1.25, borderRadius: 1, whiteSpace: "normal" }}
+            sx={{
+              alignItems: "flex-start",
+              gap: 1.5,
+              p: 1.25,
+              borderRadius: 1,
+              whiteSpace: "normal",
+            }}
           >
             <SvgColor
               src={option.iconSrc}
-              sx={{ width: 20, height: 20, mt: 0.25, color: "text.secondary", flexShrink: 0 }}
+              sx={{
+                width: 20,
+                height: 20,
+                mt: 0.25,
+                color: "text.secondary",
+                flexShrink: 0,
+              }}
             />
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>{option.title}</Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>{option.description}</Typography>
+              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                {option.title}
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {option.description}
+              </Typography>
             </Box>
           </MenuItem>
         ))}

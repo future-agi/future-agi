@@ -1,6 +1,9 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { endOfToday, sub } from "date-fns";
 import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
+import { alpha } from "@mui/material/styles";
+import { statusColors } from "src/utils/runStatus";
 import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
 import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
@@ -529,17 +532,24 @@ export function transformAlertToConditions(alertObj) {
   return conditions;
 }
 
-const STATUS_COLORS = {
-  HEALTHY: "#4DCC94",
-  WARNING: "#FFCC00",
-  CRITICAL: "#E85858",
-  INSUFFICIENT_DATA: "#9E9E9E",
+// Alert-period status -> role in the one status map; the band colour is
+// resolved from theme.palette.status.
+const ALERT_STATUS_ROLE = {
+  healthy: "success",
+  warning: "warning",
+  critical: "danger",
 };
+
+// Threshold band for the alert chart: tinted fill, solid status edge.
+export function alertThresholdBand(theme, role, fillAlpha) {
+  const solid = statusColors(theme, role).solid;
+  return { fillColor: alpha(solid, fillAlpha), borderColor: solid };
+}
 
 export function getCompareChartConfig(
   apiData,
   customOptions = {},
-  { isDark = false } = {},
+  { isDark = false, theme } = {},
 ) {
   if (!apiData?.result?.graph_data || !apiData?.result?.alert_bar_data) {
     throw new Error("Invalid API data structure");
@@ -560,20 +570,9 @@ export function getCompareChartConfig(
     const startPercent = ((periodStart - startTime) / totalTimeSpan) * 100;
     const endPercent = ((periodEnd - startTime) / totalTimeSpan) * 100;
 
-    let color;
-    switch (period.status) {
-      case "healthy":
-        color = STATUS_COLORS.HEALTHY;
-        break;
-      case "warning":
-        color = STATUS_COLORS.WARNING;
-        break;
-      case "critical":
-        color = STATUS_COLORS.CRITICAL;
-        break;
-      default:
-        color = STATUS_COLORS.INSUFFICIENT_DATA; // insufficient_data
-    }
+    const color = theme
+      ? statusColors(theme, ALERT_STATUS_ROLE[period.status] || "neutral").solid
+      : undefined;
 
     colorStops.push({ offset: startPercent, color, opacity: 1 });
     if (endPercent !== startPercent) {
@@ -729,9 +728,10 @@ export function transformSimpleLineChart(apiData) {
 export function getSimpleLineChartConfig(
   apiData,
   customOptions = {},
-  { isDark = false } = {},
+  { isDark = false, theme } = {},
 ) {
   const transformed = transformSimpleLineChart(apiData);
+  const axisLabelColor = theme?.palette.text.tertiary;
   const { lineData, metadata } = transformed;
 
   // Determine Y-axis range based on data
@@ -768,14 +768,14 @@ export function getSimpleLineChartConfig(
       type: "datetime",
       convertedCatToNumeric: false, // include this explicitly
       labels: {
-        style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+        style: { fontSize: "12px", colors: axisLabelColor },
       },
     },
     yaxis: {
       min: yAxisMin,
       max: yAxisMax,
       labels: {
-        style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#999" },
+        style: { fontSize: "12px", colors: axisLabelColor },
         formatter: formatYAxisValue,
       },
       title: {
@@ -811,8 +811,8 @@ export function getSimpleLineChartConfig(
         y: threshold.value || 0,
         y2: threshold.y2 || 0,
         yAxisIndex: 0,
-        fillColor: threshold.fillColor || "#00A25108",
-        borderColor: threshold.borderColor || "#00A251",
+        fillColor: threshold.fillColor,
+        borderColor: threshold.borderColor,
         strokeDashArray: threshold.strokeDashArray || 4,
         opacity: threshold.opacity || 0.5,
       })),

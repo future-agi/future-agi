@@ -15,14 +15,11 @@ import {
   TextField,
   Tooltip,
   Typography,
-  alpha,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Iconify from "src/components/iconify";
-import { purple } from "src/theme/palette";
 import { useErrorFeedStore } from "../store";
 import { useFollowUpRunner } from "../useAnalyzeRunner";
 import { useStreamingText } from "../useStreamingText";
@@ -35,8 +32,10 @@ import {
   STREAM_TICK_MS,
 } from "../constants";
 import { useAgentImprovementFlag } from "src/sections/simulate-v2/_mock/featureFlags";
-import { textTone } from "src/sections/simulate-v2/components/textTone";
-import { clickable, focusRing } from "src/sections/simulate-v2/components/clickable";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 
 // Run-sequence definitions + makeStepMessage / buildSynthesis live in
 // `../useAnalyzeRunner` now — that hook owns the actual streaming so
@@ -46,11 +45,9 @@ import { clickable, focusRing } from "src/sections/simulate-v2/components/clicka
 
 // ── Visual primitives ─────────────────────────────────────────────────────
 
-const ACCENT = purple[500];
-
 // Inline blinking caret rendered at the end of streaming text — same
 // visual cue every chat LLM uses to say "still typing".
-function StreamCursor({ color = ACCENT }) {
+function StreamCursor({ color = "status.discovery.solid" }) {
   return (
     <Box
       component="span"
@@ -95,14 +92,14 @@ function AnalyzeMarkdown({
         "& > :first-of-type": { mt: 0 },
         "& > :last-child": { mb: 0 },
         "& p": { m: 0, mb: 0.75 },
-        "& strong": { fontWeight: 700, color: "text.primary" },
+        "& strong": { fontWeight: 600, color: "text.primary" },
         "& em": { fontStyle: "italic" },
-        "& a": { color: ACCENT, textDecoration: "underline" },
+        "& a": { color: "status.discovery.fg", textDecoration: "underline" },
         "& ul, & ol": { m: 0, mb: 0.75, pl: 2.25 },
         "& li": { mb: 0.2 },
         "& h1, & h2, & h3, & h4, & h5, & h6": {
           fontSize: "1.05em",
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.primary",
           m: 0,
           mb: 0.4,
@@ -113,11 +110,8 @@ function AnalyzeMarkdown({
           fontStyle: "normal",
           px: 0.5,
           py: "1px",
-          borderRadius: "3px",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? alpha("#fff", 0.08)
-              : alpha("#000", 0.05),
+          borderRadius: "4px",
+          bgcolor: "action.selected",
         },
         "& pre": {
           m: 0,
@@ -125,12 +119,9 @@ function AnalyzeMarkdown({
           p: 1,
           borderRadius: "6px",
           overflowX: "auto",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? alpha("#fff", 0.05)
-              : alpha("#000", 0.04),
+          bgcolor: "action.selected",
         },
-        "& pre code": { bgcolor: "transparent", p: 0, fontSize: "11px" },
+        "& pre code": { bgcolor: "transparent", p: 0, fontSize: "12px" },
         "& blockquote": {
           m: 0,
           mb: 0.75,
@@ -155,12 +146,9 @@ function AnalyzeMarkdown({
           textAlign: "left",
         },
         "& th": {
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.primary",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? alpha("#fff", 0.04)
-              : alpha("#000", 0.03),
+          bgcolor: "action.hover",
         },
         "& hr": {
           border: "none",
@@ -260,7 +248,7 @@ function FadeIn({ children }) {
   return (
     <Box
       sx={{
-        animation: "msg-in 220ms cubic-bezier(0.2, 0.65, 0.3, 1) both",
+        animation: "msg-in 200ms cubic-bezier(0.2, 0.65, 0.3, 1) both",
         "@keyframes msg-in": {
           "0%": { opacity: 0, transform: "translateY(6px)" },
           "100%": { opacity: 1, transform: "translateY(0)" },
@@ -317,7 +305,7 @@ function SequentialListItems({ items, live, onComplete, identityPrefix }) {
               identityKey={
                 identityPrefix ? `${identityPrefix}-item-${i}` : undefined
               }
-              fontSize="11.5px"
+              fontSize="12px"
               color="text.secondary"
               sx={{ lineHeight: 1.55 }}
             />
@@ -349,9 +337,6 @@ SequentialListItems.propTypes = {
 //   list      → the last item's stream (via SequentialListItems)
 //   code      → its single text stream
 function StepDetailBlock({ block, live, onComplete, identityKey }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   // Used by branches with no streamed content (e.g., tool block with no
   // output). Fire onComplete once on mount when in live mode so the
   // sequencer doesn't stall waiting on a stream that never starts.
@@ -373,7 +358,7 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
         instant={!live}
         onComplete={onComplete}
         identityKey={identityKey}
-        fontSize="11.5px"
+        fontSize="12px"
         color="text.secondary"
         sx={{ lineHeight: 1.65 }}
       />
@@ -387,19 +372,19 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "6px",
-          bgcolor: isDark ? alpha("#fff", 0.025) : alpha("#000", 0.02),
+          bgcolor: "action.hover",
           px: 1,
           py: 0.75,
         }}
       >
         <Stack direction="row" alignItems="center" gap={0.5}>
           <Iconify
-            icon="mdi:wrench-outline"
-            width={11}
-            sx={{ color: ACCENT }}
+            icon="solar:toolbox-linear"
+            width={12}
+            sx={{ color: "status.discovery.fg" }}
           />
           <Typography
-            fontSize="11px"
+            fontSize="12px"
             fontWeight={600}
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -411,7 +396,7 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
         </Stack>
         {block.input != null && (
           <Typography
-            fontSize="10.5px"
+            fontSize="12px"
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
               color: "text.disabled",
@@ -428,7 +413,7 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
             instant={!live}
             onComplete={onComplete}
             identityKey={identityKey}
-            fontSize="10.5px"
+            fontSize="12px"
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
               color: "text.secondary",
@@ -448,12 +433,12 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
       <Box>
         {block.title && (
           <Typography
-            fontSize="9.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             color="text.disabled"
             sx={{
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
               mb: 0.5,
             }}
           >
@@ -482,9 +467,9 @@ function StepDetailBlock({ block, live, onComplete, identityKey }) {
           m: 0,
           p: 1,
           borderRadius: "6px",
-          bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+          bgcolor: "action.hover",
           fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          fontSize: "10.5px",
+          fontSize: "12px",
           lineHeight: 1.5,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
@@ -566,8 +551,6 @@ StepDetailsPanel.propTypes = {
 };
 
 function StepCard({ step }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isRunning = step.status === STEP_STATUS.RUNNING;
   const isQueued = step.status === STEP_STATUS.QUEUED;
   const isDone = step.status === STEP_STATUS.DONE;
@@ -585,13 +568,9 @@ function StepCard({ step }) {
     <Box
       sx={{
         border: "1px solid",
-        borderColor: isRunning ? alpha(ACCENT, 0.35) : "divider",
+        borderColor: isRunning ? "status.discovery.border" : "divider",
         borderRadius: "8px",
-        bgcolor: isRunning
-          ? alpha(ACCENT, isDark ? 0.08 : 0.04)
-          : isDark
-            ? alpha("#fff", 0.02)
-            : "background.paper",
+        bgcolor: isRunning ? "status.discovery.bg" : "background.paper",
         opacity: isQueued ? 0.55 : 1,
         transition: "all 0.2s",
         overflow: "hidden",
@@ -600,16 +579,16 @@ function StepCard({ step }) {
       <Stack
         direction="row"
         gap={1.25}
-        {...clickable(hasDetails ? () => setExpanded((v) => !v) : undefined, { expanded })}
+        {...clickable(hasDetails ? () => setExpanded((v) => !v) : undefined, {
+          expanded,
+        })}
         sx={{
           ...focusRing,
           px: 1.5,
           py: 1.25,
           cursor: hasDetails ? "pointer" : "default",
           userSelect: "none",
-          "&:hover": hasDetails
-            ? { bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.015) }
-            : {},
+          "&:hover": hasDetails ? { bgcolor: "action.hover" } : {},
         }}
       >
         <Box
@@ -623,12 +602,10 @@ function StepCard({ step }) {
             flexShrink: 0,
             mt: "1px",
             bgcolor: isDone
-              ? alpha("#5ACE6D", isDark ? 0.18 : 0.14)
+              ? "status.success.bg"
               : isRunning
-                ? alpha(ACCENT, 0.18)
-                : isDark
-                  ? alpha("#fff", 0.06)
-                  : alpha("#000", 0.05),
+                ? "status.discovery.bg"
+                : "action.selected",
           }}
         >
           {isRunning ? (
@@ -638,29 +615,33 @@ function StepCard({ step }) {
                 height: 10,
                 borderRadius: "50%",
                 border: "2px solid",
-                borderColor: alpha(ACCENT, 0.25),
-                borderTopColor: ACCENT,
+                borderColor: "status.discovery.border",
+                borderTopColor: "status.discovery.solid",
                 animation: "spin 0.8s linear infinite",
                 "@keyframes spin": { to: { transform: "rotate(360deg)" } },
               }}
             />
           ) : isDone ? (
-            <Iconify icon="mdi:check" width={12} sx={{ color: "#5ACE6D" }} />
+            <Iconify
+              icon="solar:check-linear"
+              width={12}
+              sx={{ color: "status.success.fg" }}
+            />
           ) : (
             <Iconify
-              icon="mdi:dots-horizontal"
+              icon="solar:menu-dots-linear"
               width={12}
               sx={{ color: "text.disabled" }}
             />
           )}
         </Box>
         <Stack gap={0.4} flex={1} minWidth={0}>
-          <Typography fontSize="12.5px" fontWeight={600} color="text.primary">
+          <Typography fontSize="13px" fontWeight={600} color="text.primary">
             {step.title}
           </Typography>
           {(isRunning || isDone) && (
             <Typography
-              fontSize="11.5px"
+              fontSize="12px"
               color="text.secondary"
               sx={{ lineHeight: 1.5 }}
             >
@@ -674,15 +655,7 @@ function StepCard({ step }) {
                   key={c}
                   label={c}
                   size="small"
-                  sx={{
-                    height: 18,
-                    fontSize: "10px",
-                    fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                    borderRadius: "4px",
-                    bgcolor: "action.hover",
-                    color: "text.secondary",
-                    "& .MuiChip-label": { px: "6px" },
-                  }}
+                  sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
                 />
               ))}
             </Stack>
@@ -695,12 +668,16 @@ function StepCard({ step }) {
             gap={0.3}
             sx={{ flexShrink: 0, mt: "1px" }}
           >
-            <Typography fontSize="10px" color="text.disabled">
+            <Typography fontSize="12px" color="text.disabled">
               {open ? "Hide" : "Details"}
             </Typography>
             <Iconify
-              icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
-              width={15}
+              icon={
+                open
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
+              width={16}
               sx={{ color: "text.disabled" }}
             />
           </Stack>
@@ -744,8 +721,8 @@ function ReasoningBlock({ text }) {
   return (
     <Stack direction="row" gap={1} sx={{ pl: 0.5 }}>
       <Iconify
-        icon="mdi:brain"
-        width={13}
+        icon="solar:brain-linear"
+        width={14}
         sx={{ color: "text.disabled", mt: "3px", flexShrink: 0 }}
       />
       <Box
@@ -765,12 +742,12 @@ function ReasoningBlock({ text }) {
           sx={{ cursor: "pointer", userSelect: "none", ...focusRing }}
         >
           <Typography
-            fontSize="9.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             color="text.disabled"
             sx={{
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
+              textTransform: "none",
+              letterSpacing: 0,
               flexShrink: 0,
             }}
           >
@@ -778,7 +755,7 @@ function ReasoningBlock({ text }) {
           </Typography>
           {!open && preview && (
             <Typography
-              fontSize="11px"
+              fontSize="12px"
               color="text.disabled"
               noWrap
               sx={{ flex: 1, minWidth: 0, fontStyle: "italic", opacity: 0.6 }}
@@ -787,7 +764,9 @@ function ReasoningBlock({ text }) {
             </Typography>
           )}
           <Iconify
-            icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
             width={14}
             sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
           />
@@ -796,7 +775,7 @@ function ReasoningBlock({ text }) {
           <AnalyzeMarkdown
             text={text}
             italic
-            fontSize="11.5px"
+            fontSize="12px"
             color="text.secondary"
             sx={{ opacity: 0.85, mt: 0.5 }}
           />
@@ -810,8 +789,6 @@ ReasoningBlock.propTypes = {
 };
 
 function SynthesisCard({ synthesis }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   // Stream the headline first; once it finishes, stream the fix below it.
   // identityKey is keyed off the synthesis message id so a re-mount (user
   // tabbed away and came back) skips the animation if both already streamed.
@@ -829,46 +806,43 @@ function SynthesisCard({ synthesis }) {
     <Box
       sx={{
         border: "1px solid",
-        borderColor: alpha("#7857FC", 0.3),
+        borderColor: "status.discovery.border",
         borderRadius: "8px",
-        bgcolor: alpha("#7857FC", isDark ? 0.06 : 0.03),
+        bgcolor: "status.discovery.bg",
         p: 1.5,
         position: "relative",
       }}
     >
       <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 1 }}>
         <Iconify
-          icon="mdi:star-four-points"
+          icon="solar:stars-minimalistic-linear"
           width={12}
-          sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
+          sx={{ color: "status.discovery.fg" }}
         />
         <Typography
-          fontSize="10.5px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           sx={{
-            color: isDark ? "#A792FD" : "#7857FC",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
+            color: "status.discovery.fg",
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           Synthesis
         </Typography>
         {CONF_META[synthesis.confidence] && (
           <Typography
-            fontSize="9.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             sx={{
               ml: "auto",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              color: textTone(CONF_META[synthesis.confidence].color),
+              textTransform: "none",
+              letterSpacing: 0,
+              color: `status.${CONF_META[synthesis.confidence].role}.fg`,
               px: 0.75,
               py: 0.25,
-              borderRadius: "3px",
-              bgcolor: alpha(
-                CONF_META[synthesis.confidence].color,
-                isDark ? 0.16 : 0.12,
-              ),
+              borderRadius: "4px",
+              bgcolor: `status.${CONF_META[synthesis.confidence].role}.bg`,
             }}
           >
             {CONF_META[synthesis.confidence].label}
@@ -878,7 +852,7 @@ function SynthesisCard({ synthesis }) {
       <Box sx={{ mb: 1 }}>
         <AnalyzeMarkdown
           text={head.revealed}
-          fontSize="13.5px"
+          fontSize="13px"
           color="text.primary"
           sx={{ lineHeight: 1.55 }}
         />
@@ -887,18 +861,18 @@ function SynthesisCard({ synthesis }) {
       {headDone && synthesis.fix && (
         <Stack direction="row" gap={1} alignItems="flex-start">
           <Typography
-            fontSize="10px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             sx={{
-              color: "#5ACE6D",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              color: "status.success.fg",
+              textTransform: "none",
+              letterSpacing: 0,
               mt: "3px",
               flexShrink: 0,
               px: 0.75,
               py: 0.25,
-              borderRadius: "3px",
-              bgcolor: alpha("#5ACE6D", isDark ? 0.14 : 0.12),
+              borderRadius: "4px",
+              bgcolor: "status.success.bg",
             }}
           >
             Suggested fix
@@ -906,19 +880,17 @@ function SynthesisCard({ synthesis }) {
           <Box sx={{ flex: 1 }}>
             <AnalyzeMarkdown
               text={fix.revealed}
-              fontSize="12.5px"
+              fontSize="13px"
               color="text.secondary"
               sx={{ lineHeight: 1.6 }}
             />
-            {fix.isStreaming && <StreamCursor color="#5ACE6D" />}
+            {fix.isStreaming && <StreamCursor color="status.success.solid" />}
           </Box>
         </Stack>
       )}
       {/* A written fix isn't a proven one — hand it to Fix, which tests it in
           simulation and ships it as a draft. */}
-      {headDone && synthesis.fix && !fix.isStreaming && (
-        <ProveFixCard />
-      )}
+      {headDone && synthesis.fix && !fix.isStreaming && <ProveFixCard />}
     </Box>
   );
 }
@@ -928,16 +900,37 @@ function ProveFixCard() {
   const improving = useAgentImprovementFlag();
   if (!improving) return null;
   return (
-    <Box sx={{ mt: 1.5, p: 1.25, borderRadius: "6px", border: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        mt: 1.5,
+        p: 1.25,
+        borderRadius: "6px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
       <Stack direction="row" alignItems="center" gap={1.25}>
-        <Iconify icon="mdi:wrench-outline" width={18} sx={{ color: "text.secondary", flexShrink: 0 }} />
+        <Iconify
+          icon="solar:toolbox-linear"
+          width={20}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography fontSize="12.5px" fontWeight={600}>Prove it before it ships</Typography>
-          <Typography fontSize="11.5px" color="text.secondary">
-            Fixing tests a change in simulation on this issue&apos;s own traces, checks nothing else broke, and hands it over as a draft.
+          <Typography fontSize="13px" fontWeight={600}>
+            Prove it before it ships
+          </Typography>
+          <Typography fontSize="12px" color="text.secondary">
+            Fixing tests a change in simulation on this issue&apos;s own traces,
+            checks nothing else broke, and hands it over as a draft.
           </Typography>
         </Box>
-        <Button size="small" variant="outlined" onClick={() => setFixSheetOpen(true)} sx={{ height: 28, fontSize: "12px", textTransform: "none", borderColor: "divider", color: "text.primary", flexShrink: 0 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setFixSheetOpen(true)}
+          sx={{ borderColor: "divider", color: "text.primary", flexShrink: 0 }}
+        >
           Fix
         </Button>
       </Stack>
@@ -955,15 +948,15 @@ function RunHeader({ label, timestamp }) {
       <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />
       <Stack direction="row" alignItems="center" gap={0.5}>
         <Iconify
-          icon="mdi:star-four-points-outline"
-          width={11}
+          icon="solar:stars-minimalistic-linear"
+          width={12}
           sx={{ color: "text.disabled" }}
         />
         <Typography
-          fontSize="10px"
+          fontSize="12px"
           fontWeight={600}
           color="text.disabled"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.08em" }}
+          sx={{ textTransform: "none", letterSpacing: 0 }}
         >
           {label} · {timestamp}
         </Typography>
@@ -978,8 +971,6 @@ RunHeader.propTypes = { label: PropTypes.string, timestamp: PropTypes.string };
 
 // User-submitted question — right-aligned chat bubble.
 function UserQuestionBubble({ text }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack direction="row" justifyContent="flex-end" sx={{ pl: 6 }}>
       <Box
@@ -988,9 +979,9 @@ function UserQuestionBubble({ text }) {
           py: 1,
           borderRadius: "12px 12px 4px 12px",
           maxWidth: "85%",
-          bgcolor: isDark ? alpha("#fff", 0.07) : alpha(ACCENT, 0.08),
+          bgcolor: "status.discovery.bg",
           border: "1px solid",
-          borderColor: isDark ? alpha("#fff", 0.1) : alpha(ACCENT, 0.16),
+          borderColor: "status.discovery.border",
         }}
       >
         <Typography
@@ -1011,9 +1002,9 @@ function AssistantIntro({ text }) {
   return (
     <Stack direction="row" alignItems="flex-start" gap={1} sx={{ pl: 0.5 }}>
       <Iconify
-        icon="mdi:star-four-points"
+        icon="solar:stars-minimalistic-linear"
         width={14}
-        sx={{ color: ACCENT, mt: "3px", flexShrink: 0 }}
+        sx={{ color: "status.discovery.fg", mt: "3px", flexShrink: 0 }}
       />
       <Typography
         fontSize="13px"
@@ -1048,7 +1039,11 @@ function SubagentStepRow({ step }) {
         }}
       >
         {isDone ? (
-          <Iconify icon="mdi:check" width={13} sx={{ color: "#5ACE6D" }} />
+          <Iconify
+            icon="solar:check-linear"
+            width={14}
+            sx={{ color: "status.success.fg" }}
+          />
         ) : isRunning ? (
           <Box
             sx={{
@@ -1056,23 +1051,23 @@ function SubagentStepRow({ step }) {
               height: 11,
               borderRadius: "50%",
               border: "2px solid",
-              borderColor: alpha(ACCENT, 0.25),
-              borderTopColor: ACCENT,
+              borderColor: "status.discovery.border",
+              borderTopColor: "status.discovery.solid",
               animation: "spin 0.8s linear infinite",
               "@keyframes spin": { to: { transform: "rotate(360deg)" } },
             }}
           />
         ) : (
           <Iconify
-            icon="mdi:circle-outline"
-            width={11}
+            icon="solar:circle-linear"
+            width={12}
             sx={{ color: "text.disabled" }}
           />
         )}
       </Box>
       <Stack gap={0.15} sx={{ minWidth: 0 }}>
         <Typography
-          fontSize="12.5px"
+          fontSize="13px"
           fontWeight={isRunning ? 600 : 500}
           color={
             isRunning
@@ -1087,7 +1082,7 @@ function SubagentStepRow({ step }) {
         </Typography>
         {isDone && step.detail && step.detail !== "—" && (
           <Typography
-            fontSize="11.5px"
+            fontSize="12px"
             color="text.secondary"
             sx={{ lineHeight: 1.45 }}
           >
@@ -1123,18 +1118,16 @@ StreamingMarkdown.propTypes = {
 
 // The sub-agent container: header strip + sub-step list + final answer.
 function SubagentCard({ msg }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isStreaming = msg.status === STREAM_STATUS.STREAMING;
   return (
     <Stack gap={1.25} sx={{ pl: 3 }}>
       <Box
         sx={{
           border: "1px solid",
-          borderColor: isDark ? alpha("#fff", 0.08) : "divider",
-          borderRadius: "10px",
+          borderColor: "divider",
+          borderRadius: "8px",
           overflow: "hidden",
-          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.015),
+          bgcolor: "action.hover",
         }}
       >
         {/* Header */}
@@ -1147,17 +1140,21 @@ function SubagentCard({ msg }) {
             py: 0.85,
             borderBottom: "1px solid",
             borderColor: "divider",
-            bgcolor: isDark ? alpha(ACCENT, 0.08) : alpha(ACCENT, 0.05),
+            bgcolor: "status.discovery.bg",
           }}
         >
-          <Iconify icon="mdi:robot-outline" width={14} sx={{ color: ACCENT }} />
+          <Iconify
+            icon="solar:bot-linear"
+            width={14}
+            sx={{ color: "status.discovery.fg" }}
+          />
           <Typography
-            fontSize="10.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             sx={{
-              color: ACCENT,
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
+              color: "status.discovery.fg",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Sub-agent · {msg.title}
@@ -1173,7 +1170,7 @@ function SubagentCard({ msg }) {
                 }}
               />
               <Typography
-                fontSize="10.5px"
+                fontSize="12px"
                 color="text.disabled"
                 sx={{
                   fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -1186,10 +1183,10 @@ function SubagentCard({ msg }) {
           <Box sx={{ flex: 1 }} />
           {isStreaming && (
             <Typography
-              fontSize="10.5px"
+              fontSize="12px"
               fontWeight={600}
               color="text.disabled"
-              sx={{ textTransform: "uppercase", letterSpacing: "0.07em" }}
+              sx={{ textTransform: "none", letterSpacing: 0 }}
             >
               running
             </Typography>
@@ -1228,8 +1225,6 @@ SubagentCard.propTypes = { msg: PropTypes.object.isRequired };
 //     a glowing video-game ring in dark mode. A solid border with a focus
 //     accent is calmer and works in both themes.
 function FollowUpInput({ disabled, placeholder, onSubmit }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const submit = () => {
@@ -1244,18 +1239,12 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
       sx={{
         flexShrink: 0,
         border: "1.5px solid",
-        borderColor: showAccent
-          ? ACCENT
-          : isDark
-            ? alpha("#fff", 0.14)
-            : alpha("#000", 0.14),
-        borderRadius: "14px",
-        bgcolor: isDark ? "#1c1c1f" : "#ffffff",
+        borderColor: showAccent ? "status.discovery.solid" : "border.default",
+        borderRadius: "12px",
+        bgcolor: "background.paper",
         boxShadow: showAccent
-          ? `0 0 0 3px ${alpha(ACCENT, isDark ? 0.18 : 0.12)}, 0 1px 2px ${alpha("#000", isDark ? 0.35 : 0.06)}`
-          : isDark
-            ? `0 1px 2px ${alpha("#000", 0.4)}`
-            : `0 1px 3px ${alpha("#000", 0.06)}`,
+          ? (t) => `0 0 0 3px ${t.palette.status.discovery.border}`
+          : "none",
         px: 1.5,
         py: 0.85,
         display: "flex",
@@ -1267,9 +1256,9 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
       }}
     >
       <Iconify
-        icon="mdi:star-four-points"
-        width={15}
-        sx={{ color: ACCENT, ml: 0.25, flexShrink: 0 }}
+        icon="solar:stars-minimalistic-linear"
+        width={16}
+        sx={{ color: "status.discovery.fg", ml: 0.25, flexShrink: 0 }}
       />
       <TextField
         fullWidth
@@ -1292,7 +1281,7 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
         InputProps={{
           disableUnderline: true,
           sx: {
-            fontSize: "13.5px",
+            fontSize: "13px",
             lineHeight: 1.5,
             py: 0.5,
             // Lighter than `text.secondary` at full opacity but still more
@@ -1317,24 +1306,28 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
             disabled={disabled || !text.trim()}
             sx={{
               width: 28,
-              height: 28,
-              borderRadius: "6px",
-              bgcolor: text.trim() && !disabled ? ACCENT : "transparent",
-              color: text.trim() && !disabled ? "#fff" : "text.disabled",
+              aspectRatio: "1",
+              bgcolor:
+                text.trim() && !disabled
+                  ? "status.discovery.solid"
+                  : "transparent",
+              color:
+                text.trim() && !disabled
+                  ? "status.discovery.onSolid"
+                  : "text.disabled",
               "&:hover": {
                 bgcolor:
                   text.trim() && !disabled
-                    ? "#6845E8"
-                    : isDark
-                      ? alpha("#fff", 0.05)
-                      : alpha("#000", 0.04),
+                    ? "status.discovery.solid"
+                    : "action.selected",
+                opacity: text.trim() && !disabled ? 0.9 : 1,
               },
               "&.Mui-disabled": {
                 color: "text.disabled",
               },
             }}
           >
-            <Iconify icon="mdi:arrow-up" width={14} />
+            <Iconify icon="solar:arrow-up-linear" width={14} />
           </IconButton>
         </span>
       </Tooltip>
@@ -1363,10 +1356,10 @@ function ComposeArea({
       {suggestions?.length > 0 && (
         <Stack gap={0.5} sx={{ px: 0.25 }}>
           <Typography
-            fontSize="9.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             color="text.disabled"
-            sx={{ textTransform: "uppercase", letterSpacing: "0.09em" }}
+            sx={{ textTransform: "none", letterSpacing: 0 }}
           >
             {suggestionsHeader}
           </Typography>
@@ -1378,26 +1371,7 @@ function ComposeArea({
                 size="small"
                 disabled={disabled}
                 onClick={() => onSubmit?.(q)}
-                sx={{
-                  height: 26,
-                  borderRadius: "13px",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? alpha("#fff", 0.05)
-                      : alpha("#000", 0.04),
-                  color: "text.primary",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  "&:hover": {
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? alpha("#fff", 0.09)
-                        : alpha("#000", 0.06),
-                  },
-                }}
+                variant="outlined"
               />
             ))}
           </Stack>
@@ -1431,8 +1405,6 @@ const STARTER_SUGGESTIONS = [
 // ── Main AnalyzeTab ───────────────────────────────────────────────────────
 
 export default function AnalyzeTab({ error }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const clusterId = error?.cluster_id;
   const thread = useErrorFeedStore(
     (s) => s.analyzeThreadsByCluster[clusterId] ?? null,
@@ -1546,12 +1518,12 @@ export default function AnalyzeTab({ error }) {
           borderRadius: "8px",
           border: "1px solid",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.02),
+          bgcolor: "action.hover",
           flexShrink: 0,
         }}
       >
         <Iconify
-          icon="mdi:layers-outline"
+          icon="solar:layers-linear"
           width={14}
           sx={{ color: "text.disabled" }}
         />
@@ -1563,27 +1535,27 @@ export default function AnalyzeTab({ error }) {
         >
           {error?.error?.name ?? "Issue"}
         </Typography>
-        <Typography fontSize="11.5px" color="text.disabled">
+        <Typography fontSize="12px" color="text.disabled">
           · {error?.trace_count?.toLocaleString() ?? "—"} traces
         </Typography>
         {startedLabel && (
-          <Typography fontSize="11.5px" color="text.disabled">
+          <Typography fontSize="12px" color="text.disabled">
             · started {startedLabel}
           </Typography>
         )}
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="Find root cause again with the current traces (1 credit)" arrow>
+        <Tooltip
+          title="Find root cause again with the current traces (1 credit)"
+          arrow
+        >
           <span>
             <Button
               size="small"
               variant="text"
               disabled={isStreaming}
               onClick={onTriggerRun}
-              startIcon={<Iconify icon="mdi:refresh" width={12} />}
+              startIcon={<Iconify icon="solar:refresh-linear" width={12} />}
               sx={{
-                height: 24,
-                fontSize: "11.5px",
-                textTransform: "none",
                 color: "text.secondary",
                 "&:hover": { color: "text.primary" },
               }}
@@ -1604,7 +1576,7 @@ export default function AnalyzeTab({ error }) {
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "8px",
-          bgcolor: isDark ? alpha("#fff", 0.012) : "background.paper",
+          bgcolor: "background.paper",
         }}
       >
         <Stack gap={1.25} sx={{ p: 1.5 }}>
@@ -1629,16 +1601,16 @@ export default function AnalyzeTab({ error }) {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: alpha("#7857FC", isDark ? 0.16 : 0.1),
+                  bgcolor: "status.discovery.bg",
                 }}
               >
                 <Iconify
-                  icon="mdi:star-four-points-outline"
+                  icon="solar:stars-minimalistic-linear"
                   width={20}
                   sx={{ color: "accent.brand" }}
                 />
               </Box>
-              <Typography fontSize="14px" fontWeight={600} color="text.primary">
+              <Typography fontSize="13px" fontWeight={600} color="text.primary">
                 No root cause yet
               </Typography>
               <Typography
@@ -1653,22 +1625,11 @@ export default function AnalyzeTab({ error }) {
               <Button
                 size="small"
                 variant="contained"
-                startIcon={<Iconify icon="mdi:star-four-points" width={13} />}
+                startIcon={
+                  <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+                }
                 onClick={onTriggerRun}
-                sx={{
-                  mt: 0.5,
-                  height: 32,
-                  fontSize: "12.5px",
-                  fontWeight: 600,
-                  borderRadius: "8px",
-                  textTransform: "none",
-                  // White button in dark theme, purple in light.
-                  bgcolor: isDark ? "#fff" : "#7857FC",
-                  color: isDark ? "#111" : "#fff",
-                  px: 1.75,
-                  "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
-                  boxShadow: "none",
-                }}
+                sx={{ mt: 0.5 }}
               >
                 Find root cause
               </Button>
@@ -1692,8 +1653,8 @@ export default function AnalyzeTab({ error }) {
                   height: 22,
                   borderRadius: "50%",
                   border: "2px solid",
-                  borderColor: alpha(ACCENT, 0.25),
-                  borderTopColor: ACCENT,
+                  borderColor: "status.discovery.border",
+                  borderTopColor: "status.discovery.solid",
                   animation: "spin 0.8s linear infinite",
                   "@keyframes spin": { to: { transform: "rotate(360deg)" } },
                 }}
@@ -1701,7 +1662,7 @@ export default function AnalyzeTab({ error }) {
               <Typography fontSize="13px" fontWeight={600} color="text.primary">
                 {setupStatus || "Spinning up sub-agents…"}
               </Typography>
-              <Typography fontSize="11.5px" color="text.secondary">
+              <Typography fontSize="12px" color="text.secondary">
                 Sampling representative calls and reading the telemetry. The
                 investigation will stream in here as it goes.
               </Typography>
@@ -1755,12 +1716,12 @@ export default function AnalyzeTab({ error }) {
         // Cached result from a prior session — the live conversation (and its
         // reasoning trail) isn't persisted yet, so re-run to chat / watch it.
         <Typography
-          fontSize="11.5px"
+          fontSize="12px"
           color="text.disabled"
           sx={{ textAlign: "center", flexShrink: 0, py: 0.5 }}
         >
-          Showing the last root cause · Re-run to watch the full investigation and
-          ask follow-ups
+          Showing the last root cause · Re-run to watch the full investigation
+          and ask follow-ups
         </Typography>
       ) : null}
     </Stack>

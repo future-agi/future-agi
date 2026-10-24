@@ -197,7 +197,7 @@ const FormSelectField = (
                       size="small"
                       sx={{ color: theme.palette.divider }}
                     >
-                      <Iconify icon="eva:search-fill" />
+                      <Iconify icon="solar:magnifier-linear" />
                     </IconButton>
                     <Input
                       placeholder="Search"
@@ -252,7 +252,7 @@ const FormSelectField = (
                     },
                   }}
                 >
-                  <Iconify icon="eva:plus-fill" /> &nbsp; {createLabel}
+                  <Iconify icon="solar:add-linear" /> &nbsp; {createLabel}
                 </LabelButton>
               )}
 

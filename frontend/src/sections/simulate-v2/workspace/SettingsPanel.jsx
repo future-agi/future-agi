@@ -1,9 +1,22 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, TextField, IconButton, Switch, Slider, Chip, Tooltip,
-  Dialog, DialogTitle, DialogContent, DialogActions, Select, MenuItem,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  IconButton,
+  Switch,
+  Slider,
+  Chip,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { Link as RouterLink } from "react-router-dom";
@@ -11,31 +24,65 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { SectionCard, CopyField } from "../components/primitives";
 import {
-  envVarsOf, envVarRefPatch, envVarCheckOf, isAgentBehaviourKey, AGENT_BEHAVIOUR_MESSAGE,
+  envVarsOf,
+  envVarRefPatch,
+  envVarCheckOf,
+  isAgentBehaviourKey,
+  AGENT_BEHAVIOUR_MESSAGE,
   credentialSetPatch,
 } from "../_mock/envConfig";
-import { validateSecretRef, looksLikeRawKey, RAW_KEY_MESSAGE } from "../_mock/secretRefs";
-import { SecretRefText, SetRefAction, SecretRefEditor, PreflightLine, RefTag } from "./SecretRefControls";
+import {
+  validateSecretRef,
+  looksLikeRawKey,
+  RAW_KEY_MESSAGE,
+} from "../_mock/secretRefs";
+import {
+  SecretRefText,
+  SetRefAction,
+  SecretRefEditor,
+  PreflightLine,
+  RefTag,
+} from "./SecretRefControls";
 import { envMcpServersOf } from "../_mock/worldTools";
-import { MAX_EGRESS_DOMAINS, egressCheck, parseEgress } from "../agents/connect/preflight";
+import {
+  MAX_EGRESS_DOMAINS,
+  egressCheck,
+  parseEgress,
+} from "../agents/connect/preflight";
 import {
   currentEnvVersion,
-  pendingEnvChanges, envChangePatch, saveEnvChangesPatch, envChangeLabel, scenariosInSet,
+  pendingEnvChanges,
+  envChangePatch,
+  saveEnvChangesPatch,
+  envChangeLabel,
+  scenariosInSet,
 } from "../_mock/versions";
 import { twinById, resolveSeedPromptToJson } from "../_mock/twins";
 import TwinLogo from "./../components/TwinLogo";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
-import { snapshotHistoryOf, currentEnvSnapshot, envSnapshotsOf, SNAPSHOT_KIND_LABEL } from "../_mock/envSnapshot";
-import { REPLAY_HEADER, REPLAY_SDK, stubbedToolNames, toggleStubPatch } from "../_mock/replay";
 import {
-  runDefaultsOf, SIMULATOR_MODELS, REPEATS_MAX, PARALLEL_MAX, productionScenariosOn,
+  snapshotHistoryOf,
+  currentEnvSnapshot,
+  envSnapshotsOf,
+  SNAPSHOT_KIND_LABEL,
+} from "../_mock/envSnapshot";
+import {
+  REPLAY_HEADER,
+  REPLAY_SDK,
+  stubbedToolNames,
+  toggleStubPatch,
+} from "../_mock/replay";
+import {
+  runDefaultsOf,
+  SIMULATOR_MODELS,
+  REPEATS_MAX,
+  PARALLEL_MAX,
+  productionScenariosOn,
 } from "../_mock/rsiModel";
 import { simulatorOf, callerChangePatch } from "../_mock/envModel";
 import { envTurnLimitOf, TURN_LIMIT_RANGE } from "../_mock/runStream";
 import { useSimStore, useWorkspaceSettings } from "../store";
 import RollbackDialog from "./RollbackDialog";
-
-const TWIN_TINT = "#7857FC";
 
 /**
  * Environment settings.
@@ -45,7 +92,13 @@ const TWIN_TINT = "#7857FC";
  * costs and whether its results compare, and burying them in code means
  * nobody checks them before pressing Run.
  */
-export default function SettingsPanel({ env, envState, patch, onDelete, locked = false }) {
+export default function SettingsPanel({
+  env,
+  envState,
+  patch,
+  onDelete,
+  locked = false,
+}) {
   /* Edits made since the pinned version — what "New version" saves. */
   const pending = pendingEnvChanges(envState);
   const pinned = currentEnvVersion(env, envState);
@@ -57,8 +110,16 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
   const { state, dispatch } = useSimStore();
   const adopted = (state.myEnvironments || []).some((e) => e.id === env.id);
   const [name, setName] = useState(env.name);
-  const canRename = !locked && adopted && !!name.trim() && name.trim() !== env.name;
-  const rename = () => { if (canRename) dispatch({ type: "patchEnvironment", envId: env.id, patch: { name: name.trim() } }); };
+  const canRename =
+    !locked && adopted && !!name.trim() && name.trim() !== env.name;
+  const rename = () => {
+    if (canRename)
+      dispatch({
+        type: "patchEnvironment",
+        envId: env.id,
+        patch: { name: name.trim() },
+      });
+  };
 
   return (
     <Box sx={{ p: 2 }}>
@@ -78,25 +139,37 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
                   value={name}
                   disabled={locked || !adopted}
                   onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") rename(); }}
-                  sx={{ flex: 1, maxWidth: 460, "& .MuiInputBase-root": { typography: "s2" } }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") rename();
+                  }}
+                  sx={{
+                    flex: 1,
+                    maxWidth: 460,
+                    "& .MuiInputBase-root": { typography: "s2" },
+                  }}
                 />
                 <Button
                   variant="outlined"
                   size="small"
                   disabled={!canRename}
                   onClick={rename}
-                  sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+                  sx={{ color: "text.primary", borderColor: "divider" }}
                 >
                   Rename
                 </Button>
               </Stack>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.625 }}>
-                The name only — the environment ID below and every run stay as they are.
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", mt: 0.625 }}
+              >
+                The name only — the environment ID below and every run stay as
+                they are.
               </Typography>
             </Box>
             <Box sx={{ maxWidth: 460 }}>
-              <CopyField label="Environment ID" value={`${env.id}-bffc78f9-4c2a-424a`} />
+              <CopyField
+                label="Environment ID"
+                value={`${env.id}-bffc78f9-4c2a-424a`}
+              />
             </Box>
           </Stack>
         </SectionCard>
@@ -112,7 +185,12 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
         )}
 
         {/* ── what each new run starts from, saved on the environment ── */}
-        <SimulationDefaultsSection env={env} envState={envState} patch={patch} locked={locked} />
+        <SimulationDefaultsSection
+          env={env}
+          envState={envState}
+          patch={patch}
+          locked={locked}
+        />
 
         {/* ── production-derived scenario sources (workspace admin) ── */}
         <ProductionScenariosSection envState={envState} />
@@ -130,21 +208,32 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
         <SectionCard
           title="Versions"
           subtitle="One environment version covers the world, scenarios, sub-goals, evaluations, simulated caller and credentials. Every run pins one, so a result can always be traced to what produced it"
-          action={!locked && (
-            <Tooltip arrow title={pending.length ? "" : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first. Scenario, sub-goal, evaluation and caller changes make a version on their own.`}>
-              <span>
-                <Button
-                  size="small"
-                  disabled={!pending.length}
-                  onClick={() => patch(saveEnvChangesPatch(env, envState))}
-                  startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
-                >
-                  New version
-                </Button>
-              </span>
-            </Tooltip>
-          )}
+          action={
+            !locked && (
+              <Tooltip
+                arrow
+                title={
+                  pending.length
+                    ? ""
+                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first. Scenario, sub-goal, evaluation and caller changes make a version on their own.`
+                }
+              >
+                <span>
+                  <Button
+                    size="small"
+                    disabled={!pending.length}
+                    onClick={() => patch(saveEnvChangesPatch(env, envState))}
+                    startIcon={
+                      <Iconify icon="solar:add-circle-linear" width={16} />
+                    }
+                    sx={{ color: "text.secondary" }}
+                  >
+                    New version
+                  </Button>
+                </span>
+              </Tooltip>
+            )
+          }
         >
           {/*
             Changing the world is an event, not a save. A version records the
@@ -153,66 +242,104 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
             still be staged; seed, scenario checks and tools may not).
           */}
           {pending.length > 0 && (
-            <Box sx={{ px: 2.5, py: 1.5, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+            <Box
+              sx={{
+                px: 2.5,
+                py: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.neutral",
+              }}
+            >
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 {`Changes since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} · ${pendingCostOf(env, envState)?.text}`}
               </Typography>
               <Stack spacing={0.25} sx={{ mt: 0.5 }}>
                 {pending.map((c) => (
-                  <Typography key={c.at + c.detail} sx={{ typography: "s3", color: "text.subtitle" }}>
-                    · {envChangeLabel(c.kind)}{c.detail ? ` — ${c.detail}` : ""}
+                  <Typography
+                    key={c.at + c.detail}
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    · {envChangeLabel(c.kind)}
+                    {c.detail ? ` — ${c.detail}` : ""}
                   </Typography>
                 ))}
               </Stack>
             </Box>
           )}
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
             {snapshotHistoryOf(env, envState).map((v) => {
               return (
-              <Stack key={v.label} direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1.5 }}>
-                <Typography
-                  sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace", width: 44, flexShrink: 0 }}
+                <Stack
+                  key={v.label}
+                  direction="row"
+                  alignItems="center"
+                  spacing={2}
+                  sx={{ px: 2.5, py: 1 }}
                 >
-                  {v.label}
-                </Typography>
-                <Box flex={1} minWidth={0}>
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{v.summary}</Typography>
-                    {v.current && (
-                      <Chip
-                        size="small"
-                        label="Current"
-                        sx={{
-                          height: 18, borderRadius: 0.5, color: "#16A34A",
-                          bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
-                          "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700 },
-                        }}
-                      />
-                    )}
-                  </Stack>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {[
-                      v.at && new Date(v.at).toLocaleDateString(),
-                      v.kinds.map((k) => SNAPSHOT_KIND_LABEL[k]).join(" + "),
-                      `${scenariosInSet(envState, v.parts.env).length} scenarios`,
-                      `${v.runs} run${v.runs === 1 ? "" : "s"}`,
-                    ].filter(Boolean).join(" · ")}
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      width: 44,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {v.label}
                   </Typography>
-                </Box>
-                {/* Roll back makes the next version with everything as in
+                  <Box flex={1} minWidth={0}>
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s2", fontWeight: 600 }}
+                      >
+                        {v.summary}
+                      </Typography>
+                      {v.current && (
+                        <Chip
+                          size="small"
+                          label="Current"
+                          sx={{
+                            color: "status.success.fg",
+                            bgcolor: "status.success.bg",
+                          }}
+                        />
+                      )}
+                    </Stack>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {[
+                        v.at && new Date(v.at).toLocaleDateString(),
+                        v.kinds.map((k) => SNAPSHOT_KIND_LABEL[k]).join(" + "),
+                        `${scenariosInSet(envState, v.parts.env).length} scenarios`,
+                        `${v.runs} run${v.runs === 1 ? "" : "s"}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Typography>
+                  </Box>
+                  {/* Roll back makes the next version with everything as in
                     this one — world, scenarios, sub-goals, evaluations and
                     caller. RollbackDialog says what moves first. */}
-                {!v.current && !locked && (
-                  <Button
-                    size="small"
-                    onClick={() => setRestoring(v.label)}
-                    startIcon={<Iconify icon="solar:history-linear" width={13} />}
-                    sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", flexShrink: 0 }}
-                  >
-                    Roll back
-                  </Button>
-                )}
-              </Stack>
+                  {!v.current && !locked && (
+                    <Button
+                      size="small"
+                      onClick={() => setRestoring(v.label)}
+                      startIcon={
+                        <Iconify icon="solar:history-linear" width={14} />
+                      }
+                      sx={{ color: "text.secondary", flexShrink: 0 }}
+                    >
+                      Roll back
+                    </Button>
+                  )}
+                </Stack>
               );
             })}
           </Stack>
@@ -230,11 +357,15 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
               <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 Delete this environment
               </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                Removes the environment, its scenarios, evaluations and every run against it. Personas stay in your library. Cannot be undone.
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                Removes the environment, its scenarios, evaluations and every
+                run against it. Personas stay in your library. Cannot be undone.
               </Typography>
             </Box>
-            <Tooltip arrow title={onDelete ? "" : "Built-in templates can't be deleted."}>
+            <Tooltip
+              arrow
+              title={onDelete ? "" : "Built-in templates can't be deleted."}
+            >
               <span>
                 <Button
                   variant="outlined"
@@ -242,7 +373,7 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
                   color="error"
                   disabled={!onDelete}
                   onClick={onDelete}
-                  sx={{ flexShrink: 0, typography: "s2", fontWeight: 600 }}
+                  sx={{ flexShrink: 0 }}
                 >
                   Delete environment
                 </Button>
@@ -295,12 +426,38 @@ function AgentCredentialsSection({ envState }) {
       title="Agent credentials"
       subtitle="What runs use to reach the agent. References into your secret manager — the values are never stored here."
     >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {refs.map(([k, ref]) => (
-          <Stack key={k} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1.375 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, width: KEY_W, flexShrink: 0 }}>{k}</Typography>
-            <Box sx={{ flex: 1, minWidth: 0 }}><SecretRefText value={ref} /></Box>
-            <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+          <Stack
+            key={k}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ px: 2.5, py: 1 }}
+          >
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                fontFamily: MONO,
+                width: KEY_W,
+                flexShrink: 0,
+              }}
+            >
+              {k}
+            </Typography>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <SecretRefText value={ref} />
+            </Box>
+            <Iconify
+              icon="solar:lock-keyhole-minimalistic-linear"
+              width={14}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
           </Stack>
         ))}
       </Stack>
@@ -319,12 +476,22 @@ function EgressSection({ envState, patch, locked = false }) {
   const domains = envState?.egressDomains || [];
   const [text, setText] = useState("");
   const [error, setError] = useState(null);
-  const write = (next, detail) => patch?.({ egressDomains: next, ...envChangePatch(envState, "network", detail) });
+  const write = (next, detail) =>
+    patch?.({
+      egressDomains: next,
+      ...envChangePatch(envState, "network", detail),
+    });
   const add = () => {
     const asked = parseEgress(text).filter((d) => !domains.includes(d));
-    if (!asked.length) { setText(""); return; }
+    if (!asked.length) {
+      setText("");
+      return;
+    }
     const check = egressCheck([...domains, ...asked]);
-    if (!check.ok) { setError(check.detail); return; }
+    if (!check.ok) {
+      setError(check.detail);
+      return;
+    }
     write([...domains, ...asked], `Egress: allowed ${asked.join(", ")}`);
     setText("");
     setError(null);
@@ -334,35 +501,115 @@ function EgressSection({ envState, patch, locked = false }) {
       title={`Egress · ${domains.length}`}
       subtitle={`Public hostnames the agent may reach while it runs — hardcoded APIs or TURN endpoints. Everything else is firewalled at the sandbox. Up to ${MAX_EGRESS_DOMAINS}.`}
     >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {domains.length === 0 && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", px: 2.5, py: 1.375 }}>None — the agent can only reach what the world answers.</Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              px: 2.5,
+              py: 1.375,
+            }}
+          >
+            None — the agent can only reach what the world answers.
+          </Typography>
         )}
         {domains.map((d) => (
-          <Stack key={d} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1 }}>
-            <Iconify icon="solar:global-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-            <Typography sx={{ typography: "s2", fontFamily: MONO, flex: 1, minWidth: 0 }}>{d}</Typography>
+          <Stack
+            key={d}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ px: 2.5, py: 1 }}
+          >
+            <Iconify
+              icon="solar:global-linear"
+              width={14}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
+            <Typography
+              sx={{ typography: "s2", fontFamily: MONO, flex: 1, minWidth: 0 }}
+            >
+              {d}
+            </Typography>
             {!locked && patch && (
-              <IconButton size="small" aria-label={`Remove ${d}`} onClick={() => write(domains.filter((x) => x !== d), `Egress: removed ${d}`)}>
-                <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+              <IconButton
+                size="small"
+                aria-label={`Remove ${d}`}
+                onClick={() =>
+                  write(
+                    domains.filter((x) => x !== d),
+                    `Egress: removed ${d}`,
+                  )
+                }
+              >
+                <Iconify
+                  icon="solar:trash-bin-trash-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary" }}
+                />
               </IconButton>
             )}
           </Stack>
         ))}
         {!locked && patch && (
-          <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ px: 2.5, py: 1.25 }}>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            spacing={1}
+            sx={{ px: 2.5, py: 1.25 }}
+          >
             <Box flex={1} minWidth={0}>
               <TextField
-                fullWidth size="small" value={text}
-                onChange={(e) => { setText(e.target.value); setError(null); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+                fullWidth
+                size="small"
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    add();
+                  }
+                }}
                 placeholder="api.example.com, turn.example.com"
-                inputProps={{ spellCheck: false, "aria-label": "Add egress domains" }}
-                sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
+                inputProps={{
+                  spellCheck: false,
+                  "aria-label": "Add egress domains",
+                }}
+                sx={{
+                  "& .MuiInputBase-input": {
+                    typography: "s2",
+                    fontFamily: MONO,
+                  },
+                }}
               />
-              {error && <Typography sx={{ typography: "s3", color: "error.main", mt: 0.5 }}>{error}</Typography>}
+              {error && (
+                <Typography
+                  sx={{ typography: "s3", color: "error.main", mt: 0.5 }}
+                >
+                  {error}
+                </Typography>
+              )}
             </Box>
-            <Button size="small" variant="outlined" disabled={!text.trim()} onClick={add} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0, mt: 0.25 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!text.trim()}
+              onClick={add}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
+                mt: 0.25,
+              }}
+            >
               Allow
             </Button>
           </Stack>
@@ -371,34 +618,73 @@ function EgressSection({ envState, patch, locked = false }) {
     </SectionCard>
   );
 }
-EgressSection.propTypes = { envState: PropTypes.object, patch: PropTypes.func, locked: PropTypes.bool };
+EgressSection.propTypes = {
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 /* The tokens the world's MCP tool sources use — references, changed from World → Tool sources. */
 function ToolCredentialsSection({ env, envState }) {
-  const sources = envMcpServersOf(env, envState).filter((s) => s.transport !== "stdio");
+  const sources = envMcpServersOf(env, envState).filter(
+    (s) => s.transport !== "stdio",
+  );
   if (!sources.length) return null;
   return (
     <SectionCard
       title="Tool credentials"
       subtitle="What a Live call to an MCP tool source sends. References into your secret manager, or kept in your Gateway — change one from World → Tool sources."
     >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {sources.map((src) => (
-          <Stack key={src.id} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1.375 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600, width: KEY_W, flexShrink: 0 }}>{src.label}</Typography>
+          <Stack
+            key={src.id}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ px: 2.5, py: 1 }}
+          >
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                width: KEY_W,
+                flexShrink: 0,
+              }}
+            >
+              {src.label}
+            </Typography>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              {src.gateway
-                ? <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Kept in your Gateway</Typography>
-                : <SecretRefText value={envState?.mcpTokens?.[src.id] || src.tokenRef || null} empty="No token" />}
+              {src.gateway ? (
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  Kept in your Gateway
+                </Typography>
+              ) : (
+                <SecretRefText
+                  value={envState?.mcpTokens?.[src.id] || src.tokenRef || null}
+                  empty="No token"
+                />
+              )}
             </Box>
-            <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+            <Iconify
+              icon="solar:lock-keyhole-minimalistic-linear"
+              width={14}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
           </Stack>
         ))}
       </Stack>
     </SectionCard>
   );
 }
-ToolCredentialsSection.propTypes = { env: PropTypes.object, envState: PropTypes.object };
+ToolCredentialsSection.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 function EnvVarsSection({ envState, patch, locked = false }) {
   const vars = envVarsOf(envState);
@@ -407,23 +693,57 @@ function EnvVarsSection({ envState, patch, locked = false }) {
   const [addError, setAddError] = useState(null);
 
   /* Every write goes through the credential set, so a moved reference is the next (credentials-only) version. */
-  const save = (next) => patch?.(credentialSetPatch(envState, { envVars: next }));
-  const setRef = (key, ref) => { patch?.(credentialSetPatch(envState, envVarRefPatch(envState, key, ref))); setEditing(null); };
+  const save = (next) =>
+    patch?.(credentialSetPatch(envState, { envVars: next }));
+  const setRef = (key, ref) => {
+    patch?.(credentialSetPatch(envState, envVarRefPatch(envState, key, ref)));
+    setEditing(null);
+  };
   const remove = (key) => save(vars.filter((v) => v.key !== key));
 
   const add = () => {
     const key = draft.key.trim();
     if (!key) return;
-    if (vars.some((v) => v.key === key)) { setAddError(`${key} is already set.`); return; }
+    if (vars.some((v) => v.key === key)) {
+      setAddError(`${key} is already set.`);
+      return;
+    }
     /* Secret or not, a model id or flag changes the agent, not the world. */
-    if (isAgentBehaviourKey(key)) { setAddError(AGENT_BEHAVIOUR_MESSAGE); return; }
+    if (isAgentBehaviourKey(key)) {
+      setAddError(AGENT_BEHAVIOUR_MESSAGE);
+      return;
+    }
     if (draft.secret) {
       const res = validateSecretRef(draft.value);
-      if (!res.ok) { setAddError(res.error); return; }
-      patch?.(credentialSetPatch(envState, envVarRefPatch({ ...envState, envVars: [...vars, { key, secret: true, usedBy: "environment", ref: res.ref }] }, key, res.ref)));
+      if (!res.ok) {
+        setAddError(res.error);
+        return;
+      }
+      patch?.(
+        credentialSetPatch(
+          envState,
+          envVarRefPatch(
+            {
+              ...envState,
+              envVars: [
+                ...vars,
+                { key, secret: true, usedBy: "environment", ref: res.ref },
+              ],
+            },
+            key,
+            res.ref,
+          ),
+        ),
+      );
     } else {
-      if (looksLikeRawKey(draft.value)) { setAddError(RAW_KEY_MESSAGE); return; }
-      save([...vars, { key, value: draft.value, secret: false, usedBy: "environment" }]);
+      if (looksLikeRawKey(draft.value)) {
+        setAddError(RAW_KEY_MESSAGE);
+        return;
+      }
+      save([
+        ...vars,
+        { key, value: draft.value, secret: false, usedBy: "environment" },
+      ]);
     }
     setAddError(null);
     setDraft({ key: "", value: "", secret: true });
@@ -434,40 +754,88 @@ function EnvVarsSection({ envState, patch, locked = false }) {
       title="Environment variables"
       subtitle="Configuration passed into the environment. Secrets are references into your secret manager — the value is resolved inside the sandbox and never stored here. Pointing a secret somewhere else saves a credentials-only version of the environment — a minor one, like v7 → v7.1."
     >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {vars.map((v) => {
           const check = v.secret ? envVarCheckOf(envState, v.key) : null;
           const open = editing === v.key;
           return (
-            <Box key={v.key} sx={{ px: 2.5, py: 1.375 }}>
+            <Box key={v.key} sx={{ px: 2.5, py: 1 }}>
               <Stack direction="row" alignItems="center" spacing={1.5}>
-                <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, width: KEY_W, flexShrink: 0 }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    fontFamily: MONO,
+                    width: KEY_W,
+                    flexShrink: 0,
+                  }}
+                >
                   {v.key}
                 </Typography>
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ flex: 1, minWidth: 0 }}>
-                  {v.secret
-                    ? <SecretRefText value={v.ref} />
-                    : <Typography noWrap sx={{ typography: "s2", fontFamily: MONO, color: "text.secondary", minWidth: 0 }}>{v.value}</Typography>}
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ flex: 1, minWidth: 0 }}
+                >
+                  {v.secret ? (
+                    <SecretRefText value={v.ref} />
+                  ) : (
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s2",
+                        fontFamily: MONO,
+                        color: "text.secondary",
+                        minWidth: 0,
+                      }}
+                    >
+                      {v.value}
+                    </Typography>
+                  )}
                   {v.migrated && <RefTag>moved from a pasted value</RefTag>}
                 </Stack>
                 {v.secret && (
-                  <Tooltip arrow title="Stored as a reference — the value stays in your secret manager">
-                    <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                  <Tooltip
+                    arrow
+                    title="Stored as a reference — the value stays in your secret manager"
+                  >
+                    <Iconify
+                      icon="solar:lock-keyhole-minimalistic-linear"
+                      width={14}
+                      sx={{ color: "text.tertiary", flexShrink: 0 }}
+                    />
                   </Tooltip>
                 )}
                 <Chip
                   size="small"
                   label={v.usedBy}
                   sx={{
-                    height: 19, borderRadius: 0.5, color: "text.secondary", flexShrink: 0,
-                    border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                    "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
+                    color: "text.secondary",
+                    flexShrink: 0,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "transparent",
                   }}
                 />
-                {v.secret && !locked && !open && <SetRefAction onClick={() => setEditing(v.key)} />}
+                {v.secret && !locked && !open && (
+                  <SetRefAction onClick={() => setEditing(v.key)} />
+                )}
                 {!locked && (
-                  <IconButton size="small" onClick={() => remove(v.key)} aria-label={`Remove ${v.key}`}>
-                    <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+                  <IconButton
+                    size="small"
+                    onClick={() => remove(v.key)}
+                    aria-label={`Remove ${v.key}`}
+                  >
+                    <Iconify
+                      icon="solar:trash-bin-trash-linear"
+                      width={16}
+                      sx={{ color: "text.tertiary" }}
+                    />
                   </IconButton>
                 )}
               </Stack>
@@ -491,55 +859,94 @@ function EnvVarsSection({ envState, patch, locked = false }) {
       </Stack>
 
       {!locked && (
-        <Box sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
+        <Box
+          sx={{
+            px: 2.5,
+            py: 2,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           <Stack direction="row" alignItems="center" spacing={1}>
             <TextField
               size="small"
               placeholder="ENV_KEY_…"
               value={draft.key}
-              onChange={(e) => { setDraft((n) => ({ ...n, key: e.target.value })); setAddError(null); }}
-              sx={{ width: KEY_W, "& .MuiInputBase-root": { typography: "s2", fontFamily: MONO } }}
+              onChange={(e) => {
+                setDraft((n) => ({ ...n, key: e.target.value }));
+                setAddError(null);
+              }}
+              sx={{
+                width: KEY_W,
+                "& .MuiInputBase-root": { typography: "s2", fontFamily: MONO },
+              }}
             />
             <TextField
               size="small"
               placeholder={draft.secret ? "vault://acme/sim/…" : "Value"}
               value={draft.value}
               error={!!addError}
-              onChange={(e) => { setDraft((n) => ({ ...n, value: e.target.value })); setAddError(null); }}
-              onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+              onChange={(e) => {
+                setDraft((n) => ({ ...n, value: e.target.value }));
+                setAddError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") add();
+              }}
               inputProps={{ spellCheck: false, autoComplete: "off" }}
-              sx={{ flex: 1, maxWidth: 360, "& .MuiInputBase-root": { typography: "s2", fontFamily: MONO } }}
+              sx={{
+                flex: 1,
+                maxWidth: 360,
+                "& .MuiInputBase-root": { typography: "s2", fontFamily: MONO },
+              }}
             />
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Switch
                 size="small"
                 checked={draft.secret}
-                onChange={(e) => { setDraft((n) => ({ ...n, secret: e.target.checked })); setAddError(null); }}
+                onChange={(e) => {
+                  setDraft((n) => ({ ...n, secret: e.target.checked }));
+                  setAddError(null);
+                }}
               />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Secret</Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                Secret
+              </Typography>
             </Stack>
             <Button
               variant="outlined"
               size="small"
               onClick={add}
               disabled={!draft.key.trim()}
-              sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+              sx={{ color: "text.primary", borderColor: "divider" }}
             >
               Add
             </Button>
           </Stack>
           <Typography
             role={addError ? "alert" : undefined}
-            sx={{ typography: "s3", color: addError ? "error.main" : "text.subtitle", mt: 0.75, pl: { md: `calc(${KEY_W}px + 8px)` } }}
+            sx={{
+              typography: "s3",
+              color: addError ? "error.main" : "text.tertiary",
+              mt: 0.75,
+              pl: { md: `calc(${KEY_W}px + 8px)` },
+            }}
           >
-            {addError || (draft.secret ? "A secret is added as a reference — paste its path in your secret manager, not the key." : "Plain configuration — stored and shown as typed.")}
+            {addError ||
+              (draft.secret
+                ? "A secret is added as a reference — paste its path in your secret manager, not the key."
+                : "Plain configuration — stored and shown as typed.")}
           </Typography>
         </Box>
       )}
     </SectionCard>
   );
 }
-EnvVarsSection.propTypes = { envState: PropTypes.object, patch: PropTypes.func, locked: PropTypes.bool };
+EnvVarsSection.propTypes = {
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 /* ── replay flag ────────────────────────────────────────────────────────── */
 
@@ -568,39 +975,97 @@ function ReplaySection({ env, envState, patch }) {
         </Stack>
       </Box>
       <Stack
-        direction="row" alignItems="baseline" spacing={0.75}
-        sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
+        direction="row"
+        alignItems="baseline"
+        spacing={0.75}
+        sx={{
+          px: 2.5,
+          py: 1,
+          borderTop: "1px solid",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.neutral",
+        }}
       >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Tools</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          Tools
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {`${stubbed.length} of ${tools.length} marked as side effect`}
         </Typography>
       </Stack>
       {tools.length === 0 ? (
-        <Typography sx={{ px: 2.5, py: 1.5, typography: "s2", color: "text.subtitle" }}>
+        <Typography
+          sx={{ px: 2.5, py: 1.5, typography: "s2", color: "text.tertiary" }}
+        >
           This environment has no tools yet — nothing to stub.
         </Typography>
       ) : (
-        <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        <Stack
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
+        >
           {tools.map((t) => {
             const on = stubbed.includes(t.name);
             return (
-              <Stack key={t.name} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1 }}>
+              <Stack
+                key={t.name}
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{ px: 2.5, py: 1 }}
+              >
                 <Typography
                   noWrap
-                  sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", width: 220, flexShrink: 0 }}
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    width: 220,
+                    flexShrink: 0,
+                  }}
                 >
                   {t.name}
                 </Typography>
-                <Typography noWrap sx={{ flex: 1, minWidth: 0, typography: "s2", color: "text.subtitle" }}>
+                <Typography
+                  noWrap
+                  sx={{
+                    flex: 1,
+                    minWidth: 0,
+                    typography: "s2",
+                    color: "text.tertiary",
+                  }}
+                >
                   {t.desc || ""}
                 </Typography>
-                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
-                  <Typography sx={{ typography: "s3", color: on ? "text.primary" : "text.subtitle" }}>Side effect</Typography>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{ flexShrink: 0 }}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: on ? "text.primary" : "text.tertiary",
+                    }}
+                  >
+                    Side effect
+                  </Typography>
                   <Switch
                     size="small"
                     checked={on}
-                    onChange={(e) => patch(toggleStubPatch(env, envState, t.name, e.target.checked))}
+                    onChange={(e) =>
+                      patch(
+                        toggleStubPatch(
+                          env,
+                          envState,
+                          t.name,
+                          e.target.checked,
+                        ),
+                      )
+                    }
                   />
                 </Stack>
               </Stack>
@@ -608,8 +1073,18 @@ function ReplaySection({ env, envState, patch }) {
           })}
         </Stack>
       )}
-      <Typography sx={{ px: 2.5, py: 1.5, typography: "s3", color: "text.subtitle", borderTop: "1px solid", borderColor: "divider" }}>
-        Marked tools run against the environment&apos;s sandboxed version; your agent should skip the real call when it sees the flag.
+      <Typography
+        sx={{
+          px: 2.5,
+          py: 1.5,
+          typography: "s3",
+          color: "text.tertiary",
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        Marked tools run against the environment&apos;s sandboxed version; your
+        agent should skip the real call when it sees the flag.
       </Typography>
     </SectionCard>
   );
@@ -666,7 +1141,9 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
       },
       ...envChangePatch(envState, "seed", "Seed prompt rewritten"),
     });
-    enqueueSnackbar("Seed updated · the next run starts from this state", { variant: "success" });
+    enqueueSnackbar("Seed updated · the next run starts from this state", {
+      variant: "success",
+    });
   };
 
   const resetSandbox = () => {
@@ -681,11 +1158,15 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
       twinBacking: {
         ...backing,
         provisionedAt: new Date().toISOString(),
-        activity: Object.fromEntries(services.map((sId) => [sId, { requests: 0, failures: 0 }])),
+        activity: Object.fromEntries(
+          services.map((sId) => [sId, { requests: 0, failures: 0 }]),
+        ),
       },
     });
     setResetDialogOpen(false);
-    enqueueSnackbar("Sandbox reset · fresh seed installed", { variant: "success" });
+    enqueueSnackbar("Sandbox reset · fresh seed installed", {
+      variant: "success",
+    });
   };
 
   return (
@@ -694,14 +1175,23 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
       subtitle="How the sandbox is provisioned and seeded per run"
       action={
         <Chip
-          size="small" label="Sandboxed"
-          icon={<Iconify icon="solar:server-square-linear" width={11} sx={{ ml: "6px !important", color: `${TWIN_TINT} !important` }} />}
+          size="small"
+          label="Sandboxed"
+          icon={
+            <Iconify
+              icon="solar:server-square-linear"
+              width={12}
+              sx={{
+                ml: "6px !important",
+                color: (t) => `${t.palette.primary.main} !important`,
+              }}
+            />
+          }
           sx={{
-            height: 20, borderRadius: 0.75,
-            bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.18 : 0.1),
-            color: TWIN_TINT,
-            border: "1px solid", borderColor: alpha(TWIN_TINT, 0.35),
-            "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700, letterSpacing: 0.4 },
+            bgcolor: "status.discovery.bg",
+            color: "primary.main",
+            border: "1px solid",
+            borderColor: "status.discovery.border",
           }}
         />
       }
@@ -717,24 +1207,45 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
               const t = twinById(sId);
               const endpoint = backing.endpoints?.[sId] || "—";
               return (
-                <Stack key={sId} direction="row" alignItems="center" spacing={1.5}
+                <Stack
+                  key={sId}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1.5}
                   sx={{
-                    p: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider",
+                    p: 1.25,
+                    borderRadius: "8px",
+                    border: "1px solid",
+                    borderColor: "divider",
                     bgcolor: "background.paper",
                   }}
                 >
-                  <Box sx={{
-                    width: 24, height: 24, flexShrink: 0,
-                    display: "grid", placeItems: "center",
-                  }}>
+                  <Box
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      flexShrink: 0,
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
                     <TwinLogo twin={t} width={18} />
                   </Box>
                   <Box flex={1} minWidth={0}>
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>{t?.name || sId}</Typography>
-                    <Typography noWrap sx={{
-                      typography: "s3", color: "text.subtitle",
-                      fontFamily: "ui-monospace, Menlo, monospace",
-                    }}>
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s2", fontWeight: 600 }}
+                    >
+                      {t?.name || sId}
+                    </Typography>
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        fontFamily: "ui-monospace, Menlo, monospace",
+                      }}
+                    >
                       {endpoint}
                     </Typography>
                   </Box>
@@ -745,7 +1256,11 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
                       enqueueSnackbar("Endpoint copied", { variant: "info" });
                     }}
                   >
-                    <Iconify icon="solar:copy-linear" width={14} sx={{ color: "text.subtitle" }} />
+                    <Iconify
+                      icon="solar:copy-linear"
+                      width={14}
+                      sx={{ color: "text.tertiary" }}
+                    />
                   </IconButton>
                 </Stack>
               );
@@ -755,14 +1270,23 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
 
         {/* seed prompt */}
         <Box>
-          <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ mb: 0.625 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>Seed prompt</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Stack
+            direction="row"
+            alignItems="baseline"
+            spacing={0.75}
+            sx={{ mb: 0.625 }}
+          >
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              Seed prompt
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               — natural language description of the starting state
             </Typography>
           </Stack>
           <TextField
-            fullWidth multiline minRows={3}
+            fullWidth
+            multiline
+            minRows={3}
             value={seedPrompt}
             disabled={locked}
             onChange={(e) => setSeedPrompt(e.target.value)}
@@ -771,10 +1295,11 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
           />
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
             <Button
-              size="small" variant="contained" color="primary"
+              size="small"
+              variant="contained"
+              color="primary"
               disabled={!dirty || locked}
               onClick={saveSeed}
-              sx={{ typography: "s2", fontWeight: 700 }}
             >
               Save & re-resolve
             </Button>
@@ -782,7 +1307,7 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
               size="small"
               disabled={!dirty}
               onClick={() => setSeedPrompt(backing.seedPrompt || "")}
-              sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+              sx={{ color: "text.secondary" }}
             >
               Discard
             </Button>
@@ -790,21 +1315,44 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
             <Button
               size="small"
               onClick={() => setShowJson((v) => !v)}
-              startIcon={<Iconify icon={showJson ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
-              sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
+              startIcon={
+                <Iconify
+                  icon={
+                    showJson
+                      ? "solar:alt-arrow-up-linear"
+                      : "solar:alt-arrow-down-linear"
+                  }
+                  width={12}
+                />
+              }
+              sx={{ color: "text.secondary" }}
             >
               {showJson ? "Hide resolved JSON" : "View resolved JSON"}
             </Button>
           </Stack>
           {showJson && (
-            <Box sx={{
-              mt: 1, p: 1.5, borderRadius: 1, border: "1px solid", borderColor: "divider",
-              bgcolor: "background.neutral", maxHeight: 320, overflow: "auto",
-            }}>
-              <Typography component="pre" sx={{
-                typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                color: "text.primary", whiteSpace: "pre", m: 0,
-              }}>
+            <Box
+              sx={{
+                mt: 1,
+                p: 1.5,
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.neutral",
+                maxHeight: 320,
+                overflow: "auto",
+              }}
+            >
+              <Typography
+                component="pre"
+                sx={{
+                  typography: "s3",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  color: "text.primary",
+                  whiteSpace: "pre",
+                  m: 0,
+                }}
+              >
                 {backing.seed || "{}"}
               </Typography>
             </Box>
@@ -814,20 +1362,23 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
         {/* The world resets before every conversation — always; not a setting. */}
         {/* actions */}
         <Stack
-          direction={{ xs: "column", sm: "row" }} spacing={1}
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
           sx={{ pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}
         >
           <Button
-            variant="outlined" size="small"
+            variant="outlined"
+            size="small"
             onClick={() => setResetDialogOpen(true)}
-            startIcon={<Iconify icon="solar:refresh-circle-linear" width={13} />}
+            startIcon={
+              <Iconify icon="solar:refresh-circle-linear" width={14} />
+            }
             sx={{
-              typography: "s2", fontWeight: 700,
-              color: "#C2603F",
-              borderColor: (t) => alpha("#C2603F", t.palette.mode === "dark" ? 0.5 : 0.4),
+              color: "status.danger.fg",
+              borderColor: "status.danger.border",
               "&:hover": {
-                borderColor: "#C2603F",
-                bgcolor: (t) => alpha("#C2603F", t.palette.mode === "dark" ? 0.1 : 0.06),
+                borderColor: "status.danger.solid",
+                bgcolor: "status.danger.bg",
               },
             }}
           >
@@ -837,29 +1388,43 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
       </Stack>
 
       <Dialog
-        open={resetDialogOpen} onClose={() => setResetDialogOpen(false)}
-        PaperProps={{ sx: { borderRadius: 2, bgcolor: "background.paper", border: "1px solid", borderColor: "divider" } }}
+        open={resetDialogOpen}
+        onClose={() => setResetDialogOpen(false)}
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            bgcolor: "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+          },
+        }}
       >
-        <DialogTitle sx={{ typography: "m2", fontWeight: 700, p: 2.5, pb: 1 }}>
+        <DialogTitle sx={{ typography: "m2", fontWeight: 600, p: 2.5, pb: 1 }}>
           Reset the sandbox?
         </DialogTitle>
         <DialogContent sx={{ p: 2.5, pt: 1 }} dividers>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            The current sandbox state is discarded and re-provisioned from the current seed prompt.
-            In-flight runs against this environment will fail. Past runs remain in history.
+            The current sandbox state is discarded and re-provisioned from the
+            current seed prompt. In-flight runs against this environment will
+            fail. Past runs remain in history.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 1.5 }}>
-          <Button onClick={() => setResetDialogOpen(false)} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>
+          <Button
+            size="small"
+            onClick={() => setResetDialogOpen(false)}
+            sx={{ color: "text.secondary" }}
+          >
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
             onClick={resetSandbox}
             sx={{
-              typography: "s2", fontWeight: 700,
-              bgcolor: "#C2603F", color: "common.white",
-              "&:hover": { bgcolor: "#A54E32" },
+              bgcolor: "status.danger.solid",
+              color: "common.white",
+              "&:hover": { bgcolor: "status.danger.fg" },
             }}
           >
             Reset sandbox
@@ -876,14 +1441,24 @@ TwinConfigSection.propTypes = {
   locked: PropTypes.bool,
 };
 
-
-
 function NumberSetting({ label, help, value, min, max, step = 1, onChange }) {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Stack direction="row" alignItems="baseline" justifyContent="space-between">
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>
-        <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        justifyContent="space-between"
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {label}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {value}
         </Typography>
       </Stack>
@@ -896,29 +1471,51 @@ function NumberSetting({ label, help, value, min, max, step = 1, onChange }) {
         onChange={(_, v) => onChange(v)}
         sx={{ py: 1, "& .MuiSlider-thumb": { width: 12, height: 12 } }}
       />
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{help}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {help}
+      </Typography>
     </Box>
   );
 }
 NumberSetting.propTypes = {
-  label: PropTypes.string, help: PropTypes.string, value: PropTypes.number,
-  min: PropTypes.number, max: PropTypes.number, step: PropTypes.number, onChange: PropTypes.func,
+  label: PropTypes.string,
+  help: PropTypes.string,
+  value: PropTypes.number,
+  min: PropTypes.number,
+  max: PropTypes.number,
+  step: PropTypes.number,
+  onChange: PropTypes.func,
 };
 
 function ToggleSetting({ label, help, checked, onChange }) {
   return (
-    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      justifyContent="space-between"
+      spacing={2}
+    >
       <Box>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{help}</Typography>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {label}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {help}
+        </Typography>
       </Box>
-      <Switch size="small" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <Switch
+        size="small"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
     </Stack>
   );
 }
 ToggleSetting.propTypes = {
-  label: PropTypes.string, help: PropTypes.string,
-  checked: PropTypes.bool, onChange: PropTypes.func,
+  label: PropTypes.string,
+  help: PropTypes.string,
+  checked: PropTypes.bool,
+  onChange: PropTypes.func,
 };
 
 /*
@@ -930,25 +1527,49 @@ ToggleSetting.propTypes = {
 */
 function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
   const d = runDefaultsOf(envState);
-  const save = (next) => { if (!locked && patch) patch({ runDefaults: { ...(envState?.runDefaults || {}), ...next } }); };
+  const save = (next) => {
+    if (!locked && patch)
+      patch({ runDefaults: { ...(envState?.runDefaults || {}), ...next } });
+  };
   /* Parallel runs live on envState.parallelRuns (default on) — what a run reads. */
   const setParallel = (on) => {
     if (locked || !patch) return;
-    patch({ parallelRuns: on, runDefaults: { ...(envState?.runDefaults || {}), conversationsAtOnce: on ? Math.max(2, d.conversationsAtOnce > 1 ? d.conversationsAtOnce : PARALLEL_MAX) : 1 } });
+    patch({
+      parallelRuns: on,
+      runDefaults: {
+        ...(envState?.runDefaults || {}),
+        conversationsAtOnce: on
+          ? Math.max(
+              2,
+              d.conversationsAtOnce > 1 ? d.conversationsAtOnce : PARALLEL_MAX,
+            )
+          : 1,
+      },
+    });
   };
   const voice = env?.surface === "voice";
   const turnLimit = envTurnLimitOf(envState);
   /* The caller new runs pin — chosen here, else the surface's default. */
-  const model = envState?.runDefaults?.simulatorModel || simulatorOf(env, envState).model;
+  const model =
+    envState?.runDefaults?.simulatorModel || simulatorOf(env, envState).model;
   const models = SIMULATOR_MODELS.some((m) => m.id === model)
     ? SIMULATOR_MODELS
-    : [{ id: model, label: model, note: "The default for this channel." }, ...SIMULATOR_MODELS];
+    : [
+        { id: model, label: model, note: "The default for this channel." },
+        ...SIMULATOR_MODELS,
+      ];
   /* Newest first: each change, then the caller the environment started with. */
   const changes = envState?.callerChanges || [];
   /* Each change made the next environment version — named so the history
      and the run headers can be matched up. */
   const snaps = envSnapshotsOf(env, envState);
-  const madeIn = (c) => snaps.find((x) => x.kinds.includes("caller") && x.parts.caller === c.to && Date.parse(x.at || 0) >= Date.parse(c.at || 0) - 2000)?.label;
+  const madeIn = (c) =>
+    snaps.find(
+      (x) =>
+        x.kinds.includes("caller") &&
+        x.parts.caller === c.to &&
+        Date.parse(x.at || 0) >= Date.parse(c.at || 0) - 2000,
+    )?.label;
   const callerRows = [
     ...[...changes].reverse().map((c, i) => ({
       key: `${c.label}-${c.at}`,
@@ -974,23 +1595,40 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
             label="Repeats per scenario"
             help={`Each scenario runs this many times, 1 to ${REPEATS_MAX}. Three tells a flaky scenario from a failing one.`}
             value={d.repeats}
-            min={1} max={REPEATS_MAX}
+            min={1}
+            max={REPEATS_MAX}
             onChange={(v) => save({ repeats: v })}
           />
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Stack direction="row" alignItems="baseline" justifyContent="space-between">
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>Conversations at once</Typography>
-              <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.conversationsAtOnce}</Typography>
+            <Stack
+              direction="row"
+              alignItems="baseline"
+              justifyContent="space-between"
+            >
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Conversations at once
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {d.conversationsAtOnce}
+              </Typography>
             </Stack>
             <Slider
               size="small"
               value={d.conversationsAtOnce}
-              min={1} max={PARALLEL_MAX} step={1}
+              min={1}
+              max={PARALLEL_MAX}
+              step={1}
               disabled={locked || !d.parallel}
               onChange={(_, v) => save({ conversationsAtOnce: Math.max(2, v) })}
               sx={{ py: 1, "& .MuiSlider-thumb": { width: 12, height: 12 } }}
             />
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {d.parallel
                 ? `Up to ${PARALLEL_MAX} at once while parallel runs are on.`
                 : `One at a time. Turn on parallel runs to run up to ${PARALLEL_MAX} at once.`}
@@ -999,9 +1637,11 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
         </Stack>
         <ToggleSetting
           label={`Run conversations in parallel — up to ${PARALLEL_MAX} at once`}
-          help={voice
-            ? "Place several calls at once. Your provider's concurrency limit still applies, and a live agent takes them all at the same time. Off, one at a time."
-            : "Run several conversations at once. Results are the same; a run finishes sooner. Off, one at a time."}
+          help={
+            voice
+              ? "Place several calls at once. Your provider's concurrency limit still applies, and a live agent takes them all at the same time. Off, one at a time."
+              : "Run several conversations at once. Results are the same; a run finishes sooner. Off, one at a time."
+          }
           checked={d.parallel}
           onChange={setParallel}
         />
@@ -1009,44 +1649,95 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
           label="Turn limit"
           help={`A conversation stops after this many agent turns and fails with “Hit the turn limit”. A scenario's own limit wins${voice ? " — a voice scenario's Max turns" : ""}. ${TURN_LIMIT_RANGE.min} to ${TURN_LIMIT_RANGE.max}.`}
           value={turnLimit}
-          min={TURN_LIMIT_RANGE.min} max={TURN_LIMIT_RANGE.max}
+          min={TURN_LIMIT_RANGE.min}
+          max={TURN_LIMIT_RANGE.max}
           onChange={(v) => save({ turnLimit: v })}
         />
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          spacing={2}
+        >
           <Box minWidth={0}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>Simulated user&apos;s model</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {SIMULATOR_MODELS.find((m) => m.id === model)?.note || "The model that plays the caller in every scenario."}
-              {" Part of the environment version a run holds fixed — changing it makes the next version, and runs before and after it don't compare."}
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              Simulated user&apos;s model
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {SIMULATOR_MODELS.find((m) => m.id === model)?.note ||
+                "The model that plays the caller in every scenario."}
+              {
+                " Part of the environment version a run holds fixed — changing it makes the next version, and runs before and after it don't compare."
+              }
             </Typography>
           </Box>
           <Select
             size="small"
             value={model}
             disabled={locked}
-            onChange={(e) => { if (!locked && patch) patch(callerChangePatch(env, envState, e.target.value)); }}
+            onChange={(e) => {
+              if (!locked && patch)
+                patch(callerChangePatch(env, envState, e.target.value));
+            }}
             sx={{ minWidth: 200, typography: "s2", flexShrink: 0 }}
           >
             {models.map((m) => (
-              <MenuItem key={m.id} value={m.id} sx={{ typography: "s2" }}>{m.label}</MenuItem>
+              <MenuItem key={m.id} value={m.id} sx={{ typography: "s2" }}>
+                {m.label}
+              </MenuItem>
             ))}
           </Select>
         </Stack>
       </Stack>
       {/* Caller history — each change is also a step in the environment's version history. */}
       <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ px: 2.5, pt: 1.25, pb: 0.5, typography: "s3", fontWeight: 700, color: "text.subtitle" }}>
+        <Typography
+          sx={{
+            px: 2.5,
+            pt: 1.25,
+            pb: 0.5,
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.tertiary",
+          }}
+        >
           Simulated caller changes
         </Typography>
-        <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        <Stack
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
+        >
           {callerRows.map((c) => (
-            <Stack key={c.key} direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1 }}>
+            <Stack
+              key={c.key}
+              direction="row"
+              alignItems="center"
+              spacing={2}
+              sx={{ px: 2.5, py: 1 }}
+            >
               <Box flex={1} minWidth={0}>
-                <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{c.title}</Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{c.sub}</Typography>
+                <Typography noWrap sx={{ typography: "s2_1", fontWeight: 500 }}>
+                  {c.title}
+                </Typography>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.tertiary" }}
+                >
+                  {c.sub}
+                </Typography>
               </Box>
               {c.current && (
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", flexShrink: 0 }}>Current</Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                    flexShrink: 0,
+                  }}
+                >
+                  Current
+                </Typography>
               )}
             </Stack>
           ))}
@@ -1055,7 +1746,12 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
     </SectionCard>
   );
 }
-SimulationDefaultsSection.propTypes = { env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func, locked: PropTypes.bool };
+SimulationDefaultsSection.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 /*
   Scenarios from production (RSI PRD) — a workspace-admin setting, not an
@@ -1073,15 +1769,36 @@ function ProductionScenariosSection({ envState }) {
       title="Scenarios from production"
       subtitle="A workspace setting — it applies to every environment"
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} sx={{ p: 2.5 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        spacing={2}
+        sx={{ p: 2.5 }}
+      >
         <Box minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Iconify icon={on ? "solar:check-circle-linear" : "solar:forbidden-circle-linear"} width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+            <Iconify
+              icon={
+                on
+                  ? "solar:check-circle-linear"
+                  : "solar:forbidden-circle-linear"
+              }
+              width={16}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
               {on ? "On for this workspace" : "Off for this workspace"}
             </Typography>
           </Stack>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, maxWidth: 640 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              mt: 0.25,
+              maxWidth: 640,
+            }}
+          >
             {on
               ? "Error Feed issues and production conversations can become scenarios. Names, phone numbers, emails, addresses, account and card numbers are replaced with fake values before a scenario is saved; call audio is never reused."
               : "The Error Feed and production conversations are unavailable as sources on Add scenarios. Scenarios already added stay."}
@@ -1090,8 +1807,14 @@ function ProductionScenariosSection({ envState }) {
             component={RouterLink}
             to={paths.dashboard.settings.orgSettings}
             sx={{
-              display: "inline-flex", alignItems: "center", gap: 0.25, mt: 0.5,
-              typography: "s3", fontWeight: 600, color: "text.secondary", textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.25,
+              mt: 0.5,
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.secondary",
+              textDecoration: "none",
               "&:hover": { color: "text.primary", textDecoration: "underline" },
             }}
           >
@@ -1099,13 +1822,25 @@ function ProductionScenariosSection({ envState }) {
             <Iconify icon="solar:arrow-right-up-linear" width={12} />
           </Typography>
         </Box>
-        <Tooltip arrow title={isAdmin ? `Workspace admin · ${on ? "turns it off" : "turns it on"} for every environment` : readOnlyReason}>
+        <Tooltip
+          arrow
+          title={
+            isAdmin
+              ? `Workspace admin · ${on ? "turns it off" : "turns it on"} for every environment`
+              : readOnlyReason
+          }
+        >
           <span>
             <Button
-              size="small" variant="outlined"
+              size="small"
+              variant="outlined"
               disabled={!isAdmin}
               onClick={() => set("productionScenarios", !on)}
-              sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", borderColor: "divider", flexShrink: 0 }}
+              sx={{
+                color: "text.secondary",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
             >
               {on ? "Turn off for workspace" : "Turn on for workspace"}
             </Button>

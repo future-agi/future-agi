@@ -1,7 +1,14 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, IconButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import {
+  Box,
+  Button,
+  IconButton,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { HintLine } from "./replicationBits";
 
@@ -15,9 +22,18 @@ export function TextLink({ onClick, children, sx }) {
       role="button"
       tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(); } }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
       sx={{
-        typography: "s3", color: "text.subtitle", cursor: "pointer", display: "inline-block", width: "fit-content",
+        typography: "s3",
+        color: "text.subtitle",
+        cursor: "pointer",
+        display: "inline-block",
+        width: "fit-content",
         "&:hover": { color: "text.primary", textDecoration: "underline" },
         ...sx,
       }}
@@ -26,7 +42,11 @@ export function TextLink({ onClick, children, sx }) {
     </Typography>
   );
 }
-TextLink.propTypes = { onClick: PropTypes.func, children: PropTypes.node, sx: PropTypes.object };
+TextLink.propTypes = {
+  onClick: PropTypes.func,
+  children: PropTypes.node,
+  sx: PropTypes.object,
+};
 
 /* A few lines of code to copy — the command or the wrapper the person pastes. */
 export function CodeSnippet({ code }) {
@@ -37,16 +57,42 @@ export function CodeSnippet({ code }) {
     setTimeout(() => setCopied(false), 1600);
   };
   return (
-    <Box sx={{ position: "relative", border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "background.neutral" }}>
+    <Box
+      sx={{
+        position: "relative",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.neutral",
+      }}
+    >
       <Box
         component="pre"
-        sx={{ m: 0, px: 1.5, py: 1.125, pr: 5, overflowX: "auto", typography: "s2", fontFamily: MONO, color: "text.primary", whiteSpace: "pre" }}
+        sx={{
+          m: 0,
+          px: 1.5,
+          py: 1.125,
+          pr: 5,
+          overflowX: "auto",
+          typography: "s2",
+          fontFamily: MONO,
+          color: "text.primary",
+          whiteSpace: "pre",
+        }}
       >
         {code}
       </Box>
       <Tooltip arrow title={copied ? "Copied" : "Copy"}>
-        <IconButton size="small" onClick={copy} sx={{ position: "absolute", top: 6, right: 6, p: 0.5 }}>
-          <Iconify icon={copied ? "solar:check-read-linear" : "solar:copy-linear"} width={15} sx={{ color: copied ? "text.primary" : "text.subtitle" }} />
+        <IconButton
+          size="small"
+          onClick={copy}
+          sx={{ position: "absolute", top: 6, right: 6, p: 0.5 }}
+        >
+          <Iconify
+            icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
+            width={16}
+            sx={{ color: copied ? "text.primary" : "text.subtitle" }}
+          />
         </IconButton>
       </Tooltip>
     </Box>
@@ -59,13 +105,31 @@ CodeSnippet.propTypes = { code: PropTypes.string.isRequired };
   fact was read from compiled code — a graph, a crew — so it can only be
   confirmed; correcting it means changing the code.
 */
-export function FactRow({ fact, value, from, status, first, onConfirm, onCorrect }) {
+export function FactRow({
+  fact,
+  value,
+  from,
+  status,
+  first,
+  onConfirm,
+  onCorrect,
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const shown = fact.list ? (value || []) : value;
-  const open = () => { setDraft(fact.list ? (value || []).join("\n") : value || ""); setEditing(true); };
+  const shown = fact.list ? value || [] : value;
+  const open = () => {
+    setDraft(fact.list ? (value || []).join("\n") : value || "");
+    setEditing(true);
+  };
   const save = () => {
-    onCorrect(fact.list ? draft.split("\n").map((x) => x.trim()).filter(Boolean) : draft.trim());
+    onCorrect(
+      fact.list
+        ? draft
+            .split("\n")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : draft.trim(),
+    );
     setEditing(false);
   };
   return (
@@ -73,22 +137,59 @@ export function FactRow({ fact, value, from, status, first, onConfirm, onCorrect
       direction={{ xs: "column", sm: "row" }}
       spacing={{ xs: 0.5, sm: 2 }}
       alignItems={{ sm: "flex-start" }}
-      sx={{ px: 1.75, py: 1.25, borderTop: first ? "none" : "1px solid", borderColor: "divider" }}
+      sx={{
+        px: 1.75,
+        py: 1.25,
+        borderTop: first ? "none" : "1px solid",
+        borderColor: "divider",
+      }}
     >
-      <Typography sx={{ typography: "s2", color: "text.subtitle", width: { sm: 120 }, flexShrink: 0, pt: "1px" }}>{fact.label}</Typography>
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.subtitle",
+          width: { sm: 120 },
+          flexShrink: 0,
+          pt: "1px",
+        }}
+      >
+        {fact.label}
+      </Typography>
       <Box flex={1} minWidth={0}>
         {editing ? (
           <Stack spacing={0.75}>
             <TextField
-              autoFocus fullWidth size="small"
-              multiline={fact.list} minRows={fact.list ? 3 : undefined}
-              value={draft} onChange={(e) => setDraft(e.target.value)}
+              autoFocus
+              fullWidth
+              size="small"
+              multiline={fact.list}
+              minRows={fact.list ? 3 : undefined}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
               helperText={fact.list ? "One per line" : null}
-              sx={{ "& .MuiInputBase-input": { typography: "s2", ...(fact.mono && { fontFamily: MONO }) } }}
+              sx={{
+                "& .MuiInputBase-input": {
+                  typography: "s2",
+                  ...(fact.mono && { fontFamily: MONO }),
+                },
+              }}
             />
             <Stack direction="row" spacing={0.5}>
-              <Button size="small" variant="contained" color="primary" onClick={save} sx={{ typography: "s3", fontWeight: 700 }}>Save</Button>
-              <Button size="small" onClick={() => setEditing(false)} sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>Cancel</Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={save}
+              >
+                Save
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setEditing(false)}
+                sx={{ color: "text.secondary" }}
+              >
+                Cancel
+              </Button>
             </Stack>
           </Stack>
         ) : (
@@ -96,44 +197,115 @@ export function FactRow({ fact, value, from, status, first, onConfirm, onCorrect
             {fact.chips ? (
               <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                 {shown.map((t) => (
-                  <Box key={t} sx={{ px: 0.75, py: 0.25, borderRadius: 0.75, border: "1px solid", borderColor: "divider", typography: "s3", fontFamily: MONO, color: "text.secondary" }}>
+                  <Box
+                    key={t}
+                    sx={{
+                      px: 0.75,
+                      py: 0.25,
+                      borderRadius: "4px",
+                      border: "1px solid",
+                      borderColor: "divider",
+                      typography: "s3",
+                      fontFamily: MONO,
+                      color: "text.secondary",
+                    }}
+                  >
                     {t}
                   </Box>
                 ))}
-                {!shown.length && <Typography sx={{ typography: "s2", color: "text.subtitle" }}>None</Typography>}
+                {!shown.length && (
+                  <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                    None
+                  </Typography>
+                )}
               </Stack>
             ) : (
-              <Typography sx={{ typography: "s2", fontWeight: 600, wordBreak: fact.mono ? "break-all" : "normal", whiteSpace: "pre-line", ...(fact.mono && { fontFamily: MONO }) }}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  wordBreak: fact.mono ? "break-all" : "normal",
+                  whiteSpace: "pre-line",
+                  ...(fact.mono && { fontFamily: MONO }),
+                }}
+              >
                 {fact.list ? shown.join("\n") || "None" : shown || "—"}
               </Typography>
             )}
-            {from && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{from}</Typography>}
+            {from && (
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+              >
+                {from}
+              </Typography>
+            )}
           </>
         )}
       </Box>
       {!editing && (
-        <Stack direction="row" alignItems="center" spacing={0.25} sx={{ flexShrink: 0, minWidth: 120, justifyContent: "flex-end" }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.25}
+          sx={{ flexShrink: 0, minWidth: 120, justifyContent: "flex-end" }}
+        >
           {status ? (
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: "text.secondary", pr: 0.5 }}>
-              <Iconify icon={status === "corrected" ? "solar:pen-2-linear" : "solar:check-read-linear"} width={14} />
-              <Typography sx={{ typography: "s3", fontWeight: 600 }}>{status === "corrected" ? "Corrected" : "Confirmed"}</Typography>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ color: "text.secondary", pr: 0.5 }}
+            >
+              <Iconify
+                icon={
+                  status === "corrected"
+                    ? "solar:pen-2-linear"
+                    : "solar:check-read-linear"
+                }
+                width={14}
+              />
+              <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                {status === "corrected" ? "Corrected" : "Confirmed"}
+              </Typography>
             </Stack>
           ) : (
-            <Button size="small" onClick={onConfirm} sx={{ typography: "s3", fontWeight: 700, color: "text.primary", minWidth: 0 }}>
+            <Button
+              size="small"
+              onClick={onConfirm}
+              sx={{ color: "text.primary", minWidth: 0 }}
+            >
               Confirm
             </Button>
           )}
           {fact.fixed ? (
             /* Same width as the pencil, so every row's Confirm lines up. */
-            <Tooltip arrow title="Read from the compiled code — change it there">
-              <Box sx={{ width: 30, height: 30, display: "grid", placeItems: "center" }}>
-                <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.disabled" }} />
+            <Tooltip
+              arrow
+              title="Read from the compiled code — change it there"
+            >
+              <Box
+                sx={{
+                  width: 30,
+                  height: 30,
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                <Iconify
+                  icon="solar:lock-keyhole-minimalistic-linear"
+                  width={14}
+                  sx={{ color: "text.disabled" }}
+                />
               </Box>
             </Tooltip>
           ) : (
             <Tooltip arrow title="Correct it">
               <IconButton size="small" onClick={open}>
-                <Iconify icon="solar:pen-2-linear" width={14} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:pen-2-linear"
+                  width={14}
+                  sx={{ color: "text.subtitle" }}
+                />
               </IconButton>
             </Tooltip>
           )}
@@ -143,8 +315,13 @@ export function FactRow({ fact, value, from, status, first, onConfirm, onCorrect
   );
 }
 FactRow.propTypes = {
-  fact: PropTypes.object, value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]), from: PropTypes.node,
-  status: PropTypes.string, first: PropTypes.bool, onConfirm: PropTypes.func, onCorrect: PropTypes.func,
+  fact: PropTypes.object,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
+  from: PropTypes.node,
+  status: PropTypes.string,
+  first: PropTypes.bool,
+  onConfirm: PropTypes.func,
+  onCorrect: PropTypes.func,
 };
 
 /*
@@ -158,22 +335,54 @@ export function DetailRow({ label, from, right, first, children }) {
       direction={{ xs: "column", sm: "row" }}
       spacing={{ xs: 0.5, sm: 2 }}
       alignItems={{ sm: "flex-start" }}
-      sx={{ px: 1.75, py: 1.25, borderTop: first ? "none" : "1px solid", borderColor: "divider" }}
+      sx={{
+        px: 1.75,
+        py: 1.25,
+        borderTop: first ? "none" : "1px solid",
+        borderColor: "divider",
+      }}
     >
-      <Typography sx={{ typography: "s2", color: "text.subtitle", width: { sm: 120 }, flexShrink: 0, pt: "1px" }}>{label}</Typography>
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.subtitle",
+          width: { sm: 120 },
+          flexShrink: 0,
+          pt: "1px",
+        }}
+      >
+        {label}
+      </Typography>
       <Box flex={1} minWidth={0}>
         {children}
-        {from && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>{from}</Typography>}
+        {from && (
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+          >
+            {from}
+          </Typography>
+        )}
       </Box>
       {right && (
-        <Stack direction="row" alignItems="center" spacing={0.25} sx={{ flexShrink: 0, minWidth: 120, justifyContent: "flex-end" }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.25}
+          sx={{ flexShrink: 0, minWidth: 120, justifyContent: "flex-end" }}
+        >
           {right}
         </Stack>
       )}
     </Stack>
   );
 }
-DetailRow.propTypes = { label: PropTypes.node, from: PropTypes.node, right: PropTypes.node, first: PropTypes.bool, children: PropTypes.node };
+DetailRow.propTypes = {
+  label: PropTypes.node,
+  from: PropTypes.node,
+  right: PropTypes.node,
+  first: PropTypes.bool,
+  children: PropTypes.node,
+};
 
 /*
   The members an import found — a Vapi squad, a Retell conversation flow, an
@@ -184,14 +393,52 @@ DetailRow.propTypes = { label: PropTypes.node, from: PropTypes.node, right: Prop
 export function MembersPreview({ members, title = "Members", note }) {
   if (!members?.length) return null;
   const cols = "minmax(0, 1.1fr) minmax(0, 1.4fr) 130px minmax(0, 1.2fr)";
-  const head = { typography: "s3", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "text.subtitle" };
+  const head = {
+    typography: "s3",
+    fontWeight: 600,
+    letterSpacing: 0.4,
+    textTransform: "none",
+    color: "text.subtitle",
+  };
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ px: 1.5, py: 0.875, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`${members.length} · saved as this agent's members`}</Typography>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        spacing={1}
+        sx={{
+          px: 1.5,
+          py: 0.875,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        <Typography
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >{`${members.length} · saved as this agent's members`}</Typography>
       </Stack>
-      <Box sx={{ display: { xs: "none", sm: "grid" }, gridTemplateColumns: cols, columnGap: 2, px: 1.5, py: 0.75, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider" }}>
+      <Box
+        sx={{
+          display: { xs: "none", sm: "grid" },
+          gridTemplateColumns: cols,
+          columnGap: 2,
+          px: 1.5,
+          py: 0.75,
+          bgcolor: "background.neutral",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
         <Typography sx={head}>Name</Typography>
         <Typography sx={head}>Role</Typography>
         <Typography sx={head}>Model</Typography>
@@ -200,23 +447,61 @@ export function MembersPreview({ members, title = "Members", note }) {
       {members.map((m, i) => (
         <Box
           key={m.id || m.name}
-          sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: cols }, columnGap: 2, rowGap: 0.25, alignItems: "center", px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: cols },
+            columnGap: 2,
+            rowGap: 0.25,
+            alignItems: "center",
+            px: 1.5,
+            py: 0.875,
+            borderTop: i ? "1px solid" : "none",
+            borderColor: "divider",
+          }}
         >
-          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{m.name}</Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>{m.role}</Typography>
-          <Typography noWrap sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}>{m.model}</Typography>
-          <Typography noWrap sx={{ typography: "s3", fontFamily: MONO, color: "text.subtitle" }}>{m.promptRef}</Typography>
+          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+            {m.name}
+          </Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
+            {m.role}
+          </Typography>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}
+          >
+            {m.model}
+          </Typography>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", fontFamily: MONO, color: "text.subtitle" }}
+          >
+            {m.promptRef}
+          </Typography>
         </Box>
       ))}
       {note && (
-        <Typography sx={{ px: 1.5, py: 0.75, typography: "s3", color: "text.subtitle", borderTop: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
+        <Typography
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            typography: "s3",
+            color: "text.subtitle",
+            borderTop: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.neutral",
+          }}
+        >
           {note}
         </Typography>
       )}
     </Box>
   );
 }
-MembersPreview.propTypes = { members: PropTypes.array, title: PropTypes.string, note: PropTypes.node };
+MembersPreview.propTypes = {
+  members: PropTypes.array,
+  title: PropTypes.string,
+  note: PropTypes.node,
+};
 
 /*
   What improvements can change for this framework, as a two-row spec sheet:
@@ -228,45 +513,121 @@ export function FrameworkTuning({ tuning, structure }) {
   if (!tuning) return null;
   const rows = [
     ["Improvements edit", tuning.edits],
-    ...(structure ? [["Structure", `${structure} — read by the adapter, changed only with a written rationale`]] : []),
-    ["Production traces", tuning.traced ? "Through traceAI, into the Error Feed" : "traceAI doesn't instrument it — failures come from simulations"],
+    ...(structure
+      ? [
+          [
+            "Structure",
+            `${structure} — read by the adapter, changed only with a written rationale`,
+          ],
+        ]
+      : []),
+    [
+      "Production traces",
+      tuning.traced
+        ? "Through traceAI, into the Error Feed"
+        : "traceAI doesn't instrument it — failures come from simulations",
+    ],
   ];
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
       {rows.map(([label, value], i) => (
-        <Stack key={label} direction="row" spacing={1.5} sx={{ px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", width: 128, flexShrink: 0 }}>{label}</Typography>
-          <Typography sx={{ typography: "s3", color: "text.primary", flex: 1, minWidth: 0 }}>{value}</Typography>
+        <Stack
+          key={label}
+          direction="row"
+          spacing={1.5}
+          sx={{
+            px: 1.5,
+            py: 0.875,
+            borderTop: i ? "1px solid" : "none",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              width: 128,
+              flexShrink: 0,
+            }}
+          >
+            {label}
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.primary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {value}
+          </Typography>
         </Stack>
       ))}
     </Box>
   );
 }
-FrameworkTuning.propTypes = { tuning: PropTypes.object, structure: PropTypes.string };
+FrameworkTuning.propTypes = {
+  tuning: PropTypes.object,
+  structure: PropTypes.string,
+};
 
 /** One of two or three ways to do something, as a selectable card with a one-line summary and a hint. */
 export function WhereOption({ icon, label, short, hint, on, onClick }) {
   return (
     <Stack
-      direction="row" spacing={1.25} alignItems="flex-start"
-      role="radio" aria-checked={on} tabIndex={0}
+      direction="row"
+      spacing={1.25}
+      alignItems="flex-start"
+      role="radio"
+      aria-checked={on}
+      tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       sx={{
-        px: 1.5, py: 1.25, borderRadius: 1, border: "1px solid", cursor: "pointer",
+        px: 1.5,
+        py: 1.25,
+        borderRadius: 1,
+        border: "1px solid",
+        cursor: "pointer",
         borderColor: on ? "text.primary" : "divider",
-        bgcolor: (t) => (on ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03) : "transparent"),
+        bgcolor: on ? "action.selected" : "transparent",
       }}
     >
-      <Iconify icon={icon} width={16} sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }} />
+      <Iconify
+        icon={icon}
+        width={16}
+        sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{label}</Typography>
-        <Typography component="div" sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {label}
+        </Typography>
+        <Typography
+          component="div"
+          sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+        >
           <HintLine hint={hint}>{short}</HintLine>
         </Typography>
       </Box>
-      <Iconify icon={on ? "solar:check-circle-bold" : "solar:circle-linear"} width={16} sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }} />
+      <Iconify
+        icon={on ? "solar:check-circle-bold" : "solar:circle-linear"}
+        width={16}
+        sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }}
+      />
     </Stack>
   );
 }
-WhereOption.propTypes = { icon: PropTypes.string, label: PropTypes.string, short: PropTypes.string, hint: PropTypes.string, on: PropTypes.bool, onClick: PropTypes.func };
+WhereOption.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.string,
+  short: PropTypes.string,
+  hint: PropTypes.string,
+  on: PropTypes.bool,
+  onClick: PropTypes.func,
+};

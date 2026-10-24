@@ -5,16 +5,37 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import RunsOverview from "./RunsOverview";
-import { previousRunOf, runStatsOf, sharedDeltaOf, sameEnvVersion } from "../_mock/runCompare";
 import {
-  Box, Stack, Typography, Button, Checkbox, Popover, Tooltip, IconButton,
-  Menu, MenuItem, ListItemText, ListItemIcon, Chip,
+  previousRunOf,
+  runStatsOf,
+  sharedDeltaOf,
+  sameEnvVersion,
+} from "../_mock/runCompare";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Checkbox,
+  Popover,
+  Tooltip,
+  IconButton,
+  Menu,
+  MenuItem,
+  ListItemText,
+  ListItemIcon,
+  Chip,
 } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { statusStyles } from "src/sections/common/simulation";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { runSummaries, evalSeries, trialSummaries, RUN_COLORS } from "../_mock/comparison";
+import {
+  runSummaries,
+  evalSeries,
+  trialSummaries,
+  RUN_COLORS,
+} from "../_mock/comparison";
 import { TRIAL_CAP, DEMO_QUEUED_ROW } from "../_mock/runList";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { isCandidateRun, runIdentityOf } from "../_mock/runIdentity";
@@ -35,7 +56,6 @@ import AlsoRunIn from "./AlsoRunIn";
 import useRunGroup from "./useRunGroup";
 import { clickable, focusRing } from "../components/clickable";
 
-
 /* Timestamp for a run row. Falls back to startedAt and never prints
    "Invalid Date" for an in-progress run that has no finishedAt yet. */
 const runTimeLabel = (r) => {
@@ -43,7 +63,10 @@ const runTimeLabel = (r) => {
   const d = raw ? new Date(raw) : null;
   if (!d || Number.isNaN(d.getTime())) return "in progress";
   return d.toLocaleString(undefined, {
-    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 
@@ -109,7 +132,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
      time); the table shows newest first like every other run. */
   const [allTrials, setAllTrials] = useState(false);
   const trialsAll = useMemo(
-    () => trialSummaries(env, envState).slice().sort((a, b) => new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0)),
+    () =>
+      trialSummaries(env, envState)
+        .slice()
+        .sort(
+          (a, b) => new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0),
+        ),
     [env, envState],
   );
   const trials = useMemo(
@@ -127,14 +155,17 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   const mergedRaw = useMemo(() => {
     /* A run still going has no finish time yet — it sorts by when it
        started, not as the oldest run there is. */
-    const when = (r) => new Date(r.finishedAt || r.startedAt || Date.now()).getTime();
+    const when = (r) =>
+      new Date(r.finishedAt || r.startedAt || Date.now()).getTime();
     const combined = [...summaries, ...trials]
       .filter((r) => !r.synthetic)
       .sort((a, b) => when(a) - when(b));
     /* A run keeps the number it was stamped with when it ran — the same one
        its own page, Insights, the digest and Compare print. Trials read as
        "Trial N" with their T badge, so they never shift a run's number. */
-    const stamped = combined.map((r) => (r.kind === "trial" ? { ...r, ordinal: null } : r));
+    const stamped = combined.map((r) =>
+      r.kind === "trial" ? { ...r, ordinal: null } : r,
+    );
     /* For every trial, find the ordinal of the manual run that spawned
        its improvement run — used by the "from Run N" chip on
        trial rows. Trial → optimization.fromRunId → run.ordinal. */
@@ -145,7 +176,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     return stamped.map((r) => {
       if (r.kind !== "trial") return r;
       const parentRunId = parentByOptId.get(r.selfImprovementId);
-      return { ...r, parentRunOrdinal: parentRunId ? ordinalById.get(parentRunId) : null };
+      return {
+        ...r,
+        parentRunOrdinal: parentRunId ? ordinalById.get(parentRunId) : null,
+      };
     });
   }, [summaries, trials, envState.optimizations]);
 
@@ -160,7 +194,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     [mergedRaw, envState],
   );
   const listed = useMemo(
-    () => (showCandidates ? mergedRaw : mergedRaw.filter((r) => !isCandidateRun(r, envState))),
+    () =>
+      showCandidates
+        ? mergedRaw
+        : mergedRaw.filter((r) => !isCandidateRun(r, envState)),
     [mergedRaw, showCandidates, envState],
   );
 
@@ -172,33 +209,47 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
      winner, which all read `rows` / `allSummaries` — but it can be selected
      and deleted, like any run nobody wants any more. */
   const tableRows = useMemo(() => {
-    if (!DEMO_QUEUED_ROW || envState.demoQueuedRemoved || !rows.length) return rows;
+    if (!DEMO_QUEUED_ROW || envState.demoQueuedRemoved || !rows.length)
+      return rows;
     const next = Math.max(...rows.map((r) => r.ordinal || 0)) + 1;
-    return [{
-      id: QUEUED_ID,
-      kind: "queued-demo",
-      status: "queued",
-      ordinal: next,
-      letter: String(next),
-      color: RUN_COLORS[(next - 1) % RUN_COLORS.length],
-      agentVersion: currentAgentVersion(envState)?.label || "—",
-      envVersion: currentEnvVersion(env, envState)?.label,
-    }, ...rows];
+    return [
+      {
+        id: QUEUED_ID,
+        kind: "queued-demo",
+        status: "queued",
+        ordinal: next,
+        letter: String(next),
+        color: RUN_COLORS[(next - 1) % RUN_COLORS.length],
+        agentVersion: currentAgentVersion(envState)?.label || "—",
+        envVersion: currentEnvVersion(env, envState)?.label,
+      },
+      ...rows,
+    ];
   }, [rows, env, envState]);
 
   /* Chart, compare, baseline lookups all read from the same merged list. */
   const allSummaries = mergedRaw;
   /* Finished runs someone started — what each row's change is read against. */
-  const finishedRuns = useMemo(() => mergedRaw.filter((r) => r.kind !== "trial" && r.finishedAt), [mergedRaw]);
+  const finishedRuns = useMemo(
+    () => mergedRaw.filter((r) => r.kind !== "trial" && r.finishedAt),
+    [mergedRaw],
+  );
 
   /* Eval series is now built off the merged list so trials contribute
      points, not just manual runs. Same shape evalSeries produces. */
   const series = useMemo(() => {
-    const evalDefs = (envState?.evals || []).map((e) => ({ id: e.id })).filter((e) => e.id);
-    const rawSeries = evalSeries(summaries, envState); /* keeps colour/name mapping */
+    const evalDefs = (envState?.evals || [])
+      .map((e) => ({ id: e.id }))
+      .filter((e) => e.id);
+    const rawSeries = evalSeries(
+      summaries,
+      envState,
+    ); /* keeps colour/name mapping */
     return rawSeries.map((s) => ({
       ...s,
-      data: listed.map((r) => (r.scores?.[s.id] == null ? null : r.scores[s.id])),
+      data: listed.map((r) =>
+        r.scores?.[s.id] == null ? null : r.scores[s.id],
+      ),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listed, summaries, envState]);
@@ -226,16 +277,29 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     if (!expectation) return null;
     const all = envState.scenarios.map((sc) => sc.id);
     const setOf = (ids) => [...new Set(ids)].sort().join(",");
-    const wanted = setOf(Array.isArray(expectation.scenarios) ? expectation.scenarios : all);
-    return summaries.find((r) => r.agentVersion === expectation.version
-      && r.finishedAt
-      && (!expectation.envVersion || r.envVersion === expectation.envVersion)
-      && setOf(r.scenarioIds?.length ? r.scenarioIds : all) === wanted) || null;
+    const wanted = setOf(
+      Array.isArray(expectation.scenarios) ? expectation.scenarios : all,
+    );
+    return (
+      summaries.find(
+        (r) =>
+          r.agentVersion === expectation.version &&
+          r.finishedAt &&
+          (!expectation.envVersion ||
+            r.envVersion === expectation.envVersion) &&
+          setOf(r.scenarioIds?.length ? r.scenarioIds : all) === wanted,
+      ) || null
+    );
   }, [expectation, summaries, envState.scenarios]);
   /* Required ones are marked — only they weigh like a pass/fail signal. */
   const evals = useMemo(() => {
     const required = new Set(requiredEvalIds(envState?.evals || []));
-    return series.map((s) => ({ id: s.id, name: s.name, color: s.color, required: required.has(s.id) }));
+    return series.map((s) => ({
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      required: required.has(s.id),
+    }));
   }, [series, envState?.evals]);
 
   /* The same metric definitions the winner weights use, so a column that reads
@@ -246,7 +310,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   );
 
   const toggle = (id) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
 
   /*
     The baseline is what everything else is read as a change from, so it has to
@@ -262,10 +328,13 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
       .filter((r) => selected.includes(r.id))
       .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt))
       .map((r) => r.id);
-    const ordered = baselineId && chronological.includes(baselineId)
-      ? [baselineId, ...chronological.filter((id) => id !== baselineId)]
-      : chronological;
-    navigate(`${paths.dashboard.simulate.simulationCompare(env.id)}?runs=${ordered.join(",")}`);
+    const ordered =
+      baselineId && chronological.includes(baselineId)
+        ? [baselineId, ...chronological.filter((id) => id !== baselineId)]
+        : chronological;
+    navigate(
+      `${paths.dashboard.simulate.simulationCompare(env.id)}?runs=${ordered.join(",")}`,
+    );
   };
 
   const setBaseline = () => {
@@ -349,7 +418,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   }, [evals]);
 
   return (
-    <Box sx={{ p: 2, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+    <Box
+      sx={{ p: 2, display: "flex", flexDirection: "column", minHeight: "100%" }}
+    >
       {/* No "Simulations summary" heading — the tab names the page. Add Evals
           and Choose winner sit on the runs bar, beside the run count. */}
       {/* Pass rate by run, in its own card above the runs. */}
@@ -358,110 +429,175 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           runs={listed}
           versionOf={versionOf}
           evals={evals}
-          barPct={Math.round(((envState.reportBar?.pass1) ?? 0.8) * 100)}
-          onOpenRun={(r) => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))}
+          barPct={Math.round((envState.reportBar?.pass1 ?? 0.8) * 100)}
+          onOpenRun={(r) =>
+            navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))
+          }
         />
       </Box>
-      {/* ── one surface ──
-          The chart and the runs were two bordered cards stacked with a gap,
-          which spent three horizontal rules and 40px of air on a boundary
-          nobody needed: the chart is a summary *of* these runs. One card, one
-          divider. */}
+      {/* ── the runs ──
+          Design system table: no box around it. The bar sits above the
+          table and hairlines divide the rows. */}
       <Box
         sx={{
-          border: "1px solid", borderColor: "divider", borderRadius: 1.5,
-          bgcolor: "background.paper", overflow: "hidden",
+          overflow: "hidden",
           /* Grow to fill any remaining vertical space so the card
              reaches the bottom of the surrounding scroll container
              instead of leaving a blank strip beneath it (e.g. on
              Improvements L2 where the header is shorter than the
              env workspace's). */
-          flex: 1, display: "flex", flexDirection: "column",
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         {/* ── did the fix do what it was projected to do ── */}
-      {expectation && verified && (
-        <Stack
-          direction="row" alignItems="flex-start" spacing={1.5}
-          sx={{
-            mb: 2, px: 2.5, py: 1.75, borderRadius: 1.5, border: "1px solid",
-            borderColor: (t) => alpha(verified.passRate >= expectation.projected ? "#16A34A" : "#CA8A04", 0.35),
-            bgcolor: (t) => alpha(
-              verified.passRate >= expectation.projected ? "#16A34A" : "#CA8A04",
-              t.palette.mode === "dark" ? 0.1 : 0.05,
-            ),
-          }}
-        >
-          <Iconify
-            icon={verified.passRate >= expectation.projected ? "solar:check-circle-bold" : "solar:info-circle-bold"}
-            width={16}
-            sx={{ color: verified.passRate >= expectation.projected ? "#16A34A" : "#CA8A04", flexShrink: 0, mt: "1px" }}
-          />
-          <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-              Projected {expectation.projected}%{expectation.projectedOn ? ` (${expectation.projectedOn === "held out" ? "held-back scenarios" : expectation.projectedOn})` : ""} for agent {expectation.version} — it came in at {verified.passRate}%
-            </Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {verified.passRate >= expectation.projected
-                ? `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run met the projection. The projection is only ever a claim until a run answers it.`
-                : `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run fell ${expectation.projected - verified.passRate} points short. Worth reading which of them still fail before proposing the next fix.`}
-            </Typography>
-          </Box>
-          <Button
-            size="small"
-            onClick={() => patch({ omegaExpectation: null })}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", flexShrink: 0 }}
+        {expectation && verified && (
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            spacing={1.5}
+            sx={{
+              mb: 2,
+              px: 2.5,
+              py: 1.75,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor:
+                verified.passRate >= expectation.projected
+                  ? "status.success.border"
+                  : "status.warning.border",
+              bgcolor:
+                verified.passRate >= expectation.projected
+                  ? "status.success.bg"
+                  : "status.warning.bg",
+            }}
           >
-            Dismiss
-          </Button>
-        </Stack>
-      )}
+            <Iconify
+              icon={
+                verified.passRate >= expectation.projected
+                  ? "solar:check-circle-bold"
+                  : "solar:info-circle-bold"
+              }
+              width={16}
+              sx={{
+                color:
+                  verified.passRate >= expectation.projected
+                    ? "status.success.fg"
+                    : "status.warning.fg",
+                flexShrink: 0,
+                mt: "1px",
+              }}
+            />
+            <Box flex={1} minWidth={0}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Projected {expectation.projected}%
+                {expectation.projectedOn
+                  ? ` (${expectation.projectedOn === "held out" ? "held-back scenarios" : expectation.projectedOn})`
+                  : ""}{" "}
+                for agent {expectation.version} — it came in at{" "}
+                {verified.passRate}%
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {verified.passRate >= expectation.projected
+                  ? `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run met the projection. The projection is only ever a claim until a run answers it.`
+                  : `The change addressed ${expectation.addresses.length} ${expectation.addresses.length === 1 ? "scenario" : "scenarios"} and the run fell ${expectation.projected - verified.passRate} points short. Worth reading which of them still fail before proposing the next fix.`}
+              </Typography>
+            </Box>
+            <Button
+              size="small"
+              onClick={() => patch({ omegaExpectation: null })}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
+            >
+              Dismiss
+            </Button>
+          </Stack>
+        )}
 
-      {/* ── the runs ── */}
-        <Stack
-          direction="row" alignItems="center" spacing={2}
-          sx={{ px: 2.5, py: 1.25 }}
-        >
+        {/* ── the runs ── */}
+        <Stack direction="row" alignItems="center" spacing={2} sx={{ pb: 1.5 }}>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>Runs ({tableRows.length})</Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              Runs ({tableRows.length})
+            </Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
               {baseline ? (
                 <>
                   Measured against{" "}
-                  <Box component="span" sx={{ color: "text.primary", fontWeight: 700 }}>
-                    {baseline.kind === "trial" ? `Run ${baseline.trialN}${baseline.selfImprovementName ? ` · ${baseline.selfImprovementName}` : ""}` : `Run ${baseline.ordinal}`} · {identityOf(baseline).label}
-                  </Box>
-                  {" "}— rates in points, everything else in percent; runs on other environment versions show no change.
+                  <Box
+                    component="span"
+                    sx={{ color: "text.primary", fontWeight: 600 }}
+                  >
+                    {baseline.kind === "trial"
+                      ? `Run ${baseline.trialN}${baseline.selfImprovementName ? ` · ${baseline.selfImprovementName}` : ""}`
+                      : `Run ${baseline.ordinal}`}{" "}
+                    · {identityOf(baseline).label}
+                  </Box>{" "}
+                  — rates in points, everything else in percent; runs on other
+                  environment versions show no change.
                 </>
-              ) : "Select two or more to compare them scenario by scenario"}
+              ) : (
+                "Select two or more to compare them scenario by scenario"
+              )}
             </Typography>
           </Box>
           {/* Candidate runs, off by default — the count says what the list
               is leaving out. Same quiet text toggle as the chart's run
               window. */}
           {selected.length === 0 && candidateCount > 0 && (
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ flexShrink: 0 }}
+            >
               {!showCandidates && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {`${candidateCount} improvement run${candidateCount === 1 ? "" : "s"} hidden`}
                 </Typography>
               )}
-              <Tooltip arrow title="Runs an improvement made to try a change. They aren't sent to Debug failures — the improvement reads its own.">
+              <Tooltip
+                arrow
+                title="Runs an improvement made to try a change. They aren't sent to Debug failures — the improvement reads its own."
+              >
                 <Button
                   size="small"
                   onClick={() => setShowCandidates((v) => !v)}
-                  sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", flexShrink: 0, whiteSpace: "nowrap", minWidth: 0 }}
+                  sx={{
+                    color: "text.secondary",
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
                 >
-                  {showCandidates ? "Hide improvement runs" : "Show improvement runs"}
+                  {showCandidates
+                    ? "Hide improvement runs"
+                    : "Show improvement runs"}
                 </Button>
               </Tooltip>
               {showCandidates && trialsAll.length > TRIAL_CAP && (
                 <Button
                   size="small"
                   onClick={() => setAllTrials((v) => !v)}
-                  sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", flexShrink: 0, whiteSpace: "nowrap", minWidth: 0 }}
+                  sx={{
+                    color: "text.secondary",
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                  }}
                 >
-                  {allTrials ? `Show the latest ${TRIAL_CAP}` : `Show all ${trialsAll.length} improvement runs`}
+                  {allTrials
+                    ? `Show the latest ${TRIAL_CAP}`
+                    : `Show all ${trialsAll.length} improvement runs`}
                 </Button>
               )}
             </Stack>
@@ -474,19 +610,27 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   (Improvements) — the env workspace header already starts runs. */}
               {onStart && (
                 <Button
-                  variant="outlined" color="inherit" size="small"
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
                   onClick={(e) => setAddAnchor(e.currentTarget)}
-                  startIcon={<Iconify icon="solar:test-tube-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
+                  startIcon={
+                    <Iconify icon="solar:test-tube-linear" width={16} />
+                  }
+                  sx={{ borderColor: "divider" }}
                 >
                   Add more runs
                 </Button>
               )}
               <Button
-                variant="outlined" color="inherit" size="small"
+                variant="outlined"
+                color="inherit"
+                size="small"
                 onClick={() => setAddEvalsOpen(true)}
-                startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                sx={{ borderColor: "divider" }}
               >
                 Add Evals
               </Button>
@@ -494,71 +638,99 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   same act every time — open the weights, decide, apply — and
                   "Change winner" implied a different, smaller thing. */}
               <Button
-                variant="outlined" color="inherit" size="small"
+                variant="outlined"
+                color="inherit"
+                size="small"
                 onClick={() => setPickingWinner(true)}
-                startIcon={<Iconify icon="solar:cup-star-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
+                startIcon={<Iconify icon="solar:cup-star-bold" width={16} />}
+                sx={{ borderColor: "divider" }}
               >
                 Choose winner
               </Button>
             </Stack>
           )}
-          {
-          selected.length === 0 && baseline ? (
+          {selected.length === 0 && baseline ? (
             <Button
               size="small"
               onClick={() => patch({ baselineRunId: null })}
-              startIcon={<Iconify icon="mingcute:close-line" width={14} />}
-              sx={{ typography: "s2", fontWeight: 700, color: "primary.main", flexShrink: 0 }}
+              startIcon={<Iconify icon="solar:close-linear" width={14} />}
+              sx={{ color: "primary.main", flexShrink: 0 }}
             >
               Remove baseline
             </Button>
           ) : (
             selected.length > 0 && (
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography sx={{ typography: "s2", color: "text.secondary", mr: 0.5 }}>
-                {selected.length} selected
-              </Typography>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography
+                  sx={{ typography: "s2", color: "text.secondary", mr: 0.5 }}
+                >
+                  {selected.length} selected
+                </Typography>
 
-              {/* One run is a baseline; two or more is a comparison. Offering
+                {/* One run is a baseline; two or more is a comparison. Offering
                   both at once would ask people to work out which button their
                   selection is even eligible for. A queued run is neither — with
                   one in the selection, only Delete applies to it. */}
-              {selected.length === 1 && !selectedQueued ? (
-                <Button
-                  variant="contained" color="primary" size="small"
-                  onClick={setBaseline}
-                  startIcon={<Iconify icon="solar:transfer-vertical-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
-                >
-                  {selected[0] === baselineId ? "Clear baseline" : "Set as baseline"}
-                </Button>
-              ) : selectedFinished.length >= 2 && !selectedQueued && (
-                <Button
-                  variant="contained" color="primary" size="small"
-                  onClick={compare}
-                  startIcon={<Iconify icon="solar:transfer-horizontal-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
-                >
-                  Compare
-                </Button>
-              )}
+                {selected.length === 1 && !selectedQueued ? (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    onClick={setBaseline}
+                    startIcon={
+                      <Iconify
+                        icon="solar:transfer-vertical-linear"
+                        width={16}
+                      />
+                    }
+                  >
+                    {selected[0] === baselineId
+                      ? "Clear baseline"
+                      : "Set as baseline"}
+                  </Button>
+                ) : (
+                  selectedFinished.length >= 2 &&
+                  !selectedQueued && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      onClick={compare}
+                      startIcon={
+                        <Iconify
+                          icon="solar:transfer-horizontal-linear"
+                          width={16}
+                        />
+                      }
+                    >
+                      Compare
+                    </Button>
+                  )
+                )}
 
-              <Button
-                variant="outlined" color="inherit" size="small"
-                onClick={() => setDeleting(true)}
-                startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
-              >
-                Delete
-              </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  size="small"
+                  onClick={() => setDeleting(true)}
+                  startIcon={
+                    <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+                  }
+                  sx={{ borderColor: "divider" }}
+                >
+                  Delete
+                </Button>
 
-              <Tooltip arrow title="Clear selection">
-                <IconButton size="small" onClick={() => setSelected([])}>
-                  <Iconify icon="mingcute:close-line" width={16} sx={{ color: "text.subtitle" }} />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+                <Tooltip arrow title="Clear selection">
+                  <IconButton size="small" onClick={() => setSelected([])}>
+                    <Iconify
+                      icon="solar:close-linear"
+                      width={16}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
             )
           )}
         </Stack>
@@ -576,41 +748,93 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             /* Grow to consume any leftover vertical space inside the
                card so the card visually reaches the bottom of the
                surrounding scroll container. */
-            flex: 1, minHeight: 0,
+            flex: 1,
+            minHeight: 0,
             "&::after": {
               content: '""',
-              position: "sticky", right: 0, top: 0, float: "right",
-              width: 28, height: "100%", pointerEvents: "none",
-              backgroundImage: (t) => `linear-gradient(to right, transparent, ${t.palette.background.paper})`,
+              position: "sticky",
+              right: 0,
+              top: 0,
+              float: "right",
+              width: 28,
+              height: "100%",
+              pointerEvents: "none",
+              backgroundImage: (t) =>
+                `linear-gradient(to right, transparent, ${t.palette.background.paper})`,
             },
           }}
         >
           <Box sx={{ minWidth: grid.min }}>
             <Box
               sx={{
-                display: "grid", gridTemplateColumns: grid.template,
-                alignItems: "flex-end", columnGap: 0,
-                pl: 2.5, pr: 0, pt: 1.5, pb: 1,
-                borderBottom: "1px solid", borderColor: "divider",
+                display: "grid",
+                gridTemplateColumns: grid.template,
+                alignItems: "flex-end",
+                columnGap: 0,
+                pl: 1.5,
+                pr: 0,
+                pt: 0,
+                pb: 1,
+                borderBottom: "1px solid",
+                borderColor: "divider",
               }}
             >
               <Box />
               <Head>Run</Head>
               <Head>Status</Head>
-              <Head right title="Scenarios that passed a majority of their repeats. The change beside it is on the scenarios both runs measured — grey when it's within noise.">Scenario pass</Head>
-              <Head right title="Every repeat counted">Call pass</Head>
-              <Head right title="Passed some repeats and failed others">Flaky</Head>
-              <Head right title="Scenarios that failed a majority of their repeats">Failing</Head>
-              <Head right title="Scenarios × repeats">Calls</Head>
-              <Head right title="Start to finish">Run time</Head>
-              <Head gap title="Who started it">Started by</Head>
-              <Head right title="Average duration per task">Duration</Head>
+              <Head
+                right
+                title="Scenarios that passed a majority of their repeats. The change beside it is on the scenarios both runs measured — grey when it's within noise."
+              >
+                Scenario pass
+              </Head>
+              <Head right title="Every repeat counted">
+                Call pass
+              </Head>
+              <Head right title="Passed some repeats and failed others">
+                Flaky
+              </Head>
+              <Head
+                right
+                title="Scenarios that failed a majority of their repeats"
+              >
+                Failing
+              </Head>
+              <Head right title="Scenarios × repeats">
+                Calls
+              </Head>
+              <Head right title="Start to finish">
+                Run time
+              </Head>
+              <Head gap title="Who started it">
+                Started by
+              </Head>
+              <Head right title="Average duration per task">
+                Duration
+              </Head>
               <Head right>Tokens</Head>
               <Head right>Cost</Head>
-              <Head right title="Tasks where the agent said it was done but the world shows it wasn't">Said, not done</Head>
-              <Head right title="Mean return — the environment's score, averaged over conversations">Return</Head>
+              <Head
+                right
+                title="Tasks where the agent said it was done but the world shows it wasn't"
+              >
+                Said, not done
+              </Head>
+              <Head
+                right
+                title="Mean return — the environment's score, averaged over conversations"
+              >
+                Return
+              </Head>
               {evals.map((e, i) => (
-                <Head key={e.id} right divider={i === 0} last={i === evals.length - 1} title={e.name} wrap>
+                <Head
+                  key={e.id}
+                  right
+                  divider={i === 0}
+                  last={i === evals.length - 1}
+                  title={e.name}
+                  wrap
+                >
                   {/* snake_case names are one long word — a break opportunity
                       after each underscore lets them wrap like the rest. */}
                   {e.name.replace(/_/g, "_​")}
@@ -618,7 +842,14 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               ))}
             </Box>
 
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+            <Stack
+              divider={
+                <Box
+                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                />
+              }
+              sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+            >
               {tableRows.map((r, i) => {
                 const picked = selected.includes(r.id);
                 const won = winner?.runId === r.id;
@@ -626,53 +857,120 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                    baseline when one is set, else the run before it — on the
                    same environment version only. A run with no results, or on
                    another version than the baseline, shows no deltas. */
-                const against = !r.finishedAt ? null
-                  : baseline ? (sameEnvVersion(baseline, r, versionOf) ? baseline : null)
-                    : (r.kind === "trial" ? null : previousRunOf(finishedRuns, r, versionOf));
+                const against = !r.finishedAt
+                  ? null
+                  : baseline
+                    ? sameEnvVersion(baseline, r, versionOf)
+                      ? baseline
+                      : null
+                    : r.kind === "trial"
+                      ? null
+                      : previousRunOf(finishedRuns, r, versionOf);
 
                 if (r.kind === "queued-demo") {
                   return (
                     <Box
                       key={r.id}
                       sx={{
-                        display: "grid", gridTemplateColumns: grid.template,
-                        alignItems: "stretch", columnGap: 0,
-                        pl: 2.5, pr: 0, py: 0, minHeight: 40,
-                        borderLeft: "2px solid", borderColor: "transparent",
+                        display: "grid",
+                        gridTemplateColumns: grid.template,
+                        alignItems: "stretch",
+                        columnGap: 0,
+                        pl: 1.5,
+                        pr: 0,
+                        py: 0,
+                        minHeight: 40,
+                        borderLeft: "2px solid",
+                        borderColor: "transparent",
                       }}
                     >
                       <Box
-                        sx={{ display: "flex", alignItems: "center", cursor: "pointer" }}
-                        onClick={(e) => { if (e.target === e.currentTarget) toggle(r.id); }}
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          cursor: "pointer",
+                        }}
+                        onClick={(e) => {
+                          if (e.target === e.currentTarget) toggle(r.id);
+                        }}
                       >
                         <Checkbox
-                          size="small" checked={picked} onChange={() => toggle(r.id)}
-                          inputProps={{ "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}` }}
-                          sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
+                          size="small"
+                          checked={picked}
+                          onChange={() => toggle(r.id)}
+                          inputProps={{
+                            "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}`,
+                          }}
+                          sx={{
+                            p: 0.5,
+                            pointerEvents: "none",
+                            ...neutralCheckboxSx,
+                          }}
                         />
                       </Box>
-                      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5, overflow: "hidden" }}>
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1.25}
+                        sx={{
+                          minWidth: 0,
+                          py: 0.875,
+                          pr: 1.5,
+                          overflow: "hidden",
+                        }}
+                      >
                         <Box
                           sx={{
-                            minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
-                            display: "grid", placeItems: "center",
-                            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+                            minWidth: 26,
+                            height: 22,
+                            px: 0.75,
+                            borderRadius: "4px",
+                            flexShrink: 0,
+                            display: "grid",
+                            placeItems: "center",
+                            typography: "s3",
+                            fontWeight: 600,
+                            fontVariantNumeric: "tabular-nums",
                             color: textTone(r.color),
-                            bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                            bgcolor: (t) =>
+                              alpha(
+                                r.color,
+                                t.palette.mode === "dark" ? 0.22 : 0.14,
+                              ),
                           }}
                         >
                           {r.letter}
                         </Box>
-                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
-                            {r.kind === "trial" ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}` : `Run ${r.ordinal}`} · {identityOf(r).label}
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={0.75}
+                          sx={{ minWidth: 0, overflow: "hidden" }}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {r.kind === "trial"
+                              ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
+                              : `Run ${r.ordinal}`}{" "}
+                            · {identityOf(r).label}
                           </Typography>
                           <RunDetail text="waiting to start" />
                         </Stack>
                       </Stack>
                       <StatusCell status="Queued" />
                       {Array.from({ length: 12 }).map((_, k) => (
-                        <MetricCell key={k} quiet deltaWidth={grid.deltaWidth} text="—" />
+                        <MetricCell
+                          key={k}
+                          quiet
+                          deltaWidth={grid.deltaWidth}
+                          text="—"
+                        />
                       ))}
                       {evals.map((e, ei) => (
                         <ScoreCell
@@ -696,62 +994,140 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     <Box
                       key={r.id}
                       sx={{
-                        display: "grid", gridTemplateColumns: grid.template,
-                        alignItems: "stretch", columnGap: 0,
-                        pl: 2.5, pr: 0, py: 0, minHeight: 40, cursor: "pointer",
+                        display: "grid",
+                        gridTemplateColumns: grid.template,
+                        alignItems: "stretch",
+                        columnGap: 0,
+                        pl: 1.5,
+                        pr: 0,
+                        py: 0,
+                        minHeight: 40,
+                        cursor: "pointer",
                         borderLeft: "2px solid",
-                        borderColor: r.id === baselineId ? "primary.main" : "transparent",
-                        bgcolor: picked ? (t) => alpha(t.palette.primary.main, 0.05) : "transparent",
+                        borderColor:
+                          r.id === baselineId ? "primary.main" : "transparent",
+                        bgcolor: picked
+                          ? (t) => alpha(t.palette.primary.main, 0.05)
+                          : "transparent",
                         "&:hover": { bgcolor: "action.hover" },
                         ...focusRing,
                       }}
-                      {...clickable(() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id)), { role: "link" })}
+                      {...clickable(
+                        () =>
+                          navigate(
+                            paths.dashboard.simulate.simulationRun(
+                              env.id,
+                              r.id,
+                            ),
+                          ),
+                        { role: "link" },
+                      )}
                     >
                       <Box
                         sx={{ display: "flex", alignItems: "center" }}
-                        onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) toggle(r.id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (e.target === e.currentTarget) toggle(r.id);
+                        }}
                       >
                         <Checkbox
-                          size="small" checked={picked} onChange={() => toggle(r.id)}
-                          inputProps={{ "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}` }}
-                          sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
+                          size="small"
+                          checked={picked}
+                          onChange={() => toggle(r.id)}
+                          inputProps={{
+                            "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}`,
+                          }}
+                          sx={{
+                            p: 0.5,
+                            pointerEvents: "none",
+                            ...neutralCheckboxSx,
+                          }}
                         />
                       </Box>
 
-                      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5, overflow: "hidden" }}>
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1.25}
+                        sx={{
+                          minWidth: 0,
+                          py: 0.875,
+                          pr: 1.5,
+                          overflow: "hidden",
+                        }}
+                      >
                         <Box
                           sx={{
-                            minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
-                            display: "grid", placeItems: "center",
-                            typography: "s3", fontWeight: 700,
+                            minWidth: 26,
+                            height: 22,
+                            px: 0.75,
+                            borderRadius: "4px",
+                            flexShrink: 0,
+                            display: "grid",
+                            placeItems: "center",
+                            typography: "s3",
+                            fontWeight: 600,
                             fontVariantNumeric: "tabular-nums",
                             color: textTone(r.color),
-                            bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                            bgcolor: (t) =>
+                              alpha(
+                                r.color,
+                                t.palette.mode === "dark" ? 0.22 : 0.14,
+                              ),
                           }}
                         >
                           {r.letter}
                         </Box>
-                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={0.75}
+                          sx={{ minWidth: 0, overflow: "hidden" }}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
                             {`Run ${r.trialN}`} · {identityOf(r).label}
                           </Typography>
-                          <RunDetail improvement={identityOf(r).improvement} text={runTimeLabel(r)} />
+                          <RunDetail
+                            improvement={identityOf(r).improvement}
+                            text={runTimeLabel(r)}
+                          />
                           {r.toolGap?.length > 0 && (
                             <Tooltip
                               arrow
                               title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that called ${r.toolGap.length === 1 ? "it" : "them"} got no answer and are not measured.`}
                             >
-                              <Box sx={{ display: "inline-flex", flexShrink: 0, color: "text.secondary" }}>
-                                <Iconify icon="solar:plug-circle-linear" width={15} />
+                              <Box
+                                sx={{
+                                  display: "inline-flex",
+                                  flexShrink: 0,
+                                  color: "text.secondary",
+                                }}
+                              >
+                                <Iconify
+                                  icon="solar:plug-circle-linear"
+                                  width={16}
+                                />
                               </Box>
                             </Tooltip>
                           )}
                           {r.id === baselineId && (
                             <Typography
                               sx={{
-                                px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-                                typography: "s3", fontWeight: 700, color: "primary.main",
-                                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.2 : 0.12),
+                                px: 0.75,
+                                py: 0.125,
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                                typography: "s3",
+                                fontWeight: 600,
+                                color: "primary.main",
+                                bgcolor: "status.discovery.bg",
                               }}
                             >
                               Baseline
@@ -763,21 +1139,33 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       <StatusCell status={runStatus(r)} />
                       {scenarioCell(r, against)}
                       <MetricCell
-                        anchor deltaWidth={grid.deltaWidth} text={`${r.passRate}%`}
+                        anchor
+                        deltaWidth={grid.deltaWidth}
+                        text={`${r.passRate}%`}
                         delta={deltaAgainst(metrics.passRate, r, against)}
                       />
                       {addedCells(r, against)}
                       <MetricCell
-                        quiet deltaWidth={grid.deltaWidth} text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
+                        quiet
+                        deltaWidth={grid.deltaWidth}
+                        text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
                         delta={deltaAgainst(metrics.duration, r, against)}
                       />
                       <MetricCell
-                        quiet deltaWidth={grid.deltaWidth} text={compactTokens(r.tokens)}
+                        quiet
+                        deltaWidth={grid.deltaWidth}
+                        text={compactTokens(r.tokens)}
                         delta={deltaAgainst(metrics.tokens, r, against)}
                       />
                       <MetricCell
-                        quiet deltaWidth={grid.deltaWidth} text={costText(r)}
-                        delta={costComparable(r, against) ? deltaAgainst(metrics.cost, r, against) : null}
+                        quiet
+                        deltaWidth={grid.deltaWidth}
+                        text={costText(r)}
+                        delta={
+                          costComparable(r, against)
+                            ? deltaAgainst(metrics.cost, r, against)
+                            : null
+                        }
                       />
                       <MetricCell quiet deltaWidth={grid.deltaWidth} text="—" />
                       <MetricCell quiet deltaWidth={grid.deltaWidth} text="—" />
@@ -788,7 +1176,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           divider={ei === 0}
                           last={ei === evals.length - 1}
                           deltaWidth={grid.deltaWidth}
-                          delta={deltaAgainst(metrics[`eval:${e.id}`], r, against)}
+                          delta={deltaAgainst(
+                            metrics[`eval:${e.id}`],
+                            r,
+                            against,
+                          )}
                         />
                       ))}
                     </Box>
@@ -799,9 +1191,15 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   <Box
                     key={r.id}
                     sx={{
-                      display: "grid", gridTemplateColumns: grid.template,
-                      alignItems: "stretch", columnGap: 0,
-                      pl: 2.5, pr: 0, py: 0, minHeight: 40, cursor: "pointer",
+                      display: "grid",
+                      gridTemplateColumns: grid.template,
+                      alignItems: "stretch",
+                      columnGap: 0,
+                      pl: 1.5,
+                      pr: 0,
+                      py: 0,
+                      minHeight: 40,
+                      cursor: "pointer",
                       /*
                         Marked by a rule and a chip, not by a filled row. Two
                         tinted rows in a table of five — one amber, one blue —
@@ -810,9 +1208,13 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       */
                       borderLeft: "2px solid",
                       borderColor: won
-                        ? "#EA580C"
-                        : r.id === baselineId ? "primary.main" : "transparent",
-                      bgcolor: picked ? (t) => alpha(t.palette.primary.main, 0.05) : "transparent",
+                        ? "status.warning.solid"
+                        : r.id === baselineId
+                          ? "primary.main"
+                          : "transparent",
+                      bgcolor: picked
+                        ? (t) => alpha(t.palette.primary.main, 0.05)
+                        : "transparent",
                       /* `relative` for the overlaid RunRowMenu. `.row-menu` fades
                          in with `.row-open`; both stay visible when the menu is
                          open so the row doesn't flicker while the user reads it. */
@@ -824,7 +1226,13 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       },
                       ...focusRing,
                     }}
-                    {...clickable(() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id)), { role: "link" })}
+                    {...clickable(
+                      () =>
+                        navigate(
+                          paths.dashboard.simulate.simulationRun(env.id, r.id),
+                        ),
+                      { role: "link" },
+                    )}
                   >
                     {/* Row menu — delete. Overlaid on the right
                         of the row on hover so the grid columns stay comparable
@@ -833,7 +1241,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     {r.status !== "queued" && (
                       <RunRowMenu
                         run={r}
-                        onDelete={() => { setSelected([r.id]); setDeleting(true); }}
+                        onDelete={() => {
+                          setSelected([r.id]);
+                          setDeleting(true);
+                        }}
                       />
                     )}
                     {/* The whole cell toggles. An 18px box inside a row that
@@ -841,29 +1252,53 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         opens the run instead of selecting it. */}
                     <Box
                       sx={{ display: "flex", alignItems: "center" }}
-                      onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) toggle(r.id); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (e.target === e.currentTarget) toggle(r.id);
+                      }}
                     >
                       <Checkbox
                         size="small"
                         checked={picked}
                         onChange={() => toggle(r.id)}
-                        inputProps={{ "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}` }}
-                        sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
+                        inputProps={{
+                          "aria-label": `Select Run ${r.kind === "trial" ? r.trialN : r.ordinal}`,
+                        }}
+                        sx={{
+                          p: 0.5,
+                          pointerEvents: "none",
+                          ...neutralCheckboxSx,
+                        }}
                       />
                     </Box>
 
-                    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5 }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1.25}
+                      sx={{ minWidth: 0, py: 0.875, pr: 1.5 }}
+                    >
                       {/* Numeric chip = the continuous ordinal, same
                           scheme across manual runs and trials so a row's
                           badge always matches its "Run N" label. */}
                       <Box
                         sx={{
-                          minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
-                          display: "grid", placeItems: "center",
-                          typography: "s3", fontWeight: 700,
+                          minWidth: 26,
+                          height: 22,
+                          px: 0.75,
+                          borderRadius: "4px",
+                          flexShrink: 0,
+                          display: "grid",
+                          placeItems: "center",
+                          typography: "s3",
+                          fontWeight: 600,
                           fontVariantNumeric: "tabular-nums",
                           color: textTone(r.color),
-                          bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                          bgcolor: (t) =>
+                            alpha(
+                              r.color,
+                              t.palette.mode === "dark" ? 0.22 : 0.14,
+                            ),
                         }}
                       >
                         {r.letter}
@@ -875,8 +1310,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         the agent version — the thing that actually changed —
                         out of sight.
                       */}
-                      <Box minWidth={0} sx={{ display: "flex", alignItems: "center", minWidth: 0, overflow: "hidden" }}>
-                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
+                      <Box
+                        minWidth={0}
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          minWidth: 0,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={0.75}
+                          sx={{ minWidth: 0, overflow: "hidden" }}
+                        >
                           {/* The run's name never shrinks — "Ru…" identifies
                               nothing. The env version it was pinned to and
                               the timestamp are the detail, so they are what
@@ -886,10 +1334,23 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                               rather than reading as "env unknown". Short
                               timestamp, no task count: every run here runs
                               the same scenarios. */}
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
-                            {r.kind === "trial" ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}` : `Run ${r.ordinal}`} · {identityOf(r).label}
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {r.kind === "trial"
+                              ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
+                              : `Run ${r.ordinal}`}{" "}
+                            · {identityOf(r).label}
                           </Typography>
-                          <RunDetail improvement={identityOf(r).improvement} text={runTimeLabel(r)} />
+                          <RunDetail
+                            improvement={identityOf(r).improvement}
+                            text={runTimeLabel(r)}
+                          />
                           {/* Started with runs in other environments — the
                               same agent version, one run each. The row stays
                               this environment's run; its page switches between
@@ -897,9 +1358,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.group?.members?.length > 1 && (
                             <Tooltip
                               arrow
-                              title={`Run group · agent ${r.group.agentVersion || r.agentVersion} also ran in ${r.group.members.filter((m) => m.envId !== env.id).map((m) => m.envName).join(", ")}. Open the run to read them side by side.`}
+                              title={`Run group · agent ${r.group.agentVersion || r.agentVersion} also ran in ${r.group.members
+                                .filter((m) => m.envId !== env.id)
+                                .map((m) => m.envName)
+                                .join(
+                                  ", ",
+                                )}. Open the run to read them side by side.`}
                             >
-                              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+                              <Typography
+                                noWrap
+                                sx={{
+                                  typography: "s3",
+                                  color: "text.tertiary",
+                                  flexShrink: 0,
+                                }}
+                              >
                                 · group of {r.group.members.length}
                               </Typography>
                             </Tooltip>
@@ -909,8 +1382,17 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                               arrow
                               title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that called ${r.toolGap.length === 1 ? "it" : "them"} got no answer and are not measured.`}
                             >
-                              <Box sx={{ display: "inline-flex", flexShrink: 0, color: "text.secondary" }}>
-                                <Iconify icon="solar:plug-circle-linear" width={15} />
+                              <Box
+                                sx={{
+                                  display: "inline-flex",
+                                  flexShrink: 0,
+                                  color: "text.secondary",
+                                }}
+                              >
+                                <Iconify
+                                  icon="solar:plug-circle-linear"
+                                  width={16}
+                                />
                               </Box>
                             </Tooltip>
                           )}
@@ -930,9 +1412,14 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.id === baselineId && (
                             <Typography
                               sx={{
-                                px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-                                typography: "s3", fontWeight: 700, color: "primary.main",
-                                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.2 : 0.12),
+                                px: 0.75,
+                                py: 0.125,
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                                typography: "s3",
+                                fontWeight: 600,
+                                color: "primary.main",
+                                bgcolor: "status.discovery.bg",
                               }}
                             >
                               Baseline
@@ -940,14 +1427,29 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           )}
                           {won && (
                             <Stack
-                              direction="row" alignItems="center" spacing={0.375}
+                              direction="row"
+                              alignItems="center"
+                              spacing={0.375}
                               sx={{
-                                px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-                                bgcolor: (t) => alpha("#EA580C", t.palette.mode === "dark" ? 0.2 : 0.12),
+                                px: 0.75,
+                                py: 0.125,
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                                bgcolor: "status.warning.bg",
                               }}
                             >
-                              <Iconify icon="solar:cup-star-bold" width={12} sx={{ color: "#EA580C" }} />
-                              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
+                              <Iconify
+                                icon="solar:cup-star-bold"
+                                width={12}
+                                sx={{ color: "status.warning.fg" }}
+                              />
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  fontWeight: 600,
+                                  color: "text.primary",
+                                }}
+                              >
                                 Winner
                               </Typography>
                             </Stack>
@@ -958,15 +1460,31 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                               rather than reading as "0 writes". */}
                           {typeof r.twinWrites === "number" && (
                             <Stack
-                              direction="row" alignItems="center" spacing={0.375}
+                              direction="row"
+                              alignItems="center"
+                              spacing={0.375}
                               sx={{
-                                px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-                                bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.08),
+                                px: 0.75,
+                                py: 0.125,
+                                borderRadius: "4px",
+                                flexShrink: 0,
+                                bgcolor: "status.discovery.bg",
                               }}
                             >
-                              <Iconify icon="solar:pen-2-linear" width={11} sx={{ color: "#7857FC" }} />
-                              <Typography sx={{ typography: "s3", fontWeight: 700, color: "#7857FC" }}>
-                                {r.twinWrites} write{r.twinWrites === 1 ? "" : "s"}
+                              <Iconify
+                                icon="solar:pen-2-linear"
+                                width={12}
+                                sx={{ color: "primary.main" }}
+                              />
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  fontWeight: 600,
+                                  color: "primary.main",
+                                }}
+                              >
+                                {r.twinWrites} write
+                                {r.twinWrites === 1 ? "" : "s"}
                               </Typography>
                             </Stack>
                           )}
@@ -974,45 +1492,66 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       </Box>
                       {/* The row opens the run. Nothing else on it said so. */}
                       <Iconify
-                        icon="eva:arrow-ios-forward-fill"
-                        width={15}
+                        icon="solar:alt-arrow-right-linear"
+                        width={16}
                         className="row-open"
-                        sx={{ opacity: 0, transition: "opacity .12s", color: "text.subtitle", flexShrink: 0 }}
+                        sx={{
+                          opacity: 0,
+                          transition: "opacity .12s",
+                          color: "text.tertiary",
+                          flexShrink: 0,
+                        }}
                       />
                     </Stack>
 
                     <StatusCell status={runStatus(r)} />
                     {scenarioCell(r, against)}
                     <MetricCell
-                      anchor deltaWidth={grid.deltaWidth} text={`${r.passRate}%`}
+                      anchor
+                      deltaWidth={grid.deltaWidth}
+                      text={`${r.passRate}%`}
                       delta={deltaAgainst(metrics.passRate, r, against)}
                     />
                     {addedCells(r, against)}
                     <MetricCell
-                      quiet deltaWidth={grid.deltaWidth} text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
+                      quiet
+                      deltaWidth={grid.deltaWidth}
+                      text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
                       delta={deltaAgainst(metrics.duration, r, against)}
                     />
                     <MetricCell
-                      quiet deltaWidth={grid.deltaWidth} text={compactTokens(r.tokens)}
+                      quiet
+                      deltaWidth={grid.deltaWidth}
+                      text={compactTokens(r.tokens)}
                       delta={deltaAgainst(metrics.tokens, r, against)}
                     />
                     <MetricCell
-                      quiet deltaWidth={grid.deltaWidth} text={costText(r)}
-                      delta={costComparable(r, against) ? deltaAgainst(metrics.cost, r, against) : null}
+                      quiet
+                      deltaWidth={grid.deltaWidth}
+                      text={costText(r)}
+                      delta={
+                        costComparable(r, against)
+                          ? deltaAgainst(metrics.cost, r, against)
+                          : null
+                      }
                     />
                     {/* The one system number that is a finding rather than a
                         measurement, so it is the one that gets an accent. */}
                     <MetricCell
                       quiet={!r.saidNotDone}
-                      deltaWidth={grid.deltaWidth} text={`${r.saidNotDone}`}
+                      deltaWidth={grid.deltaWidth}
+                      text={`${r.saidNotDone}`}
                       delta={deltaAgainst(metrics.saidNotDone, r, against)}
                     />
                     {/* The environment's own number, beside the graders it is
                         computed from so the two can be read against each other
                         rather than living on different pages. */}
                     <MetricCell
-                      anchor deltaWidth={grid.deltaWidth}
-                      text={r.meanReturn == null ? "—" : r.meanReturn.toFixed(2)}
+                      anchor
+                      deltaWidth={grid.deltaWidth}
+                      text={
+                        r.meanReturn == null ? "—" : r.meanReturn.toFixed(2)
+                      }
                       delta={deltaAgainst(metrics.meanReturn, r, against)}
                     />
 
@@ -1023,13 +1562,16 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         divider={ei === 0}
                         last={ei === evals.length - 1}
                         deltaWidth={grid.deltaWidth}
-                        delta={deltaAgainst(metrics[`eval:${e.id}`], r, against)}
+                        delta={deltaAgainst(
+                          metrics[`eval:${e.id}`],
+                          r,
+                          against,
+                        )}
                       />
                     ))}
                   </Box>
                 );
               })}
-
             </Stack>
           </Box>
         </Box>
@@ -1048,10 +1590,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         }
         action={
           <Button
-            variant="contained" color="error"
+            size="small"
+            variant="contained"
+            color="error"
             onClick={removeSelected}
             disabled={selectedManualOnly.length === 0}
-            sx={{ typography: "s2", fontWeight: 700 }}
           >
             Delete
           </Button>
@@ -1078,7 +1621,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         /* Ranked on the environment version in use — none yet says so. */
         currentOnly
         initial={winner?.weights}
-        onApply={(w) => { patch({ winner: w }); setPickingWinner(false); }}
+        onApply={(w) => {
+          patch({ winner: w });
+          setPickingWinner(false);
+        }}
       />
 
       <Popover
@@ -1087,12 +1633,17 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         onClose={() => setAddAnchor(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { width: 320, borderRadius: 1.5 } } }}
+        slotProps={{ paper: { sx: { width: 320, borderRadius: "8px" } } }}
       >
         <Box sx={{ p: 2 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>Run again</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.5 }}>
-            The same scenarios against whatever the agent is now — that is what makes the rows comparable.
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            Run again
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mb: 1.5 }}
+          >
+            The same scenarios against whatever the agent is now — that is what
+            makes the rows comparable.
           </Typography>
           <Stack spacing={0.75} sx={{ mb: 1.75 }}>
             {/* The pairing, quoted at the one moment it is a decision: a run is
@@ -1100,18 +1651,29 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                 the result will be attributed to. */}
             <Line
               label="Runs"
-              value={currentAgentVersion(envState)
-                ? identityOf({ agentVersion: currentAgentVersion(envState).label, envVersion: currentEnvVersion(env, envState)?.label }).label
-                : `no agent connected × environment ${currentEnvSnapshot(env, envState)?.label || "—"}`}
+              value={
+                currentAgentVersion(envState)
+                  ? identityOf({
+                      agentVersion: currentAgentVersion(envState).label,
+                      envVersion: currentEnvVersion(env, envState)?.label,
+                    }).label
+                  : `no agent connected × environment ${currentEnvSnapshot(env, envState)?.label || "—"}`
+              }
             />
-            <Line label="Scenarios" value={`${envState.scenarios.length} tasks`} />
+            <Line
+              label="Scenarios"
+              value={`${envState.scenarios.length} tasks`}
+            />
             {/* Sampling is part of the cost and part of what the next rate
                 will mean, so it is quoted before the run, not discovered
                 afterwards in a tooltip. */}
             <Line label="Repeats" value="3 per scenario" />
             <Line label="Evals" value={`${envState.evals.length} applied`} />
             {/* Priced with the metering rates, scenarios × repeats, in credits. */}
-            <Line label="Est. cost" value={`≈ ${creditsLabel(priceOf(env, envState, envState.scenarios.length, 3).usd)}`} />
+            <Line
+              label="Est. cost"
+              value={`≈ ${creditsLabel(priceOf(env, envState, envState.scenarios.length, 3).usd)}`}
+            />
           </Stack>
 
           {/* A run with no graders is not a measurement. It still produces
@@ -1119,16 +1681,25 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               someone wait out a run and then find there is no pass rate. */}
           {envState.evals.length === 0 && (
             <Stack
-              direction="row" spacing={1} alignItems="flex-start"
+              direction="row"
+              spacing={1}
+              alignItems="flex-start"
               sx={{
-                mb: 1.75, px: 1.25, py: 1, borderRadius: 1,
-                bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.06),
+                mb: 1.75,
+                px: 1.25,
+                py: 1,
+                borderRadius: 1,
+                bgcolor: "status.warning.bg",
               }}
             >
-              <Iconify icon="solar:info-circle-bold" width={14} sx={{ color: "#CA8A04", flexShrink: 0, mt: "1px" }} />
+              <Iconify
+                icon="solar:info-circle-bold"
+                width={14}
+                sx={{ color: "status.warning.fg", flexShrink: 0, mt: "1px" }}
+              />
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                No evals are applied, so this run will produce traces but no pass rate to compare
-                against the runs above.
+                No evals are applied, so this run will produce traces but no
+                pass rate to compare against the runs above.
               </Typography>
             </Stack>
           )}
@@ -1137,16 +1708,26 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               produces numbers; it just cannot claim they rest on a proof. */}
           {staleScenarios(envState.scenarios, env, envState).length > 0 && (
             <Stack
-              direction="row" spacing={1} alignItems="flex-start"
+              direction="row"
+              spacing={1}
+              alignItems="flex-start"
               sx={{
-                mb: 1.75, px: 1.25, py: 1, borderRadius: 1,
-                bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.06),
+                mb: 1.75,
+                px: 1.25,
+                py: 1,
+                borderRadius: 1,
+                bgcolor: "status.warning.bg",
               }}
             >
-              <Iconify icon="solar:danger-triangle-bold" width={14} sx={{ color: "#CA8A04", flexShrink: 0, mt: "1px" }} />
+              <Iconify
+                icon="solar:danger-triangle-bold"
+                width={14}
+                sx={{ color: "status.warning.fg", flexShrink: 0, mt: "1px" }}
+              />
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {staleScenarios(envState.scenarios, env, envState).length} scenarios were proved against an older
-                world. Re-prove them on the Scenarios step if this run has to stand up.
+                {staleScenarios(envState.scenarios, env, envState).length}{" "}
+                scenarios were proved against an older world. Re-prove them on
+                the Scenarios step if this run has to stand up.
               </Typography>
             </Stack>
           )}
@@ -1162,19 +1743,26 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             </Box>
           )}
           {(() => {
-            const groupWith = alsoRunIn.filter((id) => runGroup.candidates.some((c) => c.envId === id && c.ready));
+            const groupWith = alsoRunIn.filter((id) =>
+              runGroup.candidates.some((c) => c.envId === id && c.ready),
+            );
             return (
               <Button
-                fullWidth variant="contained" color="primary" size="small"
+                fullWidth
+                variant="contained"
+                color="primary"
+                size="small"
                 onClick={() => {
                   setAddAnchor(null);
-                  if (groupWith.length) runGroup.start(groupWith, { trials: 3 });
+                  if (groupWith.length)
+                    runGroup.start(groupWith, { trials: 3 });
                   else onStart();
                 }}
-                startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: 700 }}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
               >
-                {groupWith.length ? `Start in ${groupWith.length + 1} environments` : "Start simulation"}
+                {groupWith.length
+                  ? `Start in ${groupWith.length + 1} environments`
+                  : "Start simulation"}
               </Button>
             );
           })()}
@@ -1215,11 +1803,13 @@ const runStatus = (r) => {
   const raw = String(r?.status || "").toLowerCase();
   if (r?.kind === "trial") return "Completed";
   /* Unfinished for over a day: timed out, an infrastructure failure. */
-  if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r)) return "Failed";
+  if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r))
+    return "Failed";
   if (raw === "queued") return "Queued";
   if (raw === "pending") return "Pending";
   if (raw === "running" && !r.finishedAt) return "Running";
-  if (["cancelled", "canceled", "stopped", "aborted"].includes(raw)) return "Cancelled";
+  if (["cancelled", "canceled", "stopped", "aborted"].includes(raw))
+    return "Cancelled";
   if (["error", "errored", "crashed"].includes(raw)) return "Failed";
   return "Completed";
 };
@@ -1239,24 +1829,38 @@ const RUN_CHIP_STYLES = {
  */
 function RunRowMenu({ onDelete }) {
   const [anchor, setAnchor] = useState(null);
-  const stop = (e) => { e.stopPropagation(); };
+  const stop = (e) => {
+    e.stopPropagation();
+  };
   return (
     <>
       <IconButton
         size="small"
         className="row-menu"
-        onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setAnchor(e.currentTarget);
+        }}
         onMouseDown={stop}
         aria-label="Run actions"
         sx={{
-          position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", zIndex: 2,
-          p: 0.5, borderRadius: 0.75,
+          position: "absolute",
+          right: 6,
+          top: "50%",
+          transform: "translateY(-50%)",
+          zIndex: 2,
           bgcolor: "background.paper",
-          border: "1px solid", borderColor: "divider",
-          opacity: anchor ? 1 : 0, transition: "opacity .12s ease",
+          border: "1px solid",
+          borderColor: "divider",
+          opacity: anchor ? 1 : 0,
+          transition: "opacity .12s ease",
         }}
       >
-        <Iconify icon="solar:menu-dots-bold" width={14} sx={{ color: "text.subtitle" }} />
+        <Iconify
+          icon="solar:menu-dots-bold"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
       </IconButton>
       <Menu
         anchorEl={anchor}
@@ -1265,16 +1869,31 @@ function RunRowMenu({ onDelete }) {
         onClick={stop}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 220 } } }}
+        slotProps={{ paper: { sx: { minWidth: 240 } } }}
       >
         <MenuItem
-          onClick={(e) => { stop(e); setAnchor(null); onDelete(); }}
-          sx={{ typography: "s2", gap: 1, color: "#DC2626" }}
+          onClick={(e) => {
+            stop(e);
+            setAnchor(null);
+            onDelete();
+          }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ typography: "s2", gap: 1, color: "status.danger.fg" }}
         >
           <ListItemIcon sx={{ minWidth: "0 !important", mr: 0 }}>
-            <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "#DC2626" }} />
+            <Iconify
+              icon="solar:trash-bin-trash-linear"
+              width={16}
+              sx={{ color: "status.danger.fg" }}
+            />
           </ListItemIcon>
-          <ListItemText primary="Delete run" primaryTypographyProps={{ typography: "s2", color: "#DC2626" }} />
+          <ListItemText
+            primary="Delete run"
+            primaryTypographyProps={{
+              typography: "s2",
+              color: "status.danger.fg",
+            }}
+          />
         </MenuItem>
       </Menu>
     </>
@@ -1293,8 +1912,6 @@ function StatusCell({ status }) {
         label={status}
         size="small"
         sx={{
-          typography: "s3",
-          fontWeight: "fontWeightRegular",
           pointerEvents: "none",
           ...RUN_CHIP_STYLES[status],
         }}
@@ -1304,18 +1921,35 @@ function StatusCell({ status }) {
 }
 StatusCell.propTypes = { status: PropTypes.string };
 
-
 /* A run's env pairing and timestamp — the part of its name that gives way,
    with an ellipsis and the full text on hover, when the column is narrow. */
 function RunDetail({ text, improvement }) {
   return (
-    <Tooltip arrow title={[improvement && `From ${improvement.name}`, text].filter(Boolean).join(" · ")} placement="top-start">
+    <Tooltip
+      arrow
+      title={[improvement && `From ${improvement.name}`, text]
+        .filter(Boolean)
+        .join(" · ")}
+      placement="top-start"
+    >
       <Typography
         noWrap
-        sx={{ typography: "s3", color: "text.subtitle", minWidth: 0, flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          minWidth: 0,
+          flex: "0 1 auto",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
       >
         {/* The improvement that produced the run leads, and links to it. */}
-        {improvement && <><FromImprovement improvement={improvement} />{" · "}</>}
+        {improvement && (
+          <>
+            <FromImprovement improvement={improvement} />
+            {" · "}
+          </>
+        )}
         {text}
       </Typography>
     </Tooltip>
@@ -1325,15 +1959,29 @@ RunDetail.propTypes = { text: PropTypes.string, improvement: PropTypes.object };
 
 /** A legend key: the eval's colour as a dot. */
 function LegendDot({ color }) {
-  return <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: color, flexShrink: 0 }} />;
+  return (
+    <Box
+      sx={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        bgcolor: color,
+        flexShrink: 0,
+      }}
+    />
+  );
 }
 LegendDot.propTypes = { color: PropTypes.string };
 
 function Line({ label, value }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>{label}</Typography>
-      <Typography sx={{ typography: "s3", fontWeight: 600 }}>{value}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
+        {label}
+      </Typography>
+      <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+        {value}
+      </Typography>
     </Stack>
   );
 }
@@ -1357,42 +2005,84 @@ const statsOf = (r) => (r?.finishedAt ? runStatsOf(r) : null);
 const costText = (r) => {
   const n = r.costUnverified || 0;
   if (n && !(r.cost > 0)) return "unverified";
-  return n ? `${creditsLabel(r.cost || 0)} + ${n} unverified` : creditsLabel(r.cost || 0);
+  return n
+    ? `${creditsLabel(r.cost || 0)} + ${n} unverified`
+    : creditsLabel(r.cost || 0);
 };
 /* A cost delta needs every cost known on both sides. */
-const costComparable = (r, against) => !!against && !r.costUnverified && !against.costUnverified;
+const costComparable = (r, against) =>
+  !!against && !r.costUnverified && !against.costUnverified;
 
 /* A count against the same count in another run: lower is better. */
-const countDelta = (now, before) => (now == null || before == null ? null
-  : now === before ? { flat: true }
-    : { text: `${Math.abs(now - before)}`, up: now > before, better: now < before });
+const countDelta = (now, before) =>
+  now == null || before == null
+    ? null
+    : now === before
+      ? { flat: true }
+      : {
+          text: `${Math.abs(now - before)}`,
+          up: now > before,
+          better: now < before,
+        };
 
 /* "65%  37/57" — the rate, the fraction it came from, and how it moved on
    the scenarios both runs measured (grey inside the noise). */
 function scenarioCell(r, against) {
   const st = statsOf(r);
-  const d = st && against && against.id !== r.id ? sharedDeltaOf(r, against) : null;
-  const vs = against ? (against.kind === "trial" ? `Run ${against.trialN}${against.selfImprovementName ? ` · ${against.selfImprovementName}` : ""}` : `Run ${against.ordinal}`) : "";
-  const delta = d && (d.pts === 0 ? { flat: true } : { text: `${Math.abs(d.pts)} pts`, up: d.pts > 0, better: d.pts > 0, muted: d.within });
+  const d =
+    st && against && against.id !== r.id ? sharedDeltaOf(r, against) : null;
+  const vs = against
+    ? against.kind === "trial"
+      ? `Run ${against.trialN}${against.selfImprovementName ? ` · ${against.selfImprovementName}` : ""}`
+      : `Run ${against.ordinal}`
+    : "";
+  const delta =
+    d &&
+    (d.pts === 0
+      ? { flat: true }
+      : {
+          text: `${Math.abs(d.pts)} pts`,
+          up: d.pts > 0,
+          better: d.pts > 0,
+          muted: d.within,
+        });
   const onlySome = r.kind === "trial" && r.partial;
   return (
     <Tooltip
-      key="scenario" arrow disableHoverListener={!d && !onlySome}
+      key="scenario"
+      arrow
+      disableHoverListener={!d && !onlySome}
       title={[
         /* An improvement's run measures only the scenarios it worked on. */
-        onlySome ? "Target scenarios only — held-back scenarios are checked on the change it picks." : null,
-        d ? `${d.pts > 0 ? "+" : ""}${d.pts} pts against ${vs} on the ${d.shared} scenarios both measured. Two runs of that size differ by up to ±${d.noise} pts by chance (95%)${d.within ? ", so this is within noise." : "."}` : null,
-      ].filter(Boolean).join(" ")}
+        onlySome
+          ? "Target scenarios only — held-back scenarios are checked on the change it picks."
+          : null,
+        d
+          ? `${d.pts > 0 ? "+" : ""}${d.pts} pts against ${vs} on the ${d.shared} scenarios both measured. Two runs of that size differ by up to ±${d.noise} pts by chance (95%)${d.within ? ", so this is within noise." : "."}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <Box sx={{ display: "grid", minWidth: 0 }}>
         <MetricCell
-          anchor quiet={!st?.measured} deltaWidth={64} delta={delta}
-          text={st?.measured ? (
-            <>
-              {`${st.scenarioRate}%`}
-              <Box component="span" sx={{ color: "text.subtitle", fontWeight: 400, ml: 0.75 }}>{`${st.scenarioPassed}/${st.measured}`}</Box>
-            </>
-          ) : "—"}
+          anchor
+          quiet={!st?.measured}
+          deltaWidth={64}
+          delta={delta}
+          text={
+            st?.measured ? (
+              <>
+                {`${st.scenarioRate}%`}
+                <Box
+                  component="span"
+                  sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
+                >{`${st.scenarioPassed}/${st.measured}`}</Box>
+              </>
+            ) : (
+              "—"
+            )
+          }
         />
       </Box>
     </Tooltip>
@@ -1404,19 +2094,58 @@ function addedCells(r, against) {
   const st = statsOf(r);
   const was = against ? statsOf(against) : null;
   return [
-    <MetricCell key="flaky" quiet deltaWidth={56} text={st ? `${st.flaky}` : "—"} delta={st && was ? countDelta(st.flaky, was.flaky) : null} />,
-    <MetricCell key="failing" quiet={!st?.failed} deltaWidth={56} text={st ? `${st.failed}` : "—"} delta={st && was ? countDelta(st.failed, was.failed) : null} />,
     <MetricCell
-      key="calls" quiet
-      text={st ? (
-        <Tooltip arrow title={`${(r.tasks?.length ? r.tasks : r.trialTasks || []).length} scenarios × ${r.repeats || 1} ${(r.repeats || 1) === 1 ? "repeat" : "repeats"}`}>
-          <Box component="span" sx={{ cursor: "default" }}>{st.calls.toLocaleString()}</Box>
-        </Tooltip>
-      ) : "—"}
+      key="flaky"
+      quiet
+      deltaWidth={56}
+      text={st ? `${st.flaky}` : "—"}
+      delta={st && was ? countDelta(st.flaky, was.flaky) : null}
+    />,
+    <MetricCell
+      key="failing"
+      quiet={!st?.failed}
+      deltaWidth={56}
+      text={st ? `${st.failed}` : "—"}
+      delta={st && was ? countDelta(st.failed, was.failed) : null}
+    />,
+    <MetricCell
+      key="calls"
+      quiet
+      text={
+        st ? (
+          <Tooltip
+            arrow
+            title={`${(r.tasks?.length ? r.tasks : r.trialTasks || []).length} scenarios × ${r.repeats || 1} ${(r.repeats || 1) === 1 ? "repeat" : "repeats"}`}
+          >
+            <Box component="span" sx={{ cursor: "default" }}>
+              {st.calls.toLocaleString()}
+            </Box>
+          </Tooltip>
+        ) : (
+          "—"
+        )
+      }
     />,
     <MetricCell key="took" quiet text={fmtTook(st?.tookMs)} />,
-    <Box key="who" sx={{ pl: 2.5, pr: 1.25, display: "flex", alignItems: "center", minWidth: 0 }}>
-      <Typography noWrap sx={{ typography: "s2", color: r.startedBy ? "text.secondary" : "text.subtitle" }}>{r.startedBy || "—"}</Typography>
+    <Box
+      key="who"
+      sx={{
+        pl: 2.5,
+        pr: 1.25,
+        display: "flex",
+        alignItems: "center",
+        minWidth: 0,
+      }}
+    >
+      <Typography
+        noWrap
+        sx={{
+          typography: "s2",
+          color: r.startedBy ? "text.secondary" : "text.tertiary",
+        }}
+      >
+        {r.startedBy || "—"}
+      </Typography>
     </Box>,
   ];
 }

@@ -142,16 +142,16 @@ const TreeNode = ({
             {hasChildren && (
               <Iconify
                 // @ts-ignore
-                icon="line-md:chevron-right"
+                icon="solar:alt-arrow-right-linear"
                 color="text.secondary"
-                width={18}
+                width={20}
                 sx={{
                   position: "absolute",
                   zIndex: 1,
                   left: `${-depth * 28 + 18}px`,
                   top: 4,
                   transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                  transition: "transform 0.3s ease",
+                  transition: "transform 200ms ease",
                 }}
               />
             )}
@@ -184,11 +184,6 @@ const TreeNode = ({
                 size="small"
                 type="black"
                 slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
                   popper: {
                     modifiers: [
                       {
@@ -389,7 +384,7 @@ const TraceTree = ({
         }}
       >
         <Box sx={{ flex: 1 }}>
-          <Typography color="text.secondary" fontSize="13px" fontWeight={700}>
+          <Typography color="text.secondary" fontSize="13px" fontWeight={600}>
             {label}
           </Typography>
         </Box>
@@ -408,7 +403,11 @@ const TraceTree = ({
           }}
         >
           {/* @ts-ignore */}
-          <Iconify icon="bi:arrows-collapse" color="text.primary" width={14} />
+          <Iconify
+            icon="solar:chevrons-down-up-linear"
+            color="text.primary"
+            width={14}
+          />
         </Box>
         <Box
           ref={anchorRef}
@@ -455,15 +454,7 @@ const TraceTree = ({
           style={{ zIndex: 1300 }}
         >
           <ClickAwayListener onClickAway={() => setDropdownOpen(false)}>
-            <Paper
-              sx={{
-                width: 177,
-                mt: 1,
-                py: 1,
-                boxShadow: "0px 5px 15px rgba(0, 0, 0, 0.15)",
-                borderRadius: "8px",
-              }}
-            >
+            <Paper sx={{ width: 200, mt: 1, py: 1 }}>
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {columnOptions.map(({ key, label, visible }) => (
                   <FormControlLabel
@@ -482,7 +473,7 @@ const TraceTree = ({
                     label={
                       <Typography
                         sx={{
-                          fontSize: "14px",
+                          fontSize: "13px",
                           color: "text.primary",
                           fontWeight: 400,
                         }}
@@ -507,8 +498,8 @@ const TraceTree = ({
             height: "6px",
           },
           "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            backgroundColor: "border.strong",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",
@@ -658,7 +649,7 @@ const RightSection = ({
             >
               <Iconify
                 // @ts-ignore
-                icon="material-symbols:schedule-outline"
+                icon="solar:clock-circle-linear"
                 width="12px"
                 height="12px"
                 color="text.secondary"

@@ -47,14 +47,14 @@ const OptimizePrompt = ({ control, allColumns }) => {
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="material-symbols:add" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
             >
               Import Prompt
             </Button>
           </Box>
           <MessageList control={control} allColumns={allColumns} />
           <Box sx={{ display: "flex", gap: 2, flexDirection: "column" }}>
-            <Typography color="text.secondary" fontSize="12px" fontWeight={700}>
+            <Typography color="text.secondary" fontSize="12px" fontWeight={600}>
               Language Model
             </Typography>
             <FormSelectField

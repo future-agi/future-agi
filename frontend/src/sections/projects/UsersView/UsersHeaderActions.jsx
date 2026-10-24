@@ -1,13 +1,6 @@
+import SelectionBar from "src/components/selection-bar";
 import React, { useMemo, useRef } from "react";
-import {
-  Badge,
-  Box,
-  Button,
-  Divider,
-  IconButton,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Badge, Box, Divider, IconButton, useTheme } from "@mui/material";
 import useUsersStore from "./Store/usersStore";
 import CustomTooltip from "src/components/tooltip";
 import SvgColor from "src/components/svg-color";
@@ -32,43 +25,6 @@ export const UsersHeaderActions = () => {
       display: "flex",
       alignItems: "center",
       gap: theme.spacing(2),
-    }),
-    [theme],
-  );
-
-  const selectedBoxStyle = useMemo(
-    () => ({
-      display: "flex",
-      border: "1px solid",
-      borderColor: "divider",
-      borderRadius: "4px",
-      paddingLeft: theme.spacing(1.5),
-      paddingY: theme.spacing(0.5),
-      alignItems: "center",
-      gap: theme.spacing(1),
-      marginRight: theme.spacing(1.5),
-      height: "38px",
-    }),
-    [theme],
-  );
-
-  const dividerStyle = useMemo(
-    () => ({
-      borderRightWidth: "1px",
-      marginLeft: theme.spacing(1),
-      height: "20px",
-      mt: theme.spacing(0.5),
-    }),
-    [theme],
-  );
-
-  const cancelButtonStyle = useMemo(
-    () => ({
-      display: "flex",
-      alignItems: "center",
-      gap: theme.spacing(1),
-      pr: theme.spacing(1.5),
-      cursor: "pointer",
     }),
     [theme],
   );
@@ -139,15 +95,10 @@ export const UsersHeaderActions = () => {
   if (selectedRowsData.length > 0) {
     return (
       <Box sx={wrapperStyle}>
-        <Box sx={selectedBoxStyle}>
-          <Typography fontWeight="500" typography="s1" color="primary.main">
-            {selectedRowsData.length} Selected
-          </Typography>
-          <Divider orientation="vertical" flexItem sx={dividerStyle} />
-          <Button size="small" sx={cancelButtonStyle} onClick={clearSelection}>
-            Cancel
-          </Button>
-        </Box>
+        <SelectionBar
+          count={selectedRowsData.length}
+          onCancel={clearSelection}
+        />
       </Box>
     );
   }

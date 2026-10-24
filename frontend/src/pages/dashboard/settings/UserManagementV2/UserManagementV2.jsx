@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import { Box, Button } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -268,29 +269,15 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
             <BackButton onBack={() => navigate(-1)} />
           </Box>
         )}
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            {pageTitle}
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            {workspaceScope
+        <PageHeader
+          title={pageTitle}
+          description={
+            workspaceScope
               ? "Manage workspace members and their roles"
-              : "Manage who has access to workspace"}
-          </Typography>
-        </Box>
+              : "Manage who has access to workspace"
+          }
+          sx={{ mb: 0 }}
+        />
         <Box
           sx={{
             paddingX: 0,

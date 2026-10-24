@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material";
@@ -32,7 +33,7 @@ export default function BaselineChart() {
     chart: {
       type: "line",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       zoom: {
         enabled: false,
       },
@@ -79,7 +80,7 @@ export default function BaselineChart() {
       },
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
   };
 

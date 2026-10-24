@@ -35,7 +35,7 @@ export const PreviewContainer = ({
       width: "100%",
       border: "1px solid",
       borderColor: isError ? "error.main" : "divider",
-      borderRadius: 0.25,
+      borderRadius: "4px",
       overflow: "hidden",
       ...(centered && {
         display: "flex",

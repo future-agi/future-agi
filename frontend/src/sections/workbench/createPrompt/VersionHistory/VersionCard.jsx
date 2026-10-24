@@ -195,7 +195,7 @@ const VersionCard = ({
                   fontWeight={"fontWeightMedium"}
                   sx={{
                     backgroundColor: "action.hover",
-                    borderRadius: "2px",
+                    borderRadius: "4px",
                     color: "text.primary",
                     paddingX: theme.spacing(0.75),
                     paddingTop: theme.spacing(0.5),
@@ -237,7 +237,7 @@ const VersionCard = ({
                         sx={{
                           backgroundColor: "action.hover",
                           color: "text.primary",
-                          borderRadius: "2px",
+                          borderRadius: "4px",
                           padding: "4px 8px",
                           display: "flex",
                           alignItems: "center",
@@ -287,6 +287,7 @@ const VersionCard = ({
                             borderColor: "divider",
                             borderRadius: 1,
                             padding: 1,
+                            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
                             boxShadow: 4,
                             minWidth: "150px",
                             display: "flex",
@@ -324,7 +325,7 @@ const VersionCard = ({
                 </Box>
               </Box>
               <Typography
-                fontSize={"14px"}
+                fontSize={"13px"}
                 fontWeight={400}
                 color={"text.primary"}
               >
@@ -394,7 +395,7 @@ const VersionCard = ({
                   buttonTitle="Select Model"
                   buttonIcon={
                     <Iconify
-                      icon="radix-icons:box-model"
+                      icon="solar:graph-linear"
                       width="16px"
                       height="16px"
                       sx={{
@@ -435,7 +436,7 @@ const VersionCard = ({
                 src="/assets/icons/ic_variables.svg"
                 sx={{ width: "20px", height: "20px", color: "text.primary" }}
               />
-              <Typography sx={{ fontSize: "15px", fontWeight: 500 }}>
+              <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>
                 Variables :
               </Typography>
 
@@ -454,7 +455,7 @@ const VersionCard = ({
                         bgcolor: "success.lighter",
                         padding: 0.5,
                         color: "success.dark",
-                        fontSize: "15px",
+                        fontSize: "13px",
                         alignItems: "center",
                         fontWeight: 500,
                       }}

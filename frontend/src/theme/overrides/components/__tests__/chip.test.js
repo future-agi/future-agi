@@ -26,8 +26,9 @@ describe("chip theme override", () => {
       clickable: true,
     });
 
+    // Design system: neutral chips darken to the selected tint on hover.
     expect(styles["&:hover"]).toEqual({
-      backgroundColor: darkTheme.palette.grey[100],
+      backgroundColor: darkTheme.palette.action.selected,
     });
   });
 
@@ -66,8 +67,10 @@ describe("chip theme override", () => {
       clickable: true,
     });
 
+    // Design system: purple is kept for the main action, so a primary chip
+    // renders (and hovers) as a neutral chip.
     expect(styles["&:hover"]).toEqual({
-      backgroundColor: darkTheme.palette.primary.dark,
+      backgroundColor: darkTheme.palette.action.selected,
     });
   });
 });

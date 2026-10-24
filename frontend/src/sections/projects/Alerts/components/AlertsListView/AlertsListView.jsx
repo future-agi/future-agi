@@ -230,7 +230,7 @@ export default function AlertsListView() {
                     height: 14,
                     width: 14,
                     flexShrink: 0,
-                    bgcolor: "red.500",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
               )}

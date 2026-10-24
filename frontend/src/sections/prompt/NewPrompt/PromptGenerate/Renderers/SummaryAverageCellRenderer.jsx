@@ -15,7 +15,7 @@ const SummaryAverageCellRenderer = (props) => {
           height: "100%",
         }}
       >
-        <Typography fontSize="14px" fontWeight={400} color="text.primary">
+        <Typography fontSize="13px" fontWeight={400} color="text.primary">
           {props.value}
         </Typography>
       </Box>
@@ -38,7 +38,7 @@ const SummaryAverageCellRenderer = (props) => {
         variant="determinate"
         sx={{ width: "100%" }}
       />
-      <Typography fontSize="14px" fontWeight={400} color="text.secondary">
+      <Typography fontSize="13px" fontWeight={400} color="text.secondary">
         {props.value}%
       </Typography>
     </Box>

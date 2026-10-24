@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Box, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Box } from "@mui/material";
 import PersonaListView from "src/sections/persona/PersonaListView";
 import { useSimStore } from "../../store";
 import UseInEnvironmentDialog from "./UseInEnvironmentDialog";
@@ -36,17 +35,9 @@ export default function PersonaLibraryTab() {
   }, [state.byEnv, state.myEnvironments]);
 
   return (
-    <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 1.5, overflow: "hidden", px: 2, pt: 2, pb: 2 }}>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
-        <Iconify icon="solar:users-group-rounded-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {"Reusable callers for voice and chat agents. "}
-          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>Use</Box>
-          {" writes an environment's tasks in a persona's voice."}
-        </Typography>
-      </Stack>
+    <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 3, pb: 2 }}>
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <PersonaListView onUseInEnvironment={onUse} usage={usage} />
+        <PersonaListView framed onUseInEnvironment={onUse} usage={usage} />
       </Box>
       <UseInEnvironmentDialog open={!!using} onClose={() => setUsing(null)} personas={using || []} />
     </Box>

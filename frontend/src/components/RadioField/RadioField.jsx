@@ -37,8 +37,8 @@ const RadioField = ({
           {label && (
             <Typography
               sx={{
-                fontSize: "14px",
-                fontWeight: "700",
+                fontSize: "13px",
+                fontWeight: "600",
                 lineHeight: "18.2px",
                 letterSpacing: "0.02em",
                 color: other.labelColor || "text.secondary",
@@ -138,7 +138,7 @@ const RadioField = ({
                     marginLeft: 1,
                     height: "48px",
                     cursor: "pointer",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     backgroundColor: "background.paper",
                     border: "1px solid",
                     borderColor: "divider",
@@ -163,7 +163,7 @@ const RadioField = ({
                   )}
                   <Typography
                     sx={{
-                      fontSize: "15px",
+                      fontSize: "13px",
                       fontWeight: 500,
                       color: "text.primary",
                       ...other?.labelTxtsx,
@@ -202,7 +202,7 @@ const RadioField = ({
                     },
                     "& .MuiTypography-root": {
                       m: 0,
-                      fontSize: "14px",
+                      fontSize: "13px",
                     },
                     ...other.optionSx,
                   }}
@@ -214,7 +214,7 @@ const RadioField = ({
           {error && (
             <Typography
               sx={{
-                color: "red.500",
+                color: "status.danger.fg",
                 fontSize: "12px",
                 marginTop: "5px",
                 ...other.helperTextSx,

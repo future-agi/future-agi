@@ -57,9 +57,6 @@ const FilterSection = ({ setFilter, filter }) => {
                     key={value}
                     label={getTabLabel(value)}
                     size="small"
-                    sx={{
-                      fontSize: "11px",
-                    }}
                   />
                 ))}
                 {Boolean(selected.length - 1) && (

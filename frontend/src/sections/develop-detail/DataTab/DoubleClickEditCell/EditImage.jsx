@@ -64,7 +64,7 @@ const EditImage = ({
 
   const imageStyles = {
     transform: `scale(${zoom}) rotate(${rotation}deg)`,
-    transition: "transform 0.3s ease",
+    transition: "transform 0.2s ease",
     maxWidth: "100%",
     maxHeight: "100%",
   };
@@ -143,7 +143,7 @@ const EditImage = ({
                 }}
               >
                 <IconButton onClick={handleZoomIn}>
-                  <Iconify icon="ic:twotone-zoom-in" color="#fff" />
+                  <Iconify icon="solar:magnifier-zoom-in-linear" color="common.white" />
                 </IconButton>
                 <IconButton>
                   <input
@@ -160,10 +160,10 @@ const EditImage = ({
                     }}
                     onChange={handleImageChange}
                   />
-                  <Iconify icon="fa6-solid:rotate" color="#fff" />
+                  <Iconify icon="solar:refresh-linear" color="common.white" />
                 </IconButton>
                 <IconButton onClick={handleDelete}>
-                  <Iconify icon="solar:trash-bin-trash-bold" color="#fff" />
+                  <Iconify icon="solar:trash-bin-trash-bold" color="common.white" />
                 </IconButton>
               </Box>
             </Box>
@@ -231,7 +231,7 @@ const EditImage = ({
                 }}
               >
                 <IconButton>
-                  <Iconify icon="fa6-solid:rotate" color="#fff" />
+                  <Iconify icon="solar:refresh-linear" color="common.white" />
                 </IconButton>
               </Box>
             </Box>
@@ -257,7 +257,6 @@ const EditImage = ({
           sx={{
             width: "90px",
             fontsize: "14px",
-            fontWeight: 500,
             marginRight: "-5px",
           }}
         >
@@ -270,7 +269,7 @@ const EditImage = ({
           // fullWidth
           size="small"
           loading={false}
-          sx={{ width: "90px", fontSize: "14px", fontWeight: 700 }}
+          sx={{ width: "90px" }}
         >
           Save
         </LoadingButton>

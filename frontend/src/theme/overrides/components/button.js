@@ -28,7 +28,9 @@ export function button(theme) {
     const largeSize = ownerState.size === "large";
 
     const defaultStyle = {
-      borderRadius: theme.spacing(0.5),
+      borderRadius: theme.shape.borderRadius,
+      textTransform: "none",
+      minWidth: 0,
       ...(inheritColor && {
         // CONTAINED
         ...(containedVariant && {
@@ -44,32 +46,19 @@ export function button(theme) {
               : theme.palette.grey[400],
           },
         }),
-        // OUTLINED
+        // OUTLINED: the DS secondary button, same as every other outlined
+        // button — hairline border.default, never the text colour.
         ...(outlinedVariant && {
-          borderColor: lightMode
-            ? theme.palette.whiteScale[500]
-            : theme.palette.border.default,
-          color: lightMode
-            ? theme.palette.black[1000]
-            : theme.palette.text.primary,
+          borderColor: `${theme.palette.border.default} !important`,
+          color: theme.palette.text.primary,
+          backgroundColor: theme.palette.background.paper,
           "&:hover": {
-            border: `1px solid ${lightMode ? theme.palette.black[200] : theme.palette.border.hover} !important`,
-            borderColor: lightMode
-              ? theme.palette.black[200]
-              : theme.palette.border.hover,
-            backgroundColor: lightMode
-              ? theme.palette.whiteScale[300]
-              : theme.palette.action.hover,
+            borderColor: `${theme.palette.border.strong} !important`,
+            backgroundColor: theme.palette.action.hover,
           },
           "& .MuiButton-startIcon, & .MuiButton-endIcon": {
-            color: lightMode
-              ? theme.palette.black[1000]
-              : theme.palette.text.primary,
-            "& .svg-color": {
-              color: lightMode
-                ? theme.palette.black[1000]
-                : theme.palette.text.primary,
-            },
+            color: theme.palette.action.active,
+            "& .svg-color": { color: theme.palette.action.active },
           },
           "&.Mui-disabled": {
             borderColor: lightMode
@@ -117,14 +106,10 @@ export function button(theme) {
       "& .MuiButton-startIcon, & .MuiButton-endIcon": {
         // height: theme.spacing(2),
         // width: theme.spacing(2),
-        "& .svg-color": {
-          height: `${theme.spacing(2)}`,
-          width: `${theme.spacing(2)}`,
-        },
-        "& svg": {
-          height: theme.spacing(2),
-          width: theme.spacing(2),
-        },
+        marginLeft: 0,
+        marginRight: 6,
+        "& .svg-color": { height: 16, width: 16 },
+        "& svg": { height: 16, width: 16 },
       },
       "&.Mui-disabled": {
         "& .MuiButton-startIcon, & .MuiButton-endIcon": {
@@ -136,20 +121,57 @@ export function button(theme) {
       },
     };
 
+    // Future AGI Design System: one purple main button per view; outlined and
+    // text buttons are neutral (secondary / ghost); no coloured glow on hover.
+    const neutral = !["error", "warning", "success", "info"].includes(
+      ownerState.color,
+    );
     const colorStyle = COLORS.map((color) => ({
       ...(ownerState.color === color && {
         // CONTAINED
         ...(containedVariant && {
+          boxShadow: "none",
           "&:hover": {
-            boxShadow: theme.customShadows[color],
+            boxShadow: "none",
+            backgroundColor: theme.palette[color].dark,
           },
         }),
+        // OUTLINED: neutral secondary button
+        ...(outlinedVariant &&
+          neutral && {
+            color: theme.palette.text.primary,
+            borderColor: theme.palette.border.default,
+            backgroundColor: theme.palette.background.paper,
+            "&:hover": {
+              borderColor: theme.palette.border.strong,
+              backgroundColor: theme.palette.action.hover,
+            },
+            "& .MuiButton-startIcon, & .MuiButton-endIcon": {
+              color: theme.palette.action.active,
+            },
+          }),
+        ...(outlinedVariant &&
+          !neutral && {
+            borderColor:
+              theme.palette.status?.[color === "error" ? "danger" : color]
+                ?.border,
+            "&:hover": { backgroundColor: theme.palette.action.hover },
+          }),
+        // TEXT: neutral ghost button
+        ...(textVariant &&
+          neutral && {
+            color: theme.palette.text.secondary,
+            "&:hover": {
+              color: theme.palette.text.primary,
+              backgroundColor: theme.palette.action.hover,
+            },
+          }),
         // SOFT
         ...(softVariant && {
-          color: theme.palette[color][lightMode ? "dark" : "light"],
-          backgroundColor: alpha(theme.palette[color].main, 0.16),
+          color: theme.palette[color].dark,
+          backgroundColor: theme.palette[color].lighter,
           "&:hover": {
-            backgroundColor: alpha(theme.palette[color].main, 0.32),
+            backgroundColor: alpha(theme.palette[color].main, 0.16),
           },
         }),
       }),
@@ -157,59 +179,94 @@ export function button(theme) {
 
     const disabledState = {
       [`&.${buttonClasses.disabled}`]: {
-        // SOFT
-        ...(softVariant && {
+        ...((containedVariant || softVariant) && {
           backgroundColor: theme.palette.action.disabledBackground,
+          color: theme.palette.text.disabled,
+          borderColor: "transparent",
+        }),
+        ...(outlinedVariant && {
+          backgroundColor: theme.palette.action.disabledBackground,
+          borderColor: "transparent",
+          color: theme.palette.text.disabled,
         }),
       },
     };
 
+    // Sizes: 28 / 32 / 36 (design-system controls), 13px label at 500.
     const size = {
+      fontWeight: 500,
+      boxShadow: "none",
       ...(smallSize && {
-        height: 30,
+        height: 28,
         fontSize: 12,
-        paddingLeft: 24,
-        paddingRight: 24,
-        paddingTop: 6,
-        paddingBottom: 6,
-        fontWeight: 500,
-        ...(textVariant && {
-          paddingLeft: 4,
-          paddingRight: 4,
-        }),
+        lineHeight: "16px",
+        paddingLeft: 10,
+        paddingRight: 10,
+        paddingTop: 0,
+        paddingBottom: 0,
+        ...(textVariant && { paddingLeft: 8, paddingRight: 8 }),
       }),
       ...(mediumSize && {
-        paddingLeft: 24,
-        paddingRight: 24,
-        paddingTop: 8,
-        paddingBottom: 8,
-        fontSize: 14,
-        height: 38,
-        fontWeight: 500,
-        ...(textVariant && {
-          paddingLeft: 8,
-          paddingRight: 8,
-        }),
+        height: 32,
+        fontSize: 13,
+        lineHeight: "20px",
+        paddingLeft: 12,
+        paddingRight: 12,
+        paddingTop: 0,
+        paddingBottom: 0,
+        ...(textVariant && { paddingLeft: 8, paddingRight: 8 }),
       }),
       ...(largeSize && {
-        height: 48,
-        fontSize: 15,
-        paddingLeft: 16,
-        paddingRight: 16,
-        ...(textVariant && {
-          paddingLeft: 10,
-          paddingRight: 10,
-        }),
+        height: 36,
+        fontSize: 13,
+        lineHeight: "20px",
+        paddingLeft: 14,
+        paddingRight: 14,
+        ...(textVariant && { paddingLeft: 10, paddingRight: 10 }),
       }),
     };
 
-    return [defaultStyle, ...colorStyle, disabledState, size];
+    // Every neutral outlined button (primary, secondary, inherit, default)
+    // is the DS secondary button: hairline border, never purple or the text
+    // colour. Applied last so it wins over MUI's own outlined colours.
+    const outlinedNeutral = outlinedVariant &&
+      neutral && {
+        color: theme.palette.text.primary,
+        borderColor: theme.palette.border.default,
+        backgroundColor: theme.palette.background.paper,
+        "&:hover": {
+          borderColor: theme.palette.border.strong,
+          backgroundColor: theme.palette.action.hover,
+        },
+      };
+
+    return [defaultStyle, ...colorStyle, disabledState, size, outlinedNeutral || {}];
   };
 
   return {
+    // Design system icon button: a 6px-rounded square, not a circle; hover
+    // and focus come from the same tokens as ghost buttons.
+    MuiIconButton: {
+      styleOverrides: {
+        root: {
+          borderRadius: 6,
+          "&:hover": { backgroundColor: theme.palette.action.hover },
+          "&.Mui-focusVisible": {
+            outline: `2px solid ${theme.palette.border.focus}`,
+            outlineOffset: -2,
+          },
+        },
+        sizeSmall: { padding: 4 },
+        sizeMedium: { padding: 6 },
+      },
+    },
     MuiButton: {
       styleOverrides: {
-        root: ({ ownerState }) => rootStyles(ownerState),
+        // Button labels never wrap onto two lines.
+        root: ({ ownerState }) => [
+          { whiteSpace: "nowrap" },
+          ...rootStyles(ownerState),
+        ],
       },
     },
   };

@@ -3,8 +3,6 @@ import React, { useState, useMemo } from "react";
 import {
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Dialog,
   DialogActions,
@@ -15,6 +13,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useRemoveMCPServer } from "./hooks/useMCPConfig";
@@ -62,19 +61,17 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
 
   if (serverIds.length === 0) {
     return (
-      <Card>
-        <CardContent>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            align="center"
-            sx={{ py: 3 }}
-          >
-            No MCP servers configured. Click &quot;Add Server&quot; to connect
-            an upstream MCP tool server.
-          </Typography>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          align="center"
+          sx={{ py: 3 }}
+        >
+          No MCP servers configured. Click &quot;Add Server&quot; to connect an
+          upstream MCP tool server.
+        </Typography>
+      </Section>
     );
   }
 
@@ -89,98 +86,101 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
 
           return (
             <Grid item xs={12} sm={6} md={4} key={serverId}>
-              <Card sx={{ height: "100%" }}>
-                <CardContent>
-                  <Stack spacing={1.5}>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                    >
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        {serverId}
-                      </Typography>
-                      {health ? (
-                        <Chip
-                          label={getMCPServerStatusLabel(health)}
-                          color={getMCPServerStatusColor(health)}
-                          size="small"
-                        />
-                      ) : (
-                        <Chip label="Unknown" size="small" />
-                      )}
-                    </Stack>
-
-                    <Box>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        display="block"
-                      >
-                        URL
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontFamily: "monospace",
-                          fontSize: 12,
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {serverCfg.url || serverCfg.command || "—"}
-                      </Typography>
-                    </Box>
-
-                    <Stack direction="row" spacing={1}>
+              <Section variant="panel" sx={{ height: "100%" }}>
+                <Stack spacing={1.5}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
+                    <Typography variant="subtitle1" fontWeight={600}>
+                      {serverId}
+                    </Typography>
+                    {health ? (
                       <Chip
-                        label={transport.toUpperCase()}
+                        label={getMCPServerStatusLabel(health)}
+                        color={getMCPServerStatusColor(health)}
                         size="small"
-                        variant="outlined"
                       />
-                      <Chip
-                        label={`Auth: ${authType}`}
-                        size="small"
-                        variant="outlined"
-                      />
-                      {health && (
-                        <Chip
-                          label={`${getMCPServerToolCount(health)} tools`}
-                          size="small"
-                          variant="outlined"
-                          color="primary"
-                        />
-                      )}
-                    </Stack>
-
-                    {serverCfg.tools_cache_ttl && (
-                      <Typography variant="caption" color="text.secondary">
-                        Cache TTL: {serverCfg.tools_cache_ttl}
-                      </Typography>
+                    ) : (
+                      <Chip label="Unknown" size="small" />
                     )}
-
-                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<Iconify icon="mdi:pencil" width={16} />}
-                        onClick={() => onEditServer(serverId, serverCfg)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        color="error"
-                        startIcon={<Iconify icon="mdi:delete" width={16} />}
-                        onClick={() => setConfirmDelete(serverId)}
-                        disabled={removeMutation.isPending}
-                      >
-                        Delete
-                      </Button>
-                    </Stack>
                   </Stack>
-                </CardContent>
-              </Card>
+
+                  <Box>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      display="block"
+                    >
+                      URL
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontFamily: "monospace",
+                        fontSize: 12,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {serverCfg.url || serverCfg.command || "—"}
+                    </Typography>
+                  </Box>
+
+                  <Stack direction="row" spacing={1}>
+                    <Chip
+                      label={transport.toUpperCase()}
+                      size="small"
+                      variant="outlined"
+                    />
+                    <Chip
+                      label={`Auth: ${authType}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                    {health && (
+                      <Chip
+                        label={`${getMCPServerToolCount(health)} tools`}
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                      />
+                    )}
+                  </Stack>
+
+                  {serverCfg.tools_cache_ttl && (
+                    <Typography variant="caption" color="text.secondary">
+                      Cache TTL: {serverCfg.tools_cache_ttl}
+                    </Typography>
+                  )}
+
+                  <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<Iconify icon="solar:pen-linear" width={16} />}
+                      onClick={() => onEditServer(serverId, serverCfg)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                      startIcon={
+                        <Iconify
+                          icon="solar:trash-bin-trash-linear"
+                          width={16}
+                        />
+                      }
+                      onClick={() => setConfirmDelete(serverId)}
+                      disabled={removeMutation.isPending}
+                    >
+                      Delete
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Section>
             </Grid>
           );
         })}

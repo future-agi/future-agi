@@ -20,7 +20,7 @@ export default function TemplateLoadingOverlay() {
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        bgcolor: "whiteScale.100",
+        bgcolor: "background.neutral",
       }}
     >
       <Stack direction={"row"} alignItems="center" gap={1}>

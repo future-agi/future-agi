@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 const ErrorMessage = ({ isError, errorMessage }) => {
   return (
     <FormHelperText error={isError} sx={{ display: "flex", gap: "4px" }}>
-      <Iconify icon="fluent:warning-16-regular" />
+      <Iconify icon="solar:danger-triangle-linear" />
       <Box>{errorMessage}</Box>
     </FormHelperText>
   );

@@ -1,11 +1,29 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Button, ClickAwayListener, Divider, Fade, Menu, MenuItem, Paper, Popper, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  ClickAwayListener,
+  Divider,
+  Fade,
+  Menu,
+  MenuItem,
+  Popper,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import {
-  connectedCloudAgents, connectedCodingAgent, dispatchToCloudAgent, handBriefTo, startImproverSession, useIntegrations,
+  connectedCloudAgents,
+  connectedCodingAgent,
+  dispatchToCloudAgent,
+  handBriefTo,
+  startImproverSession,
+  useIntegrations,
 } from "../_mock/integrations";
 import BrandMark from "../integrations/BrandMark";
 
@@ -38,7 +56,15 @@ const SIZES = {
   medium: { typography: "s2", height: 30, px: 1.25, icon: 15 },
 };
 
-export default function CopyBriefButton({ getBrief, label = "Copy for coding agent", size = "medium", target, onOpened, disabledReason, sx }) {
+export default function CopyBriefButton({
+  getBrief,
+  label = "Copy for coding agent",
+  size = "medium",
+  target,
+  onOpened,
+  disabledReason,
+  sx,
+}) {
   const navigate = useNavigate();
   const integrations = useIntegrations();
   const agent = connectedCodingAgent(integrations);
@@ -70,7 +96,12 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
   const open = () => {
     handBriefTo({ agentId: agent.id, target, brief: getBrief() });
     if (target?.kind === "improvement") {
-      startImproverSession({ agentId: agent.id, envId: target.envId, optId: target.optId, where: "future-agi" });
+      startImproverSession({
+        agentId: agent.id,
+        envId: target.envId,
+        optId: target.optId,
+        where: "future-agi",
+      });
     }
     /* An issue or a run: the caller starts the improvement its attempts land on. */
     const where = onOpened?.(agent) || null;
@@ -89,10 +120,19 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
 
   const s = SIZES[size] || SIZES.medium;
   const base = {
-    typography: s.typography, fontWeight: 700, textTransform: "none",
-    color: "text.primary", borderColor: "divider",
-    height: s.height, flexShrink: 0, whiteSpace: "nowrap",
-    "&:hover": { borderColor: "text.primary", bgcolor: "transparent", zIndex: 1 },
+    typography: s.typography,
+    fontWeight: 600,
+    textTransform: "none",
+    color: "text.primary",
+    borderColor: "divider",
+    height: s.height,
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+    "&:hover": {
+      borderColor: "text.primary",
+      bgcolor: "transparent",
+      zIndex: 1,
+    },
   };
 
   /* No code to change: a coding agent has nowhere to push its candidate. */
@@ -101,9 +141,11 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
       <Tooltip arrow title={disabledReason}>
         <span>
           <Button
-            size="small" variant="outlined" disabled
+            size="small"
+            variant="outlined"
+            disabled
             startIcon={<Iconify icon="solar:copy-linear" width={s.icon} />}
-            sx={{ ...base, px: s.px, ...sx }}
+            sx={{ ...base, ...sx }}
           >
             {label}
           </Button>
@@ -118,8 +160,13 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
         size="small"
         variant="outlined"
         onClick={copy}
-        startIcon={<Iconify icon={done ? "solar:check-circle-bold" : "solar:copy-linear"} width={s.icon} />}
-        sx={{ ...base, px: s.px, ...sx }}
+        startIcon={
+          <Iconify
+            icon={done ? "solar:check-circle-bold" : "solar:copy-linear"}
+            width={s.icon}
+          />
+        }
+        sx={{ ...base, ...sx }}
       >
         {done ? "Copied" : label}
       </Button>
@@ -131,8 +178,16 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
      agent does — one-click dispatch — and Copy moves to the caret. */
   const lead = !agent ? clouds[0] : null;
   const idle = agent
-    ? { icon: <BrandMark brand={agent.id} size={markSize} tile={false} />, text: `Open in ${agent.label}`, onClick: open }
-    : { icon: <BrandMark brand={lead.id} size={markSize} tile={false} />, text: `Dispatch to ${lead.short || lead.label}`, onClick: () => dispatch(lead) };
+    ? {
+        icon: <BrandMark brand={agent.id} size={markSize} tile={false} />,
+        text: `Open in ${agent.label}`,
+        onClick: open,
+      }
+    : {
+        icon: <BrandMark brand={lead.id} size={markSize} tile={false} />,
+        text: `Dispatch to ${lead.short || lead.label}`,
+        onClick: () => dispatch(lead),
+      };
   const doneText = {
     sent: agent && `Opened in ${agent.label}`,
     copied: "Copied",
@@ -145,8 +200,14 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
           size="small"
           variant="outlined"
           onClick={idle.onClick}
-          startIcon={done ? <Iconify icon="solar:check-circle-bold" width={s.icon} /> : idle.icon}
-          sx={{ ...base, px: s.px, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+          startIcon={
+            done ? (
+              <Iconify icon="solar:check-circle-bold" width={s.icon} />
+            ) : (
+              idle.icon
+            )
+          }
+          sx={{ ...base, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
         >
           {doneText || idle.text}
         </Button>
@@ -155,54 +216,115 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
           variant="outlined"
           aria-label="More ways to hand off"
           onClick={(e) => setMenu(e.currentTarget)}
-          sx={{ ...base, minWidth: 0, px: 0.5, ml: "-1px", borderTopLeftRadius: 0, borderBottomLeftRadius: 0, color: "text.secondary" }}
+          sx={{
+            ...base,
+            minWidth: 0,
+            ml: "-1px",
+            borderTopLeftRadius: 0,
+            borderBottomLeftRadius: 0,
+            color: "text.secondary",
+          }}
         >
-          <Iconify icon="eva:chevron-down-fill" width={s.icon + 1} />
+          <Iconify icon="solar:alt-arrow-down-linear" width={s.icon + 1} />
         </Button>
       </Stack>
 
       <Menu
-        anchorEl={menu} open={!!menu} onClose={() => setMenu(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }} transformOrigin={{ vertical: "top", horizontal: "right" }}
+        anchorEl={menu}
+        open={!!menu}
+        onClose={() => setMenu(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
-        <MenuItem onClick={() => { setMenu(null); copy(); }} sx={{ typography: "s2" }}>
-          <Iconify icon="solar:copy-linear" width={15} sx={{ mr: 1, color: "text.secondary" }} />
+        <MenuItem
+          onClick={() => {
+            setMenu(null);
+            copy();
+          }}
+          sx={{ typography: "s2" }}
+        >
+          <Iconify
+            icon="solar:copy-linear"
+            width={16}
+            sx={{ mr: 1, color: "text.secondary" }}
+          />
           Copy brief instead
         </MenuItem>
-        {clouds.filter((c) => c.id !== lead?.id).map((c) => (
-          <MenuItem key={c.id} onClick={() => { setMenu(null); dispatch(c); }} sx={{ typography: "s2" }}>
-            <Box sx={{ mr: 1, display: "inline-flex" }}><BrandMark brand={c.id} size={27} tile={false} /></Box>
-            {`Dispatch to ${c.label}`}
-          </MenuItem>
-        ))}
+        {clouds
+          .filter((c) => c.id !== lead?.id)
+          .map((c) => (
+            <MenuItem
+              key={c.id}
+              onClick={() => {
+                setMenu(null);
+                dispatch(c);
+              }}
+              sx={{ typography: "s2" }}
+            >
+              <Box sx={{ mr: 1, display: "inline-flex" }}>
+                <BrandMark brand={c.id} size={27} tile={false} />
+              </Box>
+              {`Dispatch to ${c.label}`}
+            </MenuItem>
+          ))}
         <Divider sx={{ my: 0.5 }} />
-        <MenuItem onClick={() => { setMenu(null); navigate(`${paths.dashboard.settings.integrations}/coding-agents`); }} sx={{ typography: "s2", color: "text.secondary" }}>
-          <Iconify icon="solar:settings-linear" width={15} sx={{ mr: 1 }} />
+        <MenuItem
+          onClick={() => {
+            setMenu(null);
+            navigate(`${paths.dashboard.settings.integrations}/coding-agents`);
+          }}
+          sx={{ typography: "s2" }}
+        >
+          <Iconify icon="solar:settings-linear" width={16} sx={{ mr: 1 }} />
           IDE settings
         </MenuItem>
       </Menu>
 
       {/* Not a modal — the person keeps working; it fades with the sent state. */}
-      <Popper open={done === "sent" || done === "dispatched"} anchorEl={anchor.current} placement="bottom-end" transition sx={{ zIndex: (t) => t.zIndex.modal + 1 }}>
+      <Popper
+        open={done === "sent" || done === "dispatched"}
+        anchorEl={anchor.current}
+        placement="bottom-end"
+        transition
+        sx={{ zIndex: (t) => t.zIndex.modal + 1 }}
+      >
         {({ TransitionProps }) => (
           <Fade {...TransitionProps} timeout={160}>
             <Box>
               <ClickAwayListener onClickAway={() => setDone(null)}>
-                <Paper
-                  variant="outlined"
-                  sx={{ mt: 0.75, px: 1.5, py: 1, maxWidth: 300, bgcolor: "background.paper", backgroundImage: "none", boxShadow: (t) => t.customShadows?.z8 }}
+                <Section
+                  variant="panel"
+                  sx={{ mt: 0.75, px: 1.5, py: 1, maxWidth: 300 }}
                 >
                   {done === "dispatched" && cloud ? (
                     <>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{`Dispatched to ${cloud.label}`}</Typography>
-                      <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
-                        It works in its own sandbox against the agent&apos;s repository. The change comes back as a candidate for Future AGI to check.
+                      <Typography
+                        sx={{ typography: "s2", fontWeight: 600 }}
+                      >{`Dispatched to ${cloud.label}`}</Typography>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.secondary",
+                          mt: 0.25,
+                        }}
+                      >
+                        It works in its own sandbox against the agent&apos;s
+                        repository. The change comes back as a candidate for
+                        Future AGI to check.
                       </Typography>
                     </>
                   ) : agent ? (
                     <>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{`Ready in ${agent.label}`}</Typography>
-                      <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
+                      <Typography
+                        sx={{ typography: "s2", fontWeight: 600 }}
+                      >{`Ready in ${agent.label}`}</Typography>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.secondary",
+                          mt: 0.25,
+                        }}
+                      >
                         {`Ask it to "fix ${targetRef(target)}". It fetches the brief itself and submits each change for Future AGI to check.`}
                       </Typography>
                     </>
@@ -210,14 +332,23 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
                   {/* Its attempts have a home: say where, one click away. */}
                   {landing?.href && (
                     <Button
-                      size="small" onClick={() => { setDone(null); navigate(landing.href, landing.state ? { state: landing.state } : undefined); }}
-                      endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-                      sx={{ typography: "s3", fontWeight: 700, color: "text.primary", px: 0, mt: 0.75, minWidth: 0 }}
+                      size="small"
+                      onClick={() => {
+                        setDone(null);
+                        navigate(
+                          landing.href,
+                          landing.state ? { state: landing.state } : undefined,
+                        );
+                      }}
+                      endIcon={
+                        <Iconify icon="solar:arrow-right-linear" width={14} />
+                      }
+                      sx={{ color: "text.primary", mt: 0.75, minWidth: 0 }}
                     >
                       {landing.label || "See its attempts"}
                     </Button>
                   )}
-                </Paper>
+                </Section>
               </ClickAwayListener>
             </Box>
           </Fade>

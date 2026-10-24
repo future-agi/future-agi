@@ -2,9 +2,6 @@ import { useState } from "react";
 import {
   Box,
   Button,
-  Card,
-  CardContent,
-  Chip,
   IconButton,
   Stack,
   Switch,
@@ -16,7 +13,9 @@ import {
   TableRow,
   Tooltip,
   Typography,
+  CircularProgress,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import {
   useEmailAlerts,
@@ -53,152 +52,139 @@ export default function EmailAlertsCard() {
 
   return (
     <>
-      <Card variant="outlined">
-        <CardContent>
-          <Box
-            display="flex"
-            justifyContent="space-between"
-            alignItems="center"
-            mb={2}
+      <Section variant="panel">
+        <Box
+          display="flex"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={2}
+        >
+          <Typography variant="h6" fontSize={13}>
+            Email Alerts
+          </Typography>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<Iconify icon="solar:add-linear" />}
+            onClick={handleAdd}
           >
-            <Typography variant="h6" fontSize={14}>
-              Email Alerts
-            </Typography>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<Iconify icon="mdi:plus" />}
-              onClick={handleAdd}
-              sx={{ fontWeight: 500, textTransform: "none" }}
-            >
-              Add Alert
-            </Button>
-          </Box>
+            Add Alert
+          </Button>
+        </Box>
 
-          {isLoading && (
+        {isLoading && <CircularProgress size={20} />}
+
+        {!isLoading && alerts.length === 0 && (
+          <Stack alignItems="center" spacing={1} py={3}>
+            <Iconify
+              icon="solar:letter-linear"
+              width={40}
+              sx={{ color: "text.disabled" }}
+            />
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Loading...
+              No email alerts configured
             </Typography>
-          )}
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.disabled",
+                textAlign: "center",
+                maxWidth: 320,
+              }}
+            >
+              Set up email alerts to get notified about budget overages, errors,
+              guardrail triggers, and more.
+            </Typography>
+          </Stack>
+        )}
 
-          {!isLoading && alerts.length === 0 && (
-            <Stack alignItems="center" spacing={1} py={3}>
-              <Iconify
-                icon="mdi:email-outline"
-                width={40}
-                sx={{ color: "text.disabled" }}
-              />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                No email alerts configured
-              </Typography>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.disabled",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                Set up email alerts to get notified about budget overages,
-                errors, guardrail triggers, and more.
-              </Typography>
-            </Stack>
-          )}
-
-          {!isLoading && alerts.length > 0 && (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Name</TableCell>
-                    <TableCell>Recipients</TableCell>
-                    <TableCell>Events</TableCell>
-                    <TableCell>Provider</TableCell>
-                    <TableCell align="center">Active</TableCell>
-                    <TableCell align="right">Actions</TableCell>
+        {!isLoading && alerts.length > 0 && (
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Recipients</TableCell>
+                  <TableCell>Events</TableCell>
+                  <TableCell>Provider</TableCell>
+                  <TableCell align="center">Active</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Actions
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {alerts.map((alert) => (
+                  <TableRow key={alert.id} hover>
+                    <TableCell>
+                      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                        {alert.name}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {(alert.recipients || []).slice(0, 2).join(" \u00B7 ")}
+                        {(alert.recipients || []).length > 2 &&
+                          ` \u00B7 +${alert.recipients.length - 2}`}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography
+                        sx={{ typography: "s2", color: "text.secondary" }}
+                      >
+                        {(alert.events || []).length} event
+                        {(alert.events || []).length !== 1 ? "s" : ""}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {alert.provider}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Switch
+                        size="small"
+                        checked={alert.is_active !== false}
+                        onChange={() => handleToggle(alert)}
+                      />
+                    </TableCell>
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
+                      <Tooltip title="Edit">
+                        <IconButton
+                          className="row-hover-action"
+                          size="small"
+                          onClick={() => handleEdit(alert)}
+                        >
+                          <Iconify icon="solar:pen-linear" width={20} />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Delete">
+                        <IconButton
+                          className="row-hover-action"
+                          size="small"
+                          color="error"
+                          onClick={() => handleDelete(alert)}
+                        >
+                          <Iconify
+                            icon="solar:trash-bin-trash-linear"
+                            width={20}
+                          />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
                   </TableRow>
-                </TableHead>
-                <TableBody>
-                  {alerts.map((alert) => (
-                    <TableRow key={alert.id} hover>
-                      <TableCell>
-                        <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                          {alert.name}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Stack
-                          direction="row"
-                          spacing={0.5}
-                          flexWrap="wrap"
-                          useFlexGap
-                        >
-                          {(alert.recipients || []).slice(0, 2).map((r) => (
-                            <Chip
-                              key={r}
-                              label={r}
-                              size="small"
-                              variant="outlined"
-                            />
-                          ))}
-                          {(alert.recipients || []).length > 2 && (
-                            <Chip
-                              label={`+${alert.recipients.length - 2}`}
-                              size="small"
-                              variant="outlined"
-                            />
-                          )}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Typography
-                          sx={{ typography: "s2", color: "text.secondary" }}
-                        >
-                          {(alert.events || []).length} event
-                          {(alert.events || []).length !== 1 ? "s" : ""}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={alert.provider}
-                          size="small"
-                          color="default"
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Switch
-                          size="small"
-                          checked={alert.is_active !== false}
-                          onChange={() => handleToggle(alert)}
-                        />
-                      </TableCell>
-                      <TableCell align="right">
-                        <Tooltip title="Edit">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleEdit(alert)}
-                          >
-                            <Iconify icon="mdi:pencil-outline" width={18} />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Delete">
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={() => handleDelete(alert)}
-                          >
-                            <Iconify icon="mdi:delete-outline" width={18} />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Section>
 
       <EmailAlertDialog
         open={dialogOpen}

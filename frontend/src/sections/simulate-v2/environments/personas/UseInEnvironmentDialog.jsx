@@ -2,13 +2,26 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { Box, Button, Dialog, MenuItem, Select, Stack, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  MenuItem,
+  Select,
+  Stack,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useSimStore } from "../../store";
 import {
-  DEFAULT_TASK_PLAN, personaTypeFor, planSummary, scenariosForPersonas, usesPersonaLibrary,
+  DEFAULT_TASK_PLAN,
+  personaTypeFor,
+  planSummary,
+  scenariosForPersonas,
+  usesPersonaLibrary,
 } from "../../_mock/personaScenarios";
 import PersonaTaskPlan from "../../components/PersonaTaskPlan";
 import { unanswerableNote } from "../../_mock/addScenarios";
@@ -21,7 +34,12 @@ const typeOf = (p) => p.simulationType ?? p.simulation_type ?? null;
  * callers — the environment and its runs then treat them like any other
  * scenario.
  */
-export default function UseInEnvironmentDialog({ open, onClose, personas, envId: fixedEnvId }) {
+export default function UseInEnvironmentDialog({
+  open,
+  onClose,
+  personas,
+  envId: fixedEnvId,
+}) {
   const { state, dispatch } = useSimStore();
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -50,7 +68,10 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
   /* A voice persona in a chat environment (or the reverse) still works as a
      brief, but its voice settings won't apply — say so rather than block. */
   const mismatched = useMemo(
-    () => (wantType ? personas.filter((p) => typeOf(p) && typeOf(p) !== wantType) : []),
+    () =>
+      wantType
+        ? personas.filter((p) => typeOf(p) && typeOf(p) !== wantType)
+        : [],
     [personas, wantType],
   );
   const envState = state.byEnv[envId];
@@ -60,27 +81,59 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
 
   const add = () => {
     const batch = scenariosForPersonas(env, envState, personas, plan);
-    dispatch({ type: "patchEnvState", envId, patch: { scenarios: [...(envState?.scenarios || []), ...batch.rows] } });
-    onClose();
-    enqueueSnackbar(`Added ${total} scenario${total === 1 ? "" : "s"} to ${env.name}`, {
-      variant: "success",
-      action: () => (
-        <Button size="small" onClick={() => navigate(`${paths.dashboard.simulate.environmentDetail(envId)}/scenarios`)} sx={{ color: "inherit", fontWeight: 700 }}>
-          View scenarios
-        </Button>
-      ),
+    dispatch({
+      type: "patchEnvState",
+      envId,
+      patch: { scenarios: [...(envState?.scenarios || []), ...batch.rows] },
     });
-    if (batch.needing) enqueueSnackbar(unanswerableNote(batch), { variant: "warning", autoHideDuration: 7000 });
+    onClose();
+    enqueueSnackbar(
+      `Added ${total} scenario${total === 1 ? "" : "s"} to ${env.name}`,
+      {
+        variant: "success",
+        action: () => (
+          <Button
+            size="small"
+            onClick={() =>
+              navigate(
+                `${paths.dashboard.simulate.environmentDetail(envId)}/scenarios`,
+              )
+            }
+            sx={{ color: "inherit" }}
+          >
+            View scenarios
+          </Button>
+        ),
+      },
+    );
+    if (batch.needing)
+      enqueueSnackbar(unanswerableNote(batch), {
+        variant: "warning",
+        autoHideDuration: 7000,
+      });
   };
 
   return (
     <Dialog
-      open={open} onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 520, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
       <Box sx={{ px: 3, pt: 2.5, pb: 1 }}>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>
-          {personas.length === 1 ? `Use ${personas[0].name} in an environment` : `Use ${personas.length} personas in an environment`}
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          {personas.length === 1
+            ? `Use ${personas[0].name} in an environment`
+            : `Use ${personas.length} personas in an environment`}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
           {"The environment supplies the tasks; we write each one in "}
@@ -90,7 +143,9 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
       </Box>
 
       {envs.length === 0 ? (
-        <Typography sx={{ px: 3, py: 2, typography: "s2", color: "text.secondary" }}>
+        <Typography
+          sx={{ px: 3, py: 2, typography: "s2", color: "text.secondary" }}
+        >
           {hiddenCount
             ? "None of your environments has a caller — personas play the person on the other end of a voice or chat agent."
             : "Build an environment first — then its scenarios can use library personas."}
@@ -100,32 +155,57 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
           {personas.length > 1 && (
             <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
               {names.slice(0, 6).map((n) => (
-                <Box key={n} sx={{ px: 0.875, height: 24, display: "inline-flex", alignItems: "center", borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}>
-                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>{n}</Typography>
-                </Box>
+                <Chip key={n} size="small" variant="outlined" label={n} />
               ))}
-              {names.length > 6 && <Typography sx={{ typography: "s3", color: "text.subtitle", alignSelf: "center" }}>{`+${names.length - 6} more`}</Typography>}
+              {names.length > 6 && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    alignSelf: "center",
+                  }}
+                >{`+${names.length - 6} more`}</Typography>
+              )}
             </Stack>
           )}
           <Box>
             <Label>Environment</Label>
-            <Select size="small" fullWidth value={envId} onChange={(e) => chooseEnv(e.target.value)} disabled={!!fixedEnvId} sx={{ typography: "s2" }}>
-                {envs.map((e) => (
-                  <MenuItem key={e.id} value={e.id} sx={{ typography: "s2" }}>
-                    {e.name}
-                    <Box component="span" sx={{ color: "text.subtitle", ml: 1 }}>{e.surface === "voice" ? "Voice" : e.surface === "chat" ? "Chat" : e.surface || ""}</Box>
-                  </MenuItem>
-                ))}
-              </Select>
+            <Select
+              size="small"
+              fullWidth
+              value={envId}
+              onChange={(e) => chooseEnv(e.target.value)}
+              disabled={!!fixedEnvId}
+              sx={{ typography: "s2" }}
+            >
+              {envs.map((e) => (
+                <MenuItem key={e.id} value={e.id} sx={{ typography: "s2" }}>
+                  {e.name}
+                  <Box component="span" sx={{ color: "text.subtitle", ml: 1 }}>
+                    {e.surface === "voice"
+                      ? "Voice"
+                      : e.surface === "chat"
+                        ? "Chat"
+                        : e.surface || ""}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
           </Box>
-          <PersonaTaskPlan labels env={env} envState={envState} plan={plan} onChange={setPlan} />
+          <PersonaTaskPlan
+            labels
+            env={env}
+            envState={envState}
+            plan={plan}
+            onChange={setPlan}
+          />
           {mismatched.length > 0 && (
-            <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ px: 1.25, py: 1, borderRadius: 1, bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.08) }}>
-              <Iconify icon="solar:info-circle-linear" width={15} sx={{ color: "#CA8A04", mt: 0.25, flexShrink: 0 }} />
-              <Typography sx={{ typography: "s3" }}>
-                {`${mismatched.map((p) => p.name).join(", ")} ${mismatched.length === 1 ? "is a" : "are"} ${wantType === "voice" ? "chat" : "voice"} persona${mismatched.length === 1 ? "" : "s"} — ${env?.name} is a ${wantType === "voice" ? "voice" : "chat"} environment, so ${mismatched.length === 1 ? "its" : "their"} ${wantType === "voice" ? "typing" : "voice"} settings won't apply.`}
-              </Typography>
-            </Stack>
+            <Alert
+              severity="warning"
+              icon={<Iconify icon="solar:info-circle-linear" width={16} />}
+            >
+              {`${mismatched.map((p) => p.name).join(", ")} ${mismatched.length === 1 ? "is a" : "are"} ${wantType === "voice" ? "chat" : "voice"} persona${mismatched.length === 1 ? "" : "s"} — ${env?.name} is a ${wantType === "voice" ? "voice" : "chat"} environment, so ${mismatched.length === 1 ? "its" : "their"} ${wantType === "voice" ? "typing" : "voice"} settings won't apply.`}
+            </Alert>
           )}
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {summary
@@ -135,9 +215,22 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
         </Stack>
       )}
 
-      <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}>
-        <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
-        <Button size="small" variant="contained" color="primary" disabled={!env || !total} onClick={add} sx={{ typography: "s2", fontWeight: 700 }}>
+      <Stack
+        direction="row"
+        justifyContent="flex-end"
+        spacing={1}
+        sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+      >
+        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={!env || !total}
+          onClick={add}
+        >
           {`Add ${total} scenario${total === 1 ? "" : "s"}`}
         </Button>
       </Stack>
@@ -146,10 +239,26 @@ export default function UseInEnvironmentDialog({ open, onClose, personas, envId:
 }
 
 UseInEnvironmentDialog.propTypes = {
-  open: PropTypes.bool, onClose: PropTypes.func, personas: PropTypes.array.isRequired, envId: PropTypes.string,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  personas: PropTypes.array.isRequired,
+  envId: PropTypes.string,
 };
 
 function Label({ children }) {
-  return <Typography sx={{ typography: "s3", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "text.subtitle", mb: 0.75 }}>{children}</Typography>;
+  return (
+    <Typography
+      sx={{
+        typography: "s3",
+        fontWeight: 600,
+        textTransform: "none",
+        letterSpacing: 0.5,
+        color: "text.subtitle",
+        mb: 0.75,
+      }}
+    >
+      {children}
+    </Typography>
+  );
 }
 Label.propTypes = { children: PropTypes.node };

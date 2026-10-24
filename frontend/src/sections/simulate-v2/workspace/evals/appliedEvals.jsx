@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REQUIRED_EVAL_NOTE } from "../../_mock/evals";
@@ -18,11 +17,22 @@ export function EvalRow({ item, action, dense }) {
   const mappingEntries = Object.entries(item.mapping || {});
 
   return (
-    <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ px: 2.5, py: dense ? 1.25 : 1.5 }}>
+    <Stack
+      direction="row"
+      alignItems="flex-start"
+      spacing={2}
+      sx={{ px: 2.5, py: dense ? 1.25 : 1.5 }}
+    >
       <Box
         sx={{
-          width: 30, height: 30, borderRadius: 0.875, display: "grid", placeItems: "center", flexShrink: 0,
-          color: "text.secondary", bgcolor: "background.neutral",
+          width: 30,
+          height: 30,
+          borderRadius: "6px",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+          color: "text.secondary",
+          bgcolor: "background.neutral",
           mt: 0.125,
         }}
       >
@@ -30,9 +40,13 @@ export function EvalRow({ item, action, dense }) {
       </Box>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={0.75}>
-          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{item.name}</Typography>
+          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+            {item.name}
+          </Typography>
           {item.category && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+            >
               · {item.category}
             </Typography>
           )}
@@ -41,18 +55,38 @@ export function EvalRow({ item, action, dense }) {
             <Tooltip arrow title={REQUIRED_EVAL_NOTE}>
               <Box
                 sx={{
-                  display: "inline-flex", alignItems: "center", flexShrink: 0, height: 18, px: 0.625,
-                  borderRadius: 0.5, border: "1px solid", borderColor: "text.disabled",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  flexShrink: 0,
+                  height: 18,
+                  px: 0.625,
+                  borderRadius: "4px",
+                  border: "1px solid",
+                  borderColor: "text.disabled",
                 }}
               >
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>Required</Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.primary",
+                  }}
+                >
+                  Required
+                </Typography>
               </Box>
             </Tooltip>
           )}
         </Stack>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{item.blurb}</Typography>
+        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+          {item.blurb}
+        </Typography>
         {mappingEntries.length > 0 && !dense && (
-          <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}
+          >
             {mappingEntries.map(([variable, column]) => (
               <MappingChip key={variable} variable={variable} column={column} />
             ))}
@@ -65,8 +99,11 @@ export function EvalRow({ item, action, dense }) {
       {item.threshold != null && !dense && (
         <Typography
           sx={{
-            typography: "s3", color: "text.subtitle", flexShrink: 0,
-            display: { xs: "none", md: "block" }, fontVariantNumeric: "tabular-nums",
+            typography: "s3",
+            color: "text.tertiary",
+            flexShrink: 0,
+            display: { xs: "none", md: "block" },
+            fontVariantNumeric: "tabular-nums",
             mt: 0.375,
           }}
         >
@@ -85,11 +122,16 @@ export function EvalRail({ item, sx }) {
     <Tooltip arrow title={rail.why}>
       <Typography
         sx={{
-          typography: "s3", flexShrink: 0, whiteSpace: "nowrap", mt: 0.375, cursor: "help",
-          color: rail.metered ? "text.secondary" : "text.subtitle",
+          typography: "s3",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+          mt: 0.375,
+          cursor: "help",
+          color: rail.metered ? "text.secondary" : "text.tertiary",
           fontWeight: rail.metered ? 600 : 400,
           fontVariantNumeric: "tabular-nums",
-          borderBottom: "1px dotted", borderColor: "text.disabled",
+          borderBottom: "1px dotted",
+          borderColor: "text.disabled",
           ...sx,
         }}
       >
@@ -106,24 +148,47 @@ function MappingChip({ variable, column }) {
   return (
     <Box
       sx={{
-        display: "inline-flex", alignItems: "center", gap: 0.5,
-        px: 0.75, py: 0.125, borderRadius: 0.75,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        px: 0.75,
+        py: 0.125,
+        borderRadius: "4px",
         border: "1px solid",
         borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.025),
+        bgcolor: "action.hover",
       }}
     >
-      <Typography sx={{ typography: "s3", color: "text.secondary", fontFamily: "ui-monospace, Menlo, monospace" }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.secondary",
+          fontFamily: "ui-monospace, Menlo, monospace",
+        }}
+      >
         {variable}
       </Typography>
-      <Iconify icon="solar:arrow-right-linear" width={10} sx={{ color: "text.disabled" }} />
-      <Typography sx={{ typography: "s3", color: "text.primary", fontFamily: "ui-monospace, Menlo, monospace" }}>
+      <Iconify
+        icon="solar:arrow-right-linear"
+        width={12}
+        sx={{ color: "text.disabled" }}
+      />
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.primary",
+          fontFamily: "ui-monospace, Menlo, monospace",
+        }}
+      >
         {column}
       </Typography>
     </Box>
   );
 }
-MappingChip.propTypes = { variable: PropTypes.string, column: PropTypes.string };
+MappingChip.propTypes = {
+  variable: PropTypes.string,
+  column: PropTypes.string,
+};
 
 EvalRow.propTypes = {
   item: PropTypes.object,

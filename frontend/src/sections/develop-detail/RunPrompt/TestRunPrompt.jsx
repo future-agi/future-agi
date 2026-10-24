@@ -1,4 +1,4 @@
-import { Box, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Tab, Tabs, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -15,8 +15,6 @@ const TestRunPrompt = ({ previewData, modelType }) => {
   const handleChange = (event, newValue) => {
     setSelectedTab(newValue);
   };
-
-  const theme = useTheme();
 
   const memoisedPreviewData = useMemo(() => {
     switch (selectedTab) {
@@ -75,11 +73,6 @@ const TestRunPrompt = ({ previewData, modelType }) => {
             onChange={handleChange}
             aria-label="basic tabs example"
             textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
           >
             <Tab label="Markdown" value="markdown" />
             <Tab label="Raw" value="raw" />

@@ -1,65 +1,39 @@
-import { Box, Chip, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import React from "react";
 import Iconify from "../../iconify";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 
 const AnnotationValues = ({ value, annotationType, maxChips, settings }) => {
-  const theme = useTheme();
-
+  // Categorical values read as plain text joined with " · "; the overflow
+  // count is a quiet qualifier.
   const renderCategorical = () => {
     const categoricalValues = value || [];
+    const shown =
+      maxChips === undefined
+        ? categoricalValues
+        : categoricalValues?.slice(0, maxChips);
+    const overflow =
+      maxChips !== undefined && categoricalValues?.length > maxChips
+        ? categoricalValues.length - maxChips
+        : 0;
 
-    if (maxChips === undefined) {
-      return categoricalValues?.map((v) => (
-        <Chip
-          key={v}
-          label={v}
-          size="small"
-          color="primary"
-          sx={{
-            backgroundColor: theme.palette.action.hover,
-            color: theme.palette.primary.main,
-            fontWeight: 400,
-          }}
-        />
-      ));
-    }
-
-    const chips = [];
-
-    categoricalValues?.slice(0, maxChips)?.forEach((v) => {
-      chips.push(
-        <Chip
-          key={v}
-          label={v}
-          size="small"
-          color="primary"
-          sx={{
-            backgroundColor: theme.palette.action.hover,
-            color: theme.palette.primary.main,
-            fontWeight: 400,
-          }}
-        />,
-      );
-    });
-
-    if (categoricalValues?.length > maxChips) {
-      chips.push(
-        <Chip
-          label={`+${categoricalValues?.length - maxChips}`}
-          size="small"
-          color="primary"
-          sx={{
-            backgroundColor: theme.palette.action.hover,
-            color: theme.palette.primary.main,
-            fontWeight: 400,
-          }}
-        />,
-      );
-    }
-
-    return chips;
+    return (
+      <Typography sx={{ fontSize: 13, color: "text.primary" }} noWrap>
+        {shown?.join(" · ")}
+        {overflow > 0 && (
+          <Box
+            component="span"
+            sx={{
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {` · +${overflow}`}
+          </Box>
+        )}
+      </Typography>
+    );
   };
 
   if (!value || value === "") {
@@ -76,12 +50,12 @@ const AnnotationValues = ({ value, annotationType, maxChips, settings }) => {
         sx={{ display: "flex", alignItems: "center", gap: 1, height: "100%" }}
       >
         <Iconify
-          icon="octicon:thumbsup-24"
-          color={value === "up" ? "green.500" : "divider"}
+          icon="solar:like-linear"
+          color={value === "up" ? "status.success.fg" : "divider"}
         />
         <Iconify
-          icon="octicon:thumbsdown-24"
-          color={value === "down" ? "red.500" : "divider"}
+          icon="solar:dislike-linear"
+          color={value === "down" ? "status.danger.fg" : "divider"}
         />
       </Box>
     );
@@ -95,10 +69,10 @@ const AnnotationValues = ({ value, annotationType, maxChips, settings }) => {
         {Array.from({ length: parseInt(value) }).map((_, index) => (
           <Iconify
             key={index}
-            icon="material-symbols:star"
+            icon="solar:star-bold"
             sx={{ fontSize: "inherit", flexShrink: 0 }}
             width={25}
-            color="orange.300"
+            color="status.warning.fg"
           />
         ))}
         <ShowComponent condition={settings?.noOfStars !== undefined}>
@@ -107,7 +81,7 @@ const AnnotationValues = ({ value, annotationType, maxChips, settings }) => {
           }).map((_, index) => (
             <Iconify
               key={index}
-              icon="material-symbols:star-outline"
+              icon="solar:star-linear"
               width={25}
               sx={{
                 fontSize: "inherit",

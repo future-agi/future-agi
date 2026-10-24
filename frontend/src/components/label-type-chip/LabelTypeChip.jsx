@@ -1,5 +1,6 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (label-type encodings) */
 import PropTypes from "prop-types";
-import { Box } from "@mui/material";
+import { Chip } from "@mui/material";
 import { alpha, lighten } from "@mui/material/styles";
 
 const TYPE_CHIPS = {
@@ -19,14 +20,10 @@ export default function LabelTypeChip({ type }) {
   const { hue, lightBg } = TYPE_CHIPS[type] || FALLBACK;
 
   return (
-    <Box
+    <Chip
+      size="small"
+      label={label}
       sx={{
-        px: 1,
-        py: 0.25,
-        borderRadius: 0.5,
-        fontSize: 11,
-        fontWeight: 500,
-        whiteSpace: "nowrap",
         border: "1px solid",
         bgcolor: (theme) =>
           theme.palette.mode === "dark" ? alpha(hue, 0.18) : lightBg,
@@ -35,9 +32,7 @@ export default function LabelTypeChip({ type }) {
         color: (theme) =>
           theme.palette.mode === "dark" ? lighten(hue, 0.45) : hue,
       }}
-    >
-      {label}
-    </Box>
+    />
   );
 }
 

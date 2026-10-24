@@ -16,13 +16,13 @@ const chipColor = (status) => {
   switch (status) {
     case "Passed":
       return {
-        color: "green.500",
-        backgroundColor: "green.o10",
+        color: "status.success.fg",
+        backgroundColor: "status.success.bg",
       };
     case "Failed":
       return {
-        color: "red.500",
-        backgroundColor: "red.o10",
+        color: "status.danger.fg",
+        backgroundColor: "status.danger.bg",
       };
     default:
       return {
@@ -55,11 +55,11 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
 
         let textColor = "text.primary";
         if (factor <= 49) {
-          textColor = "red.500";
+          textColor = "status.danger.fg";
         } else if (factor <= 79) {
-          textColor = "orange.500";
+          textColor = "status.warning.fg";
         } else {
-          textColor = "green.500";
+          textColor = "status.success.fg";
         }
 
         chip = {
@@ -111,12 +111,12 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
           <Typography fontWeight={600} fontSize={16} color={"text.primary"}>
             Test Eval
           </Typography>
-          <Typography fontWeight={400} fontSize={14} color={"text.secondary"}>
+          <Typography fontWeight={400} fontSize={13} color={"text.secondary"}>
             Test runs on the first 3 rows of a dataset
           </Typography>
         </Box>
         <IconButton onClick={onClose} sx={{ p: 0, color: "text.primary" }}>
-          <Iconify icon="line-md:close" width={24} height={24} />
+          <Iconify icon="solar:close-linear" width={24} height={24} />
         </IconButton>
       </Box>
 
@@ -166,7 +166,7 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
               >
                 <Typography
                   fontWeight={500}
-                  fontSize={14}
+                  fontSize={13}
                   color={"text.primary"}
                 >
                   Result - row {row}
@@ -179,8 +179,6 @@ const EvaluationTest = ({ onClose, testingEvalData, testingEvalLoading }) => {
                     size="small"
                     sx={{
                       pointerEvents: "none",
-                      fontSize: "12px",
-                      fontWeight: 400,
                       ...chip.sx,
                     }}
                   />

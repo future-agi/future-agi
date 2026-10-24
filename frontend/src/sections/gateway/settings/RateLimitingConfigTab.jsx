@@ -23,7 +23,7 @@ const RateLimitingConfigTab = ({ rateLimiting, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:speedometer" width={24} />
+        <Icon icon="solar:speedometer-middle-linear" width={24} />
         <Typography variant="h6">Rate Limiting</Typography>
       </Stack>
 
@@ -47,7 +47,7 @@ const RateLimitingConfigTab = ({ rateLimiting, onChange }) => {
         <Stack spacing={3}>
           {/* Global Limits */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+            <Typography variant="subtitle1" fontWeight="600" gutterBottom>
               Organization-Wide Limits
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -84,7 +84,7 @@ const RateLimitingConfigTab = ({ rateLimiting, onChange }) => {
 
           {/* Per-Key Limits */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+            <Typography variant="subtitle1" fontWeight="600" gutterBottom>
               Per-Key Limits
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -120,7 +120,7 @@ const RateLimitingConfigTab = ({ rateLimiting, onChange }) => {
 
           {/* Per-Model and Per-User Limits */}
           <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+            <Typography variant="subtitle1" fontWeight="600" gutterBottom>
               Additional Limits
             </Typography>
             <Stack direction="row" spacing={2}>

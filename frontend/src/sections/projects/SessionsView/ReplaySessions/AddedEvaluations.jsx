@@ -44,7 +44,6 @@ export default function AddedEvaluations({
             onClick={() => setCollapsed(!collapsed)}
             sx={{
               color: "text.primary",
-              p: 0,
             }}
             size="small"
           >
@@ -53,7 +52,7 @@ export default function AddedEvaluations({
                 height: "24px",
                 width: "24px",
                 transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-                transition: "transform 0.3s ease",
+                transition: "transform 200ms ease",
                 transformOrigin: "center",
               }}
               src="/assets/icons/custom/lucide--chevron-down.svg"
@@ -94,7 +93,7 @@ export default function AddedEvaluations({
                 alignItems: "center",
                 justifyContent: "center",
                 bgcolor: "background.paper",
-                borderRadius: 0.5,
+                borderRadius: "4px",
               }}
             >
               <Typography

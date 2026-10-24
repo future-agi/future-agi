@@ -115,7 +115,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
             show: true,
             value: {
               fontWeight: 600,
-              fontSize: "18px",
+              fontSize: "16px",
               fontFamily: "IBM Plex Sans",
               formatter: (val) => {
                 return `$${Number(val).toFixed(2)}`;
@@ -126,7 +126,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
               showAlways: true,
               label: "Total Cost",
               fontWeight: 600,
-              fontSize: "14px",
+              fontSize: "13px",
               fontFamily: "IBM Plex Sans",
               color: "var(--text-secondary)",
               formatter: (w) => {
@@ -145,9 +145,10 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
         return [`$${Number(actualValue).toFixed(2)}`, `${val.toFixed(1)}%`];
       },
       style: {
-        fontSize: "14px",
+        fontSize: "13px",
         fontFamily: "IBM Plex Sans",
         fontWeight: 600,
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         colors: ["#fff"],
       },
       dropShadow: {
@@ -286,7 +287,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
                     sx={{
                       width: 9,
                       height: 9,
-                      borderRadius: "2px",
+                      borderRadius: "4px",
                       backgroundColor: item.color,
                       flexShrink: 0,
                     }}
@@ -340,8 +341,8 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
         <CostCard
           title="Speech-to-text cost"
           icon="/assets/icons/simulate/ic_speach_to_text.svg"
-          iconColor="orange.500"
-          iconBgColor="orange.o5"
+          iconColor="status.warning.fg"
+          iconBgColor="status.warning.bg"
           value={costBreakdown?.stt?.cost ?? 0}
         />
         <CostCard
@@ -364,8 +365,8 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
         <CostCard
           title="Text-to-speech cost"
           icon="/assets/icons/simulate/ic_text_to_speach.svg"
-          iconColor="blue.500"
-          iconBgColor="blue.o5"
+          iconColor="status.info.fg"
+          iconBgColor="status.info.bg"
           value={costBreakdown?.tts?.cost ?? 0}
         />
       </Box>

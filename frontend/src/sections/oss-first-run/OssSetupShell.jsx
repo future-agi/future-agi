@@ -17,7 +17,7 @@ const DotsStepper = styled(MobileStepper)(({ theme }) => ({
     height: 12,
     margin: "0 6px",
     backgroundColor: theme.palette.action.disabled,
-    transition: "all 0.3s ease",
+    transition: "all 0.2s ease",
   },
   "& .MuiMobileStepper-dotActive": {
     width: 40,

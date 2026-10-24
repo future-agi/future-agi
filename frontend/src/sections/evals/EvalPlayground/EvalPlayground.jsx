@@ -5,6 +5,7 @@ import PlaygroundHeader from "./PlaygroundHeader";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TopEvaluateSection from "./TopEvaluationSection/TopEvaluateSection";
 import BottomEvaluationSection from "./BottomEvaluationSection/BottomEvaluationSection";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvalPlaygroundChild = ({ evaluation, onClose }) => {
   const tableRef = useRef(null);
@@ -57,18 +58,20 @@ EvalPlaygroundChild.propTypes = {
 };
 
 const EvalPlayground = ({ open, onClose, evaluation }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
           width: "85vw",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

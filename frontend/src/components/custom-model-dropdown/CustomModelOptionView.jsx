@@ -38,7 +38,7 @@ const CustomModelOptionView = ({ toolConfig }) => {
           gap: 0.5,
           border: "1px solid",
           borderColor: "background.neutral",
-          borderRadius: "2px",
+          borderRadius: "4px",
           paddingX: 1,
           paddingY: 0.5,
           backgroundColor: "background.default",
@@ -46,7 +46,7 @@ const CustomModelOptionView = ({ toolConfig }) => {
       >
         <Iconify
           // @ts-ignore
-          icon="bi:sliders"
+          icon="solar:tuning-2-linear"
           width="18px"
           height="18px"
           sx={{

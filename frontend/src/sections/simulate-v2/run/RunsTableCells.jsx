@@ -19,9 +19,13 @@ export function Head({ children, right, divider, last, title, wrap, gap }) {
            heavy alongside the values below. Small-caps weight + a
            lighter tint gives the same "this is a header" signal
            without the noise. */
-        typography: "s3", fontWeight: 600, color: "text.subtitle",
-        letterSpacing: 0.2, lineHeight: 1.3,
-        textAlign: right ? "right" : "left", minWidth: 0,
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.tertiary",
+        letterSpacing: 0.2,
+        lineHeight: 1.3,
+        textAlign: right ? "right" : "left",
+        minWidth: 0,
         px: right || gap ? 1.25 : 0,
         ...(gap && { pl: 2.5 }),
         ...(last && { pr: 2.5 }),
@@ -30,11 +34,15 @@ export function Head({ children, right, divider, last, title, wrap, gap }) {
         overflow: "hidden",
         ...(wrap
           ? {
-            whiteSpace: "normal", overflowWrap: "normal", wordBreak: "normal",
-            /* Two lines at most; a longer name ends in an ellipsis and the
+              whiteSpace: "normal",
+              overflowWrap: "normal",
+              wordBreak: "normal",
+              /* Two lines at most; a longer name ends in an ellipsis and the
                full name is in the tooltip. */
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-          }
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+            }
           : { whiteSpace: "nowrap", textOverflow: "ellipsis" }),
         /* The graders are a different kind of number from the system ones, and
            a single hairline says so more quietly than a second header row. */
@@ -46,11 +54,14 @@ export function Head({ children, right, divider, last, title, wrap, gap }) {
   );
 }
 Head.propTypes = {
-  children: PropTypes.node, right: PropTypes.bool,
-  divider: PropTypes.bool, last: PropTypes.bool,
-  title: PropTypes.string, wrap: PropTypes.bool, gap: PropTypes.bool,
+  children: PropTypes.node,
+  right: PropTypes.bool,
+  divider: PropTypes.bool,
+  last: PropTypes.bool,
+  title: PropTypes.string,
+  wrap: PropTypes.bool,
+  gap: PropTypes.bool,
 };
-
 
 /**
  * The grader heatmap.
@@ -62,17 +73,21 @@ Head.propTypes = {
  * colour competes with the numbers printed on it.
  */
 const SCORE_BANDS = [
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
   { upTo: 20, hue: "#D92D20", strong: true },
   { upTo: 40, hue: "#D92D20", strong: false },
   { upTo: 60, hue: "#E9690C", strong: false },
   { upTo: 80, hue: "#E6B800", strong: false },
   { upTo: 99, hue: "#00A251", strong: false },
   { upTo: Infinity, hue: "#00A251", strong: true },
+  /* eslint-enable no-restricted-syntax */
 ];
 
 const scoreFill = (value, mode) => {
   if (value == null) return "transparent";
-  const band = SCORE_BANDS.find((b) => value < b.upTo) || SCORE_BANDS[SCORE_BANDS.length - 1];
+  const band =
+    SCORE_BANDS.find((b) => value < b.upTo) ||
+    SCORE_BANDS[SCORE_BANDS.length - 1];
   const dark = mode === "dark";
   if (band.strong) return alpha(band.hue, dark ? 0.13 : 0.1);
   return alpha(band.hue, dark ? 0.08 : 0.06);
@@ -85,21 +100,34 @@ const scoreFill = (value, mode) => {
  * questions are live: "is this run fast enough" and "is it faster than the one
  * we were comparing against" are asked by different people in the same meeting.
  */
-export function MetricCell({ deltaWidth = 0, text, anchor, quiet, tone, delta }) {
+export function MetricCell({
+  deltaWidth = 0,
+  text,
+  anchor,
+  quiet,
+  tone,
+  delta,
+}) {
   return (
     <Box
       sx={{
-        display: "grid", gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
-        alignItems: "center", columnGap: 0.75, minWidth: 0,
-        alignContent: "center", px: 1.25,
+        display: "grid",
+        gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
+        alignItems: "center",
+        columnGap: 0.75,
+        minWidth: 0,
+        alignContent: "center",
+        px: 1.25,
       }}
     >
       <Typography
         noWrap
         sx={{
-          typography: "s2", fontVariantNumeric: "tabular-nums", textAlign: "right",
-          fontWeight: anchor ? 700 : 500,
-          color: tone || (quiet ? "text.subtitle" : "text.primary"),
+          typography: "s2",
+          fontVariantNumeric: "tabular-nums",
+          textAlign: "right",
+          fontWeight: anchor ? 600 : 500,
+          color: tone || (quiet ? "text.tertiary" : "text.primary"),
         }}
       >
         {text}
@@ -109,8 +137,12 @@ export function MetricCell({ deltaWidth = 0, text, anchor, quiet, tone, delta })
   );
 }
 MetricCell.propTypes = {
-  deltaWidth: PropTypes.number, text: PropTypes.node, anchor: PropTypes.bool,
-  quiet: PropTypes.bool, tone: PropTypes.string, delta: PropTypes.object,
+  deltaWidth: PropTypes.number,
+  text: PropTypes.node,
+  anchor: PropTypes.bool,
+  quiet: PropTypes.bool,
+  tone: PropTypes.string,
+  delta: PropTypes.object,
 };
 
 /**
@@ -135,11 +167,32 @@ function Delta({ delta }) {
      was good — so a cheaper run shows a green down arrow. A change inside
      the noise two runs carry is grey: it moved, but it says nothing. */
   const up = delta.up ?? delta.better;
-  const color = delta.muted ? "text.subtitle" : delta.better ? "#16A34A" : "#DC2626";
+  const color = delta.muted
+    ? "text.tertiary"
+    : delta.better
+      ? "status.success.fg"
+      : "status.danger.fg";
   return (
-    <Stack direction="row" alignItems="center" spacing={0.125} sx={{ minWidth: 0 }}>
-      <Iconify icon={up ? "eva:arrow-upward-fill" : "eva:arrow-downward-fill"} width={11} sx={{ color, flexShrink: 0 }} />
-      <Typography noWrap sx={{ typography: "s3", fontWeight: 600, color, fontVariantNumeric: "tabular-nums" }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.125}
+      sx={{ minWidth: 0 }}
+    >
+      <Iconify
+        icon={up ? "solar:arrow-up-linear" : "solar:arrow-down-linear"}
+        width={12}
+        sx={{ color, flexShrink: 0 }}
+      />
+      <Typography
+        noWrap
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {delta.text}
       </Typography>
     </Stack>
@@ -158,8 +211,12 @@ export function ScoreCell({ value, deltaWidth = 0, delta, divider, last }) {
   return (
     <Box
       sx={{
-        display: "grid", gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
-        alignItems: "center", alignContent: "center", columnGap: 0.75, minWidth: 0,
+        display: "grid",
+        gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
+        alignItems: "center",
+        alignContent: "center",
+        columnGap: 0.75,
+        minWidth: 0,
         px: 1.25,
         /* Filled like the observe grid's eval cells, a shade quieter. */
         backgroundColor: (t) => scoreFill(value, t.palette.mode),
@@ -177,7 +234,9 @@ export function ScoreCell({ value, deltaWidth = 0, delta, divider, last }) {
       <Typography
         noWrap
         sx={{
-          typography: "s2", fontWeight: 600, textAlign: "right",
+          typography: "s2",
+          fontWeight: 600,
+          textAlign: "right",
           fontVariantNumeric: "tabular-nums",
           color: value == null ? "text.disabled" : "text.primary",
         }}
@@ -189,6 +248,9 @@ export function ScoreCell({ value, deltaWidth = 0, delta, divider, last }) {
   );
 }
 ScoreCell.propTypes = {
-  value: PropTypes.number, deltaWidth: PropTypes.number,
-  delta: PropTypes.object, divider: PropTypes.bool, last: PropTypes.bool,
+  value: PropTypes.number,
+  deltaWidth: PropTypes.number,
+  delta: PropTypes.object,
+  divider: PropTypes.bool,
+  last: PropTypes.bool,
 };

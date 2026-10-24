@@ -1,5 +1,5 @@
 import React from "react";
-import { Chip } from "@mui/material";
+import { Box } from "@mui/material";
 import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
 import PropTypes from "prop-types";
 import NumericCell from "../../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
@@ -91,7 +91,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           backgroundColor,
           padding: "0 12px",
           margin: 0,
-          fontSize: "14px",
+          fontSize: "13px",
           color,
         }}
       >
@@ -103,26 +103,19 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   // Array of values
   if (Array.isArray(value)) {
     return (
-      <div
-        style={{
+      <Box
+        sx={{
           display: "flex",
-          gap: "8px",
-          flexWrap: "wrap",
-          padding: "10px 12px",
+          alignItems: "center",
+          padding: "0 12px",
           height: "100%",
-          overflow: "auto",
+          overflow: "hidden",
+          fontSize: 13,
+          color: "text.primary",
         }}
       >
-        {value.map((each) => (
-          <Chip
-            size="small"
-            key={each}
-            label={each}
-            variant="outlined"
-            color="primary"
-          />
-        ))}
-      </div>
+        {value.join(" · ")}
+      </Box>
     );
   }
 

@@ -2,20 +2,18 @@ import { useState, useCallback, useRef } from "react";
 import {
   Box,
   Button,
-  InputAdornment,
   MenuItem,
-  Stack,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
   useAnnotationLabelsList,
   useRestoreAnnotationLabel,
 } from "src/api/annotation-labels/annotation-labels";
-import AnnotationsTabs from "../../view/annotations-tabs";
+import AnnotationsPageLayout from "../../view/annotations-page-layout";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import AnnotationLabelTable from "../annotation-label-table";
 import AnnotationLabelEmpty from "../annotation-label-empty";
 import CreateLabelDrawer from "../create-label-drawer";
@@ -135,78 +133,27 @@ export default function AnnotationLabelsView() {
     !filters.archived;
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        backgroundColor: "background.paper",
-      }}
-    >
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "2px",
-          px: 3,
-          pt: 2,
-        }}
-      >
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight={"fontWeightSemiBold"}
-        >
-          Annotation labels
-        </Typography>
-        <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
-          <Typography
-            typography="s1"
-            color="text.primary"
-            fontWeight={"fontWeightRegular"}
-          >
-            Create and manage labels used to annotate traces, spans, and
-            datasets
-          </Typography>
-        </Box>
-      </Box>
-      <Box sx={{ flexShrink: 0, px: 3 }}>
-        <AnnotationsTabs />
-      </Box>
-
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          overflow: "hidden",
-          px: 3,
-        }}
-      >
-        <Stack
-          direction="row"
-          spacing={2}
-          mb={2}
-          flexShrink={0}
-          alignItems="center"
-        >
-          <TextField
+    <AnnotationsPageLayout
+      title="Annotation labels"
+      description="Create and manage labels used to annotate traces, spans, and datasets"
+      toolbar={
+        <>
+          <FormSearchField
             size="small"
-            placeholder="Search labels..."
-            value={searchInput}
+            placeholder="Search"
+            searchQuery={searchInput}
             onChange={handleSearch}
-            sx={{ minWidth: 280 }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Iconify
-                    icon="eva:search-fill"
-                    sx={{ color: "text.disabled" }}
-                  />
-                </InputAdornment>
-              ),
-            }}
+            sx={{ width: 280 }}
           />
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={filters.archived ? "archived" : "active"}
+            onChange={handleArchiveViewChange}
+          >
+            <ToggleButton value="active">Active</ToggleButton>
+            <ToggleButton value="archived">Archived</ToggleButton>
+          </ToggleButtonGroup>
           <TextField
             size="small"
             select
@@ -225,56 +172,38 @@ export default function AnnotationLabelsView() {
               </MenuItem>
             ))}
           </TextField>
-          <ToggleButtonGroup
-            exclusive
-            size="small"
-            value={filters.archived ? "archived" : "active"}
-            onChange={handleArchiveViewChange}
-            sx={{
-              height: 36,
-              "& .MuiToggleButton-root": {
-                px: 1.25,
-                borderRadius: "4px",
-                typography: "s2",
-                fontWeight: "fontWeightMedium",
-              },
-            }}
-          >
-            <ToggleButton value="active">Active</ToggleButton>
-            <ToggleButton value="archived">Archived</ToggleButton>
-          </ToggleButtonGroup>
           <Box sx={{ flex: 1 }} />
           <Button
             variant="contained"
             color="primary"
-            startIcon={<Iconify icon="mingcute:add-line" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             onClick={handleCreateNew}
           >
             Create Label
           </Button>
-        </Stack>
-
-        {isEmpty ? (
-          <AnnotationLabelEmpty onCreateClick={handleCreateNew} />
-        ) : (
-          <AnnotationLabelTable
-            data={results}
-            loading={isLoading}
-            page={filters.page}
-            rowsPerPage={filters.limit}
-            totalCount={totalCount}
-            onPageChange={handlePageChange}
-            onRowsPerPageChange={(rpp) => {
-              setFilters((prev) => ({ ...prev, limit: rpp, page: 0 }));
-            }}
-            onEdit={handleEdit}
-            onDuplicate={handleDuplicate}
-            onArchive={handleArchive}
-            onRestore={handleRestore}
-            archivedView={filters.archived}
-          />
-        )}
-      </Box>
+        </>
+      }
+    >
+      {isEmpty ? (
+        <AnnotationLabelEmpty onCreateClick={handleCreateNew} />
+      ) : (
+        <AnnotationLabelTable
+          data={results}
+          loading={isLoading}
+          page={filters.page}
+          rowsPerPage={filters.limit}
+          totalCount={totalCount}
+          onPageChange={handlePageChange}
+          onRowsPerPageChange={(rpp) => {
+            setFilters((prev) => ({ ...prev, limit: rpp, page: 0 }));
+          }}
+          onEdit={handleEdit}
+          onDuplicate={handleDuplicate}
+          onArchive={handleArchive}
+          onRestore={handleRestore}
+          archivedView={filters.archived}
+        />
+      )}
 
       <CreateLabelDrawer
         open={drawerOpen}
@@ -286,6 +215,6 @@ export default function AnnotationLabelsView() {
         label={archiveLabel}
         onClose={() => setArchiveLabel(null)}
       />
-    </Box>
+    </AnnotationsPageLayout>
   );
 }

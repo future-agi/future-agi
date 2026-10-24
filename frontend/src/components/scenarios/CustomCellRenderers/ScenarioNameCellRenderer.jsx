@@ -18,7 +18,7 @@ const ScenarioNameCellRenderer = ({ data }) => {
       <Typography
         variant="body2"
         fontWeight={600}
-        sx={{ fontSize: "14px", color: "text.primary" }}
+        sx={{ fontSize: "13px", color: "text.primary" }}
       >
         {name}
       </Typography>

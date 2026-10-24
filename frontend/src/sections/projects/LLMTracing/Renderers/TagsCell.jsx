@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Chip } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { normalizeTag } from "src/components/traceDetail/tagUtils";
 import TagChip from "src/components/traceDetail/TagChip";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
@@ -91,30 +91,20 @@ const TagsCell = ({
           );
         })}
         {overflowCount > 0 && (
-          <Chip
-            label={`+${overflowCount}`}
-            size="small"
+          <Typography
             sx={{
-              height: 20,
-              fontSize: 11,
-              "& .MuiChip-label": { px: 0.75 },
-              bgcolor: "action.hover",
+              fontSize: 12,
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
             }}
-          />
+          >
+            {`+${overflowCount}`}
+          </Typography>
         )}
         {tags.length === 0 && editable && (
-          <Chip
-            label="+ Tag"
-            size="small"
-            variant="outlined"
-            sx={{
-              height: 20,
-              fontSize: 11,
-              color: "text.secondary",
-              borderStyle: "dashed",
-              "& .MuiChip-label": { px: 0.75 },
-            }}
-          />
+          <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+            + Tag
+          </Typography>
         )}
       </Box>
       {editable && (

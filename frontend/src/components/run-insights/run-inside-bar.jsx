@@ -30,22 +30,9 @@ const RunInsideBar = ({ currentTab, setCurrentTab, rightSection }) => {
             setCurrentTab(value);
             trackEvent(Events.spanTracesToggle);
           }}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
           sx={{
-            minHeight: 0,
             "& .MuiTab-root": {
               margin: "0 !important",
-              fontWeight: "600",
-              typography: "s1",
-              color: "primary.main",
-              "&:not(.Mui-selected)": {
-                color: "text.disabled",
-                fontWeight: "500",
-              },
             },
           }}
         >
@@ -57,7 +44,6 @@ const RunInsideBar = ({ currentTab, setCurrentTab, rightSection }) => {
               disabled={tab.disabled}
               sx={{
                 margin: theme.spacing(0),
-                px: theme.spacing(1.875),
               }}
             />
           ))}

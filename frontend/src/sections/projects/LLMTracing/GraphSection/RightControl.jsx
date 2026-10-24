@@ -103,7 +103,7 @@ const RightControl = ({
           variant="outlined"
           startIcon={
             <Iconify
-              icon="icon-park-outline:left"
+              icon="solar:alt-arrow-left-linear"
               sx={{ color: "text.primary" }}
             />
           }
@@ -114,7 +114,7 @@ const RightControl = ({
           variant="outlined"
           startIcon={
             <Iconify
-              icon="icon-park-outline:right"
+              icon="solar:alt-arrow-right-linear"
               sx={{ color: "text.primary" }}
             />
           }
@@ -125,7 +125,7 @@ const RightControl = ({
           variant="outlined"
           startIcon={
             <Iconify
-              icon="iconamoon:zoom-in-light"
+              icon="solar:magnifier-zoom-in-linear"
               sx={{ color: "text.primary" }}
             />
           }
@@ -136,7 +136,7 @@ const RightControl = ({
           variant="outlined"
           startIcon={
             <Iconify
-              icon="iconamoon:zoom-out-light"
+              icon="solar:magnifier-zoom-out-linear"
               sx={{ color: "text.primary" }}
             />
           }

@@ -88,7 +88,7 @@ const ChatDetailDrawerV2 = ({
       {
         id: "chat",
         label: "Chat",
-        icon: "mdi:message-text-outline",
+        icon: "solar:chat-round-line-linear",
         isDefault: true,
         visibility: "project",
       },
@@ -99,7 +99,7 @@ const ChatDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -110,7 +110,7 @@ const ChatDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
         visibility: "personal",
@@ -161,7 +161,10 @@ const ChatDetailDrawerV2 = ({
         .filter((v) => orderedSet.has(v.id))
         .map((v) => v.position)
         .sort((a, b) => (a ?? 0) - (b ?? 0));
-      const order = orderedIds.map((id, i) => ({ id, position: slots[i] ?? i }));
+      const order = orderedIds.map((id, i) => ({
+        id,
+        position: slots[i] ?? i,
+      }));
       reorderSavedViews({ project_id: projectId, order });
     },
     [customViews, projectId, reorderSavedViews],

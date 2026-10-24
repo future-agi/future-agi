@@ -1,9 +1,21 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Button, TextField, Slider, Tooltip,
-  MenuItem, Select, InputLabel, FormControl, ToggleButton, ToggleButtonGroup, Switch,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Button,
+  TextField,
+  Slider,
+  Tooltip,
+  MenuItem,
+  Select,
+  InputLabel,
+  FormControl,
+  ToggleButton,
+  ToggleButtonGroup,
+  Switch,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
@@ -13,10 +25,20 @@ import { EDIT_EFFECT } from "../../_mock/decoupled";
 import PersonaDrawer from "src/sections/persona/PersonaDrawer";
 import PersonaCreateEditDrawer from "src/sections/persona/PersonaCreateEdit/PersonaCreateEditDrawer";
 import {
-  callSettingsLine, libraryPrefillFrom, personaOrigin, personaSwapPatch, personaTypeFor, usesPersonaLibrary,
+  callSettingsLine,
+  libraryPrefillFrom,
+  personaOrigin,
+  personaSwapPatch,
+  personaTypeFor,
+  usesPersonaLibrary,
 } from "../../_mock/personaScenarios";
 import { subGoalsOfScenario } from "../../_mock/envModel";
-import { SUBGOAL_MAX, SUBGOAL_MIN, subGoalCountNote, subGoalUsageOf } from "../../_mock/scenarioSubGoals";
+import {
+  SUBGOAL_MAX,
+  SUBGOAL_MIN,
+  subGoalCountNote,
+  subGoalUsageOf,
+} from "../../_mock/scenarioSubGoals";
 import { MarkToggle } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
 import { setBlocker } from "../../_mock/releaseBlocker";
@@ -58,24 +80,49 @@ import { clickable, focusRing } from "../../components/clickable";
  * gets rejected loudly.
  */
 
-const CONVERSATIONAL_SURFACES = ["voice", "chat", "messaging", "email", "multi"];
+const CONVERSATIONAL_SURFACES = [
+  "voice",
+  "chat",
+  "messaging",
+  "email",
+  "multi",
+];
 const VOICE_ONLY_SURFACES = ["voice", "multi"];
 
 const TONE_OPTIONS = [
-  "neutral", "polite", "urgent", "impatient", "sceptical",
-  "angry", "confused", "apologetic",
+  "neutral",
+  "polite",
+  "urgent",
+  "impatient",
+  "sceptical",
+  "angry",
+  "confused",
+  "apologetic",
 ];
 const STYLE_OPTIONS = [
-  "concise", "verbose", "formal", "casual", "chatty", "terse",
+  "concise",
+  "verbose",
+  "formal",
+  "casual",
+  "chatty",
+  "terse",
 ];
 const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
-const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
+const LANGUAGE_OPTIONS = [
+  "English",
+  "Spanish",
+  "Portuguese",
+  "Hindi",
+  "Japanese",
+  "Arabic",
+];
 const NOISE_OPTIONS = ["none", "low", "high"];
 
 /** Read "US female" / "IN male" → accent + gender fallback. */
 const parseVoice = (voice) => {
   const s = (voice || "").toLowerCase();
-  const accent = ACCENT_OPTIONS.find((a) => s.startsWith(a.toLowerCase())) || "US";
+  const accent =
+    ACCENT_OPTIONS.find((a) => s.startsWith(a.toLowerCase())) || "US";
   return { accent };
 };
 
@@ -86,9 +133,11 @@ const parseVoice = (voice) => {
  */
 const deriveCaller = (persona) => {
   const traits = (persona?.traits || []).map((t) => t.toLowerCase());
-  const tone = TONE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) || "neutral";
-  const style = STYLE_OPTIONS.find((o) => traits.some((t) => t.includes(o)))
-    || (traits.includes("terse") ? "terse" : "casual");
+  const tone =
+    TONE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) || "neutral";
+  const style =
+    STYLE_OPTIONS.find((o) => traits.some((t) => t.includes(o))) ||
+    (traits.includes("terse") ? "terse" : "casual");
   const { accent } = parseVoice(persona?.voice);
   return { tone, style, accent, language: "English" };
 };
@@ -99,7 +148,15 @@ const deriveNoise = (persona) => {
   return traits.some((t) => t.includes("noise")) ? "high" : "none";
 };
 
-export default function ScenarioEditor({ open, onClose, row, env, envState, onSave, onBuilderPrompt }) {
+export default function ScenarioEditor({
+  open,
+  onClose,
+  row,
+  env,
+  envState,
+  onSave,
+  onBuilderPrompt,
+}) {
   const [draft, setDraft] = useState(row || {});
   /* The draft as it opened, derived defaults included — what "changed" is
      measured against. */
@@ -133,13 +190,23 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
   if (!row) return null;
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
-  const setCaller = (k) => (v) => setDraft((d) => ({ ...d, caller: { ...(d.caller || {}), [k]: v }, callerEdited: true }));
+  const setCaller = (k) => (v) =>
+    setDraft((d) => ({
+      ...d,
+      caller: { ...(d.caller || {}), [k]: v },
+      callerEdited: true,
+    }));
   /* Editing a library persona here makes it this scenario's own version —
      it stays linked, but says it's been edited. */
-  const setPersona = (k) => (v) => setDraft((d) => ({
-    ...d,
-    persona: { ...(d.persona || {}), [k]: v, ...(d.persona?.libraryId != null && { edited: true }) },
-  }));
+  const setPersona = (k) => (v) =>
+    setDraft((d) => ({
+      ...d,
+      persona: {
+        ...(d.persona || {}),
+        [k]: v,
+        ...(d.persona?.libraryId != null && { edited: true }),
+      },
+    }));
   const origin = personaOrigin(draft.persona);
   const canUseLibrary = usesPersonaLibrary(env);
 
@@ -156,29 +223,55 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
   const toggleMustPass = (on) => setDraft((d) => setBlocker(d, on));
   const save = () => {
     const mustPassMoved = !!draft.critical !== !!initial.critical;
-    const meta = mustPassMoved ? setBlocker({ ...row }, !!draft.critical) : { ...row };
+    const meta = mustPassMoved
+      ? setBlocker({ ...row }, !!draft.critical)
+      : { ...row };
     onSave(metaOnly ? meta : draft, { metaOnly, bump });
     onClose();
   };
 
   return (
-    <SideDrawer open={open} onClose={onClose} width={620}>
+    <SideDrawer open={open} onClose={onClose} width={640}>
       <Stack sx={{ height: "100%" }}>
         <Stack
-          direction="row" alignItems="center" spacing={2}
-          sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{
+            px: 2.5,
+            py: 2,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           <Box flex={1} minWidth={0}>
-            <Stack direction="row" alignItems="center" spacing={1} className="blocker-host">
-              <Typography sx={{ typography: "m2", fontWeight: 600 }}>Edit scenario</Typography>
-              <BlockerFlag row={draft} size={15} onToggle={() => toggleMustPass(!draft.critical)} />
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              className="blocker-host"
+            >
+              <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+                Edit scenario
+              </Typography>
+              <BlockerFlag
+                row={draft}
+                size={15}
+                onToggle={() => toggleMustPass(!draft.critical)}
+              />
             </Stack>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              Changes apply to this environment&apos;s copy, not the pack it came from
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              Changes apply to this environment&apos;s copy, not the pack it
+              came from
             </Typography>
           </Box>
           <IconButton size="small" onClick={onClose}>
-            <Iconify icon="solar:close-circle-linear" width={18} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon="solar:close-circle-linear"
+              width={20}
+              sx={{ color: "text.tertiary" }}
+            />
           </IconButton>
         </Stack>
 
@@ -190,25 +283,40 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
           />
 
           <TextField
-            size="small" label="Name" value={draft.name || ""}
+            size="small"
+            label="Name"
+            value={draft.name || ""}
             onChange={(e) => set("name")(e.target.value)}
             helperText="Kebab-case identifier for this scenario — e.g. polite-senior-verify-identity."
-            InputProps={{ sx: { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+            InputProps={{
+              sx: {
+                typography: "s2",
+                fontFamily: "ui-monospace, Menlo, monospace",
+              },
+            }}
           />
           <TextField
-            size="small" label="Use case" value={draft.useCase || ""}
+            size="small"
+            label="Use case"
+            value={draft.useCase || ""}
             disabled
             helperText="Read-only — the use case comes from the scenario pack and groups this row with its siblings. Move to a different pack to change it."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <TextField
-            size="small" label="Branch" value={draft.branchCategory || ""}
+            size="small"
+            label="Branch"
+            value={draft.branchCategory || ""}
             disabled
             helperText="Read-only — the branch identifies which sibling this row is inside its use case. Move to a different pack to change it."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <TextField
-            size="small" label="Passes when" multiline minRows={2} value={draft.expected || ""}
+            size="small"
+            label="Passes when"
+            multiline
+            minRows={2}
+            value={draft.expected || ""}
             onChange={(e) => set("expected")(e.target.value)}
             helperText="What a pass looks like. Evals grade against this."
             InputProps={{ sx: { typography: "s2" } }}
@@ -220,7 +328,12 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             title="Sub-goals"
             hint={`${SUBGOAL_MIN}–${SUBGOAL_MAX} per scenario. Sub-goals decide pass or fail: it passes when every critical one holds. A new one is critical unless you mark it supporting — supporting is reported, doesn't fail it. Any change here means it can't be graded until re-proved.`}
           />
-          <SubGoalsEditor draft={draft} setDraft={setDraft} env={env} envState={envState} />
+          <SubGoalsEditor
+            draft={draft}
+            setDraft={setDraft}
+            env={env}
+            envState={envState}
+          />
 
           {/* ─── Persona ─── */}
           {/*
@@ -242,37 +355,88 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
               browser or API agent has no one on the other end. */}
           {canUseLibrary && (
             <Stack spacing={0.75}>
-              <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" rowGap={1}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                flexWrap="wrap"
+                rowGap={1}
+              >
                 {origin && (
-                  <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5, px: 0.875, height: 24, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}>
+                  <Box
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      px: 0.875,
+                      height: 24,
+                      borderRadius: "4px",
+                      border: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
                     <Iconify
-                      icon={origin.kind === "generated" ? "solar:magic-stick-3-linear" : "solar:users-group-rounded-linear"}
-                      width={13} sx={{ color: "text.subtitle" }}
+                      icon={
+                        origin.kind === "generated"
+                          ? "solar:magic-stick-3-linear"
+                          : "solar:users-group-rounded-linear"
+                      }
+                      width={14}
+                      sx={{ color: "text.tertiary" }}
                     />
-                    <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>{origin.label}</Typography>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "text.secondary",
+                      }}
+                    >
+                      {origin.label}
+                    </Typography>
                   </Box>
                 )}
                 <Box flex={1} />
                 <Button
-                  size="small" variant="outlined" onClick={() => setLibraryOpen(true)}
-                  startIcon={<Iconify icon="solar:users-group-rounded-linear" width={15} />}
-                  sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setLibraryOpen(true)}
+                  startIcon={
+                    <Iconify
+                      icon="solar:users-group-rounded-linear"
+                      width={16}
+                    />
+                  }
+                  sx={{
+                    color: "text.primary",
+                    borderColor: "divider",
+                    flexShrink: 0,
+                  }}
                 >
-                  {draft.persona ? "Swap for a library persona" : "Use a library persona"}
+                  {draft.persona
+                    ? "Swap for a library persona"
+                    : "Use a library persona"}
                 </Button>
                 {draft.persona && origin?.kind !== "library" && (
                   <Button
-                    size="small" variant="outlined" onClick={() => setSavingToLibrary(true)}
-                    startIcon={<Iconify icon="solar:bookmark-linear" width={15} />}
-                    sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setSavingToLibrary(true)}
+                    startIcon={
+                      <Iconify icon="solar:bookmark-linear" width={16} />
+                    }
+                    sx={{
+                      color: "text.primary",
+                      borderColor: "divider",
+                      flexShrink: 0,
+                    }}
                   >
                     Save to library
                   </Button>
                 )}
               </Stack>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {swapNote
-                  || (origin?.kind === "library"
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {swapNote ||
+                  (origin?.kind === "library"
                     ? "A copy of the library persona — edits below change this scenario only, and later library edits don't reach it."
                     : origin?.kind === "edited"
                       ? "Save to library keeps this version as a new persona your other environments can use."
@@ -281,21 +445,27 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             </Stack>
           )}
           <TextField
-            size="small" label="Name" value={draft.persona?.name || ""}
+            size="small"
+            label="Name"
+            value={draft.persona?.name || ""}
             onChange={(e) => setPersona("name")(e.target.value)}
             helperText="Display name for the caller — e.g. The Polite Senior Caller."
             InputProps={{ sx: { typography: "s2" } }}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
-              size="small" label="Age / age group" value={draft.persona?.age || draft.persona?.ageGroup || ""}
+              size="small"
+              label="Age / age group"
+              value={draft.persona?.age || draft.persona?.ageGroup || ""}
               onChange={(e) => setPersona("age")(e.target.value)}
               helperText="Range or number — e.g. 60-70."
               InputProps={{ sx: { typography: "s2" } }}
               fullWidth
             />
             <TextField
-              size="small" label="Voice" value={draft.persona?.voice || ""}
+              size="small"
+              label="Voice"
+              value={draft.persona?.voice || ""}
               onChange={(e) => setPersona("voice")(e.target.value)}
               helperText="Accent + gender — e.g. US female."
               InputProps={{ sx: { typography: "s2" } }}
@@ -303,9 +473,21 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             />
           </Stack>
           <TextField
-            size="small" label="Traits"
-            value={Array.isArray(draft.persona?.traits) ? draft.persona.traits.join(", ") : (draft.persona?.traits || "")}
-            onChange={(e) => setPersona("traits")(e.target.value.split(",").map((t) => t.trim()).filter(Boolean))}
+            size="small"
+            label="Traits"
+            value={
+              Array.isArray(draft.persona?.traits)
+                ? draft.persona.traits.join(", ")
+                : draft.persona?.traits || ""
+            }
+            onChange={(e) =>
+              setPersona("traits")(
+                e.target.value
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean),
+              )
+            }
             helperText="Comma-separated traits the caller carries in — e.g. polite, elderly, hard of hearing."
             InputProps={{ sx: { typography: "s2" } }}
           />
@@ -315,34 +497,49 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             <>
               <SectionHeader
                 title="Caller"
-                hint={draft.callerFrom
-                  ? (draft.callerEdited
-                    ? `Adjusted from ${draft.callerFrom}'s defaults for this scenario.`
-                    : `Set from ${draft.callerFrom}'s personality and library settings — change any to override.`)
-                  : "How the caller comes across in the run. Voice/chat surfaces only — a browser or coding agent has no caller."}
+                hint={
+                  draft.callerFrom
+                    ? draft.callerEdited
+                      ? `Adjusted from ${draft.callerFrom}'s defaults for this scenario.`
+                      : `Set from ${draft.callerFrom}'s personality and library settings — change any to override.`
+                    : "How the caller comes across in the run. Voice/chat surfaces only — a browser or coding agent has no caller."
+                }
               />
               {!isVoice && callSettingsLine(draft.persona?.callSettings) && (
-                <LibrarySettingsNote name={draft.persona.name} line={callSettingsLine(draft.persona.callSettings)} />
+                <LibrarySettingsNote
+                  name={draft.persona.name}
+                  line={callSettingsLine(draft.persona.callSettings)}
+                />
               )}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <FormControl size="small" fullWidth>
                   <InputLabel>Tone</InputLabel>
                   <Select
-                    label="Tone" value={draft.caller?.tone || "neutral"}
+                    label="Tone"
+                    value={draft.caller?.tone || "neutral"}
                     onChange={(e) => setCaller("tone")(e.target.value)}
                     sx={{ typography: "s2" }}
                   >
-                    {TONE_OPTIONS.map((o) => <MenuItem key={o} value={o} sx={{ typography: "s2" }}>{o}</MenuItem>)}
+                    {TONE_OPTIONS.map((o) => (
+                      <MenuItem key={o} value={o} sx={{ typography: "s2" }}>
+                        {o}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
                 <FormControl size="small" fullWidth>
                   <InputLabel>Style</InputLabel>
                   <Select
-                    label="Style" value={draft.caller?.style || "casual"}
+                    label="Style"
+                    value={draft.caller?.style || "casual"}
                     onChange={(e) => setCaller("style")(e.target.value)}
                     sx={{ typography: "s2" }}
                   >
-                    {STYLE_OPTIONS.map((o) => <MenuItem key={o} value={o} sx={{ typography: "s2" }}>{o}</MenuItem>)}
+                    {STYLE_OPTIONS.map((o) => (
+                      <MenuItem key={o} value={o} sx={{ typography: "s2" }}>
+                        {o}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Stack>
@@ -350,21 +547,31 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
                 <FormControl size="small" fullWidth>
                   <InputLabel>Accent</InputLabel>
                   <Select
-                    label="Accent" value={draft.caller?.accent || "US"}
+                    label="Accent"
+                    value={draft.caller?.accent || "US"}
                     onChange={(e) => setCaller("accent")(e.target.value)}
                     sx={{ typography: "s2" }}
                   >
-                    {ACCENT_OPTIONS.map((o) => <MenuItem key={o} value={o} sx={{ typography: "s2" }}>{o}</MenuItem>)}
+                    {ACCENT_OPTIONS.map((o) => (
+                      <MenuItem key={o} value={o} sx={{ typography: "s2" }}>
+                        {o}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
                 <FormControl size="small" fullWidth>
                   <InputLabel>Language</InputLabel>
                   <Select
-                    label="Language" value={draft.caller?.language || "English"}
+                    label="Language"
+                    value={draft.caller?.language || "English"}
                     onChange={(e) => setCaller("language")(e.target.value)}
                     sx={{ typography: "s2" }}
                   >
-                    {LANGUAGE_OPTIONS.map((o) => <MenuItem key={o} value={o} sx={{ typography: "s2" }}>{o}</MenuItem>)}
+                    {LANGUAGE_OPTIONS.map((o) => (
+                      <MenuItem key={o} value={o} sx={{ typography: "s2" }}>
+                        {o}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Stack>
@@ -378,48 +585,62 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
                 title="Call constraints"
                 hint="Voice-agent specific. Every generated scenario carries defaults; overriding them here is safe."
               />
-              {callSettingsLine(draft.persona?.callSettings, { voice: true }) && (
-                <LibrarySettingsNote name={draft.persona.name} line={callSettingsLine(draft.persona.callSettings, { voice: true })} />
+              {callSettingsLine(draft.persona?.callSettings, {
+                voice: true,
+              }) && (
+                <LibrarySettingsNote
+                  name={draft.persona.name}
+                  line={callSettingsLine(draft.persona.callSettings, {
+                    voice: true,
+                  })}
+                />
               )}
               <Box>
                 <Stack direction="row" alignItems="center" spacing={1}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  <Typography
+                    sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
+                  >
                     Max turns
                   </Typography>
-                  <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
                     ~{draft.turns || 0}
                   </Typography>
                 </Stack>
                 <Slider
-                  size="small" min={2} max={20} value={draft.turns || 0}
-                  onChange={(_, v) => setDraft((d) => ({ ...d, turns: v, maxTurns: v }))}
+                  size="small"
+                  min={2}
+                  max={20}
+                  value={draft.turns || 0}
+                  onChange={(_, v) =>
+                    setDraft((d) => ({ ...d, turns: v, maxTurns: v }))
+                  }
                 />
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   How long the run is allowed to go before it&apos;s called off.
                 </Typography>
               </Box>
 
               <Box>
-                <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+                <Typography
+                  sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}
+                >
                   Background noise
                 </Typography>
                 <ToggleButtonGroup
-                  size="small" exclusive
+                  size="small"
+                  exclusive
                   value={draft.backgroundNoise || "none"}
                   onChange={(_, v) => v && set("backgroundNoise")(v)}
-                  sx={{
-                    "& .MuiToggleButton-root": {
-                      typography: "s2", fontWeight: 600, textTransform: "none", px: 1.5, py: 0.375,
-                      color: "text.secondary", borderColor: "divider",
-                      "&.Mui-selected": {
-                        bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.09),
-                        color: "#7857FC", borderColor: "#7857FC",
-                      },
-                    },
-                  }}
                 >
                   {NOISE_OPTIONS.map((n) => (
-                    <ToggleButton key={n} value={n}>{n}</ToggleButton>
+                    <ToggleButton key={n} value={n}>
+                      {n}
+                    </ToggleButton>
                   ))}
                 </ToggleButtonGroup>
               </Box>
@@ -435,18 +656,30 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
               />
               <Box>
                 <Stack direction="row" alignItems="center" spacing={1}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  <Typography
+                    sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
+                  >
                     Max turns
                   </Typography>
-                  <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
                     {draft.maxTurns || draft.turns || 10}
                   </Typography>
                 </Stack>
                 <Slider
-                  size="small" min={2} max={40} value={draft.maxTurns || draft.turns || 10}
-                  onChange={(_, v) => setDraft((d) => ({ ...d, turns: v, maxTurns: v }))}
+                  size="small"
+                  min={2}
+                  max={40}
+                  value={draft.maxTurns || draft.turns || 10}
+                  onChange={(_, v) =>
+                    setDraft((d) => ({ ...d, turns: v, maxTurns: v }))
+                  }
                 />
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   Caller and agent messages each count as a turn.
                 </Typography>
               </Box>
@@ -461,7 +694,9 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
                 hint="Optional. Override the world's starting state for this scenario only — e.g. Slack starts with a specific DM thread, Notion starts with a specific page. Leave blank to use the environment's default."
               />
               <TextField
-                size="small" multiline minRows={4}
+                size="small"
+                multiline
+                minRows={4}
                 label="Starting state, in words"
                 value={draft.twinSeedPrompt || ""}
                 onChange={(e) => set("twinSeedPrompt")(e.target.value)}
@@ -517,42 +752,64 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
           })()}
 
           <Stack
-            direction="row" spacing={1.25} alignItems="flex-start"
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
             sx={{
-              p: 1.75, borderRadius: 1.25, border: "1px solid",
-              borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.28 : 0.2),
-              bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.09 : 0.04),
+              p: 1.75,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "status.discovery.border",
+              bgcolor: "status.discovery.bg",
             }}
           >
             <Iconify
               icon="solar:shield-check-linear"
-              width={15}
+              width={16}
               sx={{
-                color: (t) => (t.palette.mode === "dark" ? "#A792FD" : "#7857FC"),
-                flexShrink: 0, mt: "1px",
+                color: "primary.main",
+                flexShrink: 0,
+                mt: "1px",
               }}
             />
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              Every scenario got pre-verified before it landed: the world was set up, a known-correct
-              run had to pass, and the checks had to fail when nothing was done. Free-text edits to
-              the task, setup or checks would silently break that proof — that&apos;s why they move
+              Every scenario got pre-verified before it landed: the world was
+              set up, a known-correct run had to pass, and the checks had to
+              fail when nothing was done. Free-text edits to the task, setup or
+              checks would silently break that proof — that&apos;s why they move
               through the builder, which re-runs the check on save.
             </Typography>
           </Stack>
         </Stack>
 
-        {dirty && <BumpPreview bump={bump} intent={intent} onIntent={setIntent} />}
+        {dirty && (
+          <BumpPreview bump={bump} intent={intent} onIntent={setIntent} />
+        )}
         <Stack
-          direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            py: 1.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <Button onClick={onClose} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>
+          <Button
+            size="small"
+            onClick={onClose}
+            sx={{ color: "text.secondary" }}
+          >
             Cancel
           </Button>
           <Button
-            variant="contained" color="primary" size="small" disabled={!dirty}
+            variant="contained"
+            color="primary"
+            size="small"
+            disabled={!dirty}
             onClick={save}
-            sx={{ typography: "s2", fontWeight: 700 }}
           >
             Save scenario
           </Button>
@@ -566,7 +823,14 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
         subtitle="Pick the caller for this scenario. Edits you make after this change this scenario only."
         addLabel="Use persona"
         single
-        current={draft.persona ? { libraryId: draft.persona.libraryId ?? null, name: draft.persona.name } : null}
+        current={
+          draft.persona
+            ? {
+                libraryId: draft.persona.libraryId ?? null,
+                name: draft.persona.name,
+              }
+            : null
+        }
         onAddPersonas={(picked) => {
           setLibraryOpen(false);
           if (!picked?.length) return;
@@ -575,9 +839,11 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
              new one's, so nothing still speaks for the persona it replaced. */
           const { rewrote, ...patch } = personaSwapPatch(draft, picked[0]);
           setDraft((d) => ({ ...d, ...patch, callerEdited: false }));
-          setSwapNote(rewrote
-            ? `Now played by ${picked[0].name} — brief, opening line and caller settings rewritten in their voice.`
-            : `Now played by ${picked[0].name} — caller settings updated. This scenario scripts its own pressure, so its brief is kept.`);
+          setSwapNote(
+            rewrote
+              ? `Now played by ${picked[0].name} — brief, opening line and caller settings rewritten in their voice.`
+              : `Now played by ${picked[0].name} — caller settings updated. This scenario scripts its own pressure, so its brief is kept.`,
+          );
         }}
       />
       {/* Save this scenario's caller as a new library persona, then link the
@@ -591,9 +857,17 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
         onSaved={(saved) => {
           setDraft((d) => ({
             ...d,
-            persona: { ...(d.persona || {}), libraryId: saved.id, libraryName: saved.name, name: saved.name, edited: false },
+            persona: {
+              ...(d.persona || {}),
+              libraryId: saved.id,
+              libraryName: saved.name,
+              name: saved.name,
+              edited: false,
+            },
           }));
-          setSwapNote(`Saved to the persona library as ${saved.name} — this scenario now uses it.`);
+          setSwapNote(
+            `Saved to the persona library as ${saved.name} — this scenario now uses it.`,
+          );
         }}
       />
     </SideDrawer>
@@ -617,36 +891,51 @@ ScenarioEditor.propTypes = {
 */
 function BumpPreview({ bump, intent, onIntent }) {
   return (
-    <Box sx={{ mx: 2.5, mb: 1.5, p: 1.5, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover", flexShrink: 0 }}>
+    <Box
+      sx={{
+        mx: 2.5,
+        mb: 1.5,
+        p: 1.5,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "action.hover",
+        flexShrink: 0,
+      }}
+    >
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
         {bump.level ? EDIT_EFFECT[bump.level] : "Past results still compare"}
       </Typography>
       <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
-        {bump.why ? `${bump.why}. ` : ""}{bumpNote(bump.level)}
+        {bump.why ? `${bump.why}. ` : ""}
+        {bumpNote(bump.level)}
       </Typography>
       {bump.graderEdit && !bump.rewrite && !bump.fields.caller.length && (
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Its checks changed —</Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Its checks changed —
+          </Typography>
           <ToggleButtonGroup
-            size="small" exclusive value={intent}
+            size="small"
+            exclusive
+            value={intent}
             onChange={(_, v) => v && onIntent(v)}
-            sx={{
-              "& .MuiToggleButton-root": {
-                typography: "s3", fontWeight: 600, textTransform: "none", px: 1, py: 0.125,
-                color: "text.secondary", borderColor: "divider",
-                "&.Mui-selected": { color: "text.primary", bgcolor: "action.selected" },
-              },
-            }}
           >
             <ToggleButton value="same">Same intent (a fix)</ToggleButton>
-            <ToggleButton value="changed">It tests something else now</ToggleButton>
+            <ToggleButton value="changed">
+              It tests something else now
+            </ToggleButton>
           </ToggleButtonGroup>
         </Stack>
       )}
     </Box>
   );
 }
-BumpPreview.propTypes = { bump: PropTypes.object.isRequired, intent: PropTypes.string, onIntent: PropTypes.func };
+BumpPreview.propTypes = {
+  bump: PropTypes.object.isRequired,
+  intent: PropTypes.string,
+  onIntent: PropTypes.func,
+};
 
 /*
   The must-pass mark — on the set, not the scenario: no scenario bump, no
@@ -655,16 +944,41 @@ BumpPreview.propTypes = { bump: PropTypes.object.isRequired, intent: PropTypes.s
 function SetMarks({ row, onMustPass }) {
   if (!onMustPass) return null;
   return (
-    <Stack direction="row" alignItems="flex-start" spacing={1.25} sx={{ p: 1.5, borderRadius: 1.25, border: "1px solid", borderColor: "divider" }}>
-      <Iconify icon={row.critical ? "solar:shield-check-bold" : "solar:shield-check-linear"} width={16} sx={{ color: row.critical ? "text.primary" : "text.disabled", mt: "2px", flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      alignItems="flex-start"
+      spacing={1.25}
+      sx={{
+        p: 1.5,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Iconify
+        icon={
+          row.critical ? "solar:shield-check-bold" : "solar:shield-check-linear"
+        }
+        width={16}
+        sx={{
+          color: row.critical ? "text.primary" : "text.disabled",
+          mt: "2px",
+          flexShrink: 0,
+        }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Must-pass</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          An improvement that breaks it is rejected however much else it lifts. Results are reported; nothing here blocks a release. Moves the scenario set, not this scenario&apos;s version.
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          Must-pass
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          An improvement that breaks it is rejected however much else it lifts.
+          Results are reported; nothing here blocks a release. Moves the
+          scenario set, not this scenario&apos;s version.
         </Typography>
       </Box>
       <Switch
-        size="small" checked={!!row.critical}
+        size="small"
+        checked={!!row.critical}
         onChange={(e) => onMustPass(e.target.checked)}
         inputProps={{ "aria-label": "Must-pass" }}
         sx={{ flexShrink: 0, mt: "-2px" }}
@@ -672,22 +986,49 @@ function SetMarks({ row, onMustPass }) {
     </Stack>
   );
 }
-SetMarks.propTypes = { row: PropTypes.object.isRequired, onMustPass: PropTypes.func };
+SetMarks.propTypes = {
+  row: PropTypes.object.isRequired,
+  onMustPass: PropTypes.func,
+};
 
 /* A library persona's own call settings, said where they apply. */
 function LibrarySettingsNote({ name, line }) {
   return (
-    <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ px: 1.25, py: 1, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-      <Iconify icon="solar:users-group-rounded-linear" width={14} sx={{ color: "text.subtitle", mt: 0.25, flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      spacing={0.75}
+      alignItems="flex-start"
+      sx={{
+        px: 1.25,
+        py: 1,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Iconify
+        icon="solar:users-group-rounded-linear"
+        width={14}
+        sx={{ color: "text.tertiary", mt: 0.25, flexShrink: 0 }}
+      />
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>{`From ${name}: `}</Box>
+        <Box
+          component="span"
+          sx={{ fontWeight: 600, color: "text.primary" }}
+        >{`From ${name}: `}</Box>
         {line}
-        <Box component="span" sx={{ color: "text.subtitle" }}> — set in the persona library.</Box>
+        <Box component="span" sx={{ color: "text.tertiary" }}>
+          {" "}
+          — set in the persona library.
+        </Box>
       </Typography>
     </Stack>
   );
 }
-LibrarySettingsNote.propTypes = { name: PropTypes.string, line: PropTypes.string };
+LibrarySettingsNote.propTypes = {
+  name: PropTypes.string,
+  line: PropTypes.string,
+};
 
 /*
   The scenario's own sub-goals. The scenario owns which it has and how much
@@ -700,16 +1041,20 @@ const goalText = (g) => (typeof g === "string" ? g : g?.text || g?.label || "");
 function SubGoalsEditor({ draft, setDraft, env, envState }) {
   const [adding, setAdding] = useState("");
   const usage = useMemo(() => subGoalUsageOf(env, envState), [env, envState]);
-  const base = draft.subGoals?.length || !draft.subTasks?.length ? draft : { ...draft, subGoals: draft.subTasks.map(goalText) };
+  const base =
+    draft.subGoals?.length || !draft.subTasks?.length
+      ? draft
+      : { ...draft, subGoals: draft.subTasks.map(goalText) };
   const goals = subGoalsOfScenario(base, env, envState);
   const own = goals.filter((g) => !g.key.endsWith(":rule"));
   const note = subGoalCountNote(goals.length);
-  const write = (texts, marks) => setDraft((d) => ({
-    ...d,
-    subGoals: texts,
-    subGoalMarks: { ...(d.subGoalMarks || {}), ...marks },
-    subGoalsUnproved: true,
-  }));
+  const write = (texts, marks) =>
+    setDraft((d) => ({
+      ...d,
+      subGoals: texts,
+      subGoalMarks: { ...(d.subGoalMarks || {}), ...marks },
+      subGoalsUnproved: true,
+    }));
   const add = () => {
     const text = adding.trim();
     if (!text || goals.length >= SUBGOAL_MAX) return;
@@ -723,25 +1068,75 @@ function SubGoalsEditor({ draft, setDraft, env, envState }) {
         const isRule = g.key.endsWith(":rule");
         return (
           <Stack
-            key={g.key} direction="row" alignItems="center" spacing={1}
-            sx={{ px: 1.25, py: 0.75, border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+            key={g.key}
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 1.25,
+              py: 0.75,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+            }}
           >
-            <Typography sx={{ typography: "s3", color: "text.disabled", width: 14, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{i + 1}.</Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.disabled",
+                width: 14,
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {i + 1}.
+            </Typography>
             <Box flex={1} minWidth={0}>
               <Typography sx={{ typography: "s2" }}>{g.text}</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {[isRule && "from the rule it tests", used > 1 ? `shared · used by ${used}` : "only this scenario"].filter(Boolean).join(" · ")}
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {[
+                  isRule && "from the rule it tests",
+                  used > 1 ? `shared · used by ${used}` : "only this scenario",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </Typography>
             </Box>
-            <MarkToggle value={g.mark} onChange={(m) => write(own.map((x) => x.text), { [g.id]: m })} />
-            <Tooltip arrow title={isRule ? "Comes from the rule it tests" : goals.length <= SUBGOAL_MIN ? `Keep at least ${SUBGOAL_MIN}` : "Remove"}>
+            <MarkToggle
+              value={g.mark}
+              onChange={(m) =>
+                write(
+                  own.map((x) => x.text),
+                  { [g.id]: m },
+                )
+              }
+            />
+            <Tooltip
+              arrow
+              title={
+                isRule
+                  ? "Comes from the rule it tests"
+                  : goals.length <= SUBGOAL_MIN
+                    ? `Keep at least ${SUBGOAL_MIN}`
+                    : "Remove"
+              }
+            >
               <span>
                 <IconButton
                   size="small"
                   disabled={isRule || goals.length <= SUBGOAL_MIN}
-                  onClick={() => write(own.filter((x) => x.key !== g.key).map((x) => x.text), {})}
+                  onClick={() =>
+                    write(
+                      own.filter((x) => x.key !== g.key).map((x) => x.text),
+                      {},
+                    )
+                  }
                 >
-                  <Iconify icon="solar:close-circle-linear" width={15} sx={{ color: "text.subtitle" }} />
+                  <Iconify
+                    icon="solar:close-circle-linear"
+                    width={16}
+                    sx={{ color: "text.tertiary" }}
+                  />
                 </IconButton>
               </span>
             </Tooltip>
@@ -750,44 +1145,73 @@ function SubGoalsEditor({ draft, setDraft, env, envState }) {
       })}
       <Stack direction="row" spacing={1} alignItems="center">
         <TextField
-          size="small" fullWidth value={adding}
+          size="small"
+          fullWidth
+          value={adding}
           onChange={(e) => setAdding(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
           disabled={goals.length >= SUBGOAL_MAX}
-          placeholder={goals.length >= SUBGOAL_MAX ? `${SUBGOAL_MAX} is the most a scenario takes` : "Add a sub-goal — e.g. Confirm the refund amount before issuing it"}
+          placeholder={
+            goals.length >= SUBGOAL_MAX
+              ? `${SUBGOAL_MAX} is the most a scenario takes`
+              : "Add a sub-goal — e.g. Confirm the refund amount before issuing it"
+          }
           InputProps={{ sx: { typography: "s2" } }}
         />
         <Button
-          size="small" variant="outlined" onClick={add}
+          size="small"
+          variant="outlined"
+          onClick={add}
           disabled={!adding.trim() || goals.length >= SUBGOAL_MAX}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
           Add
         </Button>
       </Stack>
-      {note && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{note}</Typography>}
+      {note && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {note}
+        </Typography>
+      )}
       {draft.subGoalsUnproved && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          Can&apos;t be graded until re-proved — re-prove it from its state once saved.
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          Can&apos;t be graded until re-proved — re-prove it from its state once
+          saved.
         </Typography>
       )}
     </Stack>
   );
 }
-SubGoalsEditor.propTypes = { draft: PropTypes.object, setDraft: PropTypes.func, env: PropTypes.object, envState: PropTypes.object };
+SubGoalsEditor.propTypes = {
+  draft: PropTypes.object,
+  setDraft: PropTypes.func,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 function SectionHeader({ title, hint }) {
   return (
     <Box>
       <Typography
         sx={{
-          typography: "s3", fontWeight: 700, color: "text.primary",
-          textTransform: "uppercase", letterSpacing: 0.6, mb: 0.375,
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.primary",
+          textTransform: "none",
+          letterSpacing: 0.6,
+          mb: 0.375,
         }}
       >
         {title}
       </Typography>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {hint}
+      </Typography>
     </Box>
   );
 }
@@ -804,21 +1228,40 @@ function LockedRow({ label, value, prompt, onSend }) {
   return (
     <Box
       sx={{
-        p: 1.5, borderRadius: 1.25,
-        border: "1px solid", borderColor: "divider",
+        p: 1.5,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
         bgcolor: "background.neutral",
       }}
     >
       <Stack direction="row" alignItems="flex-start" spacing={1}>
-        <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={13} sx={{ color: "text.subtitle", mt: "3px", flexShrink: 0 }} />
+        <Iconify
+          icon="solar:lock-keyhole-minimalistic-linear"
+          width={14}
+          sx={{ color: "text.tertiary", mt: "3px", flexShrink: 0 }}
+        />
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", mb: 0.375, textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.secondary",
+              mb: 0.375,
+              textTransform: "none",
+              letterSpacing: 0.4,
+            }}
+          >
             {label}
           </Typography>
           <Typography
             sx={{
-              typography: "s2", color: "text.primary",
-              display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
+              typography: "s2",
+              color: "text.primary",
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
             }}
           >
             {value || "—"}
@@ -833,15 +1276,28 @@ function LockedRow({ label, value, prompt, onSend }) {
               own hover state, and a "Send to builder" title on hover so
               the reader knows what will happen. */}
           {onSend ? (
-            <Tooltip arrow placement="top" title="Send this to the builder chat">
+            <Tooltip
+              arrow
+              placement="top"
+              title="Send this to the builder chat"
+            >
               <Box
-                {...clickable((e) => { e.stopPropagation(); onSend(prompt); })}
-                sx={{ ...focusRing,
-                  mt: 1, display: "inline-flex", alignItems: "center", gap: 0.75,
-                  px: 1, py: 0.5, borderRadius: 1,
+                {...clickable((e) => {
+                  e.stopPropagation();
+                  onSend(prompt);
+                })}
+                sx={{
+                  ...focusRing,
+                  mt: 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: 1,
                   cursor: "pointer",
                   border: "1px solid",
-                  borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.12),
+                  borderColor: "divider",
                   color: "text.secondary",
                   bgcolor: "background.paper",
                   "&:hover, &:focus-visible": {
@@ -853,23 +1309,48 @@ function LockedRow({ label, value, prompt, onSend }) {
                   maxWidth: "100%",
                 }}
               >
-                <Iconify icon="solar:chat-round-line-linear" width={12} sx={{ color: "inherit", flexShrink: 0, opacity: 0.7 }} />
+                <Iconify
+                  icon="solar:chat-round-line-linear"
+                  width={12}
+                  sx={{ color: "inherit", flexShrink: 0, opacity: 0.7 }}
+                />
                 <Typography
                   noWrap
                   sx={{
-                    typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                    color: "inherit", minWidth: 0,
+                    typography: "s3",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    color: "inherit",
+                    minWidth: 0,
                   }}
                 >
                   {prompt}
                 </Typography>
-                <Iconify icon="solar:arrow-right-linear" width={12} sx={{ color: "inherit", flexShrink: 0, opacity: 0.6 }} />
+                <Iconify
+                  icon="solar:arrow-right-linear"
+                  width={12}
+                  sx={{ color: "inherit", flexShrink: 0, opacity: 0.6 }}
+                />
               </Box>
             </Tooltip>
           ) : (
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 1 }}>
-              <Iconify icon="solar:chat-round-line-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.subtitle" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ mt: 1 }}
+            >
+              <Iconify
+                icon="solar:chat-round-line-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  color: "text.tertiary",
+                }}
+              >
                 &ldquo;{prompt}&rdquo;
               </Typography>
             </Stack>
@@ -879,4 +1360,9 @@ function LockedRow({ label, value, prompt, onSend }) {
     </Box>
   );
 }
-LockedRow.propTypes = { label: PropTypes.string, value: PropTypes.string, prompt: PropTypes.string, onSend: PropTypes.func };
+LockedRow.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.string,
+  prompt: PropTypes.string,
+  onSend: PropTypes.func,
+};

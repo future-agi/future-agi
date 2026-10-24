@@ -55,13 +55,9 @@ const CustomModelTools = ({
           disabled={disableClick}
           disableRipple={viewOnly}
           sx={{
-            borderRadius: "4px",
             backgroundColor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
-            padding: "4px",
-            height: "32px",
-            width: label ? "auto" : "44px",
             marginTop: isModalContainer ? "-4px" : 0,
             color: "text.primary",
             ...(viewOnly && { cursor: "default" }),

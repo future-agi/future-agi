@@ -1,10 +1,4 @@
-import {
-  Box,
-  Divider,
-  useTheme,
-  Tab,
-  Tabs,
-} from "@mui/material";
+import { Box, Divider, useTheme, Tab, Tabs } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect } from "react";
 import AgentConfigurationView from "../AgentConfiguration/AgentConfigurationView";
@@ -118,37 +112,22 @@ const VersionDetails = () => {
           value={activeTab || agentDetailsTabData[0].id}
           onChange={handleTabChange}
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
           sx={{
-            bgcolor: "background.paper",
             borderBottom: 1,
             borderColor: "divider",
-            minHeight: 42,
             "& .MuiTabs-flexContainer": { gap: 0 },
             "& .MuiTab-root": {
-              minHeight: 42,
               paddingX: theme.spacing(3),
               margin: theme.spacing(0),
               marginRight: `${theme.spacing(0)} !important`,
               minWidth: "auto",
-              fontWeight: "fontWeightMedium",
               typography: "s1",
-              color: "text.primary",
-              textTransform: "none",
               transition: theme.transitions.create(
                 ["color", "background-color"],
                 {
                   duration: theme.transitions.duration.short,
                 },
               ),
-              "&.Mui-selected": {
-                color: "primary.main",
-              },
-              "&:not(.Mui-selected)": { color: "text.primary" },
               "&:first-of-type": { marginLeft: 0 },
             },
           }}
@@ -167,7 +146,10 @@ const VersionDetails = () => {
         {/* Scrollable content */}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", mt: 2 }}>
           {isLoading || !versionDetails ? (
-            <LoadingScreen variant="orbit" sx={{ height: "100%", minHeight: "50vh" }} />
+            <LoadingScreen
+              variant="orbit"
+              sx={{ height: "100%", minHeight: "50vh" }}
+            />
           ) : (
             renderContent(activeTab)
           )}

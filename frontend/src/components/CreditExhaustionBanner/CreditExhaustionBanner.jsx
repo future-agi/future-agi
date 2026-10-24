@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Alert, AlertTitle, Button, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -44,28 +43,23 @@ export const CreditExhaustionBanner = ({
       action={
         <Button
           size="small"
-          variant="contained"
+          variant="outlined"
           color="warning"
           onClick={onUpgrade}
-          sx={{ whiteSpace: "nowrap", textTransform: "none" }}
+          sx={{ whiteSpace: "nowrap" }}
         >
           {ctaText}
         </Button>
       }
-      sx={(theme) => ({
-        backgroundColor: alpha(theme.palette.warning.main, 0.08),
-        border: `1px solid ${alpha(theme.palette.warning.main, 0.3)}`,
-        borderRadius: 1,
+      sx={{
         "& .MuiAlert-action": {
           pt: 0,
           alignItems: "center",
         },
         ...sx,
-      })}
+      }}
     >
-      <AlertTitle sx={{ fontWeight: 600, mb: 0.25 }}>
-        AI Credits exhausted
-      </AlertTitle>
+      <AlertTitle>AI Credits exhausted</AlertTitle>
       <Typography variant="body2" color="text.secondary">
         {error.result || "You've used all your free AI credits this month."}
       </Typography>

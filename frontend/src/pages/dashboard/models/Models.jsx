@@ -1,12 +1,12 @@
 import {
   Box,
   Button,
-  Card,
   CircularProgress,
   InputAdornment,
   LinearProgress,
   TextField,
 } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import { Helmet } from "react-helmet-async";
 import Iconify from "src/components/iconify";
@@ -68,7 +68,7 @@ function Models() {
       />
       <Xwrapper>
         <Box sx={{ paddingX: "20px" }}>
-          <Card>
+          <Section variant="panel">
             <Box sx={{ padding: 2.5, display: "flex", gap: 2, width: "100%" }}>
               <TextField
                 value={searchQuery}
@@ -80,7 +80,8 @@ function Models() {
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
+                        icon="solar:magnifier-linear"
+                        width={16}
                         sx={{ color: "primary.main" }}
                       />
                     </InputAdornment>
@@ -118,7 +119,7 @@ function Models() {
                 setSortModel={setSortModel}
               />
             )}
-          </Card>
+          </Section>
           <CreateModelModal
             open={showCreateModal}
             onClose={() => setShowCreateModal(false)}

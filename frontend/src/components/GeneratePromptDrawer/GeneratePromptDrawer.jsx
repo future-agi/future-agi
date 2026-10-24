@@ -29,6 +29,7 @@ import {
 } from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import { useActiveSocket } from "src/hooks/use-active-socket";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const schema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
@@ -196,6 +197,8 @@ export default function GeneratePromptDrawer({
     generatePrompt(data?.prompt);
   };
 
+  const covered = useDrawerCovered(open);
+
   const handleClose = (force = false) => {
     const forceOrEvent = typeof force === "boolean" ? force : false;
     if (!forceOrEvent && (isDirty || promptGeneratingMode)) {
@@ -226,13 +229,13 @@ export default function GeneratePromptDrawer({
         anchor="right"
         open={open}
         onClose={handleClose}
+        sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "590px",
+            width: "640px",
             position: "fixed",
             zIndex: 2,
-            boxShadow: "-10px 0px 100px #00000035",
             backgroundColor: "background.paper",
             overflow: "visible",
           },
@@ -280,7 +283,6 @@ export default function GeneratePromptDrawer({
             <IconButton
               onClick={handleClose}
               sx={{
-                padding: theme.spacing(0.5),
                 margin: 0,
               }}
             >
@@ -322,8 +324,6 @@ export default function GeneratePromptDrawer({
                     flexDirection: "row",
                     gap: theme.spacing(1),
                     backgroundColor: "background.neutral",
-                    borderRadius: theme.spacing(0.25),
-                    padding: theme.spacing(0.5, 1),
                     border: "1px solid",
                     borderColor: "divider",
                     transition: "border-color 200ms ease-in-out",
@@ -378,8 +378,6 @@ export default function GeneratePromptDrawer({
             fullWidth
             onClick={handleClose}
             sx={{
-              borderRadius: theme.spacing(1),
-              minHeight: theme.spacing(38 / 8),
               "&:hover": {
                 borderColor: "transparent !important",
               },
@@ -406,8 +404,6 @@ export default function GeneratePromptDrawer({
             variant="contained"
             color="primary"
             sx={{
-              borderRadius: theme.spacing(1),
-              minHeight: theme.spacing(38 / 8),
               color: "primary.contrastText",
             }}
           >

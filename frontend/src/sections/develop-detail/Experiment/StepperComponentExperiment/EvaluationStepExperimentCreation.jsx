@@ -3,11 +3,11 @@ import {
   Button,
   Chip,
   IconButton,
-  Paper,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import React, { useEffect, useRef, useState } from "react";
 import StepsHeaderComponent from "./StepsHeaderComponent";
 import PropTypes from "prop-types";
@@ -197,10 +197,10 @@ const EvaluationStepExperimentCreation = ({
       <Box
         sx={{
           border: "1px solid",
-          borderColor: "blue.o20",
-          backgroundColor: "blue.o5",
+          borderColor: "border.default",
+          backgroundColor: "background.paper",
           padding: 2,
-          borderRadius: 0.5,
+          borderRadius: "8px",
           display: "flex",
           flexDirection: "row",
           alignItems: "flex-start",
@@ -211,15 +211,15 @@ const EvaluationStepExperimentCreation = ({
           sx={{
             width: 36,
             height: 36,
-            borderRadius: 0.5,
-            backgroundColor: "blue.o10",
+            borderRadius: "4px",
+            backgroundColor: "status.info.bg",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
           <SvgColor
-            sx={{ width: 24, height: 24, color: "blue.600" }}
+            sx={{ width: 24, height: 24, color: "status.info.fg" }}
             src="/assets/icons/ic_two_arrows_reverse.svg"
           />
         </Box>
@@ -298,15 +298,12 @@ const EvaluationStepExperimentCreation = ({
             }}
             startIcon={
               <SvgColor
+                width={16}
                 src="/assets/icons/action_buttons/ic_add.svg"
-                sx={{ width: 16, height: 16 }}
               />
             }
             sx={{
-              px: theme.spacing(1.5),
               mt: -0.8,
-              fontWeight: 500,
-              height: 34,
               bgcolor: "background.paper",
             }}
           >
@@ -325,16 +322,7 @@ const EvaluationStepExperimentCreation = ({
               const evalId = itemAny.evalId || itemAny.id;
               const mapping = itemAny.config?.mapping || itemAny.mapping || {};
               return (
-                <Paper
-                  key={evalId}
-                  sx={{
-                    p: 2,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    backgroundColor: "background.paper",
-                  }}
-                >
+                <Section variant="panel" key={evalId} sx={{ p: 2 }}>
                   <Box
                     sx={{
                       display: "flex",
@@ -370,14 +358,9 @@ const EvaluationStepExperimentCreation = ({
                             label={`Group name - ${itemAny.groupName}.`}
                             size="small"
                             sx={{
-                              height: "24px",
                               backgroundColor: "background.neutral",
                               borderColor: "divider",
-                              fontSize: "11px",
-                              borderRadius: "2px",
-                              paddingX: "12px",
                               lineHeight: "16px",
-                              fontWeight: 400,
                               color: "text.primary",
                               "& .MuiChip-label": { padding: 0 },
                               ".MuiChip-icon ": { marginRight: "6px" },
@@ -388,8 +371,9 @@ const EvaluationStepExperimentCreation = ({
                             }}
                             icon={
                               <SvgColor
+                                width={16}
                                 src="/assets/icons/ic_dashed_square.svg"
-                                sx={{ width: 16, height: 16, mr: 1 }}
+                                sx={{ mr: 1 }}
                                 style={{ color: theme.palette.text.primary }}
                               />
                             }
@@ -422,7 +406,6 @@ const EvaluationStepExperimentCreation = ({
                         ml: 1,
                         border: "1px solid",
                         borderColor: "divider",
-                        borderRadius: "2px",
                         color: "text.action",
                       }}
                     >
@@ -438,7 +421,6 @@ const EvaluationStepExperimentCreation = ({
                         ml: 1,
                         border: "1px solid",
                         borderColor: "divider",
-                        borderRadius: "2px",
                         color: "text.action",
                       }}
                     >
@@ -448,7 +430,7 @@ const EvaluationStepExperimentCreation = ({
                       />
                     </IconButton>
                   </Box>
-                </Paper>
+                </Section>
               );
             })}
           </Box>

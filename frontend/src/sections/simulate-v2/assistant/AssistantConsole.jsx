@@ -1,11 +1,26 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField, IconButton, Collapse, Menu, MenuItem, Tooltip } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  IconButton,
+  Collapse,
+  Menu,
+  MenuItem,
+  Tooltip,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import VoiceInput from "./VoiceInput";
 import AskUserQuestionCard from "./AskUserQuestionCard";
-import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "../_mock/builderModeBus";
+import {
+  BUILDER_MODES,
+  getBuilderMode,
+  subscribeBuilderMode,
+  setBuilderMode,
+} from "../_mock/builderModeBus";
 import { subscribeComposerScaffold } from "../_mock/composerScaffoldBus";
 import useChatActions from "./useChatActions";
 import ChatActionCard from "./ChatActionCards";
@@ -24,7 +39,17 @@ import { clickable, focusRing } from "../components/clickable";
  * convey.
  */
 
-export default function StudioConsole({ turns, running, chips, onSend, onChip, preComposer, frozen = false, frozenReason, onCollapse }) {
+export default function StudioConsole({
+  turns,
+  running,
+  chips,
+  onSend,
+  onChip,
+  preComposer,
+  frozen = false,
+  frozenReason,
+  onCollapse,
+}) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState([]);
   /*
@@ -43,19 +68,27 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
     sent to the caller exactly as before.
   */
   const chat = useChatActions();
-  const chatChips = chat.suggestion && !chips.includes(chat.suggestion) ? [...chips, chat.suggestion] : chips;
+  const chatChips =
+    chat.suggestion && !chips.includes(chat.suggestion)
+      ? [...chips, chat.suggestion]
+      : chips;
   const take = (text) => chat.active && chat.handle(text, turns.length);
 
   /* A pinned chip means "type here next" — so the cursor goes to the input. */
   useEffect(
-    () => subscribeComposerScaffold((s) => {
-      setScaffolds((prev) => (prev.some((x) => x.label === s.label) ? prev : [...prev, s]));
-      setTimeout(() => inputRef.current?.focus(), 80);
-    }),
+    () =>
+      subscribeComposerScaffold((s) => {
+        setScaffolds((prev) =>
+          prev.some((x) => x.label === s.label) ? prev : [...prev, s],
+        );
+        setTimeout(() => inputRef.current?.focus(), 80);
+      }),
     [],
   );
   /* The newest chip that says what to type takes over the input's hint. */
-  const scaffoldHint = [...scaffolds].reverse().find((s) => s.placeholder)?.placeholder;
+  const scaffoldHint = [...scaffolds]
+    .reverse()
+    .find((s) => s.placeholder)?.placeholder;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -71,7 +104,9 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
   const send = () => {
     const text = draft.trim();
     const scaffoldText = scaffolds.map((s) => s.prompt).join(". ");
-    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    const combined = [scaffoldText, text]
+      .filter(Boolean)
+      .join(scaffoldText && text ? ". " : "");
     if ((!combined && attachments.length === 0) || blocked) return;
     setDraft("");
     setAttachments([]);
@@ -99,29 +134,43 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
         reason: a conversation surface has to announce itself.
       */}
       <Stack
-        direction="row" alignItems="center" spacing={1.25}
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
         sx={{
           /* The same 42px as the workspace's tab bar beside it, so the two
              bottom rules meet in one line. */
-          flexShrink: 0, px: 2.5, py: 0, height: 42, boxSizing: "content-box",
-          borderBottom: "1px solid", borderColor: "divider",
+          flexShrink: 0,
+          px: 2.5,
+          py: 0,
+          height: 42,
+          boxSizing: "content-box",
+          borderBottom: "1px solid",
+          borderColor: "divider",
         }}
       >
         <Box
           sx={{
             /* Neutral, like the rest of the workspace chrome — the text
                colour (white in dark mode) on a quiet tile. */
-            width: 30, height: 30, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
             bgcolor: "action.hover",
             color: "text.primary",
           }}
         >
-          <Iconify icon="solar:chat-round-line-linear" width={15} />
+          <Iconify icon="solar:chat-round-line-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}
+          >
             {frozen
-              ? (frozenReason || "Environment is still being built")
+              ? frozenReason || "Environment is still being built"
               : busy
                 ? "Working on your last message…"
                 : "Ask, correct, or steer what it builds"}
@@ -134,7 +183,14 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
         */}
         {onCollapse && (
           <Tooltip arrow title="Collapse builder">
-            <IconButton size="small" onClick={onCollapse} sx={{ color: "text.subtitle", "&:hover": { color: "text.primary" } }}>
+            <IconButton
+              size="small"
+              onClick={onCollapse}
+              sx={{
+                color: "text.subtitle",
+                "&:hover": { color: "text.primary" },
+              }}
+            >
               <Iconify icon="solar:double-alt-arrow-left-linear" width={16} />
             </IconButton>
           </Tooltip>
@@ -148,27 +204,51 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
                doesn't look broken while the caller collects intake
                below. Replaces the earlier "greeting turn" which read
                as two empty tick pills. */
-            <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
+            <Stack
+              alignItems="center"
+              spacing={1.25}
+              sx={{ py: 6, opacity: 0.7 }}
+            >
               <Box
                 sx={{
-                  width: 36, height: 36, borderRadius: 999, display: "grid", placeItems: "center",
-                  bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.1),
-                  color: "#7857FC",
+                  width: 36,
+                  height: 36,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: "status.discovery.bg",
+                  color: "status.discovery.fg",
                 }}
               >
-                <Iconify icon="solar:chat-round-line-linear" width={17} />
+                <Iconify icon="solar:chat-round-line-linear" width={16} />
               </Box>
-              <Typography sx={{ typography: "s2", color: "text.subtitle", textAlign: "center", maxWidth: 320 }}>
-                Answer the questions below to kick things off. You can also just start typing.
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.subtitle",
+                  textAlign: "center",
+                  maxWidth: 320,
+                }}
+              >
+                Answer the questions below to kick things off. You can also just
+                start typing.
               </Typography>
             </Stack>
           ) : (
             <>
-              {chat.turns.filter((t) => t.anchor === 0).map((t) => <ChatTurn key={t.id} turn={t} chat={chat} />)}
+              {chat.turns
+                .filter((t) => t.anchor === 0)
+                .map((t) => (
+                  <ChatTurn key={t.id} turn={t} chat={chat} />
+                ))}
               {turns.map((turn, i) => (
                 <Stack key={turn.id} spacing={4}>
                   <Turn turn={turn} />
-                  {chat.turns.filter((t) => t.anchor === i + 1).map((t) => <ChatTurn key={t.id} turn={t} chat={chat} />)}
+                  {chat.turns
+                    .filter((t) => t.anchor === i + 1)
+                    .map((t) => (
+                      <ChatTurn key={t.id} turn={t} chat={chat} />
+                    ))}
                 </Stack>
               ))}
               {busy && <Working />}
@@ -179,22 +259,46 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
       </Box>
 
       {chatChips.length > 0 && !blocked && (
-        <Stack direction="row" useFlexGap sx={{ px: 2.5, pb: 1.5, flexWrap: "wrap", gap: 1 }}>
+        <Stack
+          direction="row"
+          useFlexGap
+          sx={{ px: 2.5, pb: 1.5, flexWrap: "wrap", gap: 1 }}
+        >
           {/* One line each, left-aligned; a long one ends in an ellipsis with
               the whole prompt on hover, so no chip turns into a paragraph. */}
           {chatChips.map((c) => (
-            <Tooltip key={c} arrow title={c.length > 48 ? c : ""} placement="top-start">
+            <Tooltip
+              key={c}
+              arrow
+              title={c.length > 48 ? c : ""}
+              placement="top-start"
+            >
               <Button
                 size="small"
                 onClick={() => chip(c)}
                 sx={{
-                  typography: "s2", fontWeight: 500, px: 1.5, borderRadius: 5, maxWidth: "100%",
-                  justifyContent: "flex-start", textAlign: "left",
-                  color: "text.secondary", border: "1px solid", borderColor: "divider",
-                  "&:hover": { borderColor: "text.subtitle", bgcolor: "action.hover" },
+                  maxWidth: "100%",
+                  justifyContent: "flex-start",
+                  textAlign: "left",
+                  color: "text.secondary",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  "&:hover": {
+                    borderColor: "text.subtitle",
+                    bgcolor: "action.hover",
+                  },
                 }}
               >
-                <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c}</Box>
+                <Box
+                  component="span"
+                  sx={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c}
+                </Box>
               </Button>
             </Tooltip>
           ))}
@@ -207,11 +311,7 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
         card sits directly on top of the input the same way Claude's
         own AskUserQuestion does.
       */}
-      {preComposer && (
-        <Box sx={{ px: 2.5, pb: 1 }}>
-          {preComposer}
-        </Box>
-      )}
+      {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
 
       {/*
         The composer, given the visual weight the input in Claude, ChatGPT or
@@ -222,12 +322,14 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
       <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
         <Box
           sx={{
-            p: 1.25, borderRadius: 2, border: "1px solid",
-            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.12),
+            p: 1.25,
+            borderRadius: 2,
+            border: "1px solid",
+            borderColor: "border.default",
             bgcolor: "background.paper",
             transition: "border-color 0.15s ease",
             "&:focus-within": {
-              borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.32 : 0.28),
+              borderColor: "border.hover",
             },
           }}
         >
@@ -238,29 +340,57 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             same shape Falcon's ChatInput uses for detected skills.
           */}
           {scaffolds.length > 0 && (
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
+            >
               {scaffolds.map((s, i) => (
                 <Stack
                   key={`${s.label}-${i}`}
-                  direction="row" alignItems="center" spacing={0.5}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
                   sx={{
-                    pl: 0.875, pr: 0.375, py: 0.375, borderRadius: 999,
-                    bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
-                    border: "1px solid", borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.24),
+                    pl: 0.875,
+                    pr: 0.375,
+                    py: 0.375,
+                    borderRadius: 999,
+                    bgcolor: "status.discovery.bg",
+                    border: "1px solid",
+                    borderColor: "status.discovery.border",
                     maxWidth: "100%",
                   }}
                 >
-                  <Iconify icon={s.icon || "solar:magic-stick-3-linear"} width={12} sx={{ color: "#7857FC", flexShrink: 0 }} />
+                  <Iconify
+                    icon={s.icon || "solar:magic-stick-3-linear"}
+                    width={12}
+                    sx={{ color: "status.discovery.fg", flexShrink: 0 }}
+                  />
                   <Typography
                     sx={{
-                      typography: "s3", fontWeight: 600, color: "#7857FC",
-                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      typography: "s3",
+                      fontWeight: 600,
+                      color: "status.discovery.fg",
+                      maxWidth: 260,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     {s.label}
                   </Typography>
-                  <IconButton size="small" onClick={() => removeScaffold(i)} sx={{ p: 0, ml: 0.25 }} aria-label={`Remove ${s.label}`}>
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: (t) => alpha("#7857FC", 0.6) }} />
+                  <IconButton
+                    size="small"
+                    onClick={() => removeScaffold(i)}
+                    sx={{ p: 0, ml: 0.25 }}
+                    aria-label={`Remove ${s.label}`}
+                  >
+                    <Iconify
+                      icon="solar:close-circle-linear"
+                      width={14}
+                      sx={{ color: "status.discovery.fg", opacity: 0.6 }}
+                    />
                   </IconButton>
                 </Stack>
               ))}
@@ -272,27 +402,62 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             the text field so the user sees what's about to be sent.
           */}
           {attachments.length > 0 && (
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
+            >
               {attachments.map((f, i) => (
                 <Stack
                   key={`${f.name}-${i}`}
-                  direction="row" alignItems="center" spacing={0.75}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
                   sx={{
-                    px: 1, py: 0.5, borderRadius: 1,
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 1,
                     bgcolor: "background.neutral",
-                    border: "1px solid", borderColor: "divider",
+                    border: "1px solid",
+                    borderColor: "divider",
                     maxWidth: 260,
                   }}
                 >
-                  <Iconify icon="solar:paperclip-linear" width={12} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Typography noWrap sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0 }}>
+                  <Iconify
+                    icon="solar:paperclip-linear"
+                    width={12}
+                    sx={{ color: "text.subtitle", flexShrink: 0 }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
                     {f.name}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.subtitle",
+                      flexShrink: 0,
+                    }}
+                  >
                     {(f.size / 1024).toFixed(0)} kB
                   </Typography>
-                  <IconButton size="small" onClick={() => removeAttachment(i)} sx={{ p: 0, ml: 0.25 }}>
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
+                  <IconButton
+                    size="small"
+                    onClick={() => removeAttachment(i)}
+                    sx={{ p: 0, ml: 0.25 }}
+                  >
+                    <Iconify
+                      icon="solar:close-circle-linear"
+                      width={14}
+                      sx={{ color: "text.subtitle" }}
+                    />
                   </IconButton>
                 </Stack>
               ))}
@@ -307,35 +472,58 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             multiline
             maxRows={8}
             variant="standard"
-            placeholder={frozen ? (frozenReason || "Environment is still being built") : (scaffoldHint || "Reply to the builder…")}
+            placeholder={
+              frozen
+                ? frozenReason || "Environment is still being built"
+                : scaffoldHint || "Reply to the builder…"
+            }
             inputRef={inputRef}
             value={draft}
             disabled={blocked}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
             }}
-            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
+            InputProps={{
+              disableUnderline: true,
+              sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 },
+            }}
           />
 
           {/* Row 2: toolbar — utility icons on the left, mode picker in
               the middle, send button on the right. */}
-          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.25}
+            sx={{ mt: 0.5, pl: 0.25 }}
+          >
             <IconButton
               component="label"
               disabled={blocked}
               title="Attach a dataset, CSV or file"
               sx={{
-                width: 30, height: 30, borderRadius: 1,
+                width: 30,
+                aspectRatio: "1",
                 color: "text.subtitle",
                 "&:hover": { bgcolor: "action.hover", color: "text.primary" },
               }}
             >
-              <Iconify icon="solar:paperclip-linear" width={15} />
+              <Iconify icon="solar:paperclip-linear" width={16} />
               <input
-                hidden multiple type="file"
+                hidden
+                multiple
+                type="file"
                 accept=".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf"
-                onChange={(e) => setAttachments((prev) => [...prev, ...Array.from(e.target.files || [])])}
+                onChange={(e) =>
+                  setAttachments((prev) => [
+                    ...prev,
+                    ...Array.from(e.target.files || []),
+                  ])
+                }
               />
             </IconButton>
             <VoiceInput onTranscript={setDraft} disabled={blocked} />
@@ -344,20 +532,53 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
             <Box flex={1} />
 
             <IconButton
-              disabled={(!draft.trim() && attachments.length === 0 && scaffolds.length === 0) || blocked}
+              disabled={
+                (!draft.trim() &&
+                  attachments.length === 0 &&
+                  scaffolds.length === 0) ||
+                blocked
+              }
               onClick={send}
               sx={{
-                width: 30, height: 30, borderRadius: 1,
-                bgcolor: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#7857FC" : undefined,
-                color: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#fff" : undefined,
-                "&:hover": { bgcolor: (draft.trim() || attachments.length > 0 || scaffolds.length > 0) && !blocked ? "#6B4EE6" : undefined },
+                width: 30,
+                aspectRatio: "1",
+                bgcolor:
+                  (draft.trim() ||
+                    attachments.length > 0 ||
+                    scaffolds.length > 0) &&
+                  !blocked
+                    ? "status.discovery.solid"
+                    : undefined,
+                color:
+                  (draft.trim() ||
+                    attachments.length > 0 ||
+                    scaffolds.length > 0) &&
+                  !blocked
+                    ? "status.discovery.onSolid"
+                    : undefined,
+                "&:hover": {
+                  bgcolor:
+                    (draft.trim() ||
+                      attachments.length > 0 ||
+                      scaffolds.length > 0) &&
+                    !blocked
+                      ? "status.discovery.solid"
+                      : undefined,
+                  opacity:
+                    (draft.trim() ||
+                      attachments.length > 0 ||
+                      scaffolds.length > 0) &&
+                    !blocked
+                      ? 0.9
+                      : undefined,
+                },
                 "&.Mui-disabled": {
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+                  bgcolor: "action.selected",
                   color: "text.disabled",
                 },
               }}
             >
-              <Iconify icon="solar:arrow-up-bold" width={15} />
+              <Iconify icon="solar:arrow-up-bold" width={16} />
             </IconButton>
           </Stack>
         </Box>
@@ -368,10 +589,14 @@ export default function StudioConsole({ turns, running, chips, onSend, onChip, p
 
 StudioConsole.propTypes = {
   onCollapse: PropTypes.func,
-  turns: PropTypes.array, running: PropTypes.bool,
-  chips: PropTypes.array, onSend: PropTypes.func, onChip: PropTypes.func,
+  turns: PropTypes.array,
+  running: PropTypes.bool,
+  chips: PropTypes.array,
+  onSend: PropTypes.func,
+  onChip: PropTypes.func,
   preComposer: PropTypes.node,
-  frozen: PropTypes.bool, frozenReason: PropTypes.string,
+  frozen: PropTypes.bool,
+  frozenReason: PropTypes.string,
 };
 
 /**
@@ -397,10 +622,9 @@ function ModePicker({ disabled }) {
           disabled={disabled}
           onClick={(e) => setAnchor(e.currentTarget)}
           startIcon={<Iconify icon={current.icon} width={12} />}
-          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={10} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
           sx={{
-            height: 30, borderRadius: 1, px: 0.75, minWidth: 0,
-            typography: "s3", fontWeight: 600,
+            minWidth: 0,
             color: "text.subtitle",
             "& .MuiButton-startIcon": { mr: 0.5 },
             "& .MuiButton-endIcon": { ml: 0.25 },
@@ -416,24 +640,39 @@ function ModePicker({ disabled }) {
         onClose={() => setAnchor(null)}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
         transformOrigin={{ vertical: "bottom", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 280, mb: 0.5 } } }}
+        slotProps={{ paper: { sx: { minWidth: 320, mb: 0.5 } } }}
       >
         {BUILDER_MODES.map((m) => {
           const active = m.id === mode;
           return (
             <MenuItem
               key={m.id}
-              onClick={() => { setBuilderMode(m.id); setAnchor(null); }}
+              onClick={() => {
+                setBuilderMode(m.id);
+                setAnchor(null);
+              }}
               sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
             >
               <Iconify
                 icon={active ? "solar:check-circle-bold" : m.icon}
                 width={16}
-                sx={{ color: active ? "primary.main" : "text.subtitle", mt: "2px", flexShrink: 0 }}
+                sx={{
+                  color: active ? "primary.main" : "text.subtitle",
+                  mt: "2px",
+                  flexShrink: 0,
+                }}
               />
               <Box minWidth={0}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{m.label}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {m.label}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    whiteSpace: "normal",
+                  }}
+                >
                   {m.hint}
                 </Typography>
               </Box>
@@ -452,7 +691,12 @@ ModePicker.propTypes = { disabled: PropTypes.bool };
 function ChatTurn({ turn, chat }) {
   if (turn.role === "user") return <Turn turn={turn} />;
   return (
-    <ChatActionCard turnId={turn.id} card={turn.card} actions={chat.actions} envState={chat.envState} />
+    <ChatActionCard
+      turnId={turn.id}
+      card={turn.card}
+      actions={chat.actions}
+      envState={chat.envState}
+    />
   );
 }
 ChatTurn.propTypes = { turn: PropTypes.object, chat: PropTypes.object };
@@ -463,13 +707,20 @@ function Turn({ turn }) {
       <Stack alignItems="flex-end">
         <Box
           sx={{
-            maxWidth: "82%", px: 1.75, py: 1.125, borderRadius: 2,
-            bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
+            maxWidth: "82%",
+            px: 1.75,
+            py: 1.125,
+            borderRadius: 2,
+            bgcolor: "status.discovery.bg",
             border: "1px solid",
-            borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.22 : 0.16),
+            borderColor: "status.discovery.border",
           }}
         >
-          <Typography sx={{ typography: "s2", lineHeight: 1.55, color: "text.primary" }}>{turn.text}</Typography>
+          <Typography
+            sx={{ typography: "s2", lineHeight: 1.55, color: "text.primary" }}
+          >
+            {turn.text}
+          </Typography>
         </Box>
       </Stack>
     );
@@ -486,15 +737,20 @@ function Turn({ turn }) {
         */
         <Typography
           sx={{
-            typography: "s3", fontWeight: 700,
-            color: "text.primary", textTransform: "uppercase", letterSpacing: 0.6,
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.primary",
+            textTransform: "none",
+            letterSpacing: 0.6,
             pt: 0.5,
           }}
         >
           {turn.title}
         </Typography>
       )}
-      {turn.steps.map((step, i) => <Step key={i} step={step} />)}
+      {turn.steps.map((step, i) => (
+        <Step key={i} step={step} />
+      ))}
     </Stack>
   );
 }
@@ -517,7 +773,8 @@ function Step({ step }) {
     return (
       <Typography
         sx={{
-          typography: "s2", lineHeight: 1.65,
+          typography: "s2",
+          lineHeight: 1.65,
           color: step.kind === "think" ? "text.secondary" : "text.primary",
         }}
       >
@@ -538,11 +795,26 @@ function Step({ step }) {
 
   if (step.kind === "file") {
     return (
-      <QuietRow tint="#16A34A">
-        <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0, color: "text.primary" }}>
+      <QuietRow role="success">
+        <Typography
+          sx={{
+            typography: "s3",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            flexShrink: 0,
+            color: "text.primary",
+          }}
+        >
           {step.path}
         </Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {step.note}
         </Typography>
       </QuietRow>
@@ -553,28 +825,49 @@ function Step({ step }) {
     return (
       <Box>
         <Stack
-          direction="row" alignItems="center" spacing={1}
+          direction="row"
+          alignItems="center"
+          spacing={1}
           {...clickable(() => setOpen((o) => !o), { expanded: open })}
-          sx={{ ...focusRing,
-            py: 0.5, cursor: "pointer", borderRadius: 1,
+          sx={{
+            ...focusRing,
+            py: 0.5,
+            cursor: "pointer",
+            borderRadius: 1,
             "&:hover": { bgcolor: "action.hover" },
             px: 0.75,
           }}
         >
           <Iconify
-            icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.subtitle", flexShrink: 0 }}
           />
-          <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary" }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontFamily: "ui-monospace, Menlo, monospace",
+              color: "text.secondary",
+            }}
+          >
             {step.label}
           </Typography>
         </Stack>
         <Collapse in={open} unmountOnExit>
           <Typography
             sx={{
-              ml: 2.5, mt: 0.5, px: 1.25, py: 1, borderRadius: 1,
-              typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap",
+              ml: 2.5,
+              mt: 0.5,
+              px: 1.25,
+              py: 1,
+              borderRadius: 1,
+              typography: "s3",
+              color: "text.secondary",
+              whiteSpace: "pre-wrap",
               fontFamily: "ui-monospace, Menlo, monospace",
               bgcolor: "background.neutral",
             }}
@@ -588,11 +881,21 @@ function Step({ step }) {
 
   // tool call
   return (
-    <QuietRow tint="#16A34A">
-      <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0, color: "text.primary" }}>
+    <QuietRow role="success">
+      <Typography
+        sx={{
+          typography: "s3",
+          fontFamily: "ui-monospace, Menlo, monospace",
+          flexShrink: 0,
+          color: "text.primary",
+        }}
+      >
         {step.label}
       </Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+      <Typography
+        noWrap
+        sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}
+      >
         {step.result}
       </Typography>
     </QuietRow>
@@ -606,36 +909,49 @@ Step.propTypes = { step: PropTypes.object };
  * the dot and the content. Repeated ten times in a row it reads as a
  * list of results, not ten stacked chips.
  */
-function QuietRow({ tint, children }) {
+function QuietRow({ role, children }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1.25}
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
       sx={{ px: 0.5, py: 0.25 }}
     >
       <Box
         sx={{
-          width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-          bgcolor: tint,
-          boxShadow: (t) => `0 0 0 3px ${alpha(tint, t.palette.mode === "dark" ? 0.15 : 0.12)}`,
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flexShrink: 0,
+          bgcolor: `status.${role}.solid`,
+          boxShadow: (t) => `0 0 0 3px ${t.palette.status[role].bg}`,
         }}
       />
       {children}
     </Stack>
   );
 }
-QuietRow.propTypes = { tint: PropTypes.string, children: PropTypes.node };
+QuietRow.propTypes = { role: PropTypes.string, children: PropTypes.node };
 
 function Working() {
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
       <Box
         sx={{
-          width: 7, height: 7, borderRadius: "50%", bgcolor: "text.subtitle",
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          bgcolor: "text.subtitle",
           animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
+          "@keyframes pulse": {
+            "0%,100%": { opacity: 0.3 },
+            "50%": { opacity: 1 },
+          },
         }}
       />
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>Working…</Typography>
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        Working…
+      </Typography>
     </Stack>
   );
 }

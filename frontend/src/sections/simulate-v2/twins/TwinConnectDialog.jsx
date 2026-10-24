@@ -1,14 +1,21 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Dialog, DialogContent, Box, Stack, Typography, IconButton, Tab, Button, Tooltip,
+  Dialog,
+  DialogContent,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Tab,
+  Button,
+  Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import TwinLogo from "../components/TwinLogo";
 
-const TWIN_TINT = "#7857FC";
+const TWIN_TINT = "status.discovery.fg";
 
 /**
  * "Connect your agent" — the missing bridge between provisioning a
@@ -23,30 +30,50 @@ const TWIN_TINT = "#7857FC";
  * because Python vs TS is the axis users pivot on most often; curl
  * sits alongside as a reference for cross-language debugging.
  */
-export default function TwinConnectDialog({ open, onClose, twin, endpoint, sessionId }) {
+export default function TwinConnectDialog({
+  open,
+  onClose,
+  twin,
+  endpoint,
+  sessionId,
+}) {
   const [lang, setLang] = useState("python");
   if (!twin) return null;
   const authHeader = `X-Clone-Session: ${sessionId || "sess_01ABC"}`;
   const snippet = SNIPPETS[lang](twin, endpoint, sessionId || "sess_01ABC");
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth
-      PaperProps={{ sx: { borderRadius: 2 } }}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      fullWidth
+      PaperProps={{ sx: { maxWidth: 960 } }}
+    >
       <DialogContent sx={{ p: 0 }}>
         {/* header */}
-        <Stack direction="row" alignItems="center" spacing={1.5} sx={{
-          px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider",
-        }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{
+            px: 3,
+            py: 2,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           <TwinLogo twin={twin} width={22} />
           <Box flex={1}>
-            <Typography sx={{ typography: "s1_2", fontWeight: 700 }}>
+            <Typography sx={{ typography: "s1_2", fontWeight: 600 }}>
               Connect your agent to {twin.name}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              Swap the real base URL for the clone&apos;s. Add the session header. Everything else stays the same.
+              Swap the real base URL for the clone&apos;s. Add the session
+              header. Everything else stays the same.
             </Typography>
           </Box>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mdi:close" width={16} />
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Stack>
 
@@ -58,8 +85,21 @@ export default function TwinConnectDialog({ open, onClose, twin, endpoint, sessi
           </Stack>
 
           {/* snippet */}
-          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1 }}>
-            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ mb: 1 }}
+          >
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.subtitle",
+                textTransform: "none",
+                letterSpacing: 0.4,
+              }}
+            >
               Snippet
             </Typography>
             <Box flex={1} />
@@ -69,43 +109,83 @@ export default function TwinConnectDialog({ open, onClose, twin, endpoint, sessi
               <Tab value="curl" label="curl" />
             </SegmentedTabs>
             <Tooltip arrow title="Copy snippet">
-              <IconButton size="small" onClick={() => navigator.clipboard?.writeText(snippet)}>
-                <Iconify icon="solar:copy-linear" width={13} />
+              <IconButton
+                size="small"
+                onClick={() => navigator.clipboard?.writeText(snippet)}
+              >
+                <Iconify icon="solar:copy-linear" width={14} />
               </IconButton>
             </Tooltip>
           </Stack>
-          <Box sx={{
-            p: 1.5, borderRadius: 1, border: "1px solid", borderColor: "divider",
-            bgcolor: "background.neutral", maxHeight: 320, overflow: "auto",
-          }}>
-            <Typography component="pre" sx={{
-              typography: "s2", m: 0, whiteSpace: "pre",
-              fontFamily: "ui-monospace, Menlo, monospace",
-              color: "text.primary",
-            }}>
+          <Box
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.neutral",
+              maxHeight: 320,
+              overflow: "auto",
+            }}
+          >
+            <Typography
+              component="pre"
+              sx={{
+                typography: "s2",
+                m: 0,
+                whiteSpace: "pre",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                color: "text.primary",
+              }}
+            >
               {snippet}
             </Typography>
           </Box>
 
           {/* why-this-works strip */}
-          <Stack direction="row" alignItems="flex-start" spacing={1.25} sx={{
-            mt: 2.5, p: 1.5, borderRadius: 1,
-            border: (t) => `1px solid ${alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.4 : 0.28)}`,
-            bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.08 : 0.04),
-          }}>
-            <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: TWIN_TINT, mt: "2px", flexShrink: 0 }} />
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            spacing={1.25}
+            sx={{
+              mt: 2.5,
+              p: 1.5,
+              borderRadius: 1,
+              border: "1px solid",
+              borderColor: "status.discovery.border",
+              bgcolor: "status.discovery.bg",
+            }}
+          >
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={14}
+              sx={{ color: TWIN_TINT, mt: "2px", flexShrink: 0 }}
+            />
             <Box>
-              <Typography sx={{ typography: "s2", fontWeight: 700, color: TWIN_TINT }}>
+              <Typography
+                sx={{ typography: "s2", fontWeight: 600, color: TWIN_TINT }}
+              >
                 Wire-compatible with the real {twin.name} SDK
               </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-                Requests hit our sandbox, not production. State is scoped to this session ID — reset the environment or start a new run and the session rotates automatically.
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+              >
+                Requests hit our sandbox, not production. State is scoped to
+                this session ID — reset the environment or start a new run and
+                the session rotates automatically.
               </Typography>
             </Box>
           </Stack>
 
-          <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2.5 }}>
-            <Button size="small" onClick={onClose}>Close</Button>
+          <Stack
+            direction="row"
+            justifyContent="flex-end"
+            spacing={1}
+            sx={{ mt: 2.5 }}
+          >
+            <Button size="small" onClick={onClose}>
+              Close
+            </Button>
           </Stack>
         </Box>
       </DialogContent>
@@ -113,31 +193,56 @@ export default function TwinConnectDialog({ open, onClose, twin, endpoint, sessi
   );
 }
 TwinConnectDialog.propTypes = {
-  open: PropTypes.bool, onClose: PropTypes.func,
-  twin: PropTypes.object, endpoint: PropTypes.string, sessionId: PropTypes.string,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  twin: PropTypes.object,
+  endpoint: PropTypes.string,
+  sessionId: PropTypes.string,
 };
 
 function FieldRow({ label, value }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1.25}>
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.4, minWidth: 92, flexShrink: 0,
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.subtitle",
+          textTransform: "none",
+          letterSpacing: 0.4,
+          minWidth: 92,
+          flexShrink: 0,
+        }}
+      >
         {label}
       </Typography>
-      <Box sx={{
-        flex: 1, minWidth: 0, px: 1, py: 0.75, borderRadius: 0.75,
-        border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
-      }}>
-        <Typography noWrap sx={{
-          typography: "s2", fontFamily: "ui-monospace, Menlo, monospace",
-        }}>
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          px: 1,
+          py: 0.75,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+        }}
+      >
+        <Typography
+          noWrap
+          sx={{
+            typography: "s2",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {value}
         </Typography>
       </Box>
       <Tooltip arrow title="Copy">
-        <IconButton size="small" onClick={() => navigator.clipboard?.writeText(value)}>
+        <IconButton
+          size="small"
+          onClick={() => navigator.clipboard?.writeText(value)}
+        >
           <Iconify icon="solar:copy-linear" width={12} />
         </IconButton>
       </Tooltip>

@@ -75,7 +75,7 @@ const TestDetailSelection = ({ agentType }) => {
           <Button
             size="small"
             variant="outlined"
-            sx={{ ...theme.typography.s2_1, fontWeight: 500, paddingX: 2 }}
+            sx={{ ...theme.typography.s2_1 }}
             startIcon={
               <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
             }
@@ -89,7 +89,7 @@ const TestDetailSelection = ({ agentType }) => {
           <Button
             size="small"
             variant="outlined"
-            sx={{ ...theme.typography.s1, fontWeight: 500 }}
+            sx={{ ...theme.typography.s1 }}
             onClick={() => {
               clearSelection();
             }}
@@ -123,15 +123,7 @@ const TestDetailSelection = ({ agentType }) => {
             <Button
               sx={{ borderColor: "text.disabled" }}
               onClick={() => setOpenTestEvaluation(true)}
-              startIcon={
-                <SvgColor
-                  sx={{
-                    height: 20,
-                    width: 20,
-                  }}
-                  src="/assets/icons/ic_add.svg"
-                />
-              }
+              startIcon={<SvgColor width={20} src="/assets/icons/ic_add.svg" />}
               variant="outlined"
               size="small"
               disabled={TestRunLoadingStatus.includes(status)}

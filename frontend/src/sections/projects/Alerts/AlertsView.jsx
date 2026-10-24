@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect } from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import { useAlertStore } from "./store/useAlertStore";
 import { useParams } from "react-router";
 import {
@@ -11,6 +11,7 @@ import {
 import SelectProject from "src/sections/alerts/component/SelectProject";
 import AlertsListView from "./components/AlertsListView/AlertsListView";
 import EmptyAlerts from "./components/EmptyAlerts";
+import PageHeader from "src/components/page-header";
 
 // Lazy load modals/drawers (opened on demand)
 const ConfirmAlertsDialog = lazy(
@@ -61,22 +62,11 @@ export default function AlertsView() {
       }}
     >
       {mainPage && (
-        <Stack gap={0.5}>
-          <Typography
-            color="text.primary"
-            typography="m2"
-            fontWeight="fontWeightSemiBold"
-          >
-            Alerts
-          </Typography>
-          <Typography
-            typography="s1"
-            fontWeight="fontWeightRegular"
-            color="text.primary"
-          >
-            Proactively monitor their LLM by setting up alerts
-          </Typography>
-        </Stack>
+        <PageHeader
+          title="Alerts"
+          description="Proactively monitor your LLM by setting up alerts"
+          sx={{ mb: 0 }}
+        />
       )}
       {!hasData ? (
         <Suspense fallback={<EmptyAlertsSkeleton mainPage={mainPage} />}>

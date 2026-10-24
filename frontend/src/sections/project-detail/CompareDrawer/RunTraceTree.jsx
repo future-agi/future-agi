@@ -19,8 +19,8 @@ const RunTraceTree = ({ observationSpans }) => {
             width: "5px !important",
           },
           "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            backgroundColor: "border.strong",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",

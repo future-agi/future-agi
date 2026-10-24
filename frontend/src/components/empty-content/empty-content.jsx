@@ -6,25 +6,37 @@ import Stack from "@mui/material/Stack";
 import { alpha } from "@mui/material/styles";
 import Typography from "@mui/material/Typography";
 
+import Iconify from "src/components/iconify";
+
 // ----------------------------------------------------------------------
+// Design System empty state: a 40px rounded square holding a 20px icon, a
+// 14/600 title, a 13px tertiary body (max 340px) and at most one action.
+// ErrorState (src/components/error-state) reuses this layout.
 
 export default function EmptyContent({
   title,
+  icon = "solar:inbox-linear",
+  img,
   imgUrl,
   action,
   filled,
   description,
+  tone,
   sx,
   ...other
 }) {
+  const image = img || imgUrl;
   return (
     <Stack
       flexGrow={1}
       alignItems="center"
       justifyContent="center"
+      spacing={1.5}
       sx={{
         px: 3,
+        py: 4,
         height: 1,
+        textAlign: "center",
         ...(filled && {
           borderRadius: 2,
           bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.04),
@@ -36,17 +48,41 @@ export default function EmptyContent({
       {...other}
     >
       <Box
-        component="img"
-        alt="empty content"
-        src={imgUrl || "/assets/icons/empty/ic_content.svg"}
-        sx={{ width: 1, maxWidth: 160 }}
-      />
+        sx={{
+          width: 40,
+          height: 40,
+          flexShrink: 0,
+          borderRadius: 1,
+          display: "grid",
+          placeItems: "center",
+          bgcolor: (theme) =>
+            tone?.(theme)?.bg ?? theme.palette.background.muted,
+          color: (theme) => tone?.(theme)?.fg ?? theme.palette.action.active,
+        }}
+      >
+        {image ? (
+          <Box
+            component="img"
+            alt=""
+            src={image}
+            sx={{ width: 24, height: 24, objectFit: "contain" }}
+          />
+        ) : typeof icon === "string" ? (
+          <Iconify icon={icon} width={20} />
+        ) : (
+          icon
+        )}
+      </Box>
 
       {title && (
         <Typography
-          variant="h6"
           component="span"
-          sx={{ mt: 1, color: "text.disabled", textAlign: "center" }}
+          sx={{
+            fontSize: 13,
+            lineHeight: "20px",
+            fontWeight: 600,
+            color: "text.primary",
+          }}
         >
           {title}
         </Typography>
@@ -54,23 +90,35 @@ export default function EmptyContent({
 
       {description && (
         <Typography
-          variant="caption"
-          sx={{ mt: 1, color: "text.disabled", textAlign: "center" }}
+          component="span"
+          sx={{
+            fontSize: 13,
+            lineHeight: "20px",
+            fontWeight: 400,
+            color: "text.tertiary",
+            maxWidth: 340,
+            mt: "4px !important",
+          }}
         >
           {description}
         </Typography>
       )}
 
-      {action && action}
+      {action && <Box sx={{ mt: "16px !important" }}>{action}</Box>}
     </Stack>
   );
 }
 
 EmptyContent.propTypes = {
   action: PropTypes.node,
-  description: PropTypes.string,
+  description: PropTypes.node,
   filled: PropTypes.bool,
+  /** Iconify name, or a node sized 20px (e.g. <SvgColor />). */
+  icon: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
+  img: PropTypes.string,
   imgUrl: PropTypes.string,
   sx: PropTypes.object,
-  title: PropTypes.string,
+  /** (theme) => ({ bg, fg }) — colours the icon square (used by ErrorState). */
+  tone: PropTypes.func,
+  title: PropTypes.node,
 };

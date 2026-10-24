@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { Box, Stack, Tab, Tabs, Card, Skeleton } from "@mui/material";
+import { Box, Stack, Tab, Tabs, Skeleton } from "@mui/material";
+import Section from "src/components/section";
 import { useNavigate, useParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import SectionHeader from "../components/SectionHeader";
@@ -84,7 +85,7 @@ const ProviderManagementSection = () => {
           </Stack>
         </Stack>
         <Skeleton width="50%" height={40} sx={{ mb: 3 }} />
-        <Card>
+        <Section variant="panel">
           {[...Array(4)].map((_, i) => (
             <Stack
               key={i}
@@ -104,7 +105,7 @@ const ProviderManagementSection = () => {
               <Skeleton width="15%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -112,6 +113,7 @@ const ProviderManagementSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.providers}
         title="Providers"
         subtitle="Manage LLM providers, routing rules, and cache settings"
@@ -122,7 +124,7 @@ const ProviderManagementSection = () => {
                   label: "Add Provider",
                   variant: "contained",
                   size: "small",
-                  icon: "mdi:plus",
+                  icon: "solar:add-linear",
                   onClick: () => setAddProviderOpen(true),
                 },
               ]
@@ -131,7 +133,7 @@ const ProviderManagementSection = () => {
             label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
             variant: "outlined",
             size: "small",
-            icon: "mdi:refresh",
+            icon: "solar:refresh-linear",
             onClick: handleReload,
             disabled: reloadMutation.isPending,
           },
@@ -141,7 +143,7 @@ const ProviderManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Provider Health" />
         <Tab label="Provider Config" />

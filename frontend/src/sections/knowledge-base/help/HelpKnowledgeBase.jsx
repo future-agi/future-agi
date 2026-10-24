@@ -125,8 +125,6 @@ const HelpKnowledgeBase = ({ helpIcon = false, onCreateKnowledge }) => {
             color="primary"
             sx={{
               width: helpIcon ? "max-content" : "100%",
-              px: "24px",
-              py: "8px",
               minWidth: "90px",
             }}
             disabled={!RolePermission.KNOWLEDGE_BASE[PERMISSIONS.CREATE][role]}

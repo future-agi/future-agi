@@ -199,6 +199,7 @@ const CustomAudioPlayer = ({
             backend: "MediaElement",
             normalize: true,
             progressColor:
+              // eslint-disable-next-line no-restricted-syntax -- ds: fallback colour
               activeColor || getCSSVar("--text-primary", "#201e25"),
             interact: true,
             renderFunction: (channels, ctx) => {
@@ -209,6 +210,7 @@ const CustomAudioPlayer = ({
 
               ctx.clearRect(0, 0, width, height);
               ctx.fillStyle =
+                // eslint-disable-next-line no-restricted-syntax -- ds: fallback colour
                 inactiveColor || getCSSVar("--border-default", "#e1dfec");
               ctx.translate(0, height / 2);
 
@@ -368,12 +370,12 @@ const CustomAudioPlayer = ({
       onMouseDown={(event) => event.stopPropagation()}
     >
       {showFileName && (
-        <Typography sx={{ fontSize: "14px", ml: "5px", color: "text.primary" }}>
+        <Typography sx={{ fontSize: "13px", ml: "5px", color: "text.primary" }}>
           {audioData?.fileName}
         </Typography>
       )}
       <ShowComponent condition={isError}>
-        <Typography typography="s1" color="red.500">
+        <Typography typography="s1" color="status.danger.fg">
           {isError?.message}
         </Typography>
       </ShowComponent>
@@ -385,10 +387,9 @@ const CustomAudioPlayer = ({
               event.stopPropagation();
               handlePlayPause();
             }}
-            sx={{ padding: "8px" }}
           >
             <Icon
-              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              icon={isPlaying ? "solar:pause-linear" : "solar:play-linear"}
               width={20}
               height={20}
               color="var(--text-primary)"
@@ -459,10 +460,13 @@ const CustomAudioPlayer = ({
               event.stopPropagation();
               handleMute();
             }}
-            sx={{ padding: "8px" }}
           >
             <Icon
-              icon={isMuted ? "lucide:volume-x" : "lucide:volume-2"}
+              icon={
+                isMuted
+                  ? "solar:volume-cross-linear"
+                  : "solar:volume-loud-linear"
+              }
               width={22}
               height={22}
               color="var(--text-primary)"

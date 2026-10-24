@@ -37,17 +37,10 @@ export const FaceItem = styled(Box)(({ theme }) => ({
   display: "flex",
   flexDirection: "column",
 }));
-export const FaceBadge = styled(Typography)(({ theme }) => ({
-  borderRadius: "6px",
-  fontSize: "12px",
-  lineHeight: "20px",
-  fontWeight: theme.typography.fontWeightMedium,
-  padding: "2px 10px",
-}));
 export const FaceInfo = styled(Typography)(({ theme }) => ({
   display: "flex",
   alignItems: "center",
-  fontSize: "10px",
+  fontSize: "12px",
   gap: "5px",
   fontWeight: theme.typography.fontWeightRegular,
   color: theme.palette.text.disabled,

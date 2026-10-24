@@ -1,11 +1,24 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Button, Dialog, MenuItem, Select, Stack, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Dialog,
+  MenuItem,
+  Select,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useOptionalSimStore } from "../store";
 import { uniqueEnvName } from "../_mock/envNames";
 import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
-import { PROVIDER_LABELS, agentNeedsRuntime, runtimeOf } from "../_mock/agentRegistry";
+import {
+  PROVIDER_LABELS,
+  agentNeedsRuntime,
+  runtimeOf,
+} from "../_mock/agentRegistry";
 import { DEFAULT_RUNTIME } from "../_mock/envConfig";
 import { PARALLEL_MAX, RUN_DEFAULTS } from "../_mock/rsiModel";
 import { buildCreditsCheck } from "../_mock/metering";
@@ -29,23 +42,48 @@ const buildChecks = (agent, worlds) => {
   const cap = Math.round(Number(v.maxConcurrency)) || PARALLEL_MAX;
   return [
     factCheck({
-      id: "reach", label: "Agent",
+      id: "reach",
+      label: "Agent",
       ok: !agentNeedsRuntime(agent),
-      okText: rt.kind === "none" ? "Built fresh from its code in the sandbox." : `${rt.label}${rt.where ? ` · ${rt.where}` : ""} — answered.`,
-      failText: "Nowhere to reach it yet — add its endpoint on the agent's Connections.",
+      okText:
+        rt.kind === "none"
+          ? "Built fresh from its code in the sandbox."
+          : `${rt.label}${rt.where ? ` · ${rt.where}` : ""} — answered.`,
+      failText:
+        "Nowhere to reach it yet — add its endpoint on the agent's Connections.",
     }),
     ...(v.apiKeyRef || v.hasApiKey
-      ? [v.apiKeyRef
-        ? credentialCheck({ id: "key", label: "API key", ref: v.apiKeyRef, provider })
-        : factCheck({ id: "key", label: "API key", ok: true, okText: "Held by the connection." })]
+      ? [
+          v.apiKeyRef
+            ? credentialCheck({
+                id: "key",
+                label: "API key",
+                ref: v.apiKeyRef,
+                provider,
+              })
+            : factCheck({
+                id: "key",
+                label: "API key",
+                ok: true,
+                okText: "Held by the connection.",
+              }),
+        ]
       : []),
-    ...(v.tokenRef ? [credentialCheck({ id: "token", label: "Auth token", ref: v.tokenRef })] : []),
+    ...(v.tokenRef
+      ? [credentialCheck({ id: "token", label: "Auth token", ref: v.tokenRef })]
+      : []),
     factCheck({
-      id: "sandbox", label: "Sandbox", ok: true,
-      okText: local ? "Runs on your machine through the CLI — no hosted sandbox needed." : `A sandbox is free in ${DEFAULT_RUNTIME.region} — the world builds there.`,
+      id: "sandbox",
+      label: "Sandbox",
+      ok: true,
+      okText: local
+        ? "Runs on your machine through the CLI — no hosted sandbox needed."
+        : `A sandbox is free in ${DEFAULT_RUNTIME.region} — the world builds there.`,
     }),
     factCheck({
-      id: "worlds", label: "Parallel worlds", ok: worlds <= cap,
+      id: "worlds",
+      label: "Parallel worlds",
+      ok: worlds <= cap,
       okText: `${worlds} at once admitted${cap < PARALLEL_MAX ? ` — ${provider || "the provider"} allows up to ${cap}` : ""}.`,
       failText: `${provider || "The provider"} admits ${cap} at once — pick ${cap} or fewer.`,
     }),
@@ -60,46 +98,100 @@ const buildChecks = (agent, worlds) => {
  * `defaultParallel` is the setting to start from (an environment's own,
  * when built from one); else the run default.
  */
-export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVersion, onBuild, channel = null, defaultParallel = null }) {
+export default function BuildEnvironmentDialog({
+  open,
+  onClose,
+  agent,
+  defaultVersion,
+  onBuild,
+  channel = null,
+  defaultParallel = null,
+}) {
   const [name, setName] = useState("");
   const envs = useOptionalSimStore()?.state?.myEnvironments || [];
   const [version, setVersion] = useState(defaultVersion);
   /* Held as typed, so a half-typed number isn't snapped mid-edit. */
   const [countText, setCountText] = useState("10");
   const typed = Math.floor(Number(countText));
-  const countOk = Number.isFinite(typed) && typed >= MIN_SCENARIOS && typed <= MAX_SCENARIOS;
-  const count = countOk ? typed : Math.min(MAX_SCENARIOS, Math.max(MIN_SCENARIOS, Number.isFinite(typed) ? typed : MIN_SCENARIOS));
+  const countOk =
+    Number.isFinite(typed) && typed >= MIN_SCENARIOS && typed <= MAX_SCENARIOS;
+  const count = countOk
+    ? typed
+    : Math.min(
+        MAX_SCENARIOS,
+        Math.max(MIN_SCENARIOS, Number.isFinite(typed) ? typed : MIN_SCENARIOS),
+      );
   const cap = Math.round(Number(agent?.values?.maxConcurrency)) || PARALLEL_MAX;
-  const startWorlds = Math.min(cap, Math.max(1, Math.round(Number(defaultParallel)) || RUN_DEFAULTS.conversationsAtOnce));
+  const startWorlds = Math.min(
+    cap,
+    Math.max(
+      1,
+      Math.round(Number(defaultParallel)) || RUN_DEFAULTS.conversationsAtOnce,
+    ),
+  );
   /* How many run at once is a run setting (the environment's Settings), not a build choice — the build starts from the default, and preflight checks it's admitted. */
   const worlds = startWorlds;
   /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
   const credits = countOk ? buildCreditsCheck(count) : null;
-  const preflight = usePreflight(buildChecks(agent, worlds), [open, version, worlds]);
+  const preflight = usePreflight(buildChecks(agent, worlds), [
+    open,
+    version,
+    worlds,
+  ]);
 
   useEffect(() => {
     if (!open) return;
     /* Numbered if taken — the name it will have, not one the store changes later. */
-    setName(uniqueEnvName(`${agent.name.replace(/\s+agent$/i, "")} environment`, envs));
+    setName(
+      uniqueEnvName(
+        `${agent.name.replace(/\s+agent$/i, "")} environment`,
+        envs,
+      ),
+    );
     /* A draft is never what an environment tests — start from production. */
-    const pick = agent.versions.find((v) => v.label === (defaultVersion || agent.latest));
-    setVersion(pick && !pick.pendingDraft ? pick.label : agent.production || agent.latest);
+    const pick = agent.versions.find(
+      (v) => v.label === (defaultVersion || agent.latest),
+    );
+    setVersion(
+      pick && !pick.pendingDraft
+        ? pick.label
+        : agent.production || agent.latest,
+    );
     setCountText("10");
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const blocked = !name.trim() ? "Name it first"
-    : !countOk ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
-      : credits && !credits.ok ? "Over your AI credits — build fewer scenarios"
-        : !preflight.ready ? (preflight.status === "done" ? "Fix what preflight found, then run it again" : "Run preflight first")
+  const blocked = !name.trim()
+    ? "Name it first"
+    : !countOk
+      ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+      : credits && !credits.ok
+        ? "Over your AI credits — build fewer scenarios"
+        : !preflight.ready
+          ? preflight.status === "done"
+            ? "Fix what preflight found, then run it again"
+            : "Run preflight first"
           : null;
 
   return (
     <Dialog
-      open={open} onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 520, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
       <Box sx={{ px: 3, pt: 2.5, pb: 1 }}>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>{channel ? `Build a ${channel} environment` : "Build environment"}</Typography>
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          {channel ? `Build a ${channel} environment` : "Build environment"}
+        </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
           {`We read ${agent.name} and build its environment — simulated tools, seeded data, rules and scenarios.`}
         </Typography>
@@ -107,17 +199,47 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
       <Stack spacing={2} sx={{ px: 3, py: 2 }}>
         <Box>
           <Label>Name</Label>
-          <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} InputProps={{ sx: { typography: "s2" } }} />
+          <TextField
+            size="small"
+            fullWidth
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            InputProps={{ sx: { typography: "s2" } }}
+          />
         </Box>
         <Stack direction="row" spacing={1.5}>
           <Box flex={1}>
-            <Label>{isGitAgent(agent) ? "Built from commit" : "Built from version"}</Label>
-            <Select size="small" fullWidth value={version} onChange={(e) => setVersion(e.target.value)} sx={{ typography: "s2" }}>
+            <Label>
+              {isGitAgent(agent) ? "Built from commit" : "Built from version"}
+            </Label>
+            <Select
+              size="small"
+              fullWidth
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              sx={{ typography: "s2" }}
+            >
               {[...agent.versions].reverse().map((v) => (
-                <MenuItem key={v.label} value={v.label} disabled={!!v.pendingDraft} sx={{ typography: "s2" }}>
-                  <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}>{versionNameOf(agent, v.label).main}</Box>
+                <MenuItem
+                  key={v.label}
+                  value={v.label}
+                  disabled={!!v.pendingDraft}
+                  sx={{ typography: "s2" }}
+                >
+                  <Box
+                    component="span"
+                    sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}
+                  >
+                    {versionNameOf(agent, v.label).main}
+                  </Box>
                   <Box component="span" sx={{ color: "text.subtitle" }}>
-                    {v.pendingDraft ? (isGitAgent(agent) ? "fix branch — merge it first" : "draft — release it first") : v.label === agent.production ? "in production" : ""}
+                    {v.pendingDraft
+                      ? isGitAgent(agent)
+                        ? "fix branch — merge it first"
+                        : "draft — release it first"
+                      : v.label === agent.production
+                        ? "in production"
+                        : ""}
                   </Box>
                 </MenuItem>
               ))}
@@ -126,36 +248,96 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
           <Box flex={1}>
             <Label>Scenarios to start with</Label>
             <TextField
-              size="small" fullWidth type="number"
+              size="small"
+              fullWidth
+              type="number"
               value={countText}
               placeholder="10"
               onChange={(e) => setCountText(e.target.value)}
               onBlur={() => setCountText(String(count))}
               error={!countOk}
-              inputProps={{ min: MIN_SCENARIOS, max: MAX_SCENARIOS, step: 1, "aria-label": "Scenarios to start with" }}
-              InputProps={{ sx: { typography: "s2", fontVariantNumeric: "tabular-nums" } }}
+              inputProps={{
+                min: MIN_SCENARIOS,
+                max: MAX_SCENARIOS,
+                step: 1,
+                "aria-label": "Scenarios to start with",
+              }}
+              InputProps={{
+                sx: { typography: "s2", fontVariantNumeric: "tabular-nums" },
+              }}
             />
           </Box>
         </Stack>
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: -1 }}>
-          {SIZES.map((n) => <Pick key={n} on={countOk && typed === n} onClick={() => setCountText(String(n))}>{n}</Pick>)}
-          <Typography sx={{ typography: "s3", color: countOk ? "text.subtitle" : "error.main", ml: 0.5 }}>
-            {countOk ? `Any number from ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}` : `Pick ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ mt: -1 }}
+        >
+          {SIZES.map((n) => (
+            <Pick
+              key={n}
+              on={countOk && typed === n}
+              onClick={() => setCountText(String(n))}
+            >
+              {n}
+            </Pick>
+          ))}
+          <Typography
+            sx={{
+              typography: "s3",
+              color: countOk ? "text.subtitle" : "error.main",
+              ml: 0.5,
+            }}
+          >
+            {countOk
+              ? `Any number from ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+              : `Pick ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
           </Typography>
         </Stack>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          The environment tests this version first. You can add scenarios and switch versions afterwards.
+          The environment tests this version first. You can add scenarios and
+          switch versions afterwards.
         </Typography>
         {/* Out of credits for this many: said before the build, with the most that fits. */}
         {credits && !credits.ok && (
-          <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "background.neutral" }}>
-            <Iconify icon="solar:wallet-money-linear" width={16} sx={{ color: "warning.main", flexShrink: 0 }} />
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              bgcolor: "background.neutral",
+            }}
+          >
+            <Iconify
+              icon="solar:wallet-money-linear"
+              width={16}
+              sx={{ color: "warning.main", flexShrink: 0 }}
+            />
             <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>Not enough AI credits for this build</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{credits.message}</Typography>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Not enough AI credits for this build
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {credits.message}
+              </Typography>
             </Box>
             {credits.affordable > 0 && (
-              <Button size="small" variant="outlined" onClick={() => setCountText(String(credits.affordable))} sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setCountText(String(credits.affordable))}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
                 {`Build ${credits.affordable.toLocaleString()}`}
               </Button>
             )}
@@ -163,21 +345,59 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
         )}
         <ConnectPreflight preflight={preflight} required />
         {/* When another environment is the right call (RSI PRD). */}
-        <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ px: 1.25, py: 1, borderRadius: 1, bgcolor: "background.neutral" }}>
-          <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }} />
+        <Stack
+          direction="row"
+          spacing={0.75}
+          alignItems="flex-start"
+          sx={{
+            px: 1.25,
+            py: 1,
+            borderRadius: 1,
+            bgcolor: "background.neutral",
+          }}
+        >
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={14}
+            sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }}
+          />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Create one environment per materially different setup — its data or systems, channel, market or language, or
-            product line. Not one per version or batch.
+            Create one environment per materially different setup — its data or
+            systems, channel, market or language, or product line. Not one per
+            version or batch.
           </Typography>
         </Stack>
       </Stack>
-      <Stack direction="row" alignItems="center" justifyContent="flex-end" spacing={1} sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}>
-        {blocked && <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>{blocked}</Typography>}
-        <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="flex-end"
+        spacing={1}
+        sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+      >
+        {blocked && (
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {blocked}
+          </Typography>
+        )}
+        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
+          Cancel
+        </Button>
         <Button
-          size="small" variant="contained" color="primary" disabled={!!blocked}
-          onClick={() => onBuild({ name: name.trim(), version, count, parallel: worlds })}
-          sx={{ typography: "s2", fontWeight: 700 }}
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={!!blocked}
+          onClick={() =>
+            onBuild({ name: name.trim(), version, count, parallel: worlds })
+          }
         >
           Build environment
         </Button>
@@ -187,7 +407,11 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
 }
 
 BuildEnvironmentDialog.propTypes = {
-  open: PropTypes.bool, onClose: PropTypes.func, agent: PropTypes.object.isRequired, defaultVersion: PropTypes.string, onBuild: PropTypes.func.isRequired,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  agent: PropTypes.object.isRequired,
+  defaultVersion: PropTypes.string,
+  onBuild: PropTypes.func.isRequired,
   /* Built for one channel of the agent ("voice", "chat"), from its Calls settings. */
   channel: PropTypes.string,
   /* The parallel worlds to start from — an environment's own setting, when there is one. */
@@ -204,10 +428,18 @@ function Pick({ on, onClick, label, children }) {
       aria-label={label}
       onClick={onClick}
       sx={{
-        px: 1, minWidth: 28, height: 22, borderRadius: 0.75, font: "inherit", cursor: "pointer",
-        border: "1px solid", borderColor: on ? "text.disabled" : "divider",
+        px: 1,
+        minWidth: 28,
+        height: 22,
+        borderRadius: "4px",
+        font: "inherit",
+        cursor: "pointer",
+        border: "1px solid",
+        borderColor: on ? "text.disabled" : "divider",
         bgcolor: on ? "action.selected" : "transparent",
-        typography: "s3", fontWeight: on ? 700 : 500, fontVariantNumeric: "tabular-nums",
+        typography: "s3",
+        fontWeight: on ? 600 : 500,
+        fontVariantNumeric: "tabular-nums",
         color: on ? "text.primary" : "text.secondary",
         "&:hover": { color: "text.primary" },
       }}
@@ -216,9 +448,27 @@ function Pick({ on, onClick, label, children }) {
     </Box>
   );
 }
-Pick.propTypes = { on: PropTypes.bool, onClick: PropTypes.func, label: PropTypes.string, children: PropTypes.node };
+Pick.propTypes = {
+  on: PropTypes.bool,
+  onClick: PropTypes.func,
+  label: PropTypes.string,
+  children: PropTypes.node,
+};
 
 function Label({ children }) {
-  return <Typography sx={{ typography: "s3", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "text.subtitle", mb: 0.75 }}>{children}</Typography>;
+  return (
+    <Typography
+      sx={{
+        typography: "s3",
+        fontWeight: 600,
+        textTransform: "none",
+        letterSpacing: 0.5,
+        color: "text.subtitle",
+        mb: 0.75,
+      }}
+    >
+      {children}
+    </Typography>
+  );
 }
 Label.propTypes = { children: PropTypes.node };

@@ -181,19 +181,10 @@ const LabelSelectContent = ({
               onDelete={
                 hasDeployPermission ? () => handleSelect(label) : undefined
               }
-              deleteIcon={
-                <Iconify
-                  icon="mdi:close"
-                  sx={{
-                    width: 14,
-                    height: 14,
-                  }}
-                />
-              }
+              deleteIcon={<Iconify width={14} icon="solar:close-linear" />}
               sx={{
                 backgroundColor: colorMap?.backgroundColor,
                 color: colorMap?.color,
-                borderRadius: "100px",
                 "&:hover": {
                   backgroundColor: colorMap?.hoverBackgroundColor,
                 },
@@ -201,7 +192,6 @@ const LabelSelectContent = ({
                   color: colorMap?.color,
                 },
                 typography: "s2_1",
-                fontWeight: "fontWeightMedium",
               }}
             />
           );
@@ -243,12 +233,7 @@ const LabelSelectContent = ({
           color="inherit"
           disabled={showCreateForm || !hasDeployPermission}
           onClick={() => setShowCreateForm(true)}
-          startIcon={
-            <SvgColor
-              src="/assets/icons/ic_add.svg"
-              sx={{ width: 16, height: 16 }}
-            />
-          }
+          startIcon={<SvgColor width={16} src="/assets/icons/ic_add.svg" />}
         >
           <Typography typography="s3" fontWeight={500}>
             Add custom tag

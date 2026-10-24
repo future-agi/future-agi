@@ -89,6 +89,7 @@ const SelectWorkspaceChild = React.forwardRef(
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 1,
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
           p: 1,
           minWidth: "200px",
@@ -110,17 +111,17 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isPending}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
           </ShowComponent>
@@ -140,7 +141,7 @@ const SelectWorkspaceChild = React.forwardRef(
                   px: 1,
                   py: 0.5,
                   cursor: isSwitching ? "wait" : "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     workspace.id === currentWorkspaceId
                       ? "background.neutral"
@@ -163,7 +164,7 @@ const SelectWorkspaceChild = React.forwardRef(
                 </Typography>
                 <ShowComponent condition={workspace.id === currentWorkspaceId}>
                   <Iconify
-                    icon="eva:checkmark-fill"
+                    icon="solar:check-linear"
                     sx={{ width: 16, height: 16, color: "primary.main" }}
                   />
                 </ShowComponent>
@@ -173,15 +174,15 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isFetchingNextPage}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
           </ShowComponent>
         </Box>

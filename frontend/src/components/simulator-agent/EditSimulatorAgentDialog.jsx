@@ -73,7 +73,8 @@ const EditSimulatorAgentDialog = ({ open, onClose, agent, onEditSuccess }) => {
           voiceName: agent.voice_name || "",
           interruptSensitivity: agent.interrupt_sensitivity || 0.5,
           conversationSpeed: agent.conversation_speed || 1.0,
-          finishedSpeakingSensitivity: agent.finished_speaking_sensitivity || 0.5,
+          finishedSpeakingSensitivity:
+            agent.finished_speaking_sensitivity || 0.5,
           model: agent.model || "",
           llmTemperature: agent.llm_temperature || 0.7,
           maxCallDurationInMinutes: agent.max_call_duration_in_minutes || 30,
@@ -169,12 +170,10 @@ const EditSimulatorAgentDialog = ({ open, onClose, agent, onEditSuccess }) => {
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="md"
+      maxWidth={false}
       fullWidth
       PaperProps={{
-        sx: {
-          borderRadius: 2,
-        },
+        sx: { maxWidth: 960, borderRadius: 2 },
       }}
     >
       <DialogTitle
@@ -187,7 +186,7 @@ const EditSimulatorAgentDialog = ({ open, onClose, agent, onEditSuccess }) => {
       >
         <Typography variant="h6">Edit Simulator Agent</Typography>
         <IconButton onClick={handleClose} disabled={isEditing}>
-          <Iconify icon="eva:close-fill" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { WorkbenchMetricsContext } from "./WorkbenchMetricsContext";
 import PropTypes from "prop-types";
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -13,6 +13,15 @@ const WorkbenchMetricsProvider = ({ children }) => {
     getDefaultFilter(),
   );
   const [columns, setColumns] = useState([]);
+
+  // Filters belong to one tab's columns; switching tabs starts clean.
+  const prevTabRef = useRef(activeTab);
+  useEffect(() => {
+    if (prevTabRef.current !== activeTab) {
+      setFilters(getDefaultFilter());
+      prevTabRef.current = activeTab;
+    }
+  }, [activeTab, setFilters]);
 
   const value = {
     activeTab,

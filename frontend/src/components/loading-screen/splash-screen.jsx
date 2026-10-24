@@ -182,8 +182,14 @@ export default function SplashScreen({ sx, ...other }) {
               animation: "splash-bracket 2.4s ease-out infinite",
               animationDelay: `${i * 0.12}s`,
               "@keyframes splash-bracket": {
-                "0%": { opacity: 0, transform: `rotate(${c.rot}deg) translate(12px, 12px)` },
-                "40%, 100%": { opacity: 1, transform: `rotate(${c.rot}deg) translate(0, 0)` },
+                "0%": {
+                  opacity: 0,
+                  transform: `rotate(${c.rot}deg) translate(12px, 12px)`,
+                },
+                "40%, 100%": {
+                  opacity: 1,
+                  transform: `rotate(${c.rot}deg) translate(0, 0)`,
+                },
               },
             }}
           />
@@ -232,13 +238,7 @@ export default function SplashScreen({ sx, ...other }) {
           />
 
           {/* Inner static ring */}
-          <circle
-            cx="120"
-            cy="120"
-            r="68"
-            stroke={faintLine}
-            strokeWidth="1"
-          />
+          <circle cx="120" cy="120" r="68" stroke={faintLine} strokeWidth="1" />
 
           {/* Rotating dashed middle ring */}
           <g>
@@ -395,7 +395,7 @@ export default function SplashScreen({ sx, ...other }) {
           fontWeight="fontWeightBold"
           letterSpacing="0.22em"
           color="text.primary"
-          sx={{ textTransform: "uppercase", fontSize: "22px" }}
+          sx={{ textTransform: "none", fontSize: "20px" }}
         >
           Future&nbsp;AGI
         </Typography>
@@ -417,10 +417,10 @@ export default function SplashScreen({ sx, ...other }) {
           />
           <Typography
             fontFamily="IBM Plex Mono, ui-monospace, monospace"
-            fontSize="10.5px"
+            fontSize="12px"
             color="text.secondary"
             letterSpacing="0.38em"
-            sx={{ textTransform: "uppercase" }}
+            sx={{ textTransform: "none" }}
           >
             Mission&nbsp;Control
           </Typography>
@@ -439,7 +439,7 @@ export default function SplashScreen({ sx, ...other }) {
         sx={{
           zIndex: 2,
           fontFamily: "IBM Plex Mono, ui-monospace, monospace",
-          fontSize: "11.5px",
+          fontSize: "12px",
           color: "text.secondary",
           display: "flex",
           alignItems: "center",

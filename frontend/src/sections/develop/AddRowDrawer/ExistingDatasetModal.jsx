@@ -471,7 +471,7 @@ const ExistingDatasetModal = ({
                 onClick={() => closeDrawer()}
                 sx={{ padding: (theme) => theme.spacing(0) }}
               >
-                <Iconify icon="mingcute:close-line" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText
@@ -718,7 +718,6 @@ const ExistingDatasetModal = ({
                   variant="outlined"
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -734,7 +733,6 @@ const ExistingDatasetModal = ({
                   loading={submitDatasetLoading}
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -747,7 +745,8 @@ const ExistingDatasetModal = ({
             <Dialog
               open={Boolean(openCreateColumn)}
               onClose={() => setOpenCreateColumn("")}
-              maxWidth="sm"
+              maxWidth={false}
+              PaperProps={{ sx: { maxWidth: 720 } }}
               fullWidth
             >
               <DialogTitle
@@ -761,7 +760,7 @@ const ExistingDatasetModal = ({
                   Create New Column
                 </Typography>
                 <IconButton onClick={() => setOpenCreateColumn("")}>
-                  <Iconify icon="mdi:close" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </DialogTitle>
               <form onSubmit={handleFormSubmit(onSubmitCreateColumn)}>

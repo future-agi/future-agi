@@ -7,6 +7,7 @@ import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
 
 import { LoadingScreen } from "src/components/loading-screen";
+import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
@@ -1178,9 +1179,7 @@ export const dashboardRoutes = (
         {
           path: "voice",
           element: (
-            <div style={{ padding: 32, color: "#888", textAlign: "center" }}>
-              Voice observability coming soon.
-            </div>
+            <EmptyContent title="Voice observability coming soon" />
           ),
         },
         {

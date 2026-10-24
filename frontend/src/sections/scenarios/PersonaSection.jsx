@@ -44,7 +44,7 @@ const PersonaSection = ({ control, description = "" }) => {
         docLink={{
           url: "https://docs.futureagi.com/docs/simulation/concepts/personas",
           sx: {
-            color: "blue.500",
+            color: "status.info.fg",
             fontWeight: "fontWeightMedium",
             fontSize: "13px",
             textDecoration: "underline",
@@ -64,7 +64,6 @@ const PersonaSection = ({ control, description = "" }) => {
                   variant="outlined"
                   color="primary"
                   disabled={!agentType}
-                  sx={{ borderRadius: "4px" }}
                   size="small"
                   onClick={() => setOpen(true)}
                   startIcon={
@@ -82,7 +81,7 @@ const PersonaSection = ({ control, description = "" }) => {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",

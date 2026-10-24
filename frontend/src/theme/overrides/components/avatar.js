@@ -13,33 +13,12 @@ const COLORS = [
   "error",
 ];
 
-const colorByName = (name) => {
-  const charAt = name.charAt(0).toLowerCase();
-
-  if (["a", "c", "f"].includes(charAt)) {
-    return "primary";
-  }
-  if (["e", "d", "h"].includes(charAt)) {
-    return "secondary";
-  }
-  if (["i", "k", "l"].includes(charAt)) {
-    return "info";
-  }
-  if (["m", "n", "p"].includes(charAt)) {
-    return "success";
-  }
-  if (["q", "s", "t"].includes(charAt)) {
-    return "warning";
-  }
-  if (["v", "x", "y"].includes(charAt)) {
-    return "error";
-  }
-  return "default";
-};
-
 // ----------------------------------------------------------------------
 
 export function avatar(theme) {
+  // One solid neutral tile (gray-150 / gray-800) so overlapping avatars in a
+  // group stay crisp; initials in fg.default.
+  const tile = theme.palette.mode === "dark" ? "#27272A" : "#EFEFF1";
   return {
     MuiAvatar: {
       variants: COLORS.map((color) =>
@@ -47,39 +26,30 @@ export function avatar(theme) {
           ? {
               props: { color: "default" },
               style: {
-                color: theme.palette.text.secondary,
-                backgroundColor: alpha(theme.palette.grey[500], 0.24),
+                color: theme.palette.text.primary,
+                backgroundColor: tile,
               },
             }
           : {
+              // Design system: avatars are neutral, never brand or status coloured.
               props: { color },
               style: {
-                color: theme.palette[color].contrastText,
-                backgroundColor: theme.palette[color].main,
+                color: theme.palette.text.primary,
+                backgroundColor: tile,
               },
             },
       ),
 
       styleOverrides: {
         rounded: {
-          borderRadius: theme.shape.borderRadius * 1.5,
+          borderRadius: 4,
         },
-        colorDefault: ({ ownerState }) => {
-          const color = colorByName(`${ownerState.alt}`);
-
-          return {
-            ...(!!ownerState.alt && {
-              ...(color !== "default"
-                ? {
-                    color: theme.palette[color].contrastText,
-                    backgroundColor: theme.palette[color].main,
-                  }
-                : {
-                    color: theme.palette.text.secondary,
-                    backgroundColor: alpha(theme.palette.grey[500], 0.24),
-                  }),
-            }),
-          };
+        // Design system: every avatar is the same light neutral tile with
+        // dark initials — never MUI's dark grey, never brand or status colour.
+        colorDefault: {
+          color: theme.palette.text.primary,
+          backgroundColor: tile,
+          fontWeight: 600,
         },
       },
     },
@@ -109,12 +79,15 @@ export function avatar(theme) {
           }),
         }),
         avatar: {
-          fontSize: 16,
-          fontWeight: theme.typography.fontWeightSemiBold,
+          fontSize: 11,
+          fontWeight: 500,
+          color: theme.palette.text.primary,
+          backgroundColor: tile,
+          borderColor: theme.palette.background.paper,
           "&:first-of-type": {
-            fontSize: 12,
-            color: theme.palette.grey[800],
-            backgroundColor: theme.palette.primary.lighter,
+            fontSize: 11,
+            color: theme.palette.text.primary,
+            backgroundColor: tile,
           },
         },
       },

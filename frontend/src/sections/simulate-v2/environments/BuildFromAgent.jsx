@@ -1,9 +1,26 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, TextField, InputAdornment, MenuItem, Tooltip, IconButton, Collapse, Popover,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  InputAdornment,
+  MenuItem,
+  Tooltip,
+  IconButton,
+  Collapse,
+  Popover,
+  Chip,
   Dialog,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -13,16 +30,29 @@ import { Upload } from "src/components/upload";
 import { formatFileSize } from "src/utils/utils";
 import { paths } from "src/routes/paths";
 import { pipelineStatus, pipelineSummary } from "../_mock/buildPipeline";
-import { subscribeScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
+import {
+  subscribeScenarioSelection,
+  getScenarioSelection,
+} from "../_mock/scenarioSelectionBus";
 import TrialsPicker from "../workspace/scenarios/TrialsPicker";
 import { setupGaps, gapCounts } from "../_mock/setupGaps";
 import { useSimStore, useEnvState, useConnectedAgents } from "../store";
 import { SectionCard } from "../components/primitives";
 import { textTone } from "../components/textTone";
 import {
-  HARNESS_STAGES, REF_KINDS, DERIVATION_OUTPUTS,
-  builderRun, derivedEnvironment, detectedStack, assistantIdLabel,
-  sourceKindsFor, providersFor, runtimeTypeFor, runtimeTypesFor, runtimeValuesFrom, sourceOwnedKeys,
+  HARNESS_STAGES,
+  REF_KINDS,
+  DERIVATION_OUTPUTS,
+  builderRun,
+  derivedEnvironment,
+  detectedStack,
+  assistantIdLabel,
+  sourceKindsFor,
+  providersFor,
+  runtimeTypeFor,
+  runtimeTypesFor,
+  runtimeValuesFrom,
+  sourceOwnedKeys,
 } from "../_mock/builder";
 import { ADAPTERS } from "../_mock/rlContract";
 import { generatedPool } from "../_mock/scenarios";
@@ -30,17 +60,31 @@ import { agentPromptOf } from "../_mock/agentPrompt";
 import { agentPinPatch } from "../_mock/versions";
 import { mcpBuildStateOf } from "../_mock/worldTools";
 import { agentRecordFromSource, envAgentKey } from "../_mock/agentRegistry";
-import { MODE_ICONS, REPLICATION_MODES, replicationRecordOf } from "../_mock/replication";
+import {
+  MODE_ICONS,
+  REPLICATION_MODES,
+  replicationRecordOf,
+} from "../_mock/replication";
 import AgentPromptDrawer from "../workspace/agents/AgentPromptDrawer";
-import { stampProvenance as provStamp, currentUser } from "../_mock/scenarioProvenance";
+import {
+  stampProvenance as provStamp,
+  currentUser,
+} from "../_mock/scenarioProvenance";
 import { detectAddScenariosIntent } from "../_mock/addScenariosIntent";
-import { stampNewBatch, unanswerableNote, rejectedNote } from "../_mock/addScenarios";
+import {
+  stampNewBatch,
+  unanswerableNote,
+  rejectedNote,
+} from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
 import { parseCurl, describeFill } from "../_mock/curl";
 import { detectEndpoints, CONFIDENCE } from "../_mock/endpoints";
 import AssistantConsole from "../assistant/AssistantConsole";
 import BuilderRail from "../workspace/BuilderRail";
-import { readBuilderCollapsed, writeBuilderCollapsed } from "../workspace/builderCollapse";
+import {
+  readBuilderCollapsed,
+  writeBuilderCollapsed,
+} from "../workspace/builderCollapse";
 import VoiceInput from "../assistant/VoiceInput";
 import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
@@ -76,7 +120,8 @@ function sizeToCount(pool, count) {
     const base = pool[i % pool.length];
     if (i < pool.length) return base;
     const round = Math.floor(i / pool.length);
-    const persona = pool[(i * 7 + round) % pool.length]?.persona || base.persona;
+    const persona =
+      pool[(i * 7 + round) % pool.length]?.persona || base.persona;
     return { ...base, id: `${base.id}~${round + 1}`, persona };
   });
 }
@@ -158,8 +203,13 @@ export default function BuildFromAgent() {
   const [readAnswers, setReadAnswers] = useState(null);
 
   /* A new environment per build — minted once for this screen. */
-  const [buildId] = useState(() => `env-returns-line-${Date.now().toString(36)}`);
-  const env = useMemo(() => (source ? derivedEnvironment(source, { id: buildId }) : null), [source, buildId]);
+  const [buildId] = useState(
+    () => `env-returns-line-${Date.now().toString(36)}`,
+  );
+  const env = useMemo(
+    () => (source ? derivedEnvironment(source, { id: buildId }) : null),
+    [source, buildId],
+  );
   /* Depth is a property of generation, so changing it regenerates the pool
      rather than just relabelling the environment. */
   const buildDone = done.includes("build");
@@ -170,10 +220,20 @@ export default function BuildFromAgent() {
   const [builtAt] = useState(() => new Date().toISOString());
   const pool = useMemo(
     // No cap unless the connect form asked for a count; then exactly that many.
-    () => (env && buildDone
-      ? sizeToCount(generatedPool({ ...env, difficulty }), source?.scenarioCount)
-        .map((r) => provStamp(r, { source: "derived", actor: currentUser(), at: builtAt, batchId: `batch_build_${buildId}` }))
-      : []),
+    () =>
+      env && buildDone
+        ? sizeToCount(
+            generatedPool({ ...env, difficulty }),
+            source?.scenarioCount,
+          ).map((r) =>
+            provStamp(r, {
+              source: "derived",
+              actor: currentUser(),
+              at: builtAt,
+              batchId: `batch_build_${buildId}`,
+            }),
+          )
+        : [],
     [env, buildDone, difficulty, source?.scenarioCount, builtAt, buildId],
   );
   /* Scenarios land one at a time while the stage writes them, so the
@@ -189,7 +249,11 @@ export default function BuildFromAgent() {
   const scenarios = useMemo(() => {
     const mark = (r, i) => (i === rewrittenIdx ? { ...r, rewritten: true } : r);
     if (scenariosDone) return pool.map(mark);
-    return pool.slice(0, revealed).map((r, i) => (i >= checked ? { ...mark(r, i), checking: true } : mark(r, i)));
+    return pool
+      .slice(0, revealed)
+      .map((r, i) =>
+        i >= checked ? { ...mark(r, i), checking: true } : mark(r, i),
+      );
   }, [pool, revealed, checked, scenariosDone, rewrittenIdx]);
   const provedCount = scenarios.filter((r) => !r.checking).length;
   const scenarioSyncKey = `${scenarios.length}:${provedCount}`;
@@ -204,7 +268,12 @@ export default function BuildFromAgent() {
   /* The contract as it's written: how many tools, rules and stores the
      builder has found so far. The Overview's build table fills in from this
      while the agent is read and the world is seeded. */
-  const [contractFound, setContractFound] = useState({ tools: 0, rules: 0, stores: 0, handlers: 0 });
+  const [contractFound, setContractFound] = useState({
+    tools: 0,
+    rules: 0,
+    stores: 0,
+    handlers: 0,
+  });
   /* Streaming from the first frame of the build, not from the first tool:
      before any tool had been read this was false, and the table showed the
      whole finished contract for the two seconds until the first one landed. */
@@ -216,7 +285,13 @@ export default function BuildFromAgent() {
   const streamFound = (kind, count, fromMs, toMs) => {
     for (let k = 1; k <= count; k += 1) {
       const at = fromMs + ((toMs - fromMs) * k) / count;
-      timers.current.push(setTimeout(() => setContractFound((c) => ({ ...c, [kind]: Math.max(c[kind], k) })), at));
+      timers.current.push(
+        setTimeout(
+          () =>
+            setContractFound((c) => ({ ...c, [kind]: Math.max(c[kind], k) })),
+          at,
+        ),
+      );
     }
   };
 
@@ -245,7 +320,8 @@ export default function BuildFromAgent() {
     const allowed = sourceKindsFor(id);
     if (!allowed.some((x) => x.id === kind)) setKind(allowed[0].id);
     const provs = providersFor(id);
-    if (provs.length && !provs.some((o) => o.value === provider)) setProvider(provs[0].value);
+    if (provs.length && !provs.some((o) => o.value === provider))
+      setProvider(provs[0].value);
   };
 
   /*
@@ -262,21 +338,33 @@ export default function BuildFromAgent() {
     const id = `t-${Date.now()}`;
     setTurns((prev) => [...prev, { id, role: "builder", title, steps: [] }]);
     steps.forEach((step, i) => {
-      timers.current.push(setTimeout(() => {
-        setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, steps: [...t.steps, step] } : t)));
-        if (i !== steps.length - 1) return;
+      timers.current.push(
+        setTimeout(
+          () => {
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === id ? { ...t, steps: [...t.steps, step] } : t,
+              ),
+            );
+            if (i !== steps.length - 1) return;
 
-        setRunning(false);
-        if (stageId) setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
+            setRunning(false);
+            if (stageId)
+              setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
 
-        // Chain to the next stage rather than offering it as a button.
-        const next = stageId ? STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1] : null;
-        if (next) {
-          timers.current.push(setTimeout(() => runStage(next), 500));
-        } else {
-          setChips(asideChips(nextChips));
-        }
-      }, pace * (i + 1)));
+            // Chain to the next stage rather than offering it as a button.
+            const next = stageId
+              ? STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1]
+              : null;
+            if (next) {
+              timers.current.push(setTimeout(() => runStage(next), 500));
+            } else {
+              setChips(asideChips(nextChips));
+            }
+          },
+          pace * (i + 1),
+        ),
+      );
     });
   };
 
@@ -285,9 +373,13 @@ export default function BuildFromAgent() {
     asides — ask what it found, or tell it to write more.
   */
   const asideChips = (list = []) => {
-    const stageChips = HARNESS_STAGES.filter((st) => st.chip).map((st) => st.chip);
+    const stageChips = HARNESS_STAGES.filter((st) => st.chip).map(
+      (st) => st.chip,
+    );
     return list.filter(
-      (c) => !stageChips.some((t) => c.startsWith(t)) && !c.startsWith("use this environment"),
+      (c) =>
+        !stageChips.some((t) => c.startsWith(t)) &&
+        !c.startsWith("use this environment"),
     );
   };
 
@@ -299,16 +391,26 @@ export default function BuildFromAgent() {
     difficulty, notes) and finally kicks off the "understand" stage.
   */
   const start = () => {
-    const ref = kind === "repo"
-      ? { kind: refKind, value: refValue.trim() || REF_KINDS.find((r) => r.id === refKind).placeholder }
-      : null;
+    const ref =
+      kind === "repo"
+        ? {
+            kind: refKind,
+            value:
+              refValue.trim() ||
+              REF_KINDS.find((r) => r.id === refKind).placeholder,
+          }
+        : null;
     const src = {
       kind,
       modality,
-      value: kind === "upload" ? (file?.name || chosen.placeholder) : (value.trim() || chosen.placeholder),
+      value:
+        kind === "upload"
+          ? file?.name || chosen.placeholder
+          : value.trim() || chosen.placeholder,
       ref,
       provider: kind === "platform" ? provider : null,
-      ...(kind === "platform" && isSecretRef(keyRef) && { apiKeyRef: keyRef.trim() }),
+      ...(kind === "platform" &&
+        isSecretRef(keyRef) && { apiKeyRef: keyRef.trim() }),
     };
     src.runtimeTypeId = runtimeTypeId;
     src.runtime = { ...runtimeValuesFrom({ ...src }), ...runtime };
@@ -325,7 +427,8 @@ export default function BuildFromAgent() {
        fires: name, thoroughness (maps to difficulty + eventual scenario
        count), and a freeform focus note that would be piped into the
        generator in a real backend. */
-    if (answers?.name) setName(uniqueEnvName(answers.name, envsRef.current, env?.id));
+    if (answers?.name)
+      setName(uniqueEnvName(answers.name, envsRef.current, env?.id));
     if (answers?.difficulty) setDifficulty(answers.difficulty);
     setIntake({ ...answers, at: new Date().toISOString() });
     setTurns([]);
@@ -360,7 +463,9 @@ export default function BuildFromAgent() {
     if (!builtEnvId || !hydrated) return;
     if (storeState.myEnvironments?.some((e) => e.id === builtEnvId)) {
       bootedPresetRef.current = true;
-      navigate(paths.dashboard.simulate.environmentDetail(builtEnvId), { replace: true });
+      navigate(paths.dashboard.simulate.environmentDetail(builtEnvId), {
+        replace: true,
+      });
     }
   }, [builtEnvId, hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -396,7 +501,9 @@ export default function BuildFromAgent() {
   /* Leaving the screen is checked first — it used to sit behind the stage
      lookup, which matched it and returned before ever getting here. */
   const onChip = (chip) => {
-    const next = HARNESS_STAGES.find((s) => s.chip && chip.startsWith(s.chip))?.id;
+    const next = HARNESS_STAGES.find(
+      (s) => s.chip && chip.startsWith(s.chip),
+    )?.id;
     if (next) return runStage(next);
     onSend(chip);
   };
@@ -405,9 +512,16 @@ export default function BuildFromAgent() {
     /* The builder narrates the count this screen will actually produce — and
        the distinct sub-goals those scenarios use, the same count the
        Environments list shows. */
-    const draft = env ? sizeToCount(generatedPool({ ...env, difficulty }), source?.scenarioCount) : [];
+    const draft = env
+      ? sizeToCount(
+          generatedPool({ ...env, difficulty }),
+          source?.scenarioCount,
+        )
+      : [];
     const draftCount = env ? draft.length : undefined;
-    const subGoalCount = env ? subGoalCatalogOf(env, { scenarios: draft }).length : undefined;
+    const subGoalCount = env
+      ? subGoalCatalogOf(env, { scenarios: draft }).length
+      : undefined;
     const stage = builderRun(id, { ...source, draftCount, subGoalCount });
     /* Writing scenarios is the stage people wait on, so it runs slower and
        drops each scenario into the table as it is written — spread across
@@ -424,20 +538,44 @@ export default function BuildFromAgent() {
       setRunning(true);
       setChips([]);
       const turnId = `t-${Date.now()}`;
-      setTurns((prev) => [...prev, { id: turnId, role: "builder", title: stage.title, steps: [] }]);
-      stage.steps.slice(0, 1).forEach((step, i) => timers.current.push(setTimeout(() => {
-        setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, steps: [...t.steps, step] } : t)));
-      }, pace * (i + 1))));
-      timers.current.push(setTimeout(() => {
-        setRunning(false);
-        setHalt({
-          kind: "failed", stage: "scenarios", stepId: "generate-scenarios",
-          title: "Out of AI credits",
-          message: `Stopped before writing any scenarios. ${credits.message}`,
-          retryable: credits.affordable > 0, affordable: credits.affordable,
-        });
-        if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "failed" } });
-      }, pace * 2.5));
+      setTurns((prev) => [
+        ...prev,
+        { id: turnId, role: "builder", title: stage.title, steps: [] },
+      ]);
+      stage.steps.slice(0, 1).forEach((step, i) =>
+        timers.current.push(
+          setTimeout(
+            () => {
+              setTurns((prev) =>
+                prev.map((t) =>
+                  t.id === turnId ? { ...t, steps: [...t.steps, step] } : t,
+                ),
+              );
+            },
+            pace * (i + 1),
+          ),
+        ),
+      );
+      timers.current.push(
+        setTimeout(() => {
+          setRunning(false);
+          setHalt({
+            kind: "failed",
+            stage: "scenarios",
+            stepId: "generate-scenarios",
+            title: "Out of AI credits",
+            message: `Stopped before writing any scenarios. ${credits.message}`,
+            retryable: credits.affordable > 0,
+            affordable: credits.affordable,
+          });
+          if (env?.id)
+            dispatch({
+              type: "patchEnvironment",
+              envId: env.id,
+              patch: { buildStatus: "failed" },
+            });
+        }, pace * 2.5),
+      );
       return;
     }
     if (id === "build") {
@@ -471,10 +609,19 @@ export default function BuildFromAgent() {
   */
   /* Stages advance from the chat, which is where the builder offers them.
      The header carries the one thing the chat cannot do: leave. */
-  const runNow = (scenarioIds, trials) => adopt({ ...env, name: name.trim(), difficulty }, "run", scenarioIds, trials);
+  const runNow = (scenarioIds, trials) =>
+    adopt(
+      { ...env, name: name.trim(), difficulty },
+      "run",
+      scenarioIds,
+      trials,
+    );
 
   const onSend = (text) => {
-    setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+    setTurns((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: "user", text },
+    ]);
     /* Recognise "add N scenarios" here too, while the environment is still
        being built. Mirrors the intent detect in EnvironmentWorkspace.sendChat. */
     const intent = detectAddScenariosIntent(text);
@@ -484,26 +631,53 @@ export default function BuildFromAgent() {
       const fresh = pool.slice(0, intent.count);
       /* Stamped like every other add route — tools, proof, the environment
          version it was added under — so the tool check runs here too. */
-      const batch = stampNewBatch(fresh.map((r) => ({ ...r, chatAsk: text })), { env, envState, source: "chat", actor: currentUser() });
+      const batch = stampNewBatch(
+        fresh.map((r) => ({ ...r, chatAsk: text })),
+        { env, envState, source: "chat", actor: currentUser() },
+      );
       /* Chat-written scenarios get the same review as every other source:
          proposed, in exploration, until someone approves them. */
       if (fresh.length > 0) {
-        envPatch({ scenarios: [...(envState?.scenarios || []), ...batch.rows.map((r) => asProposal(r, "chat"))] });
+        envPatch({
+          scenarios: [
+            ...(envState?.scenarios || []),
+            ...batch.rows.map((r) => asProposal(r, "chat")),
+          ],
+        });
       }
-      const warn = fresh.length > 0 ? [unanswerableNote(batch), rejectedNote(batch)].filter(Boolean).join(" ") || null : null;
-      setTurns((prev) => [...prev, {
-        id: `a-${Date.now()}`,
-        role: "assistant",
-        steps: [{ kind: "note", text: fresh.length === 0
-          ? "Every scenario this agent's world can write is already here — remove a few on the Scenarios tab first."
-          : fresh.length < intent.count
-            ? `${batch.rows.length} proposed — review and add them on the Scenarios tab. Only ${fresh.length} new ones could be written.${warn ? ` ${warn}` : ""}`
-            : `${batch.rows.length} proposed — review and add them on the Scenarios tab.${warn ? ` ${warn}` : ""}` }],
-      }]);
+      const warn =
+        fresh.length > 0
+          ? [unanswerableNote(batch), rejectedNote(batch)]
+              .filter(Boolean)
+              .join(" ") || null
+          : null;
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          steps: [
+            {
+              kind: "note",
+              text:
+                fresh.length === 0
+                  ? "Every scenario this agent's world can write is already here — remove a few on the Scenarios tab first."
+                  : fresh.length < intent.count
+                    ? `${batch.rows.length} proposed — review and add them on the Scenarios tab. Only ${fresh.length} new ones could be written.${warn ? ` ${warn}` : ""}`
+                    : `${batch.rows.length} proposed — review and add them on the Scenarios tab.${warn ? ` ${warn}` : ""}`,
+            },
+          ],
+        },
+      ]);
       return;
     }
     const reply = builderRun("ask", source, text);
-    play(null, reply.steps, asideChips(reply.chips.length ? reply.chips : chips), null);
+    play(
+      null,
+      reply.steps,
+      asideChips(reply.chips.length ? reply.chips : chips),
+      null,
+    );
   };
 
   /*
@@ -528,7 +702,15 @@ export default function BuildFromAgent() {
     is idempotent for the same id, so re-priming is safe.
   */
   const prime = (confirmed) => {
-    dispatch({ type: "adoptEnvironment", env: { ...confirmed, ...(buildReplication && { replication: buildReplication }), ...(fromIssue && { returnToIssue: fromIssue, returnFrom: "built" }) }, now: new Date().toISOString() });
+    dispatch({
+      type: "adoptEnvironment",
+      env: {
+        ...confirmed,
+        ...(buildReplication && { replication: buildReplication }),
+        ...(fromIssue && { returnToIssue: fromIssue, returnFrom: "built" }),
+      },
+      now: new Date().toISOString(),
+    });
     /* The agent itself was attached when the environment was first created
        (see the seeding effect) — priming only carries the derived content. */
     const patch = {};
@@ -538,9 +720,16 @@ export default function BuildFromAgent() {
        run setting — once; a later change in Settings isn't undone here. */
     const worlds = Math.round(Number(source?.parallelWorlds));
     const prevState = storeState.byEnv?.[confirmed.id];
-    if (worlds >= 1 && prevState?.parallelRuns === undefined && prevState?.runDefaults?.conversationsAtOnce == null) {
+    if (
+      worlds >= 1 &&
+      prevState?.parallelRuns === undefined &&
+      prevState?.runDefaults?.conversationsAtOnce == null
+    ) {
       patch.parallelRuns = worlds > 1;
-      patch.runDefaults = { ...(prevState?.runDefaults || {}), conversationsAtOnce: worlds > 1 ? worlds : 1 };
+      patch.runDefaults = {
+        ...(prevState?.runDefaults || {}),
+        conversationsAtOnce: worlds > 1 ? worlds : 1,
+      };
     }
     if (Object.keys(patch).length) {
       dispatch({ type: "patchEnvState", envId: confirmed.id, patch });
@@ -551,7 +740,10 @@ export default function BuildFromAgent() {
     prime(confirmed);
     let target;
     if (mode === "run") {
-      target = paths.dashboard.simulate.simulationRun(confirmed.id, `run-${Date.now().toString(36)}`);
+      target = paths.dashboard.simulate.simulationRun(
+        confirmed.id,
+        `run-${Date.now().toString(36)}`,
+      );
       const params = new URLSearchParams();
       if (Array.isArray(scenarioIds) && scenarioIds.length > 0) {
         params.set("only", scenarioIds.join(","));
@@ -569,7 +761,10 @@ export default function BuildFromAgent() {
     }
     /* Replace the build in history: Back from here goes to where the build
        started, never to a build that would start again. */
-    navigate(target, { replace: true, ...(fromIssue && { state: { fromIssue } }) });
+    navigate(target, {
+      replace: true,
+      ...(fromIssue && { state: { fromIssue } }),
+    });
   };
 
   /* Live envState for whichever env has been primed. Feeds the panels below. */
@@ -596,19 +791,21 @@ export default function BuildFromAgent() {
     truthy (click "Read this agent"), because `envState` was
     referenced before it was declared with `const`.
   */
-  const blockingGapsForRun = env && envState
-    ? setupGaps(env, envState).filter((g) => g.status === "blocking")
-    : [];
+  const blockingGapsForRun =
+    env && envState
+      ? setupGaps(env, envState).filter((g) => g.status === "blocking")
+      : [];
   const derivationDoneForRun = done.length >= DERIVATION_OUTPUTS.length;
-  const canLeave = derivationDoneForRun && !!name.trim() && blockingGapsForRun.length === 0;
+  const canLeave =
+    derivationDoneForRun && !!name.trim() && blockingGapsForRun.length === 0;
   const runBlockedReason = !derivationDoneForRun
     ? "Finish the three stages on the left first"
     : !name.trim()
       ? "Name this environment first"
       : blockingGapsForRun.length > 0
-        ? (blockingGapsForRun[0].id === "no-evals"
+        ? blockingGapsForRun[0].id === "no-evals"
           ? "Add at least one evaluation on the Evaluations tab"
-          : blockingGapsForRun[0].title)
+          : blockingGapsForRun[0].title
         : "";
 
   /*
@@ -645,7 +842,11 @@ export default function BuildFromAgent() {
     if (evalsResetRef.current === env.id) return;
     evalsResetRef.current = env.id;
     const preset = env.evalPreset || [];
-    dispatch({ type: "patchEnvState", envId: env.id, patch: { evals: preset } });
+    dispatch({
+      type: "patchEnvState",
+      envId: env.id,
+      patch: { evals: preset },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env?.id, hydrated]);
 
@@ -672,24 +873,46 @@ export default function BuildFromAgent() {
     const mcpPatch = {
       ...(mcp && { toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } }),
       /* The egress list given at connect is the environment's to start with — edited later in Settings. */
-      ...(source?.allowedEgressDomains?.length && { egressDomains: source.allowedEgressDomains }),
+      ...(source?.allowedEgressDomains?.length && {
+        egressDomains: source.allowedEgressDomains,
+      }),
     };
     /* The real agent from the first moment — identity, definition (GitHub
        link, entry file) and where it runs — so leaving mid-build never leaves
        a placeholder behind for "Use a connected agent" to duplicate. */
     const connected = source?.connectedAgent;
     if (connected && !envState.agent) {
-      const { versions: connectedVersions, usedIn, latest, id, ...record } = connected;
+      const {
+        versions: connectedVersions,
+        usedIn,
+        latest,
+        id,
+        ...record
+      } = connected;
       dispatch({
         type: "patchEnvState",
         envId: env.id,
         patch: {
           agent: { ...record, connectedAt: record.connectedAt || now },
-          ...(connectedVersions?.length && { agentVersions: connectedVersions }),
+          ...(connectedVersions?.length && {
+            agentVersions: connectedVersions,
+          }),
           /* Built at the version picked — following production when that is it. */
-          ...agentPinPatch({ agent: record, agentVersions: connectedVersions || [] }, source.agentVersion || latest || "v1"),
+          ...agentPinPatch(
+            { agent: record, agentVersions: connectedVersions || [] },
+            source.agentVersion || latest || "v1",
+          ),
           envVersions: [
-            { id: `${env.id}-v1`, label: "v1", createdAt: now, note: `First build, read from agent ${source.agentVersion || latest || "v1"}${source.worldSource?.label ? `, starting from ${source.worldSource.label}` : ""}${source.worldSource?.runsOn === "local" ? ", on your machine" : ""}.`, scenarios: envState.scenarios?.length || 0, changed: ["contract", "seed"], tools: v1Tools, builtFor: source.agentVersion || latest || "v1" },
+            {
+              id: `${env.id}-v1`,
+              label: "v1",
+              createdAt: now,
+              note: `First build, read from agent ${source.agentVersion || latest || "v1"}${source.worldSource?.label ? `, starting from ${source.worldSource.label}` : ""}${source.worldSource?.runsOn === "local" ? ", on your machine" : ""}.`,
+              scenarios: envState.scenarios?.length || 0,
+              changed: ["contract", "seed"],
+              tools: v1Tools,
+              builtFor: source.agentVersion || latest || "v1",
+            },
           ],
           activeEnvVersion: "v1",
           runs: [],
@@ -699,7 +922,10 @@ export default function BuildFromAgent() {
       return;
     }
     const agent = envState.agent
-      ? { ...envState.agent, sourceKind: source?.kind || envState.agent.sourceKind || "repo" }
+      ? {
+          ...envState.agent,
+          sourceKind: source?.kind || envState.agent.sourceKind || "repo",
+        }
       : agentForBuild(source, env, now);
     /* Every environment belongs to an agent — an MCP server or a prebuilt
        world is the world source of an agent's build, never a build of its
@@ -711,7 +937,15 @@ export default function BuildFromAgent() {
         patch: {
           agent: null,
           envVersions: [
-            { id: `${env.id}-v1`, label: "v1", createdAt: now, note: "First build.", scenarios: envState.scenarios?.length || 0, changed: ["contract", "seed"], tools: v1Tools },
+            {
+              id: `${env.id}-v1`,
+              label: "v1",
+              createdAt: now,
+              note: "First build.",
+              scenarios: envState.scenarios?.length || 0,
+              changed: ["contract", "seed"],
+              tools: v1Tools,
+            },
           ],
           activeEnvVersion: "v1",
           runs: [],
@@ -727,9 +961,15 @@ export default function BuildFromAgent() {
         agent,
         agentVersions: [
           {
-            id: "agent-v1", label: "v1", note: "The version this environment was built from.",
-            reach: source?.kind === "platform" ? "platform" : "endpoint", createdAt: now, tools: v1Tools,
-            values: agent.values, via: agent.via, connectedAt: now,
+            id: "agent-v1",
+            label: "v1",
+            note: "The version this environment was built from.",
+            reach: source?.kind === "platform" ? "platform" : "endpoint",
+            createdAt: now,
+            tools: v1Tools,
+            values: agent.values,
+            via: agent.via,
+            connectedAt: now,
             /* The prompt the build was read from — viewable from the build
                screen and from the test subject afterwards. */
             prompt: agentPromptOf(source, env),
@@ -737,11 +977,20 @@ export default function BuildFromAgent() {
         ],
         activeAgentVersion: "v1",
         envVersions: [
-          { id: `${env.id}-v1`, label: "v1", createdAt: now, note: "First build, read from agent v1.", scenarios: envState.scenarios?.length || 0, changed: ["contract", "seed"], tools: v1Tools, builtFor: "v1" },
+          {
+            id: `${env.id}-v1`,
+            label: "v1",
+            createdAt: now,
+            note: "First build, read from agent v1.",
+            scenarios: envState.scenarios?.length || 0,
+            changed: ["contract", "seed"],
+            tools: v1Tools,
+            builtFor: "v1",
+          },
         ],
         activeEnvVersion: "v1",
         runs: [],
-          ...mcpPatch,
+        ...mcpPatch,
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -751,14 +1000,20 @@ export default function BuildFromAgent() {
     const understandDone = done.includes("understand");
     /* The derived evals land in the environment's state (its preset); ones
        added here by hand are in evalIds. Either counts. */
-    const readyToAdopt = understandDone && ((evalIds?.length || 0) > 0 || (envState.evals?.length || 0) > 0);
+    const readyToAdopt =
+      understandDone &&
+      ((evalIds?.length || 0) > 0 || (envState.evals?.length || 0) > 0);
     const allDone = STAGE_ORDER.every((s) => done.includes(s));
     const buildProgress = { done: done.length, total: STAGE_ORDER.length };
     const buildStatus = allDone ? "ready" : "building";
 
     if (readyToAdopt && adoptedRef.current !== env.id) {
       /* The store numbers a name that's taken; show the same name here. */
-      const adoptedName = uniqueEnvName((name || env.name || "").trim(), envsRef.current, env.id);
+      const adoptedName = uniqueEnvName(
+        (name || env.name || "").trim(),
+        envsRef.current,
+        env.id,
+      );
       if (adoptedName && adoptedName !== name) setName(adoptedName);
       dispatch({
         type: "adoptEnvironment",
@@ -777,16 +1032,27 @@ export default function BuildFromAgent() {
         now: new Date().toISOString(),
       });
       adoptedRef.current = env.id;
-      navigate(location.pathname, { replace: true, state: { ...(location.state || {}), builtEnvId: env.id } });
+      navigate(location.pathname, {
+        replace: true,
+        state: { ...(location.state || {}), builtEnvId: env.id },
+      });
       if (allDone) readyStampedRef.current = true;
     } else if (adoptedRef.current === env.id) {
       /* Keep the card in sync as the pipeline advances — buildProgress ticks
          each stage, and the final ready stamp fires exactly once. */
       if (allDone && !readyStampedRef.current) {
-        dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "ready", buildProgress } });
+        dispatch({
+          type: "patchEnvironment",
+          envId: env.id,
+          patch: { buildStatus: "ready", buildProgress },
+        });
         readyStampedRef.current = true;
       } else if (!allDone) {
-        dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus, buildProgress } });
+        dispatch({
+          type: "patchEnvironment",
+          envId: env.id,
+          patch: { buildStatus, buildProgress },
+        });
       }
     }
 
@@ -807,7 +1073,22 @@ export default function BuildFromAgent() {
     if (Object.keys(nextPatch).length) {
       dispatch({ type: "patchEnvState", envId: env.id, patch: nextPatch });
     }
-  }, [env?.id, hydrated, done, scenarios?.length, scenarioSyncKey, evalIds?.length, envState.scenarios?.length, envState.evals?.length, envState.agent, source, name, difficulty, dispatch, buildReplication]);
+  }, [
+    env?.id,
+    hydrated,
+    done,
+    scenarios?.length,
+    scenarioSyncKey,
+    evalIds?.length,
+    envState.scenarios?.length,
+    envState.evals?.length,
+    envState.agent,
+    source,
+    name,
+    difficulty,
+    dispatch,
+    buildReplication,
+  ]);
 
   /*
     Step 5, First run (RSI PRD: "the suite runs once on the current agent
@@ -819,22 +1100,38 @@ export default function BuildFromAgent() {
   const firstRunRef = useRef(null);
   const firstRunWaitRef = useRef(null);
   useEffect(() => {
-    if (!env?.id || !hydrated || !scenariosDone || adoptedRef.current !== env.id) return;
+    if (
+      !env?.id ||
+      !hydrated ||
+      !scenariosDone ||
+      adoptedRef.current !== env.id
+    )
+      return;
     if (firstRunRef.current === env.id || !envState?.agent) return;
-    const saved = (envState.scenarios || []).filter((r) => !r.proposed && !r.checking);
+    const saved = (envState.scenarios || []).filter(
+      (r) => !r.proposed && !r.checking,
+    );
     if (!pool.length || saved.length < pool.length) return;
     const gap = blockingGapsForRun[0];
     if (gap) {
       if (firstRunWaitRef.current === env.id) return;
       firstRunWaitRef.current = env.id;
-      setTurns((prev) => [...prev, {
-        id: `first-run-wait-${Date.now()}`,
-        role: "builder",
-        title: "First run",
-        steps: [{ kind: "note", text: fromIssue
-          ? `Waiting on one step: ${gap.title || "a setup step"}. Then continue fixing ${fromIssue} from the banner above.`
-          : `Waiting on one step: ${gap.title || "a setup step"}. Then run it once — Run simulation, top right.` }],
-      }]);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `first-run-wait-${Date.now()}`,
+          role: "builder",
+          title: "First run",
+          steps: [
+            {
+              kind: "note",
+              text: fromIssue
+                ? `Waiting on one step: ${gap.title || "a setup step"}. Then continue fixing ${fromIssue} from the banner above.`
+                : `Waiting on one step: ${gap.title || "a setup step"}. Then run it once — Run simulation, top right.`,
+            },
+          ],
+        },
+      ]);
       return;
     }
     /* Built — the first run is the person's to start and watch, like every
@@ -844,13 +1141,30 @@ export default function BuildFromAgent() {
        today's version — so the note sends the person back to the fix. */
     firstRunRef.current = env.id;
     const agentLabel = currentAgentVersion(envState)?.label || "v1";
-    play(fromIssue ? "Ready to fix" : "Ready to run", [
-      { kind: "note", text: fromIssue
-        ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above: the fix's first step runs them on agent ${agentLabel}, so there's nothing to run by hand.`
-        : `Built. Run it once on agent ${agentLabel} to see where it stands today — ${saved.length} scenarios, 3 repeats each. Run simulation, top right, starts it, and you watch it as it goes.` },
-    ], [], null);
+    play(
+      fromIssue ? "Ready to fix" : "Ready to run",
+      [
+        {
+          kind: "note",
+          text: fromIssue
+            ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above: the fix's first step runs them on agent ${agentLabel}, so there's nothing to run by hand.`
+            : `Built. Run it once on agent ${agentLabel} to see where it stands today — ${saved.length} scenarios, 3 repeats each. Run simulation, top right, starts it, and you watch it as it goes.`,
+        },
+      ],
+      [],
+      null,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [env?.id, hydrated, scenariosDone, envState?.agent, envState?.scenarios, pool.length, blockingGapsForRun.length, fromIssue]);
+  }, [
+    env?.id,
+    hydrated,
+    scenariosDone,
+    envState?.agent,
+    envState?.scenarios,
+    pool.length,
+    blockingGapsForRun.length,
+    fromIssue,
+  ]);
 
   /* Back out of the source picker leaves the route; back out of a derivation
      returns to the picker, so a wrong URL is one click to fix, not a reload.
@@ -860,25 +1174,61 @@ export default function BuildFromAgent() {
   /* Stopping and restarting. A restart runs the stage it stopped at, once
      the page has the source it should use (a smaller count, say). */
   const stageNow = STAGE_ORDER.find((sid) => !done.includes(sid)) || null;
-  const FIRST_STEP_OF = { understand: "understand", build: "generate-env", scenarios: "generate-scenarios" };
-  const building = !!source && !!stageNow && !halt && !(!intake && !presetSource);
+  const FIRST_STEP_OF = {
+    understand: "understand",
+    build: "generate-env",
+    scenarios: "generate-scenarios",
+  };
+  const building =
+    !!source && !!stageNow && !halt && !(!intake && !presetSource);
   /* Finished while the question was open: there's nothing left to stop. */
-  useEffect(() => { if (cancelAsk && !building) setCancelAsk(false); }, [cancelAsk, building]);
+  useEffect(() => {
+    if (cancelAsk && !building) setCancelAsk(false);
+  }, [cancelAsk, building]);
   const cancelBuild = () => {
-    if (!stageNow) { setCancelAsk(false); return; }
+    if (!stageNow) {
+      setCancelAsk(false);
+      return;
+    }
     timers.current.forEach(clearTimeout);
     timers.current = [];
     setRunning(false);
     setCancelAsk(false);
-    setHalt({ kind: "canceled", stage: stageNow, stepId: FIRST_STEP_OF[stageNow] });
-    setTurns((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", steps: [{ kind: "note", text: "Build canceled. What was done before it stays; restart it from the bar at the top." }] }]);
-    if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "canceled" } });
+    setHalt({
+      kind: "canceled",
+      stage: stageNow,
+      stepId: FIRST_STEP_OF[stageNow],
+    });
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [
+          {
+            kind: "note",
+            text: "Build canceled. What was done before it stays; restart it from the bar at the top.",
+          },
+        ],
+      },
+    ]);
+    if (env?.id)
+      dispatch({
+        type: "patchEnvironment",
+        envId: env.id,
+        patch: { buildStatus: "canceled" },
+      });
   };
   const restartBuild = (count) => {
     if (count) setSource((cur) => ({ ...cur, scenarioCount: count }));
     const from = halt?.stage || stageNow;
     setHalt(null);
-    if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "building" } });
+    if (env?.id)
+      dispatch({
+        type: "patchEnvironment",
+        envId: env.id,
+        patch: { buildStatus: "building" },
+      });
     setRetryStage(from);
   };
   useEffect(() => {
@@ -888,15 +1238,20 @@ export default function BuildFromAgent() {
     runStage(from);
   }, [retryStage, source]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Said before the build gets there: this many scenarios is more than the credits left cover. */
-  const creditsAhead = building && !done.includes("scenarios") ? buildCreditsCheck(Number(source?.scenarioCount) || 0) : null;
+  const creditsAhead =
+    building && !done.includes("scenarios")
+      ? buildCreditsCheck(Number(source?.scenarioCount) || 0)
+      : null;
 
   const goBack = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
     /* A finished build is kept as it stands — the name typed in the header
        included — before leaving; there's no separate "Open environment". */
-    if (env && done.includes("build")) prime({ ...env, name: name.trim() || env.name, difficulty });
-    if (!source || presetSource) return navigate(paths.dashboard.simulate.environments);
+    if (env && done.includes("build"))
+      prime({ ...env, name: name.trim() || env.name, difficulty });
+    if (!source || presetSource)
+      return navigate(paths.dashboard.simulate.environments);
     setSource(null);
     setTurns([]);
     setDone([]);
@@ -908,7 +1263,14 @@ export default function BuildFromAgent() {
   };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       <Header
         onBack={goBack}
         backLabel={source ? "Change source" : "All environments"}
@@ -919,10 +1281,14 @@ export default function BuildFromAgent() {
         done={done}
         scenarioCount={scenarios?.length || 0}
         scenarioProgress={scenarioProgress}
-        agentPrompt={buildsAgent(source) && env ? agentPromptOf(source, env) : null}
+        agentPrompt={
+          buildsAgent(source) && env ? agentPromptOf(source, env) : null
+        }
         replication={buildReplication}
-        name={name} setName={setName}
-        editingName={editingName} setEditingName={setEditingName}
+        name={name}
+        setName={setName}
+        editingName={editingName}
+        setEditingName={setEditingName}
         onRun={runNow}
         canGo={canLeave}
         blockedReason={runBlockedReason}
@@ -932,52 +1298,125 @@ export default function BuildFromAgent() {
 
       {halt && <BuildHaltStrip halt={halt} onRestart={restartBuild} />}
       {!halt && creditsAhead && !creditsAhead.ok && (
-        <BuildCreditsStrip credits={creditsAhead} count={Number(source?.scenarioCount) || 0} onUse={(n) => setSource((cur) => ({ ...cur, scenarioCount: n }))} />
+        <BuildCreditsStrip
+          credits={creditsAhead}
+          count={Number(source?.scenarioCount) || 0}
+          onUse={(n) => setSource((cur) => ({ ...cur, scenarioCount: n }))}
+        />
       )}
-      <Dialog open={cancelAsk} onClose={() => setCancelAsk(false)} PaperProps={{ sx: { width: 440, p: 2.5, borderRadius: 2, backgroundImage: "none" } }}>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>Stop this build?</Typography>
+      <Dialog
+        open={cancelAsk}
+        onClose={() => setCancelAsk(false)}
+        PaperProps={{ sx: { width: 560, p: 2.5, backgroundImage: "none" } }}
+      >
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          Stop this build?
+        </Typography>
         <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
           {`It stops at ${(STAGE_LABEL[stageNow] || "the current step").toLowerCase()}. What's done so far stays, and nothing more is built or charged. You can restart it from here.`}
         </Typography>
-        <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2.5 }}>
-          <Button size="small" onClick={() => setCancelAsk(false)} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Keep building</Button>
-          <Button size="small" variant="contained" color="primary" onClick={cancelBuild} sx={{ typography: "s2", fontWeight: 700 }}>Stop build</Button>
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{ mt: 2.5 }}
+        >
+          <Button
+            size="small"
+            onClick={() => setCancelAsk(false)}
+            sx={{ color: "text.secondary" }}
+          >
+            Keep building
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={cancelBuild}
+          >
+            Stop build
+          </Button>
         </Stack>
       </Dialog>
 
       {/* Sent here by an issue's Fix: once the environment exists, the shared
           banner says what's left and leads back (Continue fixing opens Fix). */}
-      {fromIssue && env?.id && storeState.myEnvironments?.some((e) => e.id === env.id && e.returnToIssue) ? (
+      {fromIssue &&
+      env?.id &&
+      storeState.myEnvironments?.some(
+        (e) => e.id === env.id && e.returnToIssue,
+      ) ? (
         <IssueReturnBanner envId={env.id} />
-      ) : fromIssue && (
-        <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-          <Iconify icon="solar:bug-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
-          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-            {`Building this agent's environment for ${fromIssue}. When it's built, you can continue the fix.`}
-          </Typography>
-        </Stack>
+      ) : (
+        fromIssue && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{
+              px: 2,
+              py: 1,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            <Iconify
+              icon="solar:bug-linear"
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
+            />
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {`Building this agent's environment for ${fromIssue}. When it's built, you can continue the fix.`}
+            </Typography>
+          </Stack>
+        )
       )}
 
       {/* The build view runs edge to edge — chat and environment split by one
           rule — so it drops the padding the picker and intake steps use. */}
-      <Box sx={{ flex: 1, minHeight: 0, overflow: source ? "hidden" : "auto", p: source && (intake || presetSource) && !awaitReadAck ? 0 : 2 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflow: source ? "hidden" : "auto",
+          p: source && (intake || presetSource) && !awaitReadAck ? 0 : 2,
+        }}
+      >
         {!source ? (
           <SourcePicker
-            kind={kind} setKind={setKind}
-            value={value} setValue={setValue}
-            refKind={refKind} setRefKind={setRefKind}
-            refValue={refValue} setRefValue={setRefValue}
+            kind={kind}
+            setKind={setKind}
+            value={value}
+            setValue={setValue}
+            refKind={refKind}
+            setRefKind={setRefKind}
+            refValue={refValue}
+            setRefValue={setRefValue}
             chosen={chosen}
             sources={sources}
-            modality={modality} onPickModality={pickModality}
-            provider={provider} setProvider={setProvider}
-            keyRef={keyRef} setKeyRef={setKeyRef}
-            file={file} setFile={setFile}
-            runtime={runtime} setRuntime={setRuntime}
-            runtimeTypeId={runtimeTypeId} setRuntimeTypeId={setRuntimeTypeId}
+            modality={modality}
+            onPickModality={pickModality}
+            provider={provider}
+            setProvider={setProvider}
+            keyRef={keyRef}
+            setKeyRef={setKeyRef}
+            file={file}
+            setFile={setFile}
+            runtime={runtime}
+            setRuntime={setRuntime}
+            runtimeTypeId={runtimeTypeId}
+            setRuntimeTypeId={setRuntimeTypeId}
             onStart={start}
           />
-        ) : (!intake && !presetSource) ? (
+        ) : !intake && !presetSource ? (
           /*
             Intake: chat is full-width and the questionnaire card sits
             right above the input, Claude-style. Nothing derives yet;
@@ -988,7 +1427,8 @@ export default function BuildFromAgent() {
             landing and intake settling produced a visible flash.
           */
           <IntakeStage
-            turns={turns} running={running}
+            turns={turns}
+            running={running}
             onSend={onSend}
             defaultName={env?.name || ""}
             defaultDifficulty={env?.difficulty || "Advanced"}
@@ -1015,13 +1455,21 @@ export default function BuildFromAgent() {
           />
         ) : (
           <Deriving
-            turns={turns} running={running} chips={chips}
-            onSend={onSend} onChip={onChip} done={done} source={source}
-            env={env} envState={envState} patch={envPatch}
+            turns={turns}
+            running={running}
+            chips={chips}
+            onSend={onSend}
+            onChip={onChip}
+            done={done}
+            source={source}
+            env={env}
+            envState={envState}
+            patch={envPatch}
             scenarios={scenarios}
             scenarioProgress={scenarioProgress}
             contractProgress={contractProgress}
-            evalIds={evalIds} onAddEvals={() => setAddingEvals(true)}
+            evalIds={evalIds}
+            onAddEvals={() => setAddingEvals(true)}
             onBuilderTurn={runBuilderTurn}
             onRun={runNow}
           />
@@ -1035,7 +1483,9 @@ export default function BuildFromAgent() {
         env={env}
         envState={{ scenarios, evals: evalIds, agent: null }}
         existingIds={new Set(evalIds)}
-        onAdd={(added) => setEvalIds((ids) => [...new Set([...ids, ...added.map((e) => e.id)])])}
+        onAdd={(added) =>
+          setEvalIds((ids) => [...new Set([...ids, ...added.map((e) => e.id)])])
+        }
       />
     </Box>
   );
@@ -1052,7 +1502,8 @@ function agentRefLabel(source, env) {
     return `${source.value || env?.id}${ref}`;
   }
   if (source?.kind === "endpoint") return source.value || env?.id;
-  if (source?.kind === "platform") return `${source.provider || "platform"} · ${source.value || env?.id}`;
+  if (source?.kind === "platform")
+    return `${source.provider || "platform"} · ${source.value || env?.id}`;
   return env?.id || "agent";
 }
 
@@ -1074,7 +1525,11 @@ function buildReading(env) {
   /* Behavior — a small hand-picked set of prompt/inferred facts to
      illustrate the source distinction. */
   const behavior = [
-    { name: "routing prompt", note: `${Math.max(3, (env.tools || []).length - 1)} branches`, origin: "prompt" },
+    {
+      name: "routing prompt",
+      note: `${Math.max(3, (env.tools || []).length - 1)} branches`,
+      origin: "prompt",
+    },
     { name: "transfer → front desk", origin: "prompt" },
     { name: "escalate on 2× refusal", origin: "inferred" },
   ];
@@ -1100,7 +1555,8 @@ function buildQuestions(env) {
   }
   questions.push({
     id: "policy-enforcement",
-    title: "Are the policy values enforced in your backend, or only stated in the prompt?",
+    title:
+      "Are the policy values enforced in your backend, or only stated in the prompt?",
     why: "We can see the values, not where they're enforced. A rule we only infer is graded more softly than a hard one.",
     kind: "boolean",
   });
@@ -1123,10 +1579,27 @@ function buildQuestions(env) {
 /* ── header ──────────────────────────────────────────────────────────────── */
 
 function Header({
-  onBack, backLabel, source, env, envState, patch, done, running, scenarioCount,
-  scenarioProgress, agentPrompt, replication,
-  name, setName, editingName, setEditingName,
-  onRun, canGo, blockedReason, halt = null, onCancel = null,
+  onBack,
+  backLabel,
+  source,
+  env,
+  envState,
+  patch,
+  done,
+  running,
+  scenarioCount,
+  scenarioProgress,
+  agentPrompt,
+  replication,
+  name,
+  setName,
+  editingName,
+  setEditingName,
+  onRun,
+  canGo,
+  blockedReason,
+  halt = null,
+  onCancel = null,
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const navigate = useNavigate();
@@ -1138,7 +1611,11 @@ function Header({
      transformed into the SelectionBar — its "Run N selected" is
      the primary in that state, and keeping the header CTA visible
      duplicates the affordance in two places. */
-  const scenarioSelection = useSyncExternalStore(subscribeScenarioSelection, getScenarioSelection, getScenarioSelection);
+  const scenarioSelection = useSyncExternalStore(
+    subscribeScenarioSelection,
+    getScenarioSelection,
+    getScenarioSelection,
+  );
   const selectionCount = scenarioSelection?.ids?.length || 0;
   /* Repeats picker — same PRD AC-10.7 dial as the workspace header.
      Run simulation starts straight away with this value. */
@@ -1159,30 +1636,60 @@ function Header({
     not "audit the pipeline".
   */
   const [pipeAnchor, setPipeAnchor] = useState(null);
-  const pipeline = pipelineStatus(done, running && !halt, "setup", halt?.kind === "failed" ? { stepId: halt.stepId, message: halt.message } : null);
+  const pipeline = pipelineStatus(
+    done,
+    running && !halt,
+    "setup",
+    halt?.kind === "failed"
+      ? { stepId: halt.stepId, message: halt.message }
+      : null,
+  );
   const pipeSummary = pipelineSummary(pipeline);
   /* True once every setup-phase stage has finished — the environment is built.
      Hoisted to the Header body so both the status chip and the Run-simulation
      button (which is hidden until the env is built) can read it. */
-  const setupDone = pipeline.filter((st) => st.phase === "setup").every((st) => st.status === "done");
-
+  const setupDone = pipeline
+    .filter((st) => st.phase === "setup")
+    .every((st) => st.status === "done");
 
   return (
     <Stack
-      direction="row" alignItems="center" spacing={2}
-      sx={{ px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      direction="row"
+      alignItems="center"
+      spacing={2}
+      sx={{
+        px: 3,
+        py: 1.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+      }}
     >
       <Tooltip title={backLabel} arrow>
-        <Button onClick={onBack} sx={{ minWidth: 32, width: 32, height: 32, p: 0, color: "text.subtitle", flexShrink: 0 }}>
-          <Iconify icon="solar:alt-arrow-left-linear" width={18} />
+        <Button
+          onClick={onBack}
+          sx={{
+            minWidth: 32,
+            width: 32,
+            color: "text.subtitle",
+            flexShrink: 0,
+          }}
+        >
+          <Iconify icon="solar:alt-arrow-left-linear" width={20} />
         </Button>
       </Tooltip>
 
       {!source ? (
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>Connect agent source</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· Stage 1</Typography>
+            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
+              Connect agent source
+            </Typography>
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}
+            >
+              · Stage 1
+            </Typography>
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             We read the agent rather than asking you to describe it
@@ -1191,21 +1698,45 @@ function Header({
       ) : (
         <>
           {/* The derived name, corrected in place rather than asked for in a form. */}
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0, minWidth: 0 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ flexShrink: 0, minWidth: 0 }}
+          >
             {editingName ? (
               <TextField
-                size="small" value={name} autoFocus
+                size="small"
+                value={name}
+                autoFocus
                 onChange={(e) => setName(e.target.value)}
                 onBlur={() => setEditingName(false)}
                 onKeyDown={(e) => e.key === "Enter" && setEditingName(false)}
-                sx={{ width: 360, "& .MuiInputBase-input": { typography: "s1_2", fontWeight: 700, py: 0.5 } }}
+                sx={{
+                  width: 360,
+                  "& .MuiInputBase-input": {
+                    typography: "s1_2",
+                    fontWeight: 600,
+                    py: 0.5,
+                  },
+                }}
               />
             ) : (
               <>
-                <Typography noWrap title={name} sx={{ typography: "s1_2", fontWeight: 700, maxWidth: 360 }}>{name}</Typography>
+                <Typography
+                  noWrap
+                  title={name}
+                  sx={{ typography: "s1_2", fontWeight: 600, maxWidth: 360 }}
+                >
+                  {name}
+                </Typography>
                 <Tooltip arrow title="Rename">
                   <IconButton size="small" onClick={() => setEditingName(true)}>
-                    <Iconify icon="solar:pen-new-square-linear" width={14} sx={{ color: "text.subtitle" }} />
+                    <Iconify
+                      icon="solar:pen-new-square-linear"
+                      width={14}
+                      sx={{ color: "text.subtitle" }}
+                    />
                   </IconButton>
                 </Tooltip>
                 {/* No env-version chip — the environment's own page has its history. */}
@@ -1221,126 +1752,258 @@ function Header({
                 */}
                 <Box sx={{ display: { xs: "none", md: "block" } }}>
                   {(() => {
-                    const running = pipeline.find((st) => st.status === "running");
-              /*
+                    const running = pipeline.find(
+                      (st) => st.status === "running",
+                    );
+                    /*
                 "Ready to run" was only checking pipeline status —
                 it flipped green the moment derivation finished, even
                 though blocking user gaps (no evals added, missing
                 sandbox secret) genuinely stop a run. Read the same
                 setupGaps the tabs use so the chip tells the truth.
               */
-              const blockingGaps = env && envState
-                ? setupGaps(env, envState).filter((g) => g.status === "blocking")
-                : [];
+                    const blockingGaps =
+                      env && envState
+                        ? setupGaps(env, envState).filter(
+                            (g) => g.status === "blocking",
+                          )
+                        : [];
 
-              if (pipeSummary.failed) {
-                return (
-                  <Stack
-                    direction="row" alignItems="center" spacing={1}
-                    sx={{
-                      px: 1.25, py: 0.625, borderRadius: 999,
-                      border: "1px solid", borderColor: alpha("#DC2626", 0.4),
-                      bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
-                    }}
-                  >
-                    <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: "#DC2626" }} />
-                    <Typography sx={{ typography: "s2", fontWeight: 600, color: "#DC2626" }}>
-                      Failed at {pipeSummary.failed.label.toLowerCase()}
-                    </Typography>
-                  </Stack>
-                );
-              }
-              if (halt?.kind === "canceled") {
-                return (
-                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 1.125, py: 0.5, borderRadius: 999, border: "1px solid", borderColor: "divider" }}>
-                    <Iconify icon="solar:stop-circle-linear" width={13} sx={{ color: "text.secondary" }} />
-                    <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Build canceled</Typography>
-                  </Stack>
-                );
-              }
-              if (running || !setupDone) {
-                return (
-                  <Stack
-                    direction="row" alignItems="center" spacing={0.75}
-                    sx={{
-                      px: 1.125, py: 0.5, borderRadius: 999,
-                      border: "1px solid", borderColor: alpha("#7857FC", 0.35),
-                      bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: 6, height: 6, borderRadius: "50%", bgcolor: "#7857FC", flexShrink: 0,
-                        animation: "chip-pulse 1.4s ease-in-out infinite",
-                        "@keyframes chip-pulse": {
-                          "0%,100%": { opacity: 0.4, transform: "scale(1)" },
-                          "50%": { opacity: 1, transform: "scale(1.15)" },
-                        },
-                      }}
-                    />
-                    <Typography sx={{ typography: "s2", fontWeight: 700, color: "#7857FC", fontVariantNumeric: "tabular-nums" }}>
-                      {scenarioProgress?.streaming && scenarioProgress.total
-                        ? `Writing scenarios · ${scenarioProgress.shown} of ${scenarioProgress.total}`
-                        : "Building"}
-                    </Typography>
-                  </Stack>
-                );
-              }
+                    if (pipeSummary.failed) {
+                      return (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={1}
+                          sx={{
+                            px: 1.25,
+                            py: 0.625,
+                            borderRadius: 999,
+                            border: "1px solid",
+                            borderColor: "status.danger.border",
+                            bgcolor: "status.danger.bg",
+                          }}
+                        >
+                          <Iconify
+                            icon="solar:danger-triangle-bold"
+                            width={14}
+                            sx={{ color: "status.danger.fg" }}
+                          />
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              color: "status.danger.fg",
+                            }}
+                          >
+                            Failed at {pipeSummary.failed.label.toLowerCase()}
+                          </Typography>
+                        </Stack>
+                      );
+                    }
+                    if (halt?.kind === "canceled") {
+                      return (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.75}
+                          sx={{
+                            px: 1.125,
+                            py: 0.5,
+                            borderRadius: 999,
+                            border: "1px solid",
+                            borderColor: "divider",
+                          }}
+                        >
+                          <Iconify
+                            icon="solar:stop-circle-linear"
+                            width={14}
+                            sx={{ color: "text.secondary" }}
+                          />
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              color: "text.secondary",
+                            }}
+                          >
+                            Build canceled
+                          </Typography>
+                        </Stack>
+                      );
+                    }
+                    if (running || !setupDone) {
+                      return (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.75}
+                          sx={{
+                            px: 1.125,
+                            py: 0.5,
+                            borderRadius: 999,
+                            border: "1px solid",
+                            borderColor: "status.discovery.border",
+                            bgcolor: "status.discovery.bg",
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: "50%",
+                              bgcolor: "status.discovery.solid",
+                              flexShrink: 0,
+                              animation: "chip-pulse 1.4s ease-in-out infinite",
+                              "@keyframes chip-pulse": {
+                                "0%,100%": {
+                                  opacity: 0.4,
+                                  transform: "scale(1)",
+                                },
+                                "50%": { opacity: 1, transform: "scale(1.15)" },
+                              },
+                            }}
+                          />
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              color: "status.discovery.fg",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {scenarioProgress?.streaming &&
+                            scenarioProgress.total
+                              ? `Writing scenarios · ${scenarioProgress.shown} of ${scenarioProgress.total}`
+                              : "Building"}
+                          </Typography>
+                        </Stack>
+                      );
+                    }
 
-              /*
+                    /*
                 Blocking gaps outrank "ready" — the run can't start until
                 they're answered. When there's a single well-known gap
                 (e.g. no evaluations added), name it instead of the
                 generic count so the user knows exactly what to do.
               */
-              if (blockingGaps.length > 0) {
-                const g = blockingGaps[0];
-                const label = blockingGaps.length === 1
-                  ? (g.id === "no-evals" ? "Add evaluations to run" : g.title || "1 step to complete")
-                  : `${blockingGaps.length} steps to complete`;
-                /* Neutral, with the one red mark. Live-test consent is given right
+                    if (blockingGaps.length > 0) {
+                      const g = blockingGaps[0];
+                      const label =
+                        blockingGaps.length === 1
+                          ? g.id === "no-evals"
+                            ? "Add evaluations to run"
+                            : g.title || "1 step to complete"
+                          : `${blockingGaps.length} steps to complete`;
+                      /* Neutral, with the one red mark. Live-test consent is given right
                    here in a dialog; anything else goes where the step is done. */
-                const consent = blockingGaps.length === 1 && g.code === "gap_live_consent" && !!envState?.agent;
-                const href = !consent && blockingGaps.length === 1 && g.ask?.href ? g.ask.href : null;
-                return (
-                  <Tooltip arrow title={blockingGaps.length === 1 ? (g.why || "") : blockingGaps.map((x) => x.title).join(" · ")}>
-                    <Stack
-                      direction="row" alignItems="center" spacing={0.75}
-                      {...clickable(consent ? () => setConsentOpen(true) : href ? () => navigate(href) : undefined)}
-                      sx={{ ...focusRing,
-                        px: 1, height: 24, borderRadius: 0.75, border: "1px solid", borderColor: "divider",
-                        cursor: href || consent ? "pointer" : "default", "&:hover": href || consent ? { bgcolor: "action.hover" } : undefined,
-                      }}
-                    >
-                      <Iconify icon="solar:danger-triangle-linear" width={13} sx={{ color: "#DC2626" }} />
-                      <Typography noWrap sx={{ typography: "s3", fontWeight: 600, color: "text.primary" }}>{label}</Typography>
-                      {(href || consent) && <Iconify icon="solar:arrow-right-linear" width={12} sx={{ color: "text.subtitle" }} />}
-                    </Stack>
-                  </Tooltip>
-                );
-              }
+                      const consent =
+                        blockingGaps.length === 1 &&
+                        g.code === "gap_live_consent" &&
+                        !!envState?.agent;
+                      const href =
+                        !consent && blockingGaps.length === 1 && g.ask?.href
+                          ? g.ask.href
+                          : null;
+                      return (
+                        <Tooltip
+                          arrow
+                          title={
+                            blockingGaps.length === 1
+                              ? g.why || ""
+                              : blockingGaps.map((x) => x.title).join(" · ")
+                          }
+                        >
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.75}
+                            {...clickable(
+                              consent
+                                ? () => setConsentOpen(true)
+                                : href
+                                  ? () => navigate(href)
+                                  : undefined,
+                            )}
+                            sx={{
+                              ...focusRing,
+                              px: 1,
+                              height: 24,
+                              borderRadius: "4px",
+                              border: "1px solid",
+                              borderColor: "divider",
+                              cursor: href || consent ? "pointer" : "default",
+                              "&:hover":
+                                href || consent
+                                  ? { bgcolor: "action.hover" }
+                                  : undefined,
+                            }}
+                          >
+                            <Iconify
+                              icon="solar:danger-triangle-linear"
+                              width={14}
+                              sx={{ color: "status.danger.fg" }}
+                            />
+                            <Typography
+                              noWrap
+                              sx={{
+                                typography: "s3",
+                                fontWeight: 600,
+                                color: "text.primary",
+                              }}
+                            >
+                              {label}
+                            </Typography>
+                            {(href || consent) && (
+                              <Iconify
+                                icon="solar:arrow-right-linear"
+                                width={12}
+                                sx={{ color: "text.subtitle" }}
+                              />
+                            )}
+                          </Stack>
+                        </Tooltip>
+                      );
+                    }
 
-              /*
+                    /*
                 Just the pill. The "N need your input" chip lived here too, but
                 the dedicated Needs-your-input tab already carries that count in
                 its label — a second surface for the same signal was noise.
               */
-              return (
-                <Stack
-                  direction="row" alignItems="center" spacing={0.75}
-                  sx={{
-                    px: 1.125, py: 0.5, borderRadius: 999,
-                    border: "1px solid",
-                    borderColor: (t) => alpha("#16A34A", 0.35),
-                    bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.14 : 0.08),
-                  }}
-                >
-                  <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "#16A34A" }} />
-                  <Typography sx={{ typography: "s2", fontWeight: 700, color: "#16A34A" }}>
-                    Ready
-                  </Typography>
-                </Stack>
-              );
+                    return (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.75}
+                        sx={{
+                          px: 1.125,
+                          py: 0.5,
+                          borderRadius: 999,
+                          border: "1px solid",
+                          borderColor: "status.success.border",
+                          bgcolor: "status.success.bg",
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            bgcolor: "status.success.solid",
+                          }}
+                        />
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            fontWeight: 600,
+                            color: "status.success.fg",
+                          }}
+                        >
+                          Ready
+                        </Typography>
+                      </Stack>
+                    );
                   })()}
                 </Box>
                 {/* The copy this build runs against — for a provider clone,
@@ -1349,20 +2012,48 @@ function Header({
                 {/* The prompt the build is reading — open while it builds and
                     after, so what was derived can be checked against it. */}
                 {agentPrompt && (
-                  <Tooltip arrow title="The agent's v1 prompt — what this build read">
-                    <IconButton size="small" onClick={() => setPromptOpen(true)} aria-label="Agent v1 prompt" sx={{ flexShrink: 0 }}>
-                      <Iconify icon="solar:document-text-linear" width={16} sx={{ color: "text.subtitle" }} />
+                  <Tooltip
+                    arrow
+                    title="The agent's v1 prompt — what this build read"
+                  >
+                    <IconButton
+                      size="small"
+                      onClick={() => setPromptOpen(true)}
+                      aria-label="Agent v1 prompt"
+                      sx={{ flexShrink: 0 }}
+                    >
+                      <Iconify
+                        icon="solar:document-text-linear"
+                        width={16}
+                        sx={{ color: "text.subtitle" }}
+                      />
                     </IconButton>
                   </Tooltip>
                 )}
               </>
             )}
           </Stack>
-          <AgentPromptDrawer open={promptOpen} onClose={() => setPromptOpen(false)} label="v1" prompt={agentPrompt} />
+          <AgentPromptDrawer
+            open={promptOpen}
+            onClose={() => setPromptOpen(false)}
+            label="v1"
+            prompt={agentPrompt}
+          />
           {envState?.agent && (
             <Dialog
-              open={consentOpen} onClose={() => setConsentOpen(false)} maxWidth="sm" fullWidth
-              PaperProps={{ sx: { borderRadius: 2, backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+              open={consentOpen}
+              onClose={() => setConsentOpen(false)}
+              maxWidth={false}
+              fullWidth
+              PaperProps={{
+                sx: {
+                  maxWidth: 720,
+                  borderRadius: 2,
+                  backgroundImage: "none",
+                  border: "1px solid",
+                  borderColor: "divider",
+                },
+              }}
             >
               <LiveConsentCard
                 agent={envState.agent}
@@ -1386,39 +2077,45 @@ function Header({
       {/* While it builds, the one thing to do is stop it. */}
       {onCancel && !setupDone && (
         <Button
-          size="small" variant="outlined" onClick={onCancel}
-          startIcon={<Iconify icon="solar:stop-circle-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+          size="small"
+          variant="outlined"
+          onClick={onCancel}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
           Cancel build
         </Button>
       )}
-      {source && setupDone && (() => {
-        const totalCount = scenarioCount || envState?.scenarios?.length || 0;
-        const runCount = selectionCount > 0 ? selectionCount : totalCount;
-        const runLabel = selectionCount > 0 ? `Run simulation (${selectionCount})` : "Run simulation";
-        return (
-          <Stack direction="row" alignItems="center" spacing={1}>
-            {/* No "Open environment" — this already is the environment; Back keeps it as it stands. */}
-            <TrialsPicker
-              trials={headerTrials}
-              onChange={setHeaderTrials}
-              scenarioCount={runCount}
-              unit={env?.surface === "voice" ? "call" : "conversation"}
-            />
-            <RunButton
-              label={runLabel}
-              onRun={() => {
-                const sel = scenarioSelection?.ids || [];
-                onRun(sel.length > 0 ? sel : undefined, headerTrials);
-              }}
-              canGo={canGo}
-              blockedReason={blockedReason}
-            />
-          </Stack>
-        );
-      })()}
-
+      {source &&
+        setupDone &&
+        (() => {
+          const totalCount = scenarioCount || envState?.scenarios?.length || 0;
+          const runCount = selectionCount > 0 ? selectionCount : totalCount;
+          const runLabel =
+            selectionCount > 0
+              ? `Run simulation (${selectionCount})`
+              : "Run simulation";
+          return (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              {/* No "Open environment" — this already is the environment; Back keeps it as it stands. */}
+              <TrialsPicker
+                trials={headerTrials}
+                onChange={setHeaderTrials}
+                scenarioCount={runCount}
+                unit={env?.surface === "voice" ? "call" : "conversation"}
+              />
+              <RunButton
+                label={runLabel}
+                onRun={() => {
+                  const sel = scenarioSelection?.ids || [];
+                  onRun(sel.length > 0 ? sel : undefined, headerTrials);
+                }}
+                canGo={canGo}
+                blockedReason={blockedReason}
+              />
+            </Stack>
+          );
+        })()}
     </Stack>
   );
 }
@@ -1436,16 +2133,29 @@ function CopyChip({ replication }) {
     : meta.how || replication.label || "";
   return (
     <Tooltip arrow title={tip}>
-      <Stack
-        direction="row" alignItems="center" spacing={0.5}
-        sx={{ display: { xs: "none", md: "flex" }, px: 0.75, height: 22, borderRadius: 0.75, border: "1px solid", borderColor: "divider", flexShrink: 0, cursor: "default" }}
-      >
-        <Iconify icon={MODE_ICONS[replication.mode] || "solar:copy-linear"} width={11} sx={{ color: "text.secondary", flexShrink: 0 }} />
-        <Typography noWrap sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>
-          <Box component="span" sx={{ fontWeight: 500, color: "text.subtitle", mr: 0.5 }}>Runs:</Box>
-          {proof || replication.label}
-        </Typography>
-      </Stack>
+      <Chip
+        size="small"
+        variant="outlined"
+        icon={
+          <Iconify
+            icon={MODE_ICONS[replication.mode] || "solar:copy-linear"}
+            width={12}
+          />
+        }
+        label={
+          <>
+            <Box component="span" sx={{ color: "text.tertiary", mr: 0.5 }}>
+              Runs:
+            </Box>
+            {proof || replication.label}
+          </>
+        }
+        sx={{
+          display: { xs: "none", md: "inline-flex" },
+          flexShrink: 0,
+          cursor: "default",
+        }}
+      />
     </Tooltip>
   );
 }
@@ -1457,14 +2167,15 @@ CopyChip.propTypes = { replication: PropTypes.object };
    env header stays context-free. */
 function RunButton({ onRun, canGo, blockedReason, label = "Run simulation" }) {
   return (
-    <Tooltip arrow title={canGo ? "" : (blockedReason || "")}>
+    <Tooltip arrow title={canGo ? "" : blockedReason || ""}>
       <span>
         <Button
-          variant="contained" color="primary"
+          variant="contained"
+          color="primary"
           disabled={!canGo}
           onClick={() => onRun()}
           startIcon={<Iconify icon="solar:play-bold" width={14} />}
-          sx={{ flexShrink: 0, typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
         >
           {label}
         </Button>
@@ -1481,13 +2192,27 @@ RunButton.propTypes = {
 
 Header.propTypes = {
   /* A build stopped part-way ({ kind: "canceled" | "failed", … }), and how to stop one. */
-  halt: PropTypes.object, onCancel: PropTypes.func,
-  onBack: PropTypes.func, backLabel: PropTypes.string,
-  source: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func, scenarioCount: PropTypes.number, done: PropTypes.array, running: PropTypes.bool,
-  scenarioProgress: PropTypes.object, agentPrompt: PropTypes.object, replication: PropTypes.object,
-  name: PropTypes.string, setName: PropTypes.func,
-  editingName: PropTypes.bool, setEditingName: PropTypes.func,
-  onRun: PropTypes.func, canGo: PropTypes.bool, blockedReason: PropTypes.string,
+  halt: PropTypes.object,
+  onCancel: PropTypes.func,
+  onBack: PropTypes.func,
+  backLabel: PropTypes.string,
+  source: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+  scenarioCount: PropTypes.number,
+  done: PropTypes.array,
+  running: PropTypes.bool,
+  scenarioProgress: PropTypes.object,
+  agentPrompt: PropTypes.object,
+  replication: PropTypes.object,
+  name: PropTypes.string,
+  setName: PropTypes.func,
+  editingName: PropTypes.bool,
+  setEditingName: PropTypes.func,
+  onRun: PropTypes.func,
+  canGo: PropTypes.bool,
+  blockedReason: PropTypes.string,
 };
 
 /* ── pick a source ───────────────────────────────────────────────────────── */
@@ -1495,7 +2220,31 @@ Header.propTypes = {
 /* Said after a curl fill that held a raw token. */
 const TOKEN_LEFT_OUT = " · token left out — add its reference below";
 
-function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, refValue, setRefValue, chosen, sources, modality, onPickModality, provider, setProvider, keyRef, setKeyRef, file, setFile, runtime, setRuntime, runtimeTypeId, setRuntimeTypeId, onStart }) {
+function SourcePicker({
+  kind,
+  setKind,
+  value,
+  setValue,
+  refKind,
+  setRefKind,
+  refValue,
+  setRefValue,
+  chosen,
+  sources,
+  modality,
+  onPickModality,
+  provider,
+  setProvider,
+  keyRef,
+  setKeyRef,
+  file,
+  setFile,
+  runtime,
+  setRuntime,
+  runtimeTypeId,
+  setRuntimeTypeId,
+  onStart,
+}) {
   /* What a run still needs, minus anything the source above already answers. */
   const [showMore, setShowMore] = useState(false);
   const [curl, setCurl] = useState("");
@@ -1505,7 +2254,9 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
   const runtimeChoices = kind === "platform" ? [] : runtimeTypesFor(modality);
   const runtimeType = runtimeTypeFor(modality, kind, runtimeTypeId);
   const owned = sourceOwnedKeys(kind);
-  const allRuntimeFields = (runtimeType?.fields || []).filter((f) => !owned.includes(f.key));
+  const allRuntimeFields = (runtimeType?.fields || []).filter(
+    (f) => !owned.includes(f.key),
+  );
   /*
     Only what a connection genuinely cannot work without. The rest — extra
     headers, reply and session paths, SSE — are things the test call can
@@ -1536,18 +2287,31 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
         {chosen.platform && (
           <Stack spacing={1.5}>
             <TextField
-              select size="small" label="Provider" value={provider}
+              select
+              size="small"
+              label="Provider"
+              value={provider}
               onChange={(e) => setProvider(e.target.value)}
-              sx={{ minWidth: 160, "& .MuiInputBase-input": { typography: "s2", py: 0.75 } }}
+              sx={{
+                minWidth: 160,
+                "& .MuiInputBase-input": { typography: "s2", py: 0.75 },
+              }}
             >
               {providersFor(modality).map((o) => (
-                <MenuItem key={o.value} value={o.value} sx={{ typography: "s2" }}>{o.label}</MenuItem>
+                <MenuItem
+                  key={o.value}
+                  value={o.value}
+                  sx={{ typography: "s2" }}
+                >
+                  {o.label}
+                </MenuItem>
               ))}
             </TextField>
             <SecretRefField
               label="API key"
               placeholder={`vault://acme/sim/${provider}_api_key`}
-              value={keyRef} onChange={setKeyRef}
+              value={keyRef}
+              onChange={setKeyRef}
             />
           </Stack>
         )}
@@ -1555,19 +2319,44 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
         {chosen.upload ? (
           file ? (
             <Stack
-              direction="row" alignItems="center" spacing={1.5}
-              sx={{ p: 1.5, borderRadius: 1.25, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                p: 1.5,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.neutral",
+              }}
             >
-              <Iconify icon="solar:file-check-linear" width={18} sx={{ color: "#16A34A", flexShrink: 0 }} />
+              <Iconify
+                icon="solar:file-check-linear"
+                width={20}
+                sx={{ color: "status.success.fg", flexShrink: 0 }}
+              />
               <Box flex={1} minWidth={0}>
-                <Typography noWrap sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace" }}>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                  }}
+                >
                   {file.name}
                 </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{formatFileSize(file.size)}</Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {formatFileSize(file.size)}
+                </Typography>
               </Box>
               <Tooltip arrow title="Remove">
                 <IconButton size="small" onClick={() => setFile(null)}>
-                  <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
+                  <Iconify
+                    icon="solar:close-circle-linear"
+                    width={16}
+                    sx={{ color: "text.subtitle" }}
+                  />
                 </IconButton>
               </Tooltip>
             </Stack>
@@ -1578,34 +2367,62 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
               showIllustration={false}
               heading="Upload your agent"
               description="A zip of the source, or an SDK bundle (.zip, .tar.gz)"
-              uploadIcon={<Iconify icon="solar:upload-square-linear" width={30} sx={{ color: "primary.main" }} />}
-              actionButton={
-                <Button size="small" variant="outlined" color="primary">Browse files</Button>
+              uploadIcon={
+                <Iconify
+                  icon="solar:upload-square-linear"
+                  width={30}
+                  sx={{ color: "primary.main" }}
+                />
               }
-              accept={{ "application/zip": [".zip"], "application/gzip": [".tar.gz", ".tgz"] }}
+              actionButton={
+                <Button size="small" variant="outlined" color="primary">
+                  Browse files
+                </Button>
+              }
+              accept={{
+                "application/zip": [".zip"],
+                "application/gzip": [".tar.gz", ".tgz"],
+              }}
               sx={{ py: 3 }}
               onDrop={(accepted) => setFile(accepted?.[0] || null)}
             />
           )
         ) : (
           <TextField
-            fullWidth size="small" value={value}
+            fullWidth
+            size="small"
+            value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onStart()}
-            placeholder={chosen.platform ? assistantIdLabel(provider).placeholder : chosen.placeholder}
-            label={chosen.platform ? assistantIdLabel(provider).label : "Location"}
+            placeholder={
+              chosen.platform
+                ? assistantIdLabel(provider).placeholder
+                : chosen.placeholder
+            }
+            label={
+              chosen.platform ? assistantIdLabel(provider).label : "Location"
+            }
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon={chosen.platform ? "solar:phone-calling-rounded-linear" : "solar:link-linear"}
-                    width={15}
+                    icon={
+                      chosen.platform
+                        ? "solar:phone-calling-rounded-linear"
+                        : "solar:link-linear"
+                    }
+                    width={16}
                     sx={{ color: "text.subtitle" }}
                   />
                 </InputAdornment>
               ),
             }}
-            sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+            sx={{
+              "& .MuiInputBase-input": {
+                typography: "s2",
+                fontFamily: "ui-monospace, Menlo, monospace",
+              },
+            }}
           />
         )}
 
@@ -1615,22 +2432,41 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
           back months later still says what it actually ran.
         */}
         {kind === "repo" && (
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.5}
+            alignItems={{ sm: "center" }}
+          >
             <TextField
-              select size="small" label="Pin to" value={refKind}
+              select
+              size="small"
+              label="Pin to"
+              value={refKind}
               onChange={(e) => setRefKind(e.target.value)}
-              sx={{ minWidth: 128, "& .MuiInputBase-input": { typography: "s2", py: 0.75 } }}
+              sx={{
+                minWidth: 128,
+                "& .MuiInputBase-input": { typography: "s2", py: 0.75 },
+              }}
             >
               {REF_KINDS.map((r) => (
-                <MenuItem key={r.id} value={r.id} sx={{ typography: "s2" }}>{r.label}</MenuItem>
+                <MenuItem key={r.id} value={r.id} sx={{ typography: "s2" }}>
+                  {r.label}
+                </MenuItem>
               ))}
             </TextField>
             <TextField
-              size="small" value={refValue}
+              size="small"
+              value={refValue}
               onChange={(e) => setRefValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && onStart()}
               placeholder={REF_KINDS.find((r) => r.id === refKind).placeholder}
-              sx={{ minWidth: 170, "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+              sx={{
+                minWidth: 170,
+                "& .MuiInputBase-input": {
+                  typography: "s2",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                },
+              }}
             />
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {REF_KINDS.find((r) => r.id === refKind).note}
@@ -1647,276 +2483,470 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
     (next to the derivation-engine explainer) instead of buried at the
     bottom of the source-kind list on the left.
   */
-  const runtimeSection = runtimeFields.length > 0 ? (
-    <SectionCard
-      title="How we reach it during a run"
-      subtitle={owned.length > 0
-        ? "The rest came from the source above — this is what it cannot tell us."
-        : "Reading tells us what the agent can do; a run has to call it turn by turn."}
-    >
-      <Box sx={{ p: 2.5 }}>
-        {runtimeChoices.length > 1 && (
-          <TextField
-            select size="small" label="Connect via" fullWidth
-            value={runtimeType?.id || ""}
-            onChange={(e) => { setRuntimeTypeId(e.target.value); setRuntime({}); }}
-            sx={{ mb: 2.25 }}
-          >
-            {runtimeChoices.map((t) => (
-              <MenuItem key={t.id} value={t.id} sx={{ display: "block" }}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{t.label}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{t.blurb}</Typography>
-              </MenuItem>
-            ))}
-          </TextField>
-        )}
+  const runtimeSection =
+    runtimeFields.length > 0 ? (
+      <SectionCard
+        title="How we reach it during a run"
+        subtitle={
+          owned.length > 0
+            ? "The rest came from the source above — this is what it cannot tell us."
+            : "Reading tells us what the agent can do; a run has to call it turn by turn."
+        }
+      >
+        <Box sx={{ p: 2.5 }}>
+          {runtimeChoices.length > 1 && (
+            <TextField
+              select
+              size="small"
+              label="Connect via"
+              fullWidth
+              value={runtimeType?.id || ""}
+              onChange={(e) => {
+                setRuntimeTypeId(e.target.value);
+                setRuntime({});
+              }}
+              sx={{ mb: 2.25 }}
+            >
+              {runtimeChoices.map((t) => (
+                <MenuItem key={t.id} value={t.id} sx={{ display: "block" }}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {t.label}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {t.blurb}
+                  </Typography>
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
 
-        {/*
+          {/*
           The deployed URL is usually already written down in the repo.
           Offering what we found — and where — beats asking someone to
           retype it, and the source is what lets them judge it:
           fly.toml is the deployment, .env.example is a guess.
         */}
-        {found.length > 0 && allRuntimeFields.some((f) => f.key === "endpoint") && (
-          <Box sx={{ mb: 2.25, border: "1px solid", borderColor: "divider", borderRadius: 1.25, overflow: "hidden" }}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25, bgcolor: "background.neutral" }}>
-              <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "primary.main", flexShrink: 0 }} />
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                {found.length} endpoints in your source
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>· pick one to fill this in</Typography>
-            </Stack>
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {found.map((c) => (
-                <Stack key={c.id} direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.75, py: 1.25 }}>
-                  <Box flex={1} minWidth={0}>
-                    <Stack direction="row" alignItems="center" spacing={0.875}>
-                      <Typography noWrap sx={{ typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" }}>
-                        {c.url}
-                      </Typography>
-                      <Typography sx={{ typography: "s3", color: textTone(CONFIDENCE[c.confidence].color, "text.secondary"), fontWeight: 700, flexShrink: 0 }}>
-                        {CONFIDENCE[c.confidence].label}
-                      </Typography>
-                    </Stack>
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                      <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{c.from}</Box> — {c.note}
-                    </Typography>
-                  </Box>
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      /* A curl carries the token itself — that never fills the form. */
-                      const { values: extra, dropped } = c.curl ? withoutRawSecrets(parseCurl(c.curl)) : { values: null, dropped: [] };
-                      setRuntime((st) => ({ ...st, ...(extra || {}), endpoint: c.url }));
-                      setCurlNote({ ok: true, text: `${extra ? `Filled ${describeFill({ ...extra, endpoint: c.url })}` : "Filled endpoint"} from ${c.from}${dropped.length ? TOKEN_LEFT_OUT : ""}` });
-                    }}
-                    sx={{ typography: "s2", fontWeight: 700, color: "primary.main", flexShrink: 0, minWidth: 0 }}
-                  >
-                    Use
-                  </Button>
-                </Stack>
-              ))}
-            </Stack>
-          </Box>
-        )}
-
-        {allRuntimeFields.some((f) => f.key === "endpoint") && (
-          <Box sx={{ mb: 2.25 }}>
-            <Stack direction="row" spacing={1} alignItems="flex-start">
-              <TextField
-                fullWidth size="small" multiline maxRows={4}
-                label="Paste a curl instead"
-                placeholder="curl https://api.yourapp.com/agent/chat -H 'Authorization: Bearer …'"
-                value={curl}
-                onChange={(e) => { setCurl(e.target.value); setCurlNote(null); }}
-                sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
-              />
-              <Button
-                variant="outlined" size="small"
-                disabled={!curl.trim()}
-                onClick={() => {
-                  const parsed = parseCurl(curl);
-                  if (!parsed) return setCurlNote({ ok: false, text: "No URL in that — paste the whole command." });
-                  /* The token in a pasted curl is the key itself — left out; its reference goes in the field. */
-                  const { values: safe, dropped } = withoutRawSecrets(parsed);
-                  setRuntime((st) => ({ ...st, ...safe }));
-                  setCurlNote({ ok: true, text: `Filled ${describeFill(safe)}${dropped.length ? TOKEN_LEFT_OUT : ""}` });
+          {found.length > 0 &&
+            allRuntimeFields.some((f) => f.key === "endpoint") && (
+              <Box
+                sx={{
+                  mb: 2.25,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "8px",
+                  overflow: "hidden",
                 }}
-                sx={{ typography: "s2", fontWeight: 700, flexShrink: 0, mt: 0.25, color: "text.primary", borderColor: "divider" }}
               >
-                Fill
-              </Button>
-            </Stack>
-            {curlNote && (
-              <Stack direction="row" spacing={0.875} alignItems="center" sx={{ mt: 0.875 }}>
-                <Iconify
-                  icon={curlNote.ok ? "solar:check-circle-bold" : "solar:info-circle-linear"}
-                  width={14}
-                  sx={{ color: curlNote.ok ? "#16A34A" : "text.subtitle", flexShrink: 0 }}
-                />
-                <Typography sx={{ typography: "s3", color: curlNote.ok ? "text.secondary" : "text.subtitle" }}>
-                  {curlNote.text}
-                </Typography>
-              </Stack>
-            )}
-          </Box>
-        )}
-
-        <Stack spacing={2.25}>
-          {runtimeFields.map((f) => (
-            <DynamicField
-              key={f.key}
-              field={f}
-              value={runtime[f.key]}
-              values={runtime}
-              onChange={(v) => setRuntime((st) => ({ ...st, [f.key]: v }))}
-            />
-          ))}
-        </Stack>
-
-        {optionalFields.length > 0 && (
-          <Box sx={{ mt: 1.75 }}>
-            <Button
-              size="small"
-              onClick={() => setShowMore((o) => !o)}
-              startIcon={
-                <Iconify icon={showMore ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={14} />
-              }
-              sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", px: 0.5 }}
-            >
-              {showMore ? "Hide" : `${optionalFields.length} more, usually detected`}
-            </Button>
-            <Collapse in={showMore} unmountOnExit>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 2, mt: 0.5 }}>
-                We work these out from the first call. Set them only if we get them wrong.
-              </Typography>
-              <Stack spacing={2.25}>
-                {optionalFields.map((f) => (
-                  <DynamicField
-                    key={f.key}
-                    field={f}
-                    value={runtime[f.key]}
-                    values={runtime}
-                    onChange={(v) => setRuntime((st) => ({ ...st, [f.key]: v }))}
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ px: 1.75, py: 1.25, bgcolor: "background.neutral" }}
+                >
+                  <Iconify
+                    icon="solar:magnifer-linear"
+                    width={14}
+                    sx={{ color: "primary.main", flexShrink: 0 }}
                   />
-                ))}
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {found.length} endpoints in your source
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    · pick one to fill this in
+                  </Typography>
+                </Stack>
+                <Stack
+                  divider={
+                    <Box
+                      sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                    />
+                  }
+                >
+                  {found.map((c) => (
+                    <Stack
+                      key={c.id}
+                      direction="row"
+                      alignItems="center"
+                      spacing={1.5}
+                      sx={{ px: 1.75, py: 1 }}
+                    >
+                      <Box flex={1} minWidth={0}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.875}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontFamily: "ui-monospace, Menlo, monospace",
+                            }}
+                          >
+                            {c.url}
+                          </Typography>
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              color: textTone(
+                                CONFIDENCE[c.confidence].color,
+                                "text.secondary",
+                              ),
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {CONFIDENCE[c.confidence].label}
+                          </Typography>
+                        </Stack>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          <Box
+                            component="span"
+                            sx={{
+                              fontFamily: "ui-monospace, Menlo, monospace",
+                            }}
+                          >
+                            {c.from}
+                          </Box>{" "}
+                          — {c.note}
+                        </Typography>
+                      </Box>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          /* A curl carries the token itself — that never fills the form. */
+                          const { values: extra, dropped } = c.curl
+                            ? withoutRawSecrets(parseCurl(c.curl))
+                            : { values: null, dropped: [] };
+                          setRuntime((st) => ({
+                            ...st,
+                            ...(extra || {}),
+                            endpoint: c.url,
+                          }));
+                          setCurlNote({
+                            ok: true,
+                            text: `${extra ? `Filled ${describeFill({ ...extra, endpoint: c.url })}` : "Filled endpoint"} from ${c.from}${dropped.length ? TOKEN_LEFT_OUT : ""}`,
+                          });
+                        }}
+                        sx={{
+                          color: "primary.main",
+                          flexShrink: 0,
+                          minWidth: 0,
+                        }}
+                      >
+                        Use
+                      </Button>
+                    </Stack>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+          {allRuntimeFields.some((f) => f.key === "endpoint") && (
+            <Box sx={{ mb: 2.25 }}>
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                <TextField
+                  fullWidth
+                  size="small"
+                  multiline
+                  maxRows={4}
+                  label="Paste a curl instead"
+                  placeholder="curl https://api.yourapp.com/agent/chat -H 'Authorization: Bearer …'"
+                  value={curl}
+                  onChange={(e) => {
+                    setCurl(e.target.value);
+                    setCurlNote(null);
+                  }}
+                  sx={{
+                    "& .MuiInputBase-input": {
+                      typography: "s2",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    },
+                  }}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={!curl.trim()}
+                  onClick={() => {
+                    const parsed = parseCurl(curl);
+                    if (!parsed)
+                      return setCurlNote({
+                        ok: false,
+                        text: "No URL in that — paste the whole command.",
+                      });
+                    /* The token in a pasted curl is the key itself — left out; its reference goes in the field. */
+                    const { values: safe, dropped } = withoutRawSecrets(parsed);
+                    setRuntime((st) => ({ ...st, ...safe }));
+                    setCurlNote({
+                      ok: true,
+                      text: `Filled ${describeFill(safe)}${dropped.length ? TOKEN_LEFT_OUT : ""}`,
+                    });
+                  }}
+                  sx={{
+                    flexShrink: 0,
+                    mt: 0.25,
+                    color: "text.primary",
+                    borderColor: "divider",
+                  }}
+                >
+                  Fill
+                </Button>
               </Stack>
-            </Collapse>
-          </Box>
-        )}
-      </Box>
-    </SectionCard>
-  ) : null;
+              {curlNote && (
+                <Stack
+                  direction="row"
+                  spacing={0.875}
+                  alignItems="center"
+                  sx={{ mt: 0.875 }}
+                >
+                  <Iconify
+                    icon={
+                      curlNote.ok
+                        ? "solar:check-circle-bold"
+                        : "solar:info-circle-linear"
+                    }
+                    width={14}
+                    sx={{
+                      color: curlNote.ok
+                        ? "status.success.fg"
+                        : "text.subtitle",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: curlNote.ok ? "text.secondary" : "text.subtitle",
+                    }}
+                  >
+                    {curlNote.text}
+                  </Typography>
+                </Stack>
+              )}
+            </Box>
+          )}
+
+          <Stack spacing={2.25}>
+            {runtimeFields.map((f) => (
+              <DynamicField
+                key={f.key}
+                field={f}
+                value={runtime[f.key]}
+                values={runtime}
+                onChange={(v) => setRuntime((st) => ({ ...st, [f.key]: v }))}
+              />
+            ))}
+          </Stack>
+
+          {optionalFields.length > 0 && (
+            <Box sx={{ mt: 1.75 }}>
+              <Button
+                size="small"
+                onClick={() => setShowMore((o) => !o)}
+                startIcon={
+                  <Iconify
+                    icon={
+                      showMore
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
+                    width={14}
+                  />
+                }
+                sx={{ color: "text.secondary" }}
+              >
+                {showMore
+                  ? "Hide"
+                  : `${optionalFields.length} more, usually detected`}
+              </Button>
+              <Collapse in={showMore} unmountOnExit>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    mb: 2,
+                    mt: 0.5,
+                  }}
+                >
+                  We work these out from the first call. Set them only if we get
+                  them wrong.
+                </Typography>
+                <Stack spacing={2.25}>
+                  {optionalFields.map((f) => (
+                    <DynamicField
+                      key={f.key}
+                      field={f}
+                      value={runtime[f.key]}
+                      values={runtime}
+                      onChange={(v) =>
+                        setRuntime((st) => ({ ...st, [f.key]: v }))
+                      }
+                    />
+                  ))}
+                </Stack>
+              </Collapse>
+            </Box>
+          )}
+        </Box>
+      </SectionCard>
+    ) : null;
 
   return (
-    <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1.55fr) minmax(300px, 1fr)" } }}>
+    <Box
+      sx={{
+        display: "grid",
+        gap: 2,
+        gridTemplateColumns: {
+          xs: "1fr",
+          lg: "minmax(0, 1.55fr) minmax(300px, 1fr)",
+        },
+      }}
+    >
       {/* left — where the agent lives */}
       <Stack spacing={2}>
-      <SectionCard
-        title="What kind of agent is it?"
-        subtitle="This decides how we can reach it — a hosted voice platform and a coding agent have nothing in common"
-      >
-        <Box sx={{ p: 2.5, display: "grid", gap: 1.25, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
-          {ADAPTERS.map((a) => {
-            const on = a.id === modality;
-            return (
-              /*
+        <SectionCard
+          title="What kind of agent is it?"
+          subtitle="This decides how we can reach it — a hosted voice platform and a coding agent have nothing in common"
+        >
+          <Box
+            sx={{
+              p: 2.5,
+              display: "grid",
+              gap: 1.25,
+              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+            }}
+          >
+            {ADAPTERS.map((a) => {
+              const on = a.id === modality;
+              return (
+                /*
                 Monochrome, matching the source rows below. Each adapter owns a
                 colour for charts and chips, but using six of them as selection
                 states made one question look like six unrelated ones.
               */
-              <Box
-                key={a.id}
-                {...clickable(() => onPickModality(a.id), { role: "radio", checked: on })}
-                sx={{ ...focusRing,
-                  p: 1.5, borderRadius: 1.25, cursor: "pointer", border: "1px solid",
-                  borderColor: on ? "primary.main" : "divider",
-                  bgcolor: (t) => on ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.1 : 0.05) : "transparent",
-                }}
-              >
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Iconify icon={a.icon} width={15} sx={{ color: on ? "primary.main" : "text.subtitle", flexShrink: 0 }} />
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>{a.label}</Typography>
-                </Stack>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>{a.blurb}</Typography>
-              </Box>
-            );
-          })}
-        </Box>
-      </SectionCard>
-
-      {/* Nothing below until the question above is answered — the sources on
-          offer depend entirely on the answer. */}
-      {modality && (
-      <SectionCard
-        title="Where does your agent live?"
-        subtitle="Every source is read, never typed — but they do not all carry the same things"
-      >
-        <Box sx={{ p: 2.5 }}>
-          <Stack spacing={1.25} sx={{ mb: 2.5 }}>
-            {sources.map((s) => {
-              const on = kind === s.id;
-              return (
-                <Stack
-                  key={s.id}
-                  direction="row" alignItems="flex-start" spacing={1.75}
-                  {...clickable(() => setKind(s.id), { role: "radio", checked: on })}
-                  sx={{ ...focusRing,
-                    p: 1.75, borderRadius: 1.25, cursor: "pointer", border: "1px solid",
-                    /*
-                      Neutral grey selection in dark mode (matches the
-                      template row); purple stays in light mode where
-                      it reads calmly.
-                    */
-                    borderColor: (t) => on
-                      ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.35) : t.palette.primary.main)
-                      : t.palette.divider,
-                    bgcolor: (t) => on
-                      ? (t.palette.mode === "dark"
-                        ? alpha(t.palette.text.primary, 0.06)
-                        : alpha(t.palette.primary.main, 0.05))
-                      : "transparent",
-                    transition: "border-color .16s ease, background-color .16s ease",
+                <Box
+                  key={a.id}
+                  {...clickable(() => onPickModality(a.id), {
+                    role: "radio",
+                    checked: on,
+                  })}
+                  sx={{
+                    ...focusRing,
+                    p: 1.5,
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    border: "1px solid",
+                    borderColor: on ? "primary.main" : "divider",
+                    bgcolor: on ? "action.hover" : "transparent",
                   }}
                 >
-                  <Box flex={1} minWidth={0}>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                      <Iconify
-                        icon={s.icon} width={15}
-                        sx={{
-                          color: (t) => on
-                            ? (t.palette.mode === "dark" ? t.palette.text.primary : t.palette.primary.main)
-                            : t.palette.text.subtitle,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>{s.label}</Typography>
-                    </Stack>
-                    <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{s.blurb}</Typography>
-                    <Typography
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Iconify
+                      icon={a.icon}
+                      width={16}
                       sx={{
-                        typography: "s3",
-                        color: (t) => on
-                          ? (t.palette.mode === "dark" ? t.palette.text.primary : t.palette.primary.main)
-                          : t.palette.text.subtitle,
-                        mt: 0.5,
+                        color: on ? "primary.main" : "text.subtitle",
+                        flexShrink: 0,
                       }}
-                    >
-                      {s.depth}
+                    />
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                      {a.label}
                     </Typography>
-                  </Box>
-                </Stack>
+                  </Stack>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+                  >
+                    {a.blurb}
+                  </Typography>
+                </Box>
               );
             })}
-          </Stack>
+          </Box>
+        </SectionCard>
 
-          {/* Source-config fields (Provider/API, Location, Pin to)
+        {/* Nothing below until the question above is answered — the sources on
+          offer depend entirely on the answer. */}
+        {modality && (
+          <SectionCard
+            title="Where does your agent live?"
+            subtitle="Every source is read, never typed — but they do not all carry the same things"
+          >
+            <Box sx={{ p: 2.5 }}>
+              <Stack spacing={1.25} sx={{ mb: 2.5 }}>
+                {sources.map((s) => {
+                  const on = kind === s.id;
+                  return (
+                    <Stack
+                      key={s.id}
+                      direction="row"
+                      alignItems="flex-start"
+                      spacing={1.75}
+                      {...clickable(() => setKind(s.id), {
+                        role: "radio",
+                        checked: on,
+                      })}
+                      sx={{
+                        ...focusRing,
+                        p: 1.75,
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        border: "1px solid",
+                        borderColor: on ? "primary.main" : "divider",
+                        bgcolor: on ? "action.selected" : "transparent",
+                        transition:
+                          "border-color .16s ease, background-color .16s ease",
+                      }}
+                    >
+                      <Box flex={1} minWidth={0}>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Iconify
+                            icon={s.icon}
+                            width={16}
+                            sx={{
+                              color: on ? "primary.main" : "text.subtitle",
+                              flexShrink: 0,
+                            }}
+                          />
+                          <Typography
+                            sx={{ typography: "s2", fontWeight: 600 }}
+                          >
+                            {s.label}
+                          </Typography>
+                        </Stack>
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            color: "text.secondary",
+                            mt: 0.25,
+                          }}
+                        >
+                          {s.blurb}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: on ? "primary.main" : "text.subtitle",
+                            mt: 0.5,
+                          }}
+                        >
+                          {s.depth}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  );
+                })}
+              </Stack>
+
+              {/* Source-config fields (Provider/API, Location, Pin to)
               and the Read-this-agent CTA all live on the right column
               now — see {sourceConfigSection} + the right-column stack
               below. Left column stops at the source-kind list. */}
-        </Box>
-      </SectionCard>
-      )}
+            </Box>
+          </SectionCard>
+        )}
       </Stack>
 
       {/* right — source-config + runtime-connection blocks, followed
@@ -1930,10 +2960,11 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
         {modality && (
           <Box>
             <Button
-              variant="contained" color="primary" onClick={onStart}
+              variant="contained"
+              color="primary"
+              onClick={onStart}
               disabled={chosen.upload && !file}
               endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
             >
               Read this agent
             </Button>
@@ -1942,38 +2973,61 @@ function SourcePicker({ kind, setKind, value, setValue, refKind, setRefKind, ref
 
         <Box
           sx={{
-            p: 2, borderRadius: 1.25, border: "1px solid",
-            borderColor: alpha("#16A34A", 0.3),
-            bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.08 : 0.04),
+            p: 2,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "status.success.border",
+            bgcolor: "status.success.bg",
           }}
         >
           <Stack direction="row" spacing={1.25} alignItems="flex-start">
-            <Iconify icon="solar:shield-keyhole-linear" width={16} sx={{ color: "#16A34A", flexShrink: 0, mt: "1px" }} />
+            <Iconify
+              icon="solar:shield-keyhole-linear"
+              width={16}
+              sx={{ color: "status.success.fg", flexShrink: 0, mt: "1px" }}
+            />
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>Nothing touches production.</Box>{" "}
-              We stand up a shadow copy of your agent in an isolated sandbox with seeded data and
-              test credentials. Your deployed agent is never called.
+              <Box
+                component="span"
+                sx={{ fontWeight: 600, color: "text.primary" }}
+              >
+                Nothing touches production.
+              </Box>{" "}
+              We stand up a shadow copy of your agent in an isolated sandbox
+              with seeded data and test credentials. Your deployed agent is
+              never called.
             </Typography>
           </Stack>
         </Box>
-
       </Stack>
     </Box>
   );
 }
 
 SourcePicker.propTypes = {
-  kind: PropTypes.string, setKind: PropTypes.func,
-  value: PropTypes.string, setValue: PropTypes.func,
-  refKind: PropTypes.string, setRefKind: PropTypes.func,
-  refValue: PropTypes.string, setRefValue: PropTypes.func,
-  chosen: PropTypes.object, onStart: PropTypes.func,
-  sources: PropTypes.array, modality: PropTypes.string, onPickModality: PropTypes.func,
-  runtime: PropTypes.object, setRuntime: PropTypes.func,
-  runtimeTypeId: PropTypes.string, setRuntimeTypeId: PropTypes.func,
-  provider: PropTypes.string, setProvider: PropTypes.func,
-  keyRef: PropTypes.string, setKeyRef: PropTypes.func,
-  file: PropTypes.object, setFile: PropTypes.func,
+  kind: PropTypes.string,
+  setKind: PropTypes.func,
+  value: PropTypes.string,
+  setValue: PropTypes.func,
+  refKind: PropTypes.string,
+  setRefKind: PropTypes.func,
+  refValue: PropTypes.string,
+  setRefValue: PropTypes.func,
+  chosen: PropTypes.object,
+  onStart: PropTypes.func,
+  sources: PropTypes.array,
+  modality: PropTypes.string,
+  onPickModality: PropTypes.func,
+  runtime: PropTypes.object,
+  setRuntime: PropTypes.func,
+  runtimeTypeId: PropTypes.string,
+  setRuntimeTypeId: PropTypes.func,
+  provider: PropTypes.string,
+  setProvider: PropTypes.func,
+  keyRef: PropTypes.string,
+  setKeyRef: PropTypes.func,
+  file: PropTypes.object,
+  setFile: PropTypes.func,
 };
 
 /* ── intake ─────────────────────────────────────────────────────────────── */
@@ -2017,9 +3071,19 @@ const INTAKE_QUESTIONS = [
     prompt: "How thorough should the coverage be?",
     multiSelect: false,
     options: [
-      { label: "Focused", description: "Fewer scenarios, faster feedback loop. Good for a first pass." },
-      { label: "Balanced", description: "The default — enough coverage to catch most regressions." },
-      { label: "Comprehensive", description: "Every derivation path the builder can produce." },
+      {
+        label: "Focused",
+        description:
+          "Fewer scenarios, faster feedback loop. Good for a first pass.",
+      },
+      {
+        label: "Balanced",
+        description: "The default — enough coverage to catch most regressions.",
+      },
+      {
+        label: "Comprehensive",
+        description: "Every derivation path the builder can produce.",
+      },
     ],
   },
   {
@@ -2027,15 +3091,37 @@ const INTAKE_QUESTIONS = [
     prompt: "What should we press hardest on?",
     multiSelect: true,
     options: [
-      { label: "Adversarial callers", description: "Manipulation attempts, refund pressure, authority claims." },
-      { label: "Edge cases in data", description: "Awkward rows the seeded world hides." },
-      { label: "Rule enforcement", description: "Scenarios that only pass if the agent holds a policy line." },
-      { label: "Long conversations", description: "Multi-turn calls where context matters." },
+      {
+        label: "Adversarial callers",
+        description:
+          "Manipulation attempts, refund pressure, authority claims.",
+      },
+      {
+        label: "Edge cases in data",
+        description: "Awkward rows the seeded world hides.",
+      },
+      {
+        label: "Rule enforcement",
+        description:
+          "Scenarios that only pass if the agent holds a policy line.",
+      },
+      {
+        label: "Long conversations",
+        description: "Multi-turn calls where context matters.",
+      },
     ],
   },
 ];
 
-function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, source, onSubmit }) {
+function IntakeStage({
+  turns,
+  running,
+  onSend,
+  defaultName,
+  defaultDifficulty,
+  source,
+  onSubmit,
+}) {
   /*
     Pixel-faithful copy of Claude's own AskUserQuestion card as it renders
     in-chat: an amber "1/3" step badge on the left of the header, the
@@ -2046,7 +3132,11 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
     an inline text input; a bottom bar carries Back / Skip / Next|Submit.
   */
   const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState(() => INTAKE_QUESTIONS.map((q) => (q.multiSelect ? { picks: [], other: "" } : { pick: null, other: "" })));
+  const [answers, setAnswers] = useState(() =>
+    INTAKE_QUESTIONS.map((q) =>
+      q.multiSelect ? { picks: [], other: "" } : { pick: null, other: "" },
+    ),
+  );
   /*
     Freeform intake — the questionnaire covers the three narrow calls
     that shape derivation, but a user might have context that doesn't
@@ -2072,13 +3162,17 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
       return [...prev, ...list.filter((a) => !seen.has(a.id))];
     });
   };
-  const removeAttachment = (id) => setAttachments((prev) => prev.filter((a) => a.id !== id));
+  const removeAttachment = (id) =>
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
 
   const q = INTAKE_QUESTIONS[step];
   const a = answers[step];
   const isLast = step === INTAKE_QUESTIONS.length - 1;
 
-  const setAt = (i, next) => setAnswers((prev) => prev.map((v, idx) => (idx === i ? { ...v, ...next } : v)));
+  const setAt = (i, next) =>
+    setAnswers((prev) =>
+      prev.map((v, idx) => (idx === i ? { ...v, ...next } : v)),
+    );
 
   const chosen = (i) => {
     if (INTAKE_QUESTIONS[i].multiSelect) {
@@ -2110,12 +3204,19 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
       const depthA = answerFor(0);
       const focusA = answerFor(1);
       const depthLabel = String(depthA).toLowerCase();
-      const depthId = depthLabel === "focused" ? "focused" : depthLabel === "comprehensive" ? "comprehensive" : "balanced";
+      const depthId =
+        depthLabel === "focused"
+          ? "focused"
+          : depthLabel === "comprehensive"
+            ? "comprehensive"
+            : "balanced";
       onSubmit({
         name: defaultName,
         difficulty: difficultyForDepth(depthId),
         depth: depthId,
-        focus: Array.isArray(focusA) ? focusA.join(" · ") : String(focusA || ""),
+        focus: Array.isArray(focusA)
+          ? focusA.join(" · ")
+          : String(focusA || ""),
         notes: notes.trim(),
         attachments,
       });
@@ -2133,7 +3234,9 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
       onPick={(i) => {
         if (q.multiSelect) {
           const has = a.picks.includes(i);
-          setAt(step, { picks: has ? a.picks.filter((p) => p !== i) : [...a.picks, i] });
+          setAt(step, {
+            picks: has ? a.picks.filter((p) => p !== i) : [...a.picks, i],
+          });
         } else {
           setAt(step, { pick: i });
         }
@@ -2150,8 +3253,10 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
   return (
     <Box
       sx={{
-        display: "flex", flexDirection: "column",
-        height: "100%", minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
         alignItems: "center",
         overflowY: "auto",
       }}
@@ -2169,7 +3274,8 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
         sx={{
           width: "100%",
           maxWidth: 960,
-          display: "flex", flexDirection: "column",
+          display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           py: { xs: 4, md: 6 },
           px: 2,
@@ -2179,25 +3285,30 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
         <Stack alignItems="center" spacing={1.5} sx={{ textAlign: "center" }}>
           <Box
             sx={{
-              width: 52, height: 52, borderRadius: 1.5,
-              display: "grid", placeItems: "center",
-              bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.1),
-              color: "#7857FC",
+              width: 52,
+              height: 52,
+              borderRadius: "8px",
+              display: "grid",
+              placeItems: "center",
+              bgcolor: "status.discovery.bg",
+              color: "status.discovery.fg",
             }}
           >
             <Iconify icon="solar:magic-stick-3-linear" width={26} />
           </Box>
-          <Typography sx={{ typography: "m2", fontWeight: 700 }}>
+          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
             Let&apos;s build your environment
           </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 520 }}>
-            A few quick calls before I read from <b>{source?.value}</b>. This shapes what I derive — you can still steer everything after it starts.
+          <Typography
+            sx={{ typography: "s1", color: "text.secondary", maxWidth: 520 }}
+          >
+            A few quick calls before I read from <b>{source?.value}</b>. This
+            shapes what I derive — you can still steer everything after it
+            starts.
           </Typography>
         </Stack>
 
-        <Box sx={{ width: "100%" }}>
-          {askCard}
-        </Box>
+        <Box sx={{ width: "100%" }}>{askCard}</Box>
 
         {/*
           Freeform composer under the question card — for the context
@@ -2207,34 +3318,74 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
           the answers when the user hits Submit above.
         */}
         <Box sx={{ width: "100%" }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.subtitle",
+              textTransform: "none",
+              letterSpacing: 0.4,
+              mb: 1,
+            }}
+          >
             Extra context (optional)
           </Typography>
 
           {attachments.length > 0 && (
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75} sx={{ mb: 1 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              flexWrap="wrap"
+              rowGap={0.75}
+              sx={{ mb: 1 }}
+            >
               {attachments.map((f) => (
                 <Stack
-                  key={f.id} direction="row" alignItems="center" spacing={0.75}
+                  key={f.id}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
                   sx={{
-                    px: 1, py: 0.5, borderRadius: 0.875,
-                    border: "1px solid", borderColor: "divider",
-                    bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.02),
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: "6px",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "action.hover",
                     maxWidth: 260,
                   }}
                 >
-                  <Iconify icon="solar:paperclip-linear" width={12} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Typography noWrap sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }}>
+                  <Iconify
+                    icon="solar:paperclip-linear"
+                    width={12}
+                    sx={{ color: "text.subtitle", flexShrink: 0 }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
                     {f.name}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.disabled",
+                      flexShrink: 0,
+                    }}
+                  >
                     {formatFileSize(f.size)}
                   </Typography>
                   <IconButton
-                    size="small" onClick={() => removeAttachment(f.id)}
+                    size="small"
+                    onClick={() => removeAttachment(f.id)}
                     sx={{ p: 0.25, color: "text.subtitle" }}
                   >
-                    <Iconify icon="mingcute:close-line" width={11} />
+                    <Iconify icon="solar:close-linear" width={12} />
                   </IconButton>
                 </Stack>
               ))}
@@ -2242,23 +3393,33 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
           )}
 
           <Stack
-            direction="row" alignItems="flex-end" spacing={1}
+            direction="row"
+            alignItems="flex-end"
+            spacing={1}
             sx={{
-              p: 1.5, borderRadius: 2, border: "1.5px solid",
-              borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.14),
+              p: 1.5,
+              borderRadius: 2,
+              border: "1.5px solid",
+              borderColor: "border.default",
               bgcolor: "background.paper",
               transition: "border-color 0.15s ease",
               "&:focus-within": {
-                borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.32 : 0.28),
+                borderColor: "border.hover",
               },
             }}
           >
             <TextField
-              fullWidth multiline maxRows={6} variant="standard"
+              fullWidth
+              multiline
+              maxRows={6}
+              variant="standard"
               placeholder="Anything else — paste a snippet, dictate a note, or attach an SOP…"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.6, px: 1, py: 0.5 } }}
+              InputProps={{
+                disableUnderline: true,
+                sx: { typography: "s2", lineHeight: 1.6, px: 1, py: 0.5 },
+              }}
             />
             <IconButton
               size="small"
@@ -2269,14 +3430,21 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
               <Iconify icon="solar:paperclip-linear" width={16} />
             </IconButton>
             <VoiceInput
-              onTranscript={(text) => setNotes((prev) => (prev ? `${prev} ${text}` : text))}
+              onTranscript={(text) =>
+                setNotes((prev) => (prev ? `${prev} ${text}` : text))
+              }
             />
           </Stack>
 
           <input
             ref={fileInputRef}
-            type="file" multiple hidden
-            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = "";
+            }}
           />
         </Box>
       </Box>
@@ -2295,7 +3463,17 @@ function IntakeStage({ turns, running, onSend, defaultName, defaultDifficulty, s
  * shows past the first question, Submit only on the last.
  */
 function AskUserQuestionCard({
-  step, total, question, answer, onPick, onOtherChange, onBack, onSkip, onNext, canSubmit, isLast,
+  step,
+  total,
+  question,
+  answer,
+  onPick,
+  onOtherChange,
+  onBack,
+  onSkip,
+  onNext,
+  canSubmit,
+  isLast,
 }) {
   const otherIndex = question.options.length;
   const otherActive = answer.other.trim().length > 0;
@@ -2314,25 +3492,36 @@ function AskUserQuestionCard({
       sx={{
         borderRadius: 2,
         border: "1px solid",
-        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.08),
+        borderColor: "border.default",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >
       {/* ── header ── */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 1.75, py: 1.25 }}
+      >
         <Box
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 999, flexShrink: 0,
-            bgcolor: (t) => alpha("#B45309", t.palette.mode === "dark" ? 0.28 : 0.16),
+            px: 0.75,
+            py: 0.125,
+            borderRadius: 999,
+            flexShrink: 0,
+            bgcolor: "status.warning.bg",
             color: "text.secondary",
-            typography: "s3", fontWeight: 700,
+            typography: "s3",
+            fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           }}
         >
           {step + 1}/{total}
         </Box>
-        <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}>
+        <Typography
+          sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0 }}
+        >
           {question.prompt}
         </Typography>
         <IconButton
@@ -2342,119 +3531,135 @@ function AskUserQuestionCard({
           aria-expanded={!collapsed}
           sx={{ color: "text.subtitle", p: 0.5 }}
         >
-          <Iconify icon={collapsed ? "solar:alt-arrow-right-linear" : "solar:alt-arrow-down-linear"} width={14} />
+          <Iconify
+            icon={
+              collapsed
+                ? "solar:alt-arrow-right-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+            width={14}
+          />
         </IconButton>
       </Stack>
 
       {!collapsed && (
-      <>
-      {/* ── options ── */}
-      <Stack spacing={0.5} sx={{ px: 1.25, pb: 0.75 }}>
-        {question.options.map((opt, i) => (
-          <AskOptionRow
-            key={opt.label}
-            label={opt.label}
-            description={opt.description}
-            selected={rowIsSelected(i)}
-            multi={question.multiSelect}
-            index={i + 1}
-            onSelect={() => onPick(i)}
-          />
-        ))}
+        <>
+          {/* ── options ── */}
+          <Stack spacing={0.5} sx={{ px: 1.25, pb: 0.75 }}>
+            {question.options.map((opt, i) => (
+              <AskOptionRow
+                key={opt.label}
+                label={opt.label}
+                description={opt.description}
+                selected={rowIsSelected(i)}
+                multi={question.multiSelect}
+                index={i + 1}
+                onSelect={() => onPick(i)}
+              />
+            ))}
 
-        {/* Other + inline input, always at the bottom */}
-        <AskOptionRow
-          label="Other"
-          selected={otherActive}
-          multi={question.multiSelect}
-          index={otherIndex + 1}
-          onSelect={() => { /* focused when the user types */ }}
-          bottomChildren={(
-            <TextField
-              size="small" fullWidth variant="outlined"
-              value={answer.other}
-              onChange={(e) => onOtherChange(e.target.value)}
-              placeholder="Type your own answer here"
-              InputProps={{
-                sx: {
-                  typography: "s2",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
-                  "& fieldset": { border: "none" },
-                },
+            {/* Other + inline input, always at the bottom */}
+            <AskOptionRow
+              label="Other"
+              selected={otherActive}
+              multi={question.multiSelect}
+              index={otherIndex + 1}
+              onSelect={() => {
+                /* focused when the user types */
               }}
-              sx={{ mt: 0.75 }}
+              bottomChildren={
+                <TextField
+                  size="small"
+                  fullWidth
+                  variant="outlined"
+                  value={answer.other}
+                  onChange={(e) => onOtherChange(e.target.value)}
+                  placeholder="Type your own answer here"
+                  InputProps={{
+                    sx: {
+                      typography: "s2",
+                      bgcolor: "action.selected",
+                      "& fieldset": { border: "none" },
+                    },
+                  }}
+                  sx={{ mt: 0.75 }}
+                />
+              }
             />
-          )}
-        />
-      </Stack>
+          </Stack>
 
-      {/* ── bottom bar ── */}
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
-        {onBack ? (
-          <Button
-            size="small" onClick={onBack}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
-              },
-            }}
-          >
-            Back
-          </Button>
-        ) : <Box />}
-        <Box flex={1} />
-        <Stack direction="row" spacing={1}>
-          <Button
-            size="small" onClick={onSkip}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
-              },
-            }}
-          >
-            Skip
-          </Button>
-          <Button
-            size="small" onClick={onNext}
-            disabled={!canSubmit}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.09),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.22 : 0.14),
-              },
-              "&.Mui-disabled": {
-                color: "text.disabled",
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
-              },
-            }}
-          >
-            {isLast ? "Submit" : "Next"}
-          </Button>
-        </Stack>
-      </Stack>
-      </>
+          {/* ── bottom bar ── */}
+          <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
+            {onBack ? (
+              <Button
+                size="small"
+                onClick={onBack}
+                sx={{
+                  color: "text.primary",
+                  bgcolor: "action.selected",
+                  "&:hover": {
+                    bgcolor: "action.focus",
+                  },
+                }}
+              >
+                Back
+              </Button>
+            ) : (
+              <Box />
+            )}
+            <Box flex={1} />
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small"
+                onClick={onSkip}
+                sx={{
+                  color: "text.primary",
+                  bgcolor: "action.selected",
+                  "&:hover": {
+                    bgcolor: "action.focus",
+                  },
+                }}
+              >
+                Skip
+              </Button>
+              <Button
+                size="small"
+                onClick={onNext}
+                disabled={!canSubmit}
+                sx={{
+                  color: "text.primary",
+                  bgcolor: "action.focus",
+                  "&:hover": {
+                    bgcolor: "action.focus",
+                  },
+                  "&.Mui-disabled": {
+                    color: "text.disabled",
+                    bgcolor: "action.selected",
+                  },
+                }}
+              >
+                {isLast ? "Submit" : "Next"}
+              </Button>
+            </Stack>
+          </Stack>
+        </>
       )}
     </Box>
   );
 }
 
 AskUserQuestionCard.propTypes = {
-  step: PropTypes.number, total: PropTypes.number,
-  question: PropTypes.object, answer: PropTypes.object,
-  onPick: PropTypes.func, onOtherChange: PropTypes.func,
-  onBack: PropTypes.func, onSkip: PropTypes.func, onNext: PropTypes.func,
-  canSubmit: PropTypes.bool, isLast: PropTypes.bool,
+  step: PropTypes.number,
+  total: PropTypes.number,
+  question: PropTypes.object,
+  answer: PropTypes.object,
+  onPick: PropTypes.func,
+  onOtherChange: PropTypes.func,
+  onBack: PropTypes.func,
+  onSkip: PropTypes.func,
+  onNext: PropTypes.func,
+  canSubmit: PropTypes.bool,
+  isLast: PropTypes.bool,
 };
 
 /**
@@ -2463,25 +3668,43 @@ AskUserQuestionCard.propTypes = {
  * (multi-select) on the right. Optional bottomChildren for the "Other"
  * row's inline text input.
  */
-function AskOptionRow({ label, description, selected, multi, index, onSelect, bottomChildren }) {
+function AskOptionRow({
+  label,
+  description,
+  selected,
+  multi,
+  index,
+  onSelect,
+  bottomChildren,
+}) {
   return (
     <Box
-      {...clickable(onSelect, { role: multi ? "checkbox" : "radio", checked: selected })}
-      sx={{ ...focusRing,
-        p: 1.25, borderRadius: 1.25, cursor: "pointer",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.03),
+      {...clickable(onSelect, {
+        role: multi ? "checkbox" : "radio",
+        checked: selected,
+      })}
+      sx={{
+        ...focusRing,
+        p: 1.25,
+        borderRadius: "8px",
+        cursor: "pointer",
+        bgcolor: "action.hover",
         "&:hover": {
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+          bgcolor: "action.selected",
         },
       }}
     >
       <Stack direction="row" alignItems="flex-start" spacing={1.25}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+          <Typography
+            sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
+          >
             {label}
           </Typography>
           {description && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}
+            >
               {description}
             </Typography>
           )}
@@ -2491,11 +3714,16 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
         {multi ? (
           <Box
             sx={{
-              width: 18, height: 18, borderRadius: 0.5, flexShrink: 0, mt: "1px",
-              display: "grid", placeItems: "center",
+              width: 18,
+              height: 18,
+              borderRadius: "4px",
+              flexShrink: 0,
+              mt: "1px",
+              display: "grid",
+              placeItems: "center",
               border: "1.5px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.22 : 0.2),
-              bgcolor: selected ? "#7857FC" : "transparent",
+              borderColor: selected ? "status.discovery.solid" : "border.hover",
+              bgcolor: selected ? "status.discovery.solid" : "transparent",
               transition: "background-color .12s ease, border-color .12s ease",
             }}
           >
@@ -2508,9 +3736,18 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
               */
               <Box
                 component="svg"
-                viewBox="0 0 24 24" fill="none" stroke="#fff"
-                strokeWidth={3.25} strokeLinecap="round" strokeLinejoin="round"
-                sx={{ width: 11, height: 11, display: "block" }}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={3.25}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                sx={{
+                  width: 11,
+                  height: 11,
+                  display: "block",
+                  color: "status.discovery.onSolid",
+                }}
               >
                 <polyline points="5,12.5 10,17.5 19,7" />
               </Box>
@@ -2519,13 +3756,23 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
         ) : (
           <Box
             sx={{
-              minWidth: 22, height: 20, px: 0.75, borderRadius: 0.75, flexShrink: 0, mt: "1px",
-              display: "grid", placeItems: "center",
+              minWidth: 22,
+              height: 20,
+              px: 0.75,
+              borderRadius: "4px",
+              flexShrink: 0,
+              mt: "1px",
+              display: "grid",
+              placeItems: "center",
               border: "1px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
-              bgcolor: selected ? "#7857FC" : "transparent",
-              color: selected ? "#fff" : "text.subtitle",
-              typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              borderColor: selected
+                ? "status.discovery.solid"
+                : "border.default",
+              bgcolor: selected ? "status.discovery.solid" : "transparent",
+              color: selected ? "status.discovery.onSolid" : "text.subtitle",
+              typography: "s3",
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {index}
@@ -2539,9 +3786,13 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
 }
 
 AskOptionRow.propTypes = {
-  label: PropTypes.string, description: PropTypes.string,
-  selected: PropTypes.bool, multi: PropTypes.bool, index: PropTypes.number,
-  onSelect: PropTypes.func, bottomChildren: PropTypes.node,
+  label: PropTypes.string,
+  description: PropTypes.string,
+  selected: PropTypes.bool,
+  multi: PropTypes.bool,
+  index: PropTypes.number,
+  onSelect: PropTypes.func,
+  bottomChildren: PropTypes.node,
 };
 
 IntakeStage.propTypes = {
@@ -2555,35 +3806,71 @@ IntakeStage.propTypes = {
 };
 
 const DEPTH_OPTIONS = [
-  { id: "focused", label: "Focused", blurb: "Fewer scenarios, faster feedback loop. Good for a first pass." },
-  { id: "balanced", label: "Balanced", blurb: "The default — enough coverage to catch most regressions." },
-  { id: "comprehensive", label: "Comprehensive", blurb: "Every derivation path the builder can produce." },
+  {
+    id: "focused",
+    label: "Focused",
+    blurb: "Fewer scenarios, faster feedback loop. Good for a first pass.",
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    blurb: "The default — enough coverage to catch most regressions.",
+  },
+  {
+    id: "comprehensive",
+    label: "Comprehensive",
+    blurb: "Every derivation path the builder can produce.",
+  },
 ];
 
-const depthForDifficulty = (d) => (d === "Basic" ? "focused" : d === "Extreme" ? "comprehensive" : "balanced");
-const difficultyForDepth = (d) => (d === "focused" ? "Basic" : d === "comprehensive" ? "Extreme" : "Advanced");
+const depthForDifficulty = (d) =>
+  d === "Basic" ? "focused" : d === "Extreme" ? "comprehensive" : "balanced";
+const difficultyForDepth = (d) =>
+  d === "focused" ? "Basic" : d === "comprehensive" ? "Extreme" : "Advanced";
 
 /* ── the engine working ──────────────────────────────────────────────────── */
 
 function Deriving({
-  turns, running, chips, onSend, onChip, done, source, env, envState, patch, scenarios,
-  scenarioProgress, contractProgress, evalIds, onAddEvals, onBuilderTurn, onRun,
+  turns,
+  running,
+  chips,
+  onSend,
+  onChip,
+  done,
+  source,
+  env,
+  envState,
+  patch,
+  scenarios,
+  scenarioProgress,
+  contractProgress,
+  evalIds,
+  onAddEvals,
+  onBuilderTurn,
+  onRun,
 }) {
   /* The builder folds to a rail here too — the same choice as the
      environment page, remembered across both. */
   const [collapsed, setCollapsedRaw] = useState(readBuilderCollapsed);
   const [unseen, setUnseen] = useState(0);
-  const setCollapsed = (v) => { setCollapsedRaw(v); if (!v) setUnseen(0); writeBuilderCollapsed(v); };
+  const setCollapsed = (v) => {
+    setCollapsedRaw(v);
+    if (!v) setUnseen(0);
+    writeBuilderCollapsed(v);
+  };
   const seenTurns = useRef(turns.length);
   useEffect(() => {
     const added = turns.length - seenTurns.current;
     seenTurns.current = turns.length;
-    if (collapsed && added > 0 && turns[turns.length - 1]?.role === "assistant") setUnseen((n) => n + 1);
+    if (collapsed && added > 0 && turns[turns.length - 1]?.role === "assistant")
+      setUnseen((n) => n + 1);
   }, [turns, collapsed]);
   return (
     <Box
       sx={{
-        display: "grid", height: "100%", minHeight: 0,
+        display: "grid",
+        height: "100%",
+        minHeight: 0,
         /*
           Chat narrow, artifacts wide — the shape Lovable, Figma Make and v0
           all landed on for the same reason: the input is a column of text and
@@ -2591,20 +3878,36 @@ function Deriving({
           into a cramped preview of what it should be showing at full size.
           Ratio is ~1:2.6 on desktop; still stacked on mobile.
         */
-        gridTemplateColumns: { xs: "1fr", lg: collapsed ? "48px 1fr" : "minmax(360px, 400px) 1fr" },
+        gridTemplateColumns: {
+          xs: "1fr",
+          lg: collapsed ? "48px 1fr" : "minmax(360px, 400px) 1fr",
+        },
       }}
     >
-      {collapsed && <BuilderRail running={running} unseen={unseen} onExpand={() => setCollapsed(false)} />}
+      {collapsed && (
+        <BuilderRail
+          running={running}
+          unseen={unseen}
+          onExpand={() => setCollapsed(false)}
+        />
+      )}
       {/* One surface, split by a single rule — no card around either side. */}
       <Box
         sx={{
-          height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
           ...(collapsed && { display: "none" }),
           /* Widths and colour set separately: a responsive "1px solid"
              shorthand resets the colour to the text colour, which drew this
              rule bright white instead of the divider grey. */
-          borderStyle: "solid", borderWidth: 0, borderColor: "divider",
-          borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
+          borderStyle: "solid",
+          borderWidth: 0,
+          borderColor: "divider",
+          borderRightWidth: { xs: 0, lg: 1 },
+          borderBottomWidth: { xs: 1, lg: 0 },
         }}
       >
         <AssistantConsole
@@ -2619,24 +3922,32 @@ function Deriving({
         />
       </Box>
 
-      <Box sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2 }}>
+      <Box
+        sx={{
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          px: 2,
+        }}
+      >
         <PanelBoundary>
-        <DerivedPanels
-          env={env}
-          envState={envState}
-          patch={patch}
-          source={source}
-          done={done}
-          running={running}
-          scenarios={scenarios}
-          scenarioProgress={scenarioProgress}
-          contractProgress={contractProgress}
-          evalIds={evalIds}
-          onAddEvals={onAddEvals}
-          onBuilderTurn={onBuilderTurn}
-          onBuilderPrompt={onSend}
-          onStartRun={onRun}
-        />
+          <DerivedPanels
+            env={env}
+            envState={envState}
+            patch={patch}
+            source={source}
+            done={done}
+            running={running}
+            scenarios={scenarios}
+            scenarioProgress={scenarioProgress}
+            contractProgress={contractProgress}
+            evalIds={evalIds}
+            onAddEvals={onAddEvals}
+            onBuilderTurn={onBuilderTurn}
+            onBuilderPrompt={onSend}
+            onStartRun={onRun}
+          />
         </PanelBoundary>
       </Box>
     </Box>
@@ -2652,8 +3963,13 @@ function Deriving({
  */
 import { Component as ReactComponent } from "react";
 class PanelBoundary extends ReactComponent {
-  constructor(props) { super(props); this.state = { err: null }; }
-  static getDerivedStateFromError(err) { return { err }; }
+  constructor(props) {
+    super(props);
+    this.state = { err: null };
+  }
+  static getDerivedStateFromError(err) {
+    return { err };
+  }
   componentDidCatch(err, info) {
     // eslint-disable-next-line no-console
     console.error("[PanelBoundary] caught:", err, info?.componentStack);
@@ -2661,27 +3977,57 @@ class PanelBoundary extends ReactComponent {
   render() {
     if (this.state.err) {
       return (
-        <Box sx={{ p: 3, m: 2, border: "1px solid", borderColor: alpha("#DC2626", 0.4), borderRadius: 1.5,
-          bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.08 : 0.04) }}>
-          <Typography sx={{ typography: "s1", fontWeight: 700, color: "#DC2626", mb: 1 }}>
+        <Box
+          sx={{
+            p: 3,
+            m: 2,
+            border: "1px solid",
+            borderColor: "status.danger.border",
+            borderRadius: "8px",
+            bgcolor: "status.danger.bg",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s1",
+              fontWeight: 600,
+              color: "status.danger.fg",
+              mb: 1,
+            }}
+          >
             The right-side panel crashed
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}>
-            The chat on the left still works. Copy the message below and paste it back to me.
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}
+          >
+            The chat on the left still works. Copy the message below and paste
+            it back to me.
           </Typography>
-          <Typography component="pre" sx={{
-            typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-            p: 1.5, borderRadius: 1, bgcolor: "background.neutral",
-            whiteSpace: "pre-wrap", wordBreak: "break-word", color: "text.primary",
-          }}>
+          <Typography
+            component="pre"
+            sx={{
+              typography: "s3",
+              fontFamily: "ui-monospace, Menlo, monospace",
+              p: 1.5,
+              borderRadius: 1,
+              bgcolor: "background.neutral",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              color: "text.primary",
+            }}
+          >
             {String(this.state.err?.message || this.state.err)}
             {"\n\n"}
-            {String(this.state.err?.stack || "").split("\n").slice(0, 5).join("\n")}
+            {String(this.state.err?.stack || "")
+              .split("\n")
+              .slice(0, 5)
+              .join("\n")}
           </Typography>
           <Button
-            variant="text" size="small"
+            variant="text"
+            size="small"
             onClick={() => this.setState({ err: null })}
-            sx={{ mt: 1, typography: "s3", fontWeight: 700 }}
+            sx={{ mt: 1 }}
           >
             Retry
           </Button>
@@ -2694,14 +4040,21 @@ class PanelBoundary extends ReactComponent {
 PanelBoundary.propTypes = { children: PropTypes.node };
 
 Deriving.propTypes = {
-  turns: PropTypes.array, running: PropTypes.bool, chips: PropTypes.array,
-  onSend: PropTypes.func, onChip: PropTypes.func, done: PropTypes.array,
-  source: PropTypes.object, env: PropTypes.object,
-  envState: PropTypes.object, patch: PropTypes.func,
+  turns: PropTypes.array,
+  running: PropTypes.bool,
+  chips: PropTypes.array,
+  onSend: PropTypes.func,
+  onChip: PropTypes.func,
+  done: PropTypes.array,
+  source: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  patch: PropTypes.func,
   scenarios: PropTypes.array,
   scenarioProgress: PropTypes.object,
   contractProgress: PropTypes.object,
-  evalIds: PropTypes.array, onAddEvals: PropTypes.func,
+  evalIds: PropTypes.array,
+  onAddEvals: PropTypes.func,
   onBuilderTurn: PropTypes.func,
   onRun: PropTypes.func,
 };
@@ -2730,24 +4083,38 @@ function PipelinePopover({ anchor, onClose, pipeline, summary }) {
       transformOrigin={{ vertical: "top", horizontal: "center" }}
       PaperProps={{
         sx: {
-          mt: 1, width: 420, borderRadius: 1.5, backgroundImage: "none",
-          border: "1px solid", borderColor: "divider",
-          boxShadow: (t) => (t.palette.mode === "dark"
-            ? "0 12px 40px rgba(0,0,0,0.4)"
-            : "0 12px 40px rgba(16,24,40,0.12)"),
+          mt: 1,
+          width: 420,
+          borderRadius: 1,
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
         },
       }}
     >
       <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 2,
+          py: 1.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700, lineHeight: 1.2 }}>Build pipeline</Typography>
+          <Typography
+            sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.2 }}
+          >
+            Build pipeline
+          </Typography>
           <Typography
             sx={{
-              typography: "s3", lineHeight: 1.2, mt: 0.25,
-              color: summary.failed ? "#DC2626" : "text.subtitle",
+              typography: "s3",
+              lineHeight: 1.2,
+              mt: 0.25,
+              color: summary.failed ? "status.danger.fg" : "text.subtitle",
               fontWeight: summary.failed ? 600 : 400,
             }}
           >
@@ -2757,12 +4124,24 @@ function PipelinePopover({ anchor, onClose, pipeline, summary }) {
         <Stack direction="row" alignItems="center" spacing={0.625}>
           <Box
             sx={{
-              width: 7, height: 7, borderRadius: "50%",
-              bgcolor: summary.failed ? "#DC2626" : summary.running ? "#CA8A04" : "#16A34A",
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              bgcolor: summary.failed
+                ? "status.danger.solid"
+                : summary.running
+                  ? "status.warning.solid"
+                  : "status.success.solid",
             }}
           />
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {summary.failed ? "halted" : summary.running ? "running" : summary.done === summary.total ? "ready" : "paused"}
+            {summary.failed
+              ? "halted"
+              : summary.running
+                ? "running"
+                : summary.done === summary.total
+                  ? "ready"
+                  : "paused"}
           </Typography>
         </Stack>
       </Stack>
@@ -2775,14 +4154,21 @@ function PipelinePopover({ anchor, onClose, pipeline, summary }) {
             <Box key={phase.id} sx={{ py: 1 }}>
               <Typography
                 sx={{
-                  px: 2, mb: 0.5, typography: "s3", fontWeight: 700, letterSpacing: 0.5,
-                  color: "text.disabled", textTransform: "uppercase",
+                  px: 2,
+                  mb: 0.5,
+                  typography: "s3",
+                  fontWeight: 600,
+                  letterSpacing: 0.5,
+                  color: "text.disabled",
+                  textTransform: "none",
                 }}
               >
                 {phase.label}
               </Typography>
               <Stack>
-                {rows.map((step) => <PipelineRow key={step.id} step={step} />)}
+                {rows.map((step) => (
+                  <PipelineRow key={step.id} step={step} />
+                ))}
               </Stack>
             </Box>
           );
@@ -2793,8 +4179,10 @@ function PipelinePopover({ anchor, onClose, pipeline, summary }) {
 }
 
 PipelinePopover.propTypes = {
-  anchor: PropTypes.any, onClose: PropTypes.func,
-  pipeline: PropTypes.array, summary: PropTypes.object,
+  anchor: PropTypes.any,
+  onClose: PropTypes.func,
+  pipeline: PropTypes.array,
+  summary: PropTypes.object,
 };
 
 /*
@@ -2808,30 +4196,61 @@ function PipelineRow({ step }) {
   const failed = step.status === "failed";
 
   const icon = (() => {
-    if (step.status === "done") return <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "#16A34A", display: "block" }} />;
-    if (step.status === "failed") return <Iconify icon="solar:close-circle-bold" width={16} sx={{ color: "#DC2626", display: "block" }} />;
+    if (step.status === "done")
+      return (
+        <Iconify
+          icon="solar:check-circle-bold"
+          width={16}
+          sx={{ color: "status.success.fg", display: "block" }}
+        />
+      );
+    if (step.status === "failed")
+      return (
+        <Iconify
+          icon="solar:close-circle-bold"
+          width={16}
+          sx={{ color: "status.danger.fg", display: "block" }}
+        />
+      );
     if (step.status === "running") {
       return (
         <Box
           sx={{
-            width: 12, height: 12, mt: "2px", borderRadius: "50%",
-            border: "2px solid", borderColor: "#CA8A04", borderTopColor: "transparent",
+            width: 12,
+            height: 12,
+            mt: "2px",
+            borderRadius: "50%",
+            border: "2px solid",
+            borderColor: "status.warning.solid",
+            borderTopColor: "transparent",
             animation: "spin 0.8s linear infinite",
             "@keyframes spin": { to: { transform: "rotate(360deg)" } },
           }}
         />
       );
     }
-    return <Iconify icon="solar:circle-linear" width={16} sx={{ color: "text.disabled", display: "block" }} />;
+    return (
+      <Iconify
+        icon="solar:circle-linear"
+        width={16}
+        sx={{ color: "text.disabled", display: "block" }}
+      />
+    );
   })();
 
   return (
     <Box>
       <Stack
-        direction="row" alignItems="flex-start" spacing={1.25}
-        {...clickable(failed ? () => setOpen((o) => !o) : undefined, { expanded: failed ? open : undefined })}
-        sx={{ ...focusRing,
-          px: 2, py: 1,
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.25}
+        {...clickable(failed ? () => setOpen((o) => !o) : undefined, {
+          expanded: failed ? open : undefined,
+        })}
+        sx={{
+          ...focusRing,
+          px: 2,
+          py: 1,
           cursor: failed ? "pointer" : "default",
           "&:hover": failed ? { bgcolor: "action.hover" } : {},
         }}
@@ -2841,20 +4260,33 @@ function PipelineRow({ step }) {
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Typography
               sx={{
-                typography: "s2", fontWeight: 700,
-                color: step.status === "pending" ? "text.subtitle" : failed ? "#DC2626" : "text.primary",
+                typography: "s2",
+                fontWeight: 600,
+                color:
+                  step.status === "pending"
+                    ? "text.subtitle"
+                    : failed
+                      ? "status.danger.fg"
+                      : "text.primary",
               }}
             >
               {step.label}
             </Typography>
             {failed && (
               <Iconify
-                icon={open ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
-                width={12} sx={{ color: "#DC2626" }}
+                icon={
+                  open
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
+                width={12}
+                sx={{ color: "status.danger.fg" }}
               />
             )}
           </Stack>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}
+          >
             {step.detail}
           </Typography>
         </Box>
@@ -2863,33 +4295,54 @@ function PipelineRow({ step }) {
       {failed && open && step.failure && (
         <Box
           sx={{
-            mx: 1.5, mb: 1, px: 1.75, py: 1.5, borderRadius: 1,
-            border: "1px solid", borderColor: (t) => alpha("#DC2626", 0.35),
-            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
+            mx: 1.5,
+            mb: 1,
+            px: 1.75,
+            py: 1.5,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "status.danger.border",
+            bgcolor: "status.danger.bg",
           }}
         >
-          <Typography sx={{ typography: "s2", fontWeight: 700, color: "#DC2626", mb: 0.5 }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              color: "status.danger.fg",
+              mb: 0.5,
+            }}
+          >
             {step.failure.title}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.secondary", mb: 1.5 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mb: 1.5 }}
+          >
             {step.failure.detail}
           </Typography>
           <Stack direction="row" spacing={1}>
             {step.failure.retryable !== false && (
               <Button
-                size="small" variant="contained"
-                startIcon={<Iconify icon="solar:refresh-linear" width={13} />}
-                sx={{ typography: "s3", fontWeight: 700, bgcolor: "#DC2626", "&:hover": { bgcolor: "#B91C1C" } }}
-                onClick={(e) => { e.stopPropagation(); step.failure.onRetry?.(); }}
+                size="small"
+                variant="contained"
+                startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+                color="error"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  step.failure.onRetry?.();
+                }}
               >
                 Retry
               </Button>
             )}
             <Button
-              size="small" variant="outlined"
-              startIcon={<Iconify icon="solar:document-text-linear" width={13} />}
+              size="small"
+              variant="outlined"
+              startIcon={
+                <Iconify icon="solar:document-text-linear" width={14} />
+              }
               sx={{
-                typography: "s3", fontWeight: 700, color: "text.primary",
+                color: "text.primary",
                 borderColor: (t) => alpha(t.palette.text.primary, 0.2),
               }}
               onClick={(e) => e.stopPropagation()}
@@ -2907,29 +4360,42 @@ PipelineRow.propTypes = { step: PropTypes.object };
 
 /* An MCP server (the world's tools) and a local runtime (where the world
    runs) aren't agents — building from either attaches none. */
-const buildsAgent = (source) => !!source && !["mcp", "local", "scratch"].includes(source.kind);
+const buildsAgent = (source) =>
+  !!source && !["mcp", "local", "scratch"].includes(source.kind);
 
 /* The agent a build read: the same record — and the same identity — the
    Agents page and the GitHub page create for that source, plus how the
    build reached it. */
 function agentForBuild(source, env, now) {
   if (!buildsAgent(source)) return null;
-  const rt = runtimeTypeFor(source?.modality, source?.kind, source?.runtimeTypeId);
+  const rt = runtimeTypeFor(
+    source?.modality,
+    source?.kind,
+    source?.runtimeTypeId,
+  );
   /* Named as typed — else the GitHub agent's name, else where it lives. */
   const record = agentRecordFromSource(source, now);
   const where = (source.value || "").trim();
   return {
     ...record,
     typeId: rt?.id || env?.agentType || record.typeId,
-    via: source.kind === "platform" ? `${source.provider || "Hosted"} assistant ${where}`.trim()
-      : source.kind === "upload" ? `Uploaded — ${where || "bundle"}` : `Read from ${where}`,
+    via:
+      source.kind === "platform"
+        ? `${source.provider || "Hosted"} assistant ${where}`.trim()
+        : source.kind === "upload"
+          ? `Uploaded — ${where || "bundle"}`
+          : `Read from ${where}`,
     location: where,
     note: "Environment source",
   };
 }
 
 /* What each derivation stage reads as, for "it stops at …". */
-const STAGE_LABEL = { understand: "Understanding the agent", build: "Building the environment", scenarios: "Writing scenarios" };
+const STAGE_LABEL = {
+  understand: "Understanding the agent",
+  build: "Building the environment",
+  scenarios: "Writing scenarios",
+};
 
 /*
   A build that stopped part-way, under the header: canceled (restart it), or
@@ -2939,46 +4405,112 @@ const STAGE_LABEL = { understand: "Understanding the agent", build: "Building th
 function BuildHaltStrip({ halt, onRestart }) {
   const failed = halt.kind === "failed";
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.125, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, bgcolor: "background.neutral" }}>
-      <Iconify icon={failed ? "solar:danger-triangle-bold" : "solar:stop-circle-linear"} width={16} sx={{ color: failed ? "error.main" : "text.secondary", flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{
+        px: 2,
+        py: 1.125,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+        bgcolor: "background.neutral",
+      }}
+    >
+      <Iconify
+        icon={
+          failed ? "solar:danger-triangle-bold" : "solar:stop-circle-linear"
+        }
+        width={16}
+        sx={{ color: failed ? "error.main" : "text.secondary", flexShrink: 0 }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {failed ? `Build failed at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()} — ${halt.title}` : `Build canceled at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()}`}
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {failed
+            ? `Build failed at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()} — ${halt.title}`
+            : `Build canceled at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()}`}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {failed ? halt.message : "What was done before it stays. Restart to carry on from there."}
+          {failed
+            ? halt.message
+            : "What was done before it stays. Restart to carry on from there."}
         </Typography>
       </Box>
       {failed && halt.affordable > 0 && (
-        <Button size="small" variant="contained" color="primary" onClick={() => onRestart(halt.affordable)} sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          onClick={() => onRestart(halt.affordable)}
+          sx={{ flexShrink: 0 }}
+        >
           {`Retry with ${halt.affordable.toLocaleString()} scenarios`}
         </Button>
       )}
       {(!failed || halt.retryable) && !(failed && halt.affordable > 0) && (
-        <Button size="small" variant="outlined" onClick={() => onRestart()} startIcon={<Iconify icon="solar:refresh-linear" width={14} />} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onRestart()}
+          startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
           {failed ? "Retry" : "Restart build"}
         </Button>
       )}
     </Stack>
   );
 }
-BuildHaltStrip.propTypes = { halt: PropTypes.object.isRequired, onRestart: PropTypes.func.isRequired };
+BuildHaltStrip.propTypes = {
+  halt: PropTypes.object.isRequired,
+  onRestart: PropTypes.func.isRequired,
+};
 
 /* Out of credits for the scenarios still to come — said while there's time to build fewer. */
 function BuildCreditsStrip({ credits, count, onUse }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.125, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, bgcolor: "background.neutral" }}>
-      <Iconify icon="solar:wallet-money-linear" width={16} sx={{ color: "warning.main", flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{
+        px: 2,
+        py: 1.125,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+        bgcolor: "background.neutral",
+      }}
+    >
+      <Iconify
+        icon="solar:wallet-money-linear"
+        width={16}
+        sx={{ color: "warning.main", flexShrink: 0 }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`Not enough AI credits for ${count.toLocaleString()} scenarios`}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`${credits.message} The build stops when it gets there.`}</Typography>
+        <Typography
+          sx={{ typography: "s2", fontWeight: 600 }}
+        >{`Not enough AI credits for ${count.toLocaleString()} scenarios`}</Typography>
+        <Typography
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >{`${credits.message} The build stops when it gets there.`}</Typography>
       </Box>
       {credits.affordable > 0 && (
-        <Button size="small" variant="outlined" onClick={() => onUse(credits.affordable)} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onUse(credits.affordable)}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
           {`Build ${credits.affordable.toLocaleString()} instead`}
         </Button>
       )}
     </Stack>
   );
 }
-BuildCreditsStrip.propTypes = { credits: PropTypes.object.isRequired, count: PropTypes.number.isRequired, onUse: PropTypes.func.isRequired };
+BuildCreditsStrip.propTypes = {
+  credits: PropTypes.object.isRequired,
+  count: PropTypes.number.isRequired,
+  onUse: PropTypes.func.isRequired,
+};

@@ -23,7 +23,7 @@ const TooltipForEvals = ({
 
   const tooltipContent = Array.isArray(selectedEvalItem) ? (
     <Box sx={{ p: 1.5, maxHeight: 420, overflowY: "auto" }}>
-      <Typography sx={{ fontWeight: 600, fontSize: "14px", marginBottom: 0.5 }}>
+      <Typography sx={{ fontWeight: 600, fontSize: "13px", marginBottom: 0.5 }}>
         {heading}
       </Typography>
       <List
@@ -33,7 +33,7 @@ const TooltipForEvals = ({
           pl: 2,
           m: 0,
           fontWeight: 400,
-          fontSize: "11px",
+          fontSize: "12px",
         }}
       >
         {selectedEvalItem.map((item, index) => (
@@ -65,7 +65,7 @@ const TooltipForEvals = ({
         <Typography
           sx={{
             fontWeight: 600,
-            fontSize: "14px",
+            fontSize: "13px",
             textTransform: "capitalize",
           }}
         >
@@ -76,7 +76,7 @@ const TooltipForEvals = ({
             href="https://docs.futureagi.com/docs/evaluation/builtin"
             target="_blank"
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               color: "primary.main",
               textDecoration: "underline",
               "&:hover": {
@@ -114,14 +114,14 @@ const TooltipForEvals = ({
       />
 
       <Box sx={{ gap: 0.25 }}>
-        <Typography sx={{ fontWeight: 600, fontSize: "11px", mb: 0.25 }}>
+        <Typography sx={{ fontWeight: 600, fontSize: "12px", mb: 0.25 }}>
           Inputs for evaluations
         </Typography>
 
         <List
           component="ul"
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             m: 0,
             display: "flex",
             flexDirection: "row-reverse",
@@ -149,7 +149,7 @@ const TooltipForEvals = ({
                 src="/assets/icons/navbar/ic_knowledge_base.svg"
               />
             </ListItemIcon>
-            <Typography sx={{ fontSize: "11px", flexShrink: 0 }}>
+            <Typography sx={{ fontSize: "12px", flexShrink: 0 }}>
               Knowledge Base
             </Typography>
           </ListItem>
@@ -172,9 +172,12 @@ const TooltipForEvals = ({
                   src="/assets/ic_llm_future_agi.svg"
                 />
               </ListItemIcon>
-              <Typography sx={{ fontSize: "11px", flexShrink: 0 }}>
+              <Typography sx={{ fontSize: "12px", flexShrink: 0 }}>
                 Language Models{" "}
-                <Typography sx={{ color: "red.500" }} component={"span"}>
+                <Typography
+                  sx={{ color: "status.danger.fg" }}
+                  component={"span"}
+                >
                   *
                 </Typography>
               </Typography>
@@ -187,14 +190,14 @@ const TooltipForEvals = ({
 
       <Box>
         <Typography
-          sx={{ fontWeight: 600, fontSize: "11px", mb: 0.5, paddingTop: 0.125 }}
+          sx={{ fontWeight: 600, fontSize: "12px", mb: 0.5, paddingTop: 0.125 }}
         >
           Inputs for column mapping
         </Typography>
         <List
           component="ul"
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             m: 0,
             display: "flex",
             flexDirection: "row",
@@ -241,7 +244,7 @@ const TooltipForEvals = ({
                 <Typography
                   component={"span"}
                   sx={{
-                    color: "red.500",
+                    color: "status.danger.fg",
                     fontWeight: "fontWeightRegular",
                     typography: "s2_1",
                   }}
@@ -290,7 +293,7 @@ const TooltipForEvals = ({
       </Box>
       <Typography
         sx={{
-          fontSize: "9px",
+          fontSize: "12px",
           fontWeight: "fontWeightRegular",
           color: "text.primary",
           mt: "10px",
@@ -302,7 +305,7 @@ const TooltipForEvals = ({
           component={"span"}
           sx={{
             color: "red500",
-            fontSize: "9px",
+            fontSize: "12px",
             fontWeight: "fontWeightRegular",
           }}
         >
@@ -333,8 +336,9 @@ const TooltipForEvals = ({
           sx: {
             bgcolor: "background.paper",
             color: "text.primary",
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: 3,
-            borderRadius: 1.5,
+            borderRadius: "8px",
           },
         },
       }}

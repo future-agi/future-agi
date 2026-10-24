@@ -16,15 +16,12 @@ export default function ImportPromptBtn({ promptImportred, onClick }) {
       onClick={onClick}
       size="small"
       sx={{
-        borderRadius: "4px",
         border: "1px solid",
         borderColor: "primary.main",
-        px: "16px",
-        py: "6px",
       }}
       startIcon={
         promptImportred ? (
-          <Iconify icon="line-md:minus" sx={iconStyles} />
+          <Iconify icon="solar:minus-linear" sx={iconStyles} />
         ) : (
           <SvgColor
             sx={iconStyles}

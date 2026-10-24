@@ -1,9 +1,22 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { Box, Stack, Typography, Button, LinearProgress, Tooltip } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  LinearProgress,
+  Tooltip,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
-import { simulationPreviewData, resolveEval, TOOL_CALL_JUDGE_ID, MAX_APPLIED_EVALS, EVAL_CAP_NOTE } from "../../_mock/evals";
+import {
+  simulationPreviewData,
+  resolveEval,
+  TOOL_CALL_JUDGE_ID,
+  MAX_APPLIED_EVALS,
+  EVAL_CAP_NOTE,
+} from "../../_mock/evals";
 import { getAgentType } from "../../_mock/agentTypes";
 import { evalRailOf } from "../../_mock/metering";
 import { railInputOf } from "./evalRail";
@@ -17,7 +30,15 @@ import { railInputOf } from "./evalRail";
  * "Next" until the last eval, so a queue of evals is one trip through the
  * picker instead of one trip each.
  */
-export default function AddEvalsDrawer({ open, onClose, env, envState, existingIds, onAdd, slotsLeft = Infinity }) {
+export default function AddEvalsDrawer({
+  open,
+  onClose,
+  env,
+  envState,
+  existingIds,
+  onAdd,
+  slotsLeft = Infinity,
+}) {
   const [checked, setChecked] = useState({});
   const [queue, setQueue] = useState([]);
   const [index, setIndex] = useState(0);
@@ -33,7 +54,12 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
     flow is supposed to have.
   */
   const previewData = useMemo(
-    () => simulationPreviewData(env, envState, getAgentType(envState?.agent?.typeId)),
+    () =>
+      simulationPreviewData(
+        env,
+        envState,
+        getAgentType(envState?.agent?.typeId),
+      ),
     [env, envState],
   );
   const selected = useMemo(() => Object.values(checked), [checked]);
@@ -42,18 +68,28 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
      as disabled rows scattered through the library. */
   /* Callers pass ids, or (the run screen) the eval records themselves. */
   const addedIds = useMemo(
-    () => [...(existingIds || [])].map((x) => (typeof x === "string" ? x : x?.id)).filter(Boolean),
+    () =>
+      [...(existingIds || [])]
+        .map((x) => (typeof x === "string" ? x : x?.id))
+        .filter(Boolean),
     [existingIds],
   );
   const addedEvals = useMemo(() => {
-    const byId = new Map((envState?.evals || []).map((e) => [typeof e === "string" ? e : e?.id, e]));
+    const byId = new Map(
+      (envState?.evals || []).map((e) => [
+        typeof e === "string" ? e : e?.id,
+        e,
+      ]),
+    );
     return addedIds.map((id) => {
       const ev = resolveEval(byId.get(id) || id);
       return {
         id,
         name: ev?.instanceName || ev?.name || id,
         /* The rail beside the kind — free, or credits per call. */
-        meta: [ev?.category, ev?.type, ev && evalRailOf(ev).label].filter(Boolean).join(" · "),
+        meta: [ev?.category, ev?.type, ev && evalRailOf(ev).label]
+          .filter(Boolean)
+          .join(" · "),
       };
     });
   }, [envState, addedIds]);
@@ -76,7 +112,10 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
     setCollected([]);
   };
 
-  const close = () => { reset(); onClose(); };
+  const close = () => {
+    reset();
+    onClose();
+  };
 
   /* Up to 8 catalogue evaluations plus the tool-call judge: ticking stops
      at the slots this environment has left. */
@@ -84,17 +123,26 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
     setChecked((c) => {
       const next = { ...c };
       if (next[evalItem.id]) delete next[evalItem.id];
-      else if (Object.values(next).filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length >= slotsLeft && evalItem.id !== TOOL_CALL_JUDGE_ID) return c;
+      else if (
+        Object.values(next).filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length >=
+          slotsLeft &&
+        evalItem.id !== TOOL_CALL_JUDGE_ID
+      )
+        return c;
       else next[evalItem.id] = evalItem;
       return next;
     });
-  const full = Number.isFinite(slotsLeft) && selected.filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length >= slotsLeft;
+  const full =
+    Number.isFinite(slotsLeft) &&
+    selected.filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length >= slotsLeft;
 
   const entry = (config) => ({
     id: config.templateId || config.id || `eval-${config.name}`,
     name: config.name || "Eval",
-    blurb: Object.entries(config.mapping || {}).map(([k, v]) => `${k} → ${v}`).join(" · ")
-      || "Added from the eval library",
+    blurb:
+      Object.entries(config.mapping || {})
+        .map(([k, v]) => `${k} → ${v}`)
+        .join(" · ") || "Added from the eval library",
     mapping: config.mapping || {},
     model: config.model,
     threshold: 0.8,
@@ -150,7 +198,14 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
       sourcePreviewData={previewData}
       existingEvals={addedIds.map((id) => ({ id }))}
       addedEvals={addedEvals}
-      onEvalAdded={mapping ? onEvalAdded : (config) => { onAdd([entry(config)]); close(); }}
+      onEvalAdded={
+        mapping
+          ? onEvalAdded
+          : (config) => {
+              onAdd([entry(config)]);
+              close();
+            }
+      }
       initialEval={mapping ? queue[index] : null}
       // In a queue the drawer must not close itself after each save — this
       // component decides when the last eval is done.
@@ -167,47 +222,76 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
       headerAction={
         !mapping && (
           <Stack direction="row" alignItems="center" spacing={1.25}>
-          {Number.isFinite(slotsLeft) && (
-            <Tooltip arrow title={EVAL_CAP_NOTE}>
-              <Typography sx={{ typography: "s3", color: full ? "text.primary" : "text.subtitle", fontWeight: full ? 600 : 400, whiteSpace: "nowrap", cursor: "help", fontVariantNumeric: "tabular-nums" }}>
-                {full ? `No slots left · up to ${MAX_APPLIED_EVALS}` : `${slotsLeft - selected.filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length} of ${MAX_APPLIED_EVALS} slots left`}
-              </Typography>
-            </Tooltip>
-          )}
-          {selected.length > 0 && (
-            <Tooltip
-              arrow
-              title="Managed LLM judges are metered in AI credits per call. Rule-based evals and ones judged by your own model key are free."
+            {Number.isFinite(slotsLeft) && (
+              <Tooltip arrow title={EVAL_CAP_NOTE}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: full ? "text.primary" : "text.tertiary",
+                    fontWeight: full ? 600 : 400,
+                    whiteSpace: "nowrap",
+                    cursor: "help",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {full
+                    ? `No slots left · up to ${MAX_APPLIED_EVALS}`
+                    : `${slotsLeft - selected.filter((e) => e.id !== TOOL_CALL_JUDGE_ID).length} of ${MAX_APPLIED_EVALS} slots left`}
+                </Typography>
+              </Tooltip>
+            )}
+            {selected.length > 0 && (
+              <Tooltip
+                arrow
+                title="Managed LLM judges are metered in AI credits per call. Rule-based evals and ones judged by your own model key are free."
+              >
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    whiteSpace: "nowrap",
+                    cursor: "help",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {[
+                    selectedRail.free > 0 && `${selectedRail.free} free`,
+                    selectedRail.metered > 0 &&
+                      `${selectedRail.metered} at ${selectedRail.credits} credit${selectedRail.credits === 1 ? "" : "s"} / call`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Typography>
+              </Tooltip>
+            )}
+            <Button
+              variant="contained"
+              // Deliberately not `color="primary"`: this sits in a row of black
+              // per-eval "Add" buttons, so it inherits the same default and
+              // matches its neighbours instead of being the one purple thing in
+              // the list. Only this button — everything else stays brand purple.
+              size="small"
+              disabled={selected.length === 0}
+              onClick={() => {
+                setQueue(selected);
+                setIndex(0);
+                setCollected([]);
+              }}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
             >
-              <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", cursor: "help", fontVariantNumeric: "tabular-nums" }}>
-                {[
-                  selectedRail.free > 0 && `${selectedRail.free} free`,
-                  selectedRail.metered > 0 && `${selectedRail.metered} at ${selectedRail.credits} credit${selectedRail.credits === 1 ? "" : "s"} / call`,
-                ].filter(Boolean).join(" · ")}
-              </Typography>
-            </Tooltip>
-          )}
-          <Button
-            variant="contained"
-            // Deliberately not `color="primary"`: this sits in a row of black
-            // per-eval "Add" buttons, so it inherits the same default and
-            // matches its neighbours instead of being the one purple thing in
-            // the list. Only this button — everything else stays brand purple.
-            size="small"
-            disabled={selected.length === 0}
-            onClick={() => { setQueue(selected); setIndex(0); setCollected([]); }}
-            startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-            sx={{ textTransform: "none", fontSize: "12px" }}
-          >
-            Add Evaluations{selected.length ? ` (${selected.length})` : ""}
-          </Button>
+              Add Evaluations{selected.length ? ` (${selected.length})` : ""}
+            </Button>
           </Stack>
         )
       }
-      progress={mapping ? <CompletionBar pct={pct} index={index} total={total} /> : null}
+      progress={
+        mapping ? <CompletionBar pct={pct} index={index} total={total} /> : null
+      }
       primaryLabel={
         mapping
-          ? last ? `Add ${total} ${total === 1 ? "evaluation" : "evaluations"}` : "Next"
+          ? last
+            ? `Add ${total} ${total === 1 ? "evaluation" : "evaluations"}`
+            : "Next"
           : null
       }
     />
@@ -226,25 +310,47 @@ AddEvalsDrawer.propTypes = {
 
 function CompletionBar({ pct, index, total }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexShrink: 0 }}>
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>Completion rate</Typography>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{ flexShrink: 0 }}
+    >
+      <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+        Completion rate
+      </Typography>
       <LinearProgress
         variant="determinate"
         value={pct}
         sx={{
-          width: 180, height: 5, borderRadius: 3,
+          width: 180,
+          height: 5,
+          borderRadius: 3,
           bgcolor: "background.neutral",
-          "& .MuiLinearProgress-bar": { bgcolor: "#16A34A", borderRadius: 3 },
+          "& .MuiLinearProgress-bar": {
+            bgcolor: "status.success.solid",
+            borderRadius: 3,
+          },
         }}
       />
-      <Typography sx={{ typography: "s2", fontWeight: 700, color: pct ? "#16A34A" : "text.subtitle" }}>
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          color: pct ? "status.success.fg" : "text.tertiary",
+        }}
+      >
         {pct}%
       </Typography>
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+      <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
         ({index + 1}/{total})
       </Typography>
       <Box />
     </Stack>
   );
 }
-CompletionBar.propTypes = { pct: PropTypes.number, index: PropTypes.number, total: PropTypes.number };
+CompletionBar.propTypes = {
+  pct: PropTypes.number,
+  index: PropTypes.number,
+  total: PropTypes.number,
+};

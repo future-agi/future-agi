@@ -61,7 +61,9 @@ const DatasetsSelectRow = ({
   );
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
+  const isSyntheticDataset = Boolean(
+    tableData?.data?.result?.synthetic_dataset,
+  );
   const plusRef = useRef(null);
   const compareRef = useRef(null);
   const theme = useTheme();
@@ -282,7 +284,7 @@ const DatasetsSelectRow = ({
               <Box sx={{ fontSize: "12px", color: "text.secondary" }}>
                 Scenario
               </Box>
-              <Box sx={{ fontSize: "14px", fontWeight: 500 }}>
+              <Box sx={{ fontSize: "13px", fontWeight: 500 }}>
                 {scenarioName}
               </Box>
             </Box>
@@ -336,7 +338,7 @@ const DatasetsSelectRow = ({
                   }}
                 >
                   <CircularProgress size={16} />
-                  <Box sx={{ color: "text.secondary", fontSize: "14px" }}>
+                  <Box sx={{ color: "text.secondary", fontSize: "13px" }}>
                     {fromScenario
                       ? "Loading scenarios..."
                       : "Loading datasets..."}
@@ -488,7 +490,7 @@ const DatasetsSelectRow = ({
                           <Link
                             href={button.link}
                             underline="always"
-                            color="blue.500"
+                            color="status.info.fg"
                             target="_blank"
                             rel="noopener noreferrer"
                             fontWeight="fontWeightMedium"

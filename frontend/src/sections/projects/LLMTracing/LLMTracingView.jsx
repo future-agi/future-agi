@@ -325,7 +325,6 @@ CompareAgentGraph.propTypes = {
 const CallLogsGrid = lazy(
   () => import("src/sections/agents/CallLogs/CallLogsGrid"),
 );
-const LLMFiltersDrawer = lazy(() => import("./LLMFiltersDrawer"));
 const AddDataset = lazy(
   () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
 );
@@ -482,7 +481,7 @@ const CompareGraphHeader = ({
           return {
             width: 24,
             height: 25,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             backgroundColor: bg,
             display: "flex",
             alignItems: "center",
@@ -500,8 +499,8 @@ const CompareGraphHeader = ({
         ref={dateButtonRef}
         variant="outlined"
         size="small"
-        startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onClick={(e) => setDateAnchor(e.currentTarget)}
         sx={comparePillSx}
       >
@@ -514,7 +513,7 @@ const CompareGraphHeader = ({
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
-          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 140 } },
+          paper: { sx: { mt: 0.5, borderRadius: "8px", minWidth: 200 } },
         }}
       >
         {COMPARE_DATE_OPTIONS.map((opt) => (
@@ -522,7 +521,7 @@ const CompareGraphHeader = ({
             key={opt.key}
             selected={dateFilter?.dateOption === opt.key}
             onClick={() => handleDateOptionChange(opt.key)}
-            sx={{ fontSize: 13, py: 0.75 }}
+            sx={{ py: 0.75 }}
           >
             {opt.label}
           </MenuItem>
@@ -549,10 +548,10 @@ const CompareGraphHeader = ({
           startIcon={
             hasActiveFilter ? (
               <Badge variant="dot" color="error" overlap="circular">
-                <Iconify icon="mdi:filter-outline" width={16} />
+                <Iconify icon="solar:filter-linear" width={16} />
               </Badge>
             ) : (
-              <Iconify icon="mdi:filter-outline" width={16} />
+              <Iconify icon="solar:filter-linear" width={16} />
             )
           }
           onClick={(e) => onFilterToggle(e)}
@@ -605,7 +604,10 @@ const CompareGraphHeader = ({
                 onDelete={() => onRemoveFilter(idx)}
                 label={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary" }}
+                    >
                       {(() => {
                         if (f.display_name) return f.display_name;
                         // `_.startCase` on a UUID mangles it into spaced
@@ -618,13 +620,16 @@ const CompareGraphHeader = ({
                           : _.startCase(field);
                       })()}
                     </Typography>
-                    <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.disabled" }}
+                    >
                       {opLabel}
                     </Typography>
                     <Typography
+                      variant="caption"
+                      fontWeight={600}
                       sx={{
-                        fontSize: 11,
-                        fontWeight: 600,
                         color: "text.primary",
                       }}
                     >
@@ -633,11 +638,9 @@ const CompareGraphHeader = ({
                   </Box>
                 }
                 sx={{
-                  height: 24,
                   bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "6px",
                   transition: (theme) =>
                     theme.transitions.create(
                       ["background-color", "border-color"],
@@ -651,7 +654,6 @@ const CompareGraphHeader = ({
                   },
                   "& .MuiChip-label": { px: 0.5 },
                   "& .MuiChip-deleteIcon": {
-                    fontSize: 12,
                     color: "text.disabled",
                     "&:hover": { color: "text.secondary" },
                   },
@@ -663,8 +665,6 @@ const CompareGraphHeader = ({
             size="small"
             onClick={onClearFilters}
             sx={{
-              textTransform: "none",
-              fontSize: 11,
               color: "text.disabled",
               minWidth: "auto",
               p: 0,
@@ -3186,7 +3186,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     {loading && latestActive ? (
                       <CircularProgress size={16} />
                     ) : (
-                      <Iconify width={18} icon="clarity:refresh-line" />
+                      <Iconify width={20} icon="solar:refresh-linear" />
                     )}
                   </Box>
 
@@ -3204,7 +3204,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     startIcon={
                       <SvgColor
                         src="/assets/icons/navbar/ic_get_started.svg"
-                        sx={{ height: 16, width: 16 }}
+                        width={16}
                       />
                     }
                     onClick={() => {
@@ -3251,7 +3251,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 )}
                 <Button
                   sx={{
-                    paddingX: theme.spacing(2),
                     minWidth: "fit-content",
                     ml: 1,
                     whiteSpace: "nowrap",
@@ -3263,21 +3262,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       <Badge variant="dot" color="error" overlap="circular">
                         <SvgColor
                           src="/assets/icons/components/ic_newfilter.svg"
-                          sx={{
-                            color: "text.primary",
-                            width: "20px",
-                            height: "20px",
-                          }}
+                          width="20px"
+                          sx={{ color: "text.primary" }}
                         />
                       </Badge>
                     ) : (
                       <SvgColor
                         src="/assets/icons/components/ic_newfilter.svg"
-                        sx={{
-                          color: "text.primary",
-                          height: "20px",
-                          width: "20px",
-                        }}
+                        width="20px"
+                        sx={{ color: "text.primary" }}
                       />
                     )
                   }
@@ -3296,11 +3289,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   size="small"
                   type="black"
                   slotProps={{
-                    tooltip: {
-                      sx: {
-                        maxWidth: "200px !important",
-                      },
-                    },
                     popper: {
                       modifiers: [
                         {
@@ -3325,7 +3313,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         [PropertyName.id]: observeId,
                       });
                     }}
-                    startIcon={<Iconify icon="iconamoon:compare" />}
+                    startIcon={
+                      <Iconify icon="solar:transfer-horizontal-linear" />
+                    }
                   >
                     Compare
                   </Button>
@@ -3449,7 +3439,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   {loading && latestActive ? (
                     <CircularProgress size={16} />
                   ) : (
-                    <Iconify icon="clarity:refresh-line" />
+                    <Iconify icon="solar:refresh-linear" />
                   )}
                 </ObserveIconButton> */}
 
@@ -3461,7 +3451,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   size="small"
                 >
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     sx={{ color: "text.disabled" }}
                   />
                 </ObserveIconButton>
@@ -3562,8 +3552,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }
               }}
               sx={{
-                textTransform: "none",
-                fontSize: 12,
                 color: "text.secondary",
                 minWidth: "auto",
                 p: 0,
@@ -3617,11 +3605,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enqueueSnackbar("Filters saved", { variant: "success" });
               }}
               sx={{
-                textTransform: "none",
-                fontSize: 12,
-                fontWeight: 600,
-                color: (t) =>
-                  t.palette.mode === "dark" ? "text.primary" : "#573FCC",
+                color: "text.link",
                 minWidth: "auto",
                 p: 0,
                 "&:hover": { bgcolor: "transparent" },
@@ -3924,28 +3908,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 }}
                 aria-label="changes tabs"
                 textColor="primary"
-                TabIndicatorProps={{
-                  style: {
-                    backgroundColor: theme.palette.primary.main,
-                  },
-                }}
                 sx={{
-                  minHeight: 0,
                   "& .MuiTab-root": {
                     margin: "0 !important",
-                    fontWeight: "600",
-                    color: "primary.main",
-                    "&:not(.Mui-selected)": {
-                      color: "text.disabled",
-                      fontWeight: "500",
-                    },
                   },
                 }}
               >
                 <Tab
                   sx={{
                     margin: theme.spacing(0),
-                    px: theme.spacing(1.875),
                   }}
                   label="Primary Graph"
                   value="primary"
@@ -3953,7 +3924,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 <Tab
                   sx={{
                     margin: theme.spacing(0),
-                    px: theme.spacing(1.875),
                   }}
                   label="Comparison Graph"
                   value="compare"
@@ -4064,22 +4034,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     {
                       id: "replay",
                       label: "Replay Calls",
-                      icon: "mdi:play-outline",
+                      icon: "solar:play-linear",
                     },
                     {
                       id: "dataset",
                       label: "Move to dataset",
-                      icon: "mdi:folder-move-outline",
+                      icon: "solar:move-to-folder-linear",
                     },
                     {
                       id: "tags",
                       label: "Add tags",
-                      icon: "mdi:tag-outline",
+                      icon: "solar:tag-linear",
                     },
                     {
                       id: "annotation-queue",
                       label: "Add to annotation queue",
-                      icon: "mdi:clipboard-list-outline",
+                      icon: "solar:clipboard-list-linear",
                       disabled:
                         !simCallFilterSelectionMode &&
                         (selectedCallIds?.length || 0) > 0 &&
@@ -4094,22 +4064,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   {
                     id: "dataset",
                     label: "Move to dataset",
-                    icon: "mdi:folder-move-outline",
+                    icon: "solar:move-to-folder-linear",
                   },
                   {
                     id: "tags",
                     label: "Add tags",
-                    icon: "mdi:tag-outline",
+                    icon: "solar:tag-linear",
                   },
                   {
                     id: "annotation-queue",
                     label: "Add to annotation queue",
-                    icon: "mdi:clipboard-list-outline",
+                    icon: "solar:clipboard-list-linear",
                   },
                   {
                     id: "annotate",
                     label: "Annotate",
-                    icon: "mdi:pencil-box-outline",
+                    icon: "solar:pen-new-square-linear",
                     requiresSingle: true,
                   },
                 ];
@@ -4353,21 +4323,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   }}
                   aria-label="change tabs"
                   sx={{
-                    minHeight: 0,
                     "& .MuiTab-root": {
                       margin: "0 !important",
-                      fontWeight: "600",
-                      typography: "s1",
-                      color: "primary.main",
-                      "&:not(.Mui-selected)": {
-                        color: "text.disabled",
-                        fontWeight: "500",
-                      },
-                    },
-                  }}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
                     },
                   }}
                 >
@@ -4376,7 +4333,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     value="trace"
                     sx={{
                       margin: theme.spacing(0),
-                      px: theme.spacing(1.875),
                     }}
                   />
                   <Tab
@@ -4384,7 +4340,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     value="spans"
                     sx={{
                       margin: theme.spacing(0),
-                      px: theme.spacing(1.875),
                     }}
                   />
                 </Tabs>
@@ -4407,10 +4362,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     sx={{ my: theme.spacing(1) }}
                   />{" "}
                   <Button
+                    size="small"
                     sx={{
                       padding: 0,
                       width: 30,
-                      height: 30,
                       margin: 0,
                       minWidth: 0,
                       "& .MuiButton-startIcon": {
@@ -4448,7 +4403,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     >
                       <Button
                         sx={{
-                          padding: "12px",
                           borderColor: hasEvalFilter
                             ? "action.selected"
                             : undefined,
@@ -4461,12 +4415,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                             icon={
                               hasEvalFilter
                                 ? "famicons:checkbox"
-                                : "system-uicons:checkbox-empty"
+                                : "solar:square-linear"
                             }
                             color={
                               hasEvalFilter ? "primary.main" : "text.disabled"
                             }
-                            width={22}
+                            width={20}
                           />
                         }
                       >
@@ -4486,11 +4440,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       size="small"
                       type="black"
                       slotProps={{
-                        tooltip: {
-                          sx: {
-                            maxWidth: "200px !important",
-                          },
-                        },
                         popper: {
                           modifiers: [
                             {
@@ -4505,7 +4454,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       }}
                     >
                       <Button
-                        sx={{ height: "30px" }}
                         variant="outlined"
                         size="medium"
                         onClick={handleAutoSize}
@@ -4545,11 +4493,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       size="small"
                       type="black"
                       slotProps={{
-                        tooltip: {
-                          sx: {
-                            maxWidth: "200px !important",
-                          },
-                        },
                         popper: {
                           modifiers: [
                             {
@@ -4565,11 +4508,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     >
                       <span>
                         <Button
+                          size="small"
                           variant="contained"
                           color="primary"
                           sx={{
-                            borderRadius: theme.spacing(1),
-                            height: "30px",
                             "&:disabled": {
                               color: "common.white",
                               backgroundColor: "action.hover",
@@ -4577,7 +4519,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           }}
                           startIcon={
                             <Iconify
-                              icon="line-md:plus"
+                              icon="solar:add-linear"
                               color="background.paper"
                               width="16px"
                               height="16px"

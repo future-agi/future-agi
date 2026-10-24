@@ -51,7 +51,7 @@ function RenderContent({ content, theme }) {
             verticalAlign: "baseline",
           }}
         >
-          <Iconify icon={skill?.icon || "mdi:lightning-bolt"} width={13} />
+          <Iconify icon={skill?.icon || "solar:bolt-linear"} width={14} />
           {part}
         </Box>
       );
@@ -86,11 +86,8 @@ export default function UserMessage({ message }) {
       <Box sx={{ maxWidth: "85%", position: "relative" }}>
         <Box
           sx={{
-            bgcolor: alpha(
-              theme.palette.primary.main,
-              theme.palette.mode === "dark" ? 0.15 : 0.08,
-            ),
-            borderRadius: "18px",
+            bgcolor: "action.selected",
+            borderRadius: "12px",
             px: 2,
             py: 1.25,
           }}
@@ -116,7 +113,7 @@ export default function UserMessage({ message }) {
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               overflowWrap: "break-word",
-              fontSize: 14,
+              fontSize: 13,
               lineHeight: 1.8,
               color: "text.primary",
             }}
@@ -133,7 +130,7 @@ export default function UserMessage({ message }) {
             textAlign: "right",
             mt: 0.5,
             mr: 0.5,
-            fontSize: 11,
+            fontSize: 12,
             color: "text.disabled",
             opacity: hovered ? 1 : 0,
             transition: "opacity 0.15s ease",

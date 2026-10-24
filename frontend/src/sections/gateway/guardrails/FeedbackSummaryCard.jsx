@@ -1,7 +1,5 @@
 import React from "react";
 import {
-  Card,
-  CardContent,
   Typography,
   Stack,
   Table,
@@ -11,9 +9,9 @@ import {
   TableHead,
   TableRow,
   Skeleton,
-  Chip,
   LinearProgress,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useGuardrailFeedbackSummary } from "./hooks/useGuardrailFeedback";
 
 function formatPct(val) {
@@ -38,124 +36,159 @@ const FeedbackSummaryCard = () => {
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent>
-          <Skeleton width={200} height={30} sx={{ mb: 2 }} />
-          <Stack spacing={1}>
-            {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} width="100%" height={36} />
-            ))}
-          </Stack>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Skeleton width={200} height={30} sx={{ mb: 2 }} />
+        <Stack spacing={1}>
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} width="100%" height={36} />
+          ))}
+        </Stack>
+      </Section>
     );
   }
 
   if (!summary?.length) {
     return (
-      <Card>
-        <CardContent>
-          <Typography variant="subtitle1" mb={1}>
-            Feedback Summary
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            py={3}
-          >
-            No feedback data yet. Submit feedback on guardrail results in the
-            request log detail view.
-          </Typography>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="subtitle1" mb={1}>
+          Feedback Summary
+        </Typography>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          textAlign="center"
+          py={3}
+        >
+          No feedback data yet. Submit feedback on guardrail results in the
+          request log detail view.
+        </Typography>
+      </Section>
     );
   }
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="subtitle1" mb={2}>
-          Feedback Summary by Check
-        </Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Check Name</TableCell>
-                <TableCell align="right">Total</TableCell>
-                <TableCell align="right">Correct</TableCell>
-                <TableCell align="right">False Positive</TableCell>
-                <TableCell align="right">False Negative</TableCell>
-                <TableCell>Accuracy</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {summary.map((rawItem) => {
-                const item = normalizeSummaryItem(rawItem);
-                const accuracy =
-                  item.total > 0 ? item.correctCount / item.total : 0;
-                return (
-                  <TableRow key={item.checkName} hover>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={500}>
-                        {item.checkName}
+    <Section variant="panel">
+      <Typography variant="subtitle1" mb={2}>
+        Feedback Summary by Check
+      </Typography>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Check Name</TableCell>
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
+                Total
+              </TableCell>
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
+                Correct
+              </TableCell>
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
+                False Positive
+              </TableCell>
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
+                False Negative
+              </TableCell>
+              <TableCell>Accuracy</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {summary.map((rawItem) => {
+              const item = normalizeSummaryItem(rawItem);
+              const accuracy =
+                item.total > 0 ? item.correctCount / item.total : 0;
+              return (
+                <TableRow key={item.checkName} hover>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={500}>
+                      {item.checkName}
+                    </Typography>
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    <Typography variant="body2">{item.total}</Typography>
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontVariantNumeric: "tabular-nums",
+                        color: "status.success.fg",
+                      }}
+                    >
+                      {item.correctCount || 0}
+                    </Typography>
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontVariantNumeric: "tabular-nums",
+                        color: "status.warning.fg",
+                      }}
+                    >
+                      {item.falsePositiveCount || 0}
+                    </Typography>
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontVariantNumeric: "tabular-nums",
+                        color: "status.danger.fg",
+                      }}
+                    >
+                      {item.falseNegativeCount || 0}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ width: 130 }}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={accuracy * 100}
+                        color={
+                          accuracy > 0.8
+                            ? "success"
+                            : accuracy > 0.5
+                              ? "warning"
+                              : "error"
+                        }
+                        sx={{ flex: 1, height: 6, borderRadius: 3 }}
+                      />
+                      <Typography variant="caption" sx={{ minWidth: 36 }}>
+                        {formatPct(accuracy)}
                       </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Typography variant="body2">{item.total}</Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.correctCount || 0}
-                        color="success"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.falsePositiveCount || 0}
-                        color="warning"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.falseNegativeCount || 0}
-                        color="error"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell sx={{ width: 130 }}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <LinearProgress
-                          variant="determinate"
-                          value={accuracy * 100}
-                          color={
-                            accuracy > 0.8
-                              ? "success"
-                              : accuracy > 0.5
-                                ? "warning"
-                                : "error"
-                          }
-                          sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                        />
-                        <Typography variant="caption" sx={{ minWidth: 36 }}>
-                          {formatPct(accuracy)}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </CardContent>
-    </Card>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Section>
   );
 };
 

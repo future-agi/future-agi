@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React from "react";
 import HeaderContent from "./HeaderContent";
 import CreateDatasetLinks from "./CreateDatasetLinks";
@@ -18,15 +18,14 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
           title="Create your first evaluation"
           description="This tour will guide you through the key features and functionalities"
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.disabled" }}
           onClick={() => setCurrentLabel("RunFirstExperiment")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
       <Box
         sx={{

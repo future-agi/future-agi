@@ -10,55 +10,109 @@ import { clickable, focusRing } from "../../components/clickable";
   import the whole tab — that import made a cycle that stopped hot updates
   from reaching the page.
 */
-export default function ScenarioRow({ row, index, onRemove, selectable, checked, onToggle }) {
+export default function ScenarioRow({
+  row,
+  index,
+  onRemove,
+  selectable,
+  checked,
+  onToggle,
+}) {
   return (
     <Stack
       direction="row"
       alignItems="center"
       spacing={2}
-      sx={{ ...focusRing,
-        px: 2.5, py: 1.5,
+      sx={{
+        ...focusRing,
+        px: 2.5,
+        py: 1,
         cursor: selectable ? "pointer" : "default",
         "&:hover": selectable ? { bgcolor: "action.hover" } : {},
       }}
-      {...clickable(selectable ? onToggle : undefined, { role: "checkbox", checked })}
+      {...clickable(selectable ? onToggle : undefined, {
+        role: "checkbox",
+        checked,
+      })}
     >
       {selectable ? (
         <Iconify
           icon={checked ? "solar:check-square-bold" : "solar:stop-linear"}
-          width={18}
-          sx={{ color: checked ? "primary.main" : "text.subtitle", flexShrink: 0 }}
+          width={20}
+          sx={{
+            color: checked ? "primary.main" : "text.tertiary",
+            flexShrink: 0,
+          }}
         />
       ) : (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", width: 20, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            width: 20,
+            flexShrink: 0,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {index + 1}
         </Typography>
       )}
 
       <Box sx={{ flex: 1.4, minWidth: 0 }}>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{row.title}</Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.task}</Typography>
+        <Typography noWrap sx={{ typography: "s2_1", fontWeight: 500 }}>
+          {row.title}
+        </Typography>
+        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+          {row.task}
+        </Typography>
       </Box>
 
       {/* Wide enough for a full job title — roles were truncating at 180. */}
-      <Box sx={{ width: 240, flexShrink: 0, display: { xs: "none", md: "block" } }}>
+      <Box
+        sx={{ width: 240, flexShrink: 0, display: { xs: "none", md: "block" } }}
+      >
         <PersonaBadge persona={row.persona} compact />
       </Box>
 
-      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ width: 62, flexShrink: 0, display: { xs: "none", sm: "flex" } }}>
-        <Iconify icon="solar:chat-round-line-linear" width={13} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>~{row.turns}</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{ width: 62, flexShrink: 0, display: { xs: "none", sm: "flex" } }}
+      >
+        <Iconify
+          icon="solar:chat-round-line-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          ~{row.turns}
+        </Typography>
       </Stack>
 
       {onRemove && (
-        <IconButton size="small" onClick={(e) => { e.stopPropagation(); onRemove(); }}>
-          <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        >
+          <Iconify
+            icon="solar:close-circle-linear"
+            width={16}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
       )}
     </Stack>
   );
 }
 ScenarioRow.propTypes = {
-  row: PropTypes.object, index: PropTypes.number, onRemove: PropTypes.func,
-  selectable: PropTypes.bool, checked: PropTypes.bool, onToggle: PropTypes.func,
+  row: PropTypes.object,
+  index: PropTypes.number,
+  onRemove: PropTypes.func,
+  selectable: PropTypes.bool,
+  checked: PropTypes.bool,
+  onToggle: PropTypes.func,
 };

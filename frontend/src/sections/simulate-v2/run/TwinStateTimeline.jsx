@@ -1,12 +1,17 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Tooltip, IconButton, Slider } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Tooltip,
+  IconButton,
+  Slider,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { twinById, twinTimelineFor } from "../_mock/twins";
 import TwinLogo from "./../components/TwinLogo";
-
-const TWIN_TINT = "#7857FC";
 
 /**
  * Turn-by-turn view of the twin sandbox during a run.
@@ -26,7 +31,10 @@ const TWIN_TINT = "#7857FC";
  * timeline shows *which turn* caused it.
  */
 export default function TwinStateTimeline({ envState, task }) {
-  const timeline = useMemo(() => twinTimelineFor(envState, task), [envState, task]);
+  const timeline = useMemo(
+    () => twinTimelineFor(envState, task),
+    [envState, task],
+  );
   const services = envState?.twinBacking?.services || [];
   const totalTurns = timeline.byTurn.length;
   const [turn, setTurn] = useState(Math.max(0, totalTurns - 1));
@@ -34,7 +42,7 @@ export default function TwinStateTimeline({ envState, task }) {
   if (!services.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
           This environment doesn&apos;t copy any outside services.
         </Typography>
       </Box>
@@ -44,7 +52,7 @@ export default function TwinStateTimeline({ envState, task }) {
   if (totalTurns === 0) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
           No turns recorded for this call.
         </Typography>
       </Box>
@@ -63,7 +71,8 @@ export default function TwinStateTimeline({ envState, task }) {
     ]),
   );
 
-  const step = (delta) => setTurn((prev) => Math.max(0, Math.min(totalTurns - 1, prev + delta)));
+  const step = (delta) =>
+    setTurn((prev) => Math.max(0, Math.min(totalTurns - 1, prev + delta)));
 
   return (
     <Box sx={{ p: 2 }}>
@@ -74,39 +83,69 @@ export default function TwinStateTimeline({ envState, task }) {
         anchored to what happened.
       */}
       <Stack
-        direction="row" alignItems="center" spacing={1.5}
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
         sx={{
-          p: 1.5, borderRadius: 1.25, border: "1px solid",
-          borderColor: alpha(TWIN_TINT, 0.28),
-          bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.08 : 0.04),
+          p: 1.5,
+          borderRadius: "8px",
+          border: "1px solid",
+          borderColor: "status.discovery.border",
+          bgcolor: "status.discovery.bg",
           mb: 2,
         }}
       >
         <IconButton size="small" onClick={() => step(-1)} disabled={turn === 0}>
-          <Iconify icon="eva:arrow-ios-back-fill" width={16} />
+          <Iconify icon="solar:alt-arrow-left-linear" width={16} />
         </IconButton>
-        <IconButton size="small" onClick={() => step(1)} disabled={turn === totalTurns - 1}>
-          <Iconify icon="eva:arrow-ios-forward-fill" width={16} />
+        <IconButton
+          size="small"
+          onClick={() => step(1)}
+          disabled={turn === totalTurns - 1}
+        >
+          <Iconify icon="solar:alt-arrow-right-linear" width={16} />
         </IconButton>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography sx={{
-              typography: "s3", fontWeight: 700, color: TWIN_TINT,
-              fontFamily: "ui-monospace, Menlo, monospace",
-              fontVariantNumeric: "tabular-nums",
-            }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 600,
+                color: "primary.main",
+                fontFamily: "ui-monospace, Menlo, monospace",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
               Turn {turn + 1} / {totalTurns}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                textTransform: "none",
+                letterSpacing: 0.4,
+              }}
+            >
               · {currentRole === "agent" ? "Assistant" : currentRole}
             </Typography>
             <Box flex={1} />
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {eventsThisTurn.length} effect{eventsThisTurn.length === 1 ? "" : "s"} this turn
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {eventsThisTurn.length} effect
+              {eventsThisTurn.length === 1 ? "" : "s"} this turn
             </Typography>
           </Stack>
-          <Typography noWrap sx={{ typography: "s2", color: "text.primary", mt: 0.25 }}>
-            {currentText || <Box component="span" sx={{ color: "text.subtitle", fontStyle: "italic" }}>—</Box>}
+          <Typography
+            noWrap
+            sx={{ typography: "s2", color: "text.primary", mt: 0.25 }}
+          >
+            {currentText || (
+              <Box
+                component="span"
+                sx={{ color: "text.tertiary", fontStyle: "italic" }}
+              >
+                —
+              </Box>
+            )}
           </Typography>
         </Box>
       </Stack>
@@ -115,13 +154,16 @@ export default function TwinStateTimeline({ envState, task }) {
         size="small"
         value={turn}
         onChange={(_, v) => setTurn(v)}
-        min={0} max={Math.max(0, totalTurns - 1)}
+        min={0}
+        max={Math.max(0, totalTurns - 1)}
         marks={timeline.byTurn.map((t) => ({ value: t.turn, label: "" }))}
         sx={{
           mb: 2,
-          color: TWIN_TINT,
+          color: "primary.main",
           "& .MuiSlider-mark": {
-            width: 3, height: 8, borderRadius: 0.5,
+            width: 3,
+            height: 8,
+            borderRadius: "4px",
             /* Marks at turns where twin effects landed get a purple dot,
                idle turns stay grey — the shape of the run is legible
                from the scrubber alone. */
@@ -142,36 +184,61 @@ export default function TwinStateTimeline({ envState, task }) {
             <Box
               key={sId}
               sx={{
-                borderRadius: 1.25, border: "1px solid",
-                borderColor: nowEvents.length ? alpha(TWIN_TINT, 0.42) : "divider",
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: nowEvents.length
+                  ? "status.discovery.border"
+                  : "divider",
                 bgcolor: "background.paper",
                 overflow: "hidden",
               }}
             >
               <Stack
-                direction="row" alignItems="center" spacing={1.25}
+                direction="row"
+                alignItems="center"
+                spacing={1.25}
                 sx={{
-                  px: 2, py: 1.25,
-                  bgcolor: (t) => nowEvents.length
-                    ? alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.1 : 0.05)
+                  px: 2,
+                  py: 1.25,
+                  bgcolor: nowEvents.length
+                    ? "status.discovery.bg"
                     : "background.neutral",
-                  borderBottom: "1px solid", borderColor: "divider",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
                 }}
               >
-                <Box sx={{
-                  width: 24, height: 24, flexShrink: 0,
-                  display: "grid", placeItems: "center",
-                }}>
+                <Box
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    flexShrink: 0,
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
                   <TwinLogo twin={twin} width={18} />
                 </Box>
-                <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1 }}>{twin?.name || sId}</Typography>
-                <LaneCounter label="reads" count={reads} tint="text.subtitle" />
-                <LaneCounter label="writes" count={writes} tint={TWIN_TINT} bold />
+                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  {twin?.name || sId}
+                </Typography>
+                <LaneCounter label="reads" count={reads} tint="text.tertiary" />
+                <LaneCounter
+                  label="writes"
+                  count={writes}
+                  tint="primary.main"
+                  bold
+                />
               </Stack>
 
               {laneEvents.length === 0 ? (
                 <Box sx={{ px: 2, py: 1.5 }}>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      fontStyle: "italic",
+                    }}
+                  >
                     No effects on this service by turn {turn + 1}.
                   </Typography>
                 </Box>
@@ -181,38 +248,73 @@ export default function TwinStateTimeline({ envState, task }) {
                     const highlight = e.turn === turn;
                     return (
                       <Stack
-                        key={`${e.turn}-${i}`} direction="row" alignItems="flex-start" spacing={1}
+                        key={`${e.turn}-${i}`}
+                        direction="row"
+                        alignItems="flex-start"
+                        spacing={1}
                         sx={{
-                          px: 1, py: 0.75, borderRadius: 0.75,
-                          bgcolor: (t) => highlight
-                            ? alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.12 : 0.06)
+                          px: 1,
+                          py: 0.75,
+                          borderRadius: "4px",
+                          bgcolor: highlight
+                            ? "status.discovery.bg"
                             : "transparent",
                           border: "1px solid",
-                          borderColor: (t) => highlight ? alpha(TWIN_TINT, 0.32) : "transparent",
+                          borderColor: highlight
+                            ? "status.discovery.border"
+                            : "transparent",
                         }}
                       >
-                        <Typography sx={{
-                          typography: "s3", fontWeight: 700, color: "text.subtitle",
-                          fontFamily: "ui-monospace, Menlo, monospace",
-                          fontVariantNumeric: "tabular-nums",
-                          minWidth: 32, flexShrink: 0,
-                        }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            fontWeight: 600,
+                            color: "text.tertiary",
+                            fontFamily: "ui-monospace, Menlo, monospace",
+                            fontVariantNumeric: "tabular-nums",
+                            minWidth: 32,
+                            flexShrink: 0,
+                          }}
+                        >
                           T{e.turn + 1}
                         </Typography>
-                        <Tooltip title={e.isWrite ? "Write — mutated the sandbox" : "Read — inspected the sandbox"} arrow>
-                          <Box sx={{ display: "flex", flexShrink: 0, mt: "1px" }}>
+                        <Tooltip
+                          title={
+                            e.isWrite
+                              ? "Write — mutated the sandbox"
+                              : "Read — inspected the sandbox"
+                          }
+                          arrow
+                        >
+                          <Box
+                            sx={{ display: "flex", flexShrink: 0, mt: "1px" }}
+                          >
                             <Iconify
-                              icon={e.isWrite ? "solar:pen-2-linear" : "solar:eye-linear"}
+                              icon={
+                                e.isWrite
+                                  ? "solar:pen-2-linear"
+                                  : "solar:eye-linear"
+                              }
                               width={12}
-                              sx={{ color: e.isWrite ? TWIN_TINT : "text.subtitle" }}
+                              sx={{
+                                color: e.isWrite
+                                  ? "primary.main"
+                                  : "text.tertiary",
+                              }}
                             />
                           </Box>
                         </Tooltip>
-                        <Typography sx={{
-                          typography: "s2", flex: 1, minWidth: 0,
-                          color: e.isWrite ? "text.primary" : "text.secondary",
-                          fontWeight: e.isWrite ? 500 : 400,
-                        }}>
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            flex: 1,
+                            minWidth: 0,
+                            color: e.isWrite
+                              ? "text.primary"
+                              : "text.secondary",
+                            fontWeight: e.isWrite ? 500 : 400,
+                          }}
+                        >
                           {e.summary}
                         </Typography>
                       </Stack>
@@ -225,19 +327,33 @@ export default function TwinStateTimeline({ envState, task }) {
         })}
       </Stack>
 
-      <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, border: "1px dashed", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+      <Box
+        sx={{
+          mt: 2,
+          p: 1.5,
+          borderRadius: 1,
+          border: "1px dashed",
+          borderColor: "divider",
+        }}
+      >
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           Sandbox end state at run finish:{" "}
           {services.map((sId, i) => (
             <Box component="span" key={sId}>
               {i > 0 && " · "}
-              <Box component="span" sx={{ color: "text.primary", fontWeight: 700 }}>
+              <Box
+                component="span"
+                sx={{ color: "text.primary", fontWeight: 600 }}
+              >
                 {twinById(sId)?.name || sId}
               </Box>{" "}
               {timeline.writesByService[sId] || 0} writes
             </Box>
           ))}
-          . Evals of kind <Box component="span" sx={{ color: TWIN_TINT, fontWeight: 700 }}>Clone state</Box>{" "}
+          . Evals of kind{" "}
+          <Box component="span" sx={{ color: "primary.main", fontWeight: 600 }}>
+            Clone state
+          </Box>{" "}
           inspect the final sandbox — not just whether the SDK was called.
         </Typography>
       </Box>
@@ -255,17 +371,23 @@ TwinStateTimeline.propTypes = {
 function LaneCounter({ label, count, tint, bold }) {
   return (
     <Stack direction="row" alignItems="baseline" spacing={0.5}>
-      <Typography sx={{
-        typography: "s2", fontWeight: 700,
-        color: tint,
-        fontVariantNumeric: "tabular-nums",
-      }}>
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          color: tint,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {count}
       </Typography>
-      <Typography sx={{
-        typography: "s3", color: "text.subtitle",
-        fontWeight: bold ? 700 : 500,
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          fontWeight: bold ? 600 : 500,
+        }}
+      >
         {label}
       </Typography>
     </Stack>
@@ -284,11 +406,13 @@ LaneCounter.propTypes = {
  * so the whole `sx` block above stays readable.
  */
 function activeMarkSx(timeline) {
-  const active = new Set(timeline.byTurn.filter((t) => t.events.length > 0).map((t) => t.turn));
+  const active = new Set(
+    timeline.byTurn.filter((t) => t.events.length > 0).map((t) => t.turn),
+  );
   const rules = {};
   active.forEach((v) => {
     rules[`& .MuiSlider-mark[data-index="${v}"]`] = {
-      bgcolor: TWIN_TINT,
+      bgcolor: "primary.main",
       height: 10,
     };
   });

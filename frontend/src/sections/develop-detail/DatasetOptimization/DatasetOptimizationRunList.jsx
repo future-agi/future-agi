@@ -1,20 +1,16 @@
+import EmptyContent from "src/components/empty-content";
 import {
   Box,
   Button,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
-  Stack,
   Typography,
   CircularProgress,
 } from "@mui/material";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
 import React, { useMemo, useRef, useState, useCallback } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
-import Iconify from "src/components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import SvgColor from "src/components/svg-color";
@@ -31,24 +27,7 @@ import EmptyLayout from "../../../components/EmptyLayout/EmptyLayout";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const NoRowsOverlay = ({ title }) => (
-  <Box
-    sx={{
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      height: "100%",
-      gap: 2,
-    }}
-  >
-    <SvgColor
-      src="/assets/icons/ic_empty_state.svg"
-      sx={{ width: 64, height: 64, color: "text.secondary" }}
-    />
-    <Typography color="text.secondary">{title}</Typography>
-  </Box>
-);
+const NoRowsOverlay = ({ title }) => <EmptyContent title={title} />;
 
 NoRowsOverlay.propTypes = {
   title: PropTypes.string,
@@ -64,7 +43,8 @@ const DatasetOptimizationRunList = ({
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [, setTotalPages] = useState(1);
   const queryClient = useQueryClient();
   const gridRef = useRef(null);
   const totalPagesRef = useRef(1);
@@ -144,6 +124,7 @@ const DatasetOptimizationRunList = ({
             data?.result?.metadata?.total_rows ||
             0;
           const calculatedTotalPages = Math.ceil(total / pageSize);
+          setTotalRows(total);
 
           if (calculatedTotalPages !== totalPagesRef.current) {
             totalPagesRef.current = calculatedTotalPages;
@@ -265,9 +246,8 @@ const DatasetOptimizationRunList = ({
             color="primary"
             startIcon={
               <SvgColor
+                width={16}
                 sx={{
-                  height: 16,
-                  width: 16,
                   bgcolor: "primary.contrastText",
                 }}
                 src="/assets/icons/navbar/ic_optimize.svg"
@@ -308,17 +288,10 @@ const DatasetOptimizationRunList = ({
           color="primary"
           variant="contained"
           startIcon={
-            <SvgColor
-              src="/assets/icons/navbar/ic_optimize.svg"
-              sx={{ width: 16, height: 16 }}
-            />
+            <SvgColor width={16} src="/assets/icons/navbar/ic_optimize.svg" />
           }
           onClick={onCreateClick}
           disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
-          sx={{
-            py: 0.5,
-            px: 1.5,
-          }}
         >
           Optimize Prompts
         </Button>
@@ -350,7 +323,7 @@ const DatasetOptimizationRunList = ({
             onGridReady={(params) => {
               setOptimizationGridApi(params.api);
             }}
-            rowHeight={65}
+            rowHeight={44}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             components={components}
@@ -376,78 +349,16 @@ const DatasetOptimizationRunList = ({
           />
         </Box>
 
-        {/* Pagination */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, py: 1.5 }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={handlePageLimitChange}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {[10, 25, 50].map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <StopOptimizationModal onSuccess={handleSuccessOfStop} />
-          <Pagination
-            count={totalPages}
-            variant="outlined"
-            shape="rounded"
-            page={page}
-            color="primary"
-            onChange={handlePageChange}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={{
-                  borderRadius: "4px",
-                  bgcolor: "background.paper",
-                }}
-                slots={{
-                  previous: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Iconify
-                        icon="octicon:chevron-left-24"
-                        width={18}
-                        height={18}
-                      />
-                      Back
-                    </Box>
-                  ),
-                  next: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      Next
-                      <Iconify
-                        icon="octicon:chevron-right-24"
-                        width={18}
-                        height={18}
-                      />
-                    </Box>
-                  ),
-                }}
-              />
-            )}
-          />
-        </Stack>
+        <DataTablePagination
+          page={page - 1}
+          pageSize={pageLimit}
+          total={totalRows}
+          leading={<StopOptimizationModal onSuccess={handleSuccessOfStop} />}
+          onPageChange={(p) => handlePageChange(null, p + 1)}
+          onPageSizeChange={(n) =>
+            handlePageLimitChange({ target: { value: n } })
+          }
+        />
       </Box>
     </Box>
   );

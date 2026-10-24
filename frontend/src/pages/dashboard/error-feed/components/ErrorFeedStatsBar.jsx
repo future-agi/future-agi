@@ -1,13 +1,5 @@
 import React from "react";
-import {
-  Box,
-  Divider,
-  Stack,
-  Typography,
-  useTheme,
-  alpha,
-  Skeleton,
-} from "@mui/material";
+import { Box, Divider, Stack, Typography, Skeleton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useErrorFeedStats } from "src/api/errorFeed/mockAdapter";
 import { useErrorFeedApiParams } from "../store";
@@ -17,51 +9,43 @@ const STAT_CARDS = [
   {
     key: "totalErrors",
     label: "Total errors",
-    icon: "mdi:bug-outline",
-    iconColor: "#938FA3",
-    darkIconColor: "#71717a",
+    icon: "solar:bug-linear",
+    role: "neutral",
   },
   {
     key: "escalating",
     label: "Escalating",
-    icon: "mdi:trending-up",
-    iconColor: "#DB2F2D",
-    darkIconColor: "#E87876",
+    icon: "solar:graph-up-linear",
+    role: "danger",
     highlight: true,
   },
   {
     key: "acknowledged",
     label: "Acknowledged",
-    icon: "mdi:check-circle-outline",
-    iconColor: "#F5A623",
-    darkIconColor: "#F5A623",
+    icon: "solar:check-circle-linear",
+    role: "warning",
   },
   {
     key: "forReview",
     label: "For review",
-    icon: "mdi:eye-outline",
-    iconColor: "#2F7CF7",
-    darkIconColor: "#78AAFA",
+    icon: "solar:eye-linear",
+    role: "info",
   },
   {
     key: "resolved",
     label: "Resolved",
-    icon: "mdi:check-all",
-    iconColor: "#5ACE6D",
-    darkIconColor: "#5ACE6D",
+    icon: "solar:check-read-linear",
+    role: "success",
   },
   {
     key: "affectedUsers",
     label: "Users affected",
-    icon: "mdi:account-group-outline",
-    iconColor: "#938FA3",
-    darkIconColor: "#71717a",
+    icon: "solar:users-group-rounded-linear",
+    role: "neutral",
   },
 ];
 
-function StatCard({ stat, isDark, value, isLoading }) {
-  const iconColor = isDark ? stat.darkIconColor : stat.iconColor;
-
+function StatCard({ stat, value, isLoading }) {
   return (
     <Stack
       direction="row"
@@ -74,14 +58,18 @@ function StatCard({ stat, isDark, value, isLoading }) {
           width: 30,
           height: 30,
           borderRadius: "6px",
-          bgcolor: isDark ? alpha(iconColor, 0.12) : alpha(iconColor, 0.1),
+          bgcolor: `status.${stat.role}.bg`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        <Iconify icon={stat.icon} width={16} sx={{ color: iconColor }} />
+        <Iconify
+          icon={stat.icon}
+          width={16}
+          sx={{ color: `status.${stat.role}.fg` }}
+        />
       </Box>
       <Stack direction="column" gap={0}>
         {isLoading ? (
@@ -89,10 +77,10 @@ function StatCard({ stat, isDark, value, isLoading }) {
         ) : (
           <Typography
             sx={{
-              fontSize: "18px",
-              fontWeight: 700,
+              fontSize: "16px",
+              fontWeight: 600,
               lineHeight: 1.2,
-              color: stat.highlight ? iconColor : "text.primary",
+              color: stat.highlight ? `status.${stat.role}.fg` : "text.primary",
               fontFeatureSettings: "'tnum'",
             }}
           >
@@ -101,7 +89,7 @@ function StatCard({ stat, isDark, value, isLoading }) {
         )}
         <Typography
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             fontWeight: 400,
             color: "text.disabled",
             lineHeight: 1.3,
@@ -116,14 +104,11 @@ function StatCard({ stat, isDark, value, isLoading }) {
 }
 StatCard.propTypes = {
   stat: PropTypes.object,
-  isDark: PropTypes.bool,
   value: PropTypes.number,
   isLoading: PropTypes.bool,
 };
 
 export default function ErrorFeedStatsBar() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const apiParams = useErrorFeedApiParams();
   const { data: stats, isLoading } = useErrorFeedStats(apiParams);
 
@@ -137,8 +122,8 @@ export default function ErrorFeedStatsBar() {
         py: 1.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
-        bgcolor: isDark ? "background.neutral" : "background.default",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
         overflowX: "auto",
       }}
     >
@@ -146,7 +131,6 @@ export default function ErrorFeedStatsBar() {
         <React.Fragment key={stat.key}>
           <StatCard
             stat={stat}
-            isDark={isDark}
             value={stats?.[stat.key]}
             isLoading={isLoading}
           />

@@ -41,7 +41,7 @@ export default function AnnotationLabelEmpty({ onCreateClick }) {
       <Button
         variant="contained"
         color="primary"
-        startIcon={<Iconify icon="mingcute:add-line" />}
+        startIcon={<Iconify icon="solar:add-linear" />}
         onClick={onCreateClick}
       >
         Create Label

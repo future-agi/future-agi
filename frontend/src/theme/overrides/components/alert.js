@@ -1,61 +1,48 @@
-import { alpha } from "@mui/material/styles";
 import { alertClasses } from "@mui/material/Alert";
 
 // ----------------------------------------------------------------------
 
 const COLORS = ["info", "success", "warning", "error"];
+const ROLE = {
+  info: "info",
+  success: "success",
+  warning: "warning",
+  error: "danger",
+};
 
-// ----------------------------------------------------------------------
-
+// Design system banner: status tint fill, matching tint border, icon in the
+// status text colour, 13px message in fg.default, radius.lg. Every variant
+// (standard / outlined / filled) renders the same calm banner.
 export function alert(theme) {
-  const lightMode = theme.palette.mode === "light";
-
   const rootStyles = (ownerState) => {
-    const standardVariant = ownerState.variant === "standard";
-
-    const filledVariant = ownerState.variant === "filled";
-
-    const outlinedVariant = ownerState.variant === "outlined";
-
-    const colorStyle = COLORS.map((color) => ({
-      padding: "12px",
-      "& .MuiAlert-icon": {
+    const role = ROLE[ownerState.severity] || "info";
+    const s = theme.palette.status[role];
+    return {
+      padding: "10px 12px",
+      borderRadius: 8,
+      alignItems: "flex-start",
+      color: theme.palette.text.primary,
+      backgroundColor: s.bg,
+      border: `1px solid ${s.border}`,
+      [`& .${alertClasses.icon}`]: {
         padding: 0,
-        marginRight: "8px",
+        marginRight: 10,
+        marginTop: 2,
+        fontSize: 16,
+        opacity: 1,
+        color: s.fg,
       },
-      "& .MuiAlert-message": {
+      [`& .${alertClasses.message}`]: {
         padding: 0,
-        fontWeight: theme.typography.fontWeightMedium,
-        ...theme.typography.s1,
+        fontSize: 13,
+        lineHeight: "20px",
+        fontWeight: 400,
       },
-      ...(ownerState.severity === color && {
-        // STANDARD
-        ...(standardVariant && {
-          color: theme.palette[color][lightMode ? "darker" : "lighter"],
-          backgroundColor:
-            theme.palette[color][lightMode ? "lighter" : "darker"],
-          [`& .${alertClasses.icon}`]: {
-            color: theme.palette[color][lightMode ? "main" : "light"],
-          },
-        }),
-        // FILLED
-        ...(filledVariant && {
-          color: theme.palette[color].contrastText,
-          backgroundColor: theme.palette[color].main,
-        }),
-        // OUTLINED
-        ...(outlinedVariant && {
-          backgroundColor: alpha(theme.palette[color].main, 0.08),
-          color: theme.palette[color][lightMode ? "dark" : "light"],
-          border: `solid 1px ${alpha(theme.palette[color].main, 0.16)}`,
-          [`& .${alertClasses.icon}`]: {
-            color: theme.palette[color].main,
-          },
-        }),
-      }),
-    }));
-
-    return [...colorStyle];
+      [`& .${alertClasses.action}`]: {
+        paddingTop: 0,
+        marginRight: -4,
+      },
+    };
   };
 
   return {
@@ -70,10 +57,15 @@ export function alert(theme) {
     MuiAlertTitle: {
       styleOverrides: {
         root: {
-          marginBottom: theme.spacing(0.5),
-          fontWeight: theme.typography.fontWeightSemiBold,
+          marginTop: 0,
+          marginBottom: 2,
+          fontSize: 13,
+          lineHeight: "20px",
+          fontWeight: 600,
         },
       },
     },
   };
 }
+
+export { COLORS };

@@ -11,12 +11,15 @@ import {
   Tabs,
   Tooltip,
   Typography,
-  useTheme,
-  alpha,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import Iconify from "src/components/iconify";
 import {
   useErrorFeedDetail,
@@ -47,10 +50,8 @@ import IssueBriefButton from "./IssueBriefButton";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const pulse = {
-    bgcolor: isDark ? alpha("#fff", 0.07) : alpha("#000", 0.07),
+    bgcolor: "action.selected",
     borderRadius: "4px",
     animation: "pulse 1.4s ease-in-out infinite",
     "@keyframes pulse": { "0%,100%": { opacity: 1 }, "50%": { opacity: 0.4 } },
@@ -73,21 +74,7 @@ function TabLabel({ label, count, icon }) {
     <Stack direction="row" alignItems="center" gap={0.6}>
       {icon && <Iconify icon={icon} width={14} sx={{ opacity: 0.65 }} />}
       {label}
-      {count != null && (
-        <Chip
-          label={count}
-          size="small"
-          sx={{
-            height: 16,
-            fontSize: "10px",
-            fontWeight: 600,
-            borderRadius: "3px",
-            bgcolor: "action.hover",
-            color: "text.disabled",
-            "& .MuiChip-label": { px: "5px" },
-          }}
-        />
-      )}
+      {count != null && <Chip label={count} size="small" />}
     </Stack>
   );
 }
@@ -100,17 +87,21 @@ TabLabel.propTypes = {
 
 // ── Tab definitions ──────────────────────────────────────────────────────────
 const TABS = [
-  { key: "overview", label: "Overview", icon: "mdi:view-dashboard-outline" },
-  { key: "traces", label: "Traces", icon: "mdi:timeline-text-outline" },
-  { key: "trends", label: "Trends", icon: "mdi:chart-line" },
+  { key: "overview", label: "Overview", icon: "solar:widget-4-linear" },
+  { key: "traces", label: "Traces", icon: "solar:list-linear" },
+  { key: "trends", label: "Trends", icon: "solar:graph-up-linear" },
   /* The written analysis — "Fix" is the header action that proves a change. */
-  { key: "analyze", label: "Root cause", icon: "mdi:magnify-scan" },
+  { key: "analyze", label: "Root cause", icon: "solar:magnifier-linear" },
 ];
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 /* "ToolArgumentMismatchError" → "Tool argument mismatch" — said once, in words. */
 const errorTypeLabel = (type) => {
-  const words = String(type || "").replace(/Error$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").trim().toLowerCase();
+  const words = String(type || "")
+    .replace(/Error$/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim()
+    .toLowerCase();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
 };
 /* "2h ago" — the same short form the list uses. */
@@ -137,15 +128,26 @@ export default function ErrorFeedDetailView() {
   const setFixSheetOpen = useErrorFeedStore((s) => s.setFixSheetOpen);
   const [triageAnchor, setTriageAnchor] = useState(null);
   const copyText = (text, msg) => {
-    navigator.clipboard?.writeText(text).then(() => enqueueSnackbar(msg, { variant: "success" })).catch(() => {});
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => enqueueSnackbar(msg, { variant: "success" }))
+      .catch(() => {});
   };
   /* Fix is a page of its own — this issue's address with ?fix=1, so Back
      returns to the issue and the link can be shared. Anything that asks for
      it through the store (the Root cause tab) lands here too. */
   const [params, setParams] = useSearchParams();
   const fixOpen = params.get("fix") === "1";
-  const openFix = () => { const next = new URLSearchParams(params); next.set("fix", "1"); setParams(next); };
-  const closeFix = () => { const next = new URLSearchParams(params); next.delete("fix"); setParams(next); };
+  const openFix = () => {
+    const next = new URLSearchParams(params);
+    next.set("fix", "1");
+    setParams(next);
+  };
+  const closeFix = () => {
+    const next = new URLSearchParams(params);
+    next.delete("fix");
+    setParams(next);
+  };
   useEffect(() => {
     if (!fixSheetOpen) return;
     setFixSheetOpen(false);
@@ -172,7 +174,11 @@ export default function ErrorFeedDetailView() {
 
   useAnalyzeRunner(currentError?.cluster_id, currentError);
   /* Fix needs to know which agent the issue came from. */
-  const { agent: fixAgent, status: fixStatus, setReopened } = useIssueFix(currentError);
+  const {
+    agent: fixAgent,
+    status: fixStatus,
+    setReopened,
+  } = useIssueFix(currentError);
   /* Fix and Copy for coding agent carry the same root cause. */
   const rootCause = useIssueRootCause(currentError);
   /* Triage is the issue's own; the fix's status shows beside it, never in
@@ -181,7 +187,10 @@ export default function ErrorFeedDetailView() {
   if (isLoading || !currentError) {
     return <DetailSkeleton />;
   }
-  if (fixOpen) return <FixPage onClose={closeFix} issue={currentError} rootCause={rootCause} />;
+  if (fixOpen)
+    return (
+      <FixPage onClose={closeFix} issue={currentError} rootCause={rootCause} />
+    );
 
   const tabIndex = TABS.findIndex((t) => t.key === activeTab);
   const safeTabIndex = tabIndex === -1 ? 0 : tabIndex;
@@ -227,40 +236,60 @@ export default function ErrorFeedDetailView() {
             <Button
               size="small"
               variant="text"
-              startIcon={<Iconify icon="mdi:arrow-left" width={14} />}
+              startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
               onClick={() => navigate("/dashboard/error-feed")}
               sx={{
-                height: 26,
-                fontSize: "12px",
                 color: "text.secondary",
-                px: 0.75,
                 minWidth: 0,
                 "&:hover": { color: "text.primary", bgcolor: "action.hover" },
               }}
             >
               Error Feed
             </Button>
-            <Iconify icon="mdi:chevron-right" width={13} sx={{ color: "text.disabled" }} />
+            <Iconify
+              icon="solar:alt-arrow-right-linear"
+              width={14}
+              sx={{ color: "text.disabled" }}
+            />
             <Typography
-              sx={{ fontSize: "12px", color: "text.secondary", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+              sx={{
+                fontSize: "12px",
+                color: "text.secondary",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              }}
             >
               {currentError.cluster_id}
             </Typography>
             <Box flex={1} />
             <Tooltip title="Copy issue ID" arrow>
-              <IconButton size="small" onClick={() => copyText(currentError.cluster_id, "Issue ID copied")} sx={{ color: "text.secondary" }}>
-                <Iconify icon="mdi:content-copy" width={14} />
+              <IconButton
+                size="small"
+                onClick={() =>
+                  copyText(currentError.cluster_id, "Issue ID copied")
+                }
+                sx={{ color: "text.secondary" }}
+              >
+                <Iconify icon="solar:copy-linear" width={14} />
               </IconButton>
             </Tooltip>
             <Tooltip title="Copy link" arrow>
-              <IconButton size="small" onClick={() => copyText(window.location.href, "Link copied")} sx={{ color: "text.secondary" }}>
-                <Iconify icon="mdi:link-variant" width={15} />
+              <IconButton
+                size="small"
+                onClick={() => copyText(window.location.href, "Link copied")}
+                sx={{ color: "text.secondary" }}
+              >
+                <Iconify icon="solar:link-linear" width={16} />
               </IconButton>
             </Tooltip>
           </Stack>
 
           {/* Title, and the three actions: triage, hand off, fix */}
-          <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={2}>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            justifyContent="space-between"
+            gap={2}
+          >
             <Stack gap={0.75} flex={1} minWidth={0}>
               <Typography
                 typography="m3"
@@ -271,41 +300,55 @@ export default function ErrorFeedDetailView() {
                 {currentError.error.name}
               </Typography>
               {/* status · severity · what kind · how big · how recent */}
-              <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={1}
+                flexWrap="wrap"
+              >
                 {/* The issue's own status, then its fix's (RSI PRD fix-status chip). */}
                 <ErrorStatusChip status={currentError.status} />
                 <IssueStatusChip issue={currentError} />
                 <ErrorSeverityBadge severity={currentError.severity} />
-                <Typography typography="s2" color="text.secondary" sx={{ ml: 0.5 }}>
+                <Typography
+                  typography="s2"
+                  color="text.secondary"
+                  sx={{ ml: 0.5 }}
+                >
                   {[
                     errorTypeLabel(currentError.error.type),
-                    currentError.trace_count != null && `${currentError.trace_count.toLocaleString()} traces`,
-                    currentError.users_affected != null && `${currentError.users_affected.toLocaleString()} users`,
-                    currentError.last_seen && `last seen ${agoLabel(currentError.last_seen)}`,
-                  ].filter(Boolean).join(" · ")}
+                    currentError.trace_count != null &&
+                      `${currentError.trace_count.toLocaleString()} traces`,
+                    currentError.users_affected != null &&
+                      `${currentError.users_affected.toLocaleString()} users`,
+                    currentError.last_seen &&
+                      `last seen ${agoLabel(currentError.last_seen)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </Typography>
               </Stack>
               {/* The Observe project it comes from, and the agent that project traces. */}
               <IssueProjectLine issue={currentError} />
             </Stack>
 
-            <Stack direction="row" alignItems="center" gap={0.75} flexShrink={0}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              gap={0.75}
+              flexShrink={0}
+            >
               {/* Triage — Resolve, Acknowledge, Ignore — in one menu; the
                   right rail's Status says the same thing at a glance. */}
               <Button
                 size="small"
                 variant="outlined"
                 onClick={(e) => setTriageAnchor(e.currentTarget)}
-                endIcon={<Iconify icon="eva:chevron-down-fill" width={14} />}
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                }
                 disabled={updateIssue.isPending}
-                sx={{
-                  height: 30,
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  textTransform: "none",
-                  borderColor: "divider",
-                  color: "text.primary",
-                }}
+                sx={{ borderColor: "divider", color: "text.primary" }}
               >
                 Triage
               </Button>
@@ -315,29 +358,64 @@ export default function ErrorFeedDetailView() {
                 onClose={() => setTriageAnchor(null)}
                 anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
                 transformOrigin={{ vertical: "top", horizontal: "right" }}
-                slotProps={{ paper: { sx: { width: 280, mt: 0.5 } } }}
+                slotProps={{ paper: { sx: { width: 320, mt: 0.5 } } }}
               >
                 {[
-                  { key: "acknowledged", icon: "mdi:check-circle-outline", label: "Acknowledge", note: "", disabled: currentError?.status === "acknowledged" },
-                  { key: "for_review", icon: "mdi:eye-outline", label: "Mark for review", note: "", disabled: currentError?.status === "for_review" },
-                  { key: "resolved", icon: "mdi:check", label: "Resolve", note: triageFixEffect(fixStatus, "resolved")?.note || "", disabled: currentError?.status === "resolved" },
+                  {
+                    key: "acknowledged",
+                    icon: "solar:check-circle-linear",
+                    label: "Acknowledge",
+                    note: "",
+                    disabled: currentError?.status === "acknowledged",
+                  },
+                  {
+                    key: "for_review",
+                    icon: "solar:eye-linear",
+                    label: "Mark for review",
+                    note: "",
+                    disabled: currentError?.status === "for_review",
+                  },
+                  {
+                    key: "resolved",
+                    icon: "solar:check-linear",
+                    label: "Resolve",
+                    note: triageFixEffect(fixStatus, "resolved")?.note || "",
+                    disabled: currentError?.status === "resolved",
+                  },
                 ].map((t) => (
                   <MenuItem
                     key={t.key}
                     disabled={t.disabled}
                     onClick={() => {
                       setTriageAnchor(null);
-                      updateIssue.mutate({ clusterId: currentError.cluster_id, status: t.key });
+                      updateIssue.mutate({
+                        clusterId: currentError.cluster_id,
+                        status: t.key,
+                      });
                       const effect = triageFixEffect(fixStatus, t.key);
                       if (effect) setReopened(effect.reopen);
                     }}
                     sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
                   >
-                    <Iconify icon={t.icon} width={15} sx={{ mt: "2px", color: "text.secondary", flexShrink: 0 }} />
+                    <Iconify
+                      icon={t.icon}
+                      width={16}
+                      sx={{ mt: "2px", color: "text.secondary", flexShrink: 0 }}
+                    />
                     <Box minWidth={0}>
-                      <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>{t.label}</Typography>
+                      <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>
+                        {t.label}
+                      </Typography>
                       {t.note && (
-                        <Typography sx={{ fontSize: "11.5px", color: "text.secondary", whiteSpace: "normal" }}>{t.note}</Typography>
+                        <Typography
+                          sx={{
+                            fontSize: "12px",
+                            color: "text.secondary",
+                            whiteSpace: "normal",
+                          }}
+                        >
+                          {t.note}
+                        </Typography>
                       )}
                     </Box>
                   </MenuItem>
@@ -374,24 +452,6 @@ export default function ErrorFeedDetailView() {
           <Tabs
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
-            sx={{
-              minHeight: 34,
-              "& .MuiTab-root": {
-                fontSize: "12px",
-                minHeight: 34,
-                py: 0,
-                px: 0,
-                mr: "20px",
-                textTransform: "none",
-                fontWeight: 500,
-                color: "text.secondary",
-                "&.Mui-selected": { color: "text.primary", fontWeight: 600 },
-              },
-              "& .MuiTabs-indicator": {
-                height: 2,
-                borderRadius: "2px 2px 0 0",
-              },
-            }}
           >
             {TABS.map((tab) => (
               <Tab

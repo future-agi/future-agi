@@ -5,7 +5,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
   TextField,
   InputAdornment,
 } from "@mui/material";
@@ -49,7 +48,6 @@ const evalTemplateTags = (evalItem) =>
     : [];
 
 const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
-  const theme = useTheme();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
@@ -135,7 +133,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} color="text.primary">
+          <Typography fontWeight={600} color="text.primary">
             Preset Evaluations
           </Typography>
           <Button variant="soft" size="small" onClick={onClose}>
@@ -154,7 +152,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear" width={16}
                     sx={{ color: "text.secondary" }}
                   />
                 </InputAdornment>
@@ -170,12 +168,6 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
           }}
         >
           <Tabs
-            textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
             TabScrollButtonProps={{
@@ -189,17 +181,11 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             <Tab
               label="All"
               value="all"
-              sx={{
-                "&.MuiTab-root": {
-                  marginRight: 2,
-                  fontSize: 12,
-                },
-              }}
               icon={
                 loadingEvalList ? (
                   <Skeleton variant="text" width={20} height={35} />
                 ) : (
-                  <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
+                  <Label variant="soft" color="success">
                     {evals.length}
                   </Label>
                 )
@@ -215,22 +201,12 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
                   loadingEvalList ? (
                     <Skeleton variant="text" width={20} height={35} />
                   ) : (
-                    <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
+                    <Label variant="soft" color="success">
                       {categoryCount[value] || 0}
                     </Label>
                   )
                 }
                 iconPosition="end"
-                sx={{
-                  "&.MuiTab-root": {
-                    marginRight: 2,
-                    fontSize: 12,
-                    "&.Mui-selected": {
-                      color: "inherit",
-                    },
-                    color: "text.secondary",
-                  },
-                }}
               />
             ))}
           </Tabs>

@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -13,7 +12,14 @@ import Iconify from "src/components/iconify";
  * for within/across-section widget moves.
  */
 export default function SortableSection({ sectionId, label, hint, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: `section:${sectionId}`,
     data: { kind: "section", sectionId },
   });
@@ -24,17 +30,26 @@ export default function SortableSection({ sectionId, label, hint, children }) {
     opacity: isDragging ? 0.55 : 1,
   };
   return (
-    <Box ref={setNodeRef} style={style} className="analytics-section" data-section-id={sectionId}>
+    <Box
+      ref={setNodeRef}
+      style={style}
+      className="analytics-section"
+      data-section-id={sectionId}
+    >
       {/* Section header — this row is the drag handle. The rest of
           the section (widget grid below) doesn't listen for section
           drag, so widget-level drag inside still works normally. */}
       <Box
-        {...attributes} {...listeners}
+        {...attributes}
+        {...listeners}
         className="section-drag-surface analytics-no-print"
         sx={{
-          pt: 2, mt: 0.5, mb: 0.5, px: 0.25,
+          pt: 2,
+          mt: 0.5,
+          mb: 0.5,
+          px: 0.25,
           borderTop: "1px solid",
-          borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+          borderColor: "divider",
           cursor: isDragging ? "grabbing" : "grab",
           touchAction: "none",
           userSelect: "none",
@@ -46,8 +61,11 @@ export default function SortableSection({ sectionId, label, hint, children }) {
           <Box
             className="section-drag-icon"
             sx={{
-              width: 18, height: 18, display: "grid", placeItems: "center",
-              color: "text.subtitle",
+              width: 18,
+              height: 18,
+              display: "grid",
+              placeItems: "center",
+              color: "text.tertiary",
               opacity: 0.35,
               transition: "opacity 120ms",
             }}
@@ -55,15 +73,27 @@ export default function SortableSection({ sectionId, label, hint, children }) {
           >
             <Iconify icon="solar:hamburger-menu-linear" width={14} />
           </Box>
-          <Typography sx={{
-            fontSize: 18, fontWeight: 700, letterSpacing: -0.2, lineHeight: 1.2,
-            color: "text.primary",
-          }}>
+          <Typography
+            sx={{
+              fontSize: 16,
+              fontWeight: 600,
+              letterSpacing: -0.2,
+              lineHeight: 1.2,
+              color: "text.primary",
+            }}
+          >
             {label}
           </Typography>
         </Stack>
         {hint && (
-          <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, pl: "26px" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.tertiary",
+              mt: 0.25,
+              pl: "26px",
+            }}
+          >
             {hint}
           </Typography>
         )}

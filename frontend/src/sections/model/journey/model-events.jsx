@@ -1,7 +1,7 @@
 import { Button, Grid, Stack, Switch, Typography } from "@mui/material";
 import { m } from "framer-motion";
 import PropTypes from "prop-types";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
 import Iconify from "src/components/iconify";
 
@@ -10,7 +10,7 @@ import EventPropertyPopover from "../event-property-popover";
 import EventsCollapsibleTable from "./events-collapsible-table";
 import InsightsDateSelector, { getDateRange } from "./insights-date-selector";
 import CollapsibleSelectEvent from "./collapsible-select-event";
-import CollapsibleSelectFilter from "./collapsible-select-filter";
+import { FilterButton } from "src/components/filter";
 
 const defaultColumns = [
   "Event Name",
@@ -30,6 +30,16 @@ export default function ModelEvents({ modelId: _modelId }) {
   const [_filters, setFilters] = useState(defaultFilters);
   const [showOnlyPredictions, setShowOnlyPredictions] = useState(false);
   const [modPropertiesData, setModPropertiesData] = useState([]);
+  const [eventFilterRows, setEventFilterRows] = useState([]);
+  const eventFilterFields = useMemo(
+    () =>
+      (modPropertiesData || []).map(({ name, dataType }) => ({
+        id: name,
+        label: name,
+        type: dataType === "number" ? "number" : "text",
+      })),
+    [modPropertiesData],
+  );
 
   const [eventsTable, setEventsTable] = useState([]);
 
@@ -94,7 +104,7 @@ export default function ModelEvents({ modelId: _modelId }) {
                 variant="outlined"
                 size="small"
                 component={m.button}
-                startIcon={<Iconify icon="material-symbols:add" />}
+                startIcon={<Iconify icon="solar:add-linear" />}
               >
                 Create Annotation Task
               </Button>
@@ -106,7 +116,7 @@ export default function ModelEvents({ modelId: _modelId }) {
                 // whileTap="tap"
                 // whileHover="hover"
                 // variants={varHover(1.05)}
-                startIcon={<Iconify icon="material-symbols:edit" />}
+                startIcon={<Iconify icon="solar:pen-linear" />}
                 onClick={columnsPopover.onOpen}
                 // sx={{
                 //   width: 40,
@@ -142,7 +152,7 @@ export default function ModelEvents({ modelId: _modelId }) {
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
+                        icon="solar:magnifier-linear" width={16}
                         sx={{ color: "text.disabled" }}
                       />
                     </InputAdornment>
@@ -158,7 +168,11 @@ export default function ModelEvents({ modelId: _modelId }) {
         </Grid>
 
         <Grid item xs={12}>
-          <CollapsibleSelectFilter />
+          <FilterButton
+            fields={eventFilterFields}
+            value={eventFilterRows}
+            onChange={(rows) => setEventFilterRows(rows || [])}
+          />
         </Grid>
 
         <Grid item xs={12} />

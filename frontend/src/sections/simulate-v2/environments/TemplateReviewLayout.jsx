@@ -2,7 +2,12 @@ import PropTypes from "prop-types";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Box, Stack, Typography, Button, IconButton, Tooltip,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -12,7 +17,11 @@ import useRunFitCheck from "../run/useRunFitCheck";
 import { builderRun } from "../_mock/builder";
 import { scenarioPoolFor } from "../_mock/scenarioPool";
 import { detectAddScenariosIntent } from "../_mock/addScenariosIntent";
-import { stampNewBatch, unanswerableNote, rejectedNote } from "../_mock/addScenarios";
+import {
+  stampNewBatch,
+  unanswerableNote,
+  rejectedNote,
+} from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
 import { currentUser } from "../_mock/scenarioProvenance";
 import { currentAgentVersion } from "../_mock/versions";
@@ -55,26 +64,26 @@ const CHIPS_BY_TAB = {
     "Which agent version does this test?",
     "What's still missing before we can run?",
   ],
-  contract: [
-    "Explain the tools and rules to me",
-    "How is a run scored?",
-  ],
-  scenarios: [
-    "Write 5 more scenarios",
-    "How is a run scored?",
-  ],
-  evals: [
-    "How is a run scored?",
-  ],
+  contract: ["Explain the tools and rules to me", "How is a run scored?"],
+  scenarios: ["Write 5 more scenarios", "How is a run scored?"],
+  evals: ["How is a run scored?"],
 };
 export default function TemplateReviewLayout({
-  env, onFinish, onBack, isTwin, initialTurns,
+  env,
+  onFinish,
+  onBack,
+  isTwin,
+  initialTurns,
 }) {
   const navigate = useNavigate();
   const { envState, patch } = useEnvState(env.id);
   const scenarioCount = envState?.scenarios?.length || 0;
   /* Same tool-fit ask every other Run button makes. */
-  const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(env, envState, patch);
+  const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(
+    env,
+    envState,
+    patch,
+  );
 
   /*
     `initialTurns` lets the caller seed the chat with prior history —
@@ -129,32 +138,50 @@ export default function TemplateReviewLayout({
     const play = (stageId, delay = 0) => {
       const stage = builderRun(stageId, source);
       const turnId = `t-${stageId}-${Date.now()}`;
-      timers.current.push(setTimeout(() => {
-        setTurns((prev) => [...prev, { id: turnId, role: "builder", title: stage.title, steps: [] }]);
-      }, delay));
+      timers.current.push(
+        setTimeout(() => {
+          setTurns((prev) => [
+            ...prev,
+            { id: turnId, role: "builder", title: stage.title, steps: [] },
+          ]);
+        }, delay),
+      );
       stage.steps.forEach((step, i) => {
-        timers.current.push(setTimeout(() => {
-          setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, steps: [...t.steps, step] } : t)));
-          if (i !== stage.steps.length - 1) return;
-          setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
-          const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
-          if (nextId) play(nextId, 500);
-          else setRunning(false);
-        }, delay + 380 * (i + 1)));
+        timers.current.push(
+          setTimeout(
+            () => {
+              setTurns((prev) =>
+                prev.map((t) =>
+                  t.id === turnId ? { ...t, steps: [...t.steps, step] } : t,
+                ),
+              );
+              if (i !== stage.steps.length - 1) return;
+              setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
+              const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
+              if (nextId) play(nextId, 500);
+              else setRunning(false);
+            },
+            delay + 380 * (i + 1),
+          ),
+        );
       });
     };
     setRunning(true);
     setTurns([
-      ...(fromScratch && scratchText ? [{ id: "u-intake", role: "user", text: scratchText }] : []),
+      ...(fromScratch && scratchText
+        ? [{ id: "u-intake", role: "user", text: scratchText }]
+        : []),
       {
         id: "a-init",
         role: "assistant",
-        steps: [{
-          kind: "note",
-          text: fromScratch
-            ? `Building ${env.name} from your description — ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"} and ${(env.rules || []).length} rule${(env.rules || []).length === 1 ? "" : "s"} to start. No agent yet: connect it when it's ready, and runs start once it is.`
-            : `Building ${env.name} — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
-        }],
+        steps: [
+          {
+            kind: "note",
+            text: fromScratch
+              ? `Building ${env.name} from your description — ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"} and ${(env.rules || []).length} rule${(env.rules || []).length === 1 ? "" : "s"} to start. No agent yet: connect it when it's ready, and runs start once it is.`
+              : `Building ${env.name} — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
+          },
+        ],
       },
     ]);
     play("understand", 600);
@@ -184,21 +211,33 @@ export default function TemplateReviewLayout({
     feel context-blind. Now every tab carries its own short list of
     prompts that make sense for what's on-screen.
   */
-  const chips = useMemo(() => (CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview), [activeTab]);
+  const chips = useMemo(
+    () => CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview,
+    [activeTab],
+  );
 
   /* What the build narration reads: this world's own tools, the agent it
      belongs to (so the narration says sealed or live honestly), and the
      distinct sub-goals its scenarios use. */
-  const narrationSource = () => (fromScratch ? {
-    kind: "scratch",
-    rules: (env.rules || []).length,
-    scenarios: (envState?.scenarios || []).length,
-    surface: env.surface,
-  } : {
-    kind: "template", value: env.name, templateId: env.id, tools: env.tools || [],
-    connectedAgent: envState?.agent || null,
-    subGoalCount: subGoalCatalogOf(env, { ...envState, scenarios: (envState?.scenarios || []).filter((r) => !r.proposed) }).length,
-  });
+  const narrationSource = () =>
+    fromScratch
+      ? {
+          kind: "scratch",
+          rules: (env.rules || []).length,
+          scenarios: (envState?.scenarios || []).length,
+          surface: env.surface,
+        }
+      : {
+          kind: "template",
+          value: env.name,
+          templateId: env.id,
+          tools: env.tools || [],
+          connectedAgent: envState?.agent || null,
+          subGoalCount: subGoalCatalogOf(env, {
+            ...envState,
+            scenarios: (envState?.scenarios || []).filter((r) => !r.proposed),
+          }).length,
+        };
 
   /*
     The chat never claims a change it didn't make. Asking for more scenarios
@@ -210,11 +249,25 @@ export default function TemplateReviewLayout({
     const intent = detectAddScenariosIntent(trimmed);
     if (intent) {
       const existing = new Set((envState?.scenarios || []).map((r) => r.id));
-      const fresh = scenarioPoolFor(env, envState).filter((r) => !existing.has(r.id)).slice(0, intent.count);
-      if (!fresh.length) return "Every scenario this world can write is already here — remove a few on the Scenarios tab first.";
-      const batch = stampNewBatch(fresh.map((r) => ({ ...r, chatAsk: trimmed })), { env, envState, source: "chat", actor: currentUser() });
-      if (batch.rows.length) patch({ scenarios: [...(envState?.scenarios || []), ...batch.rows.map((r) => asProposal(r, "chat"))] });
-      const warn = [unanswerableNote(batch), rejectedNote(batch)].filter(Boolean).join(" ");
+      const fresh = scenarioPoolFor(env, envState)
+        .filter((r) => !existing.has(r.id))
+        .slice(0, intent.count);
+      if (!fresh.length)
+        return "Every scenario this world can write is already here — remove a few on the Scenarios tab first.";
+      const batch = stampNewBatch(
+        fresh.map((r) => ({ ...r, chatAsk: trimmed })),
+        { env, envState, source: "chat", actor: currentUser() },
+      );
+      if (batch.rows.length)
+        patch({
+          scenarios: [
+            ...(envState?.scenarios || []),
+            ...batch.rows.map((r) => asProposal(r, "chat")),
+          ],
+        });
+      const warn = [unanswerableNote(batch), rejectedNote(batch)]
+        .filter(Boolean)
+        .join(" ");
       return `${batch.rows.length} proposed — review and add them on the Scenarios tab.${fresh.length < intent.count ? ` Only ${fresh.length} new ones could be written.` : ""}${warn ? ` ${warn}` : ""}`;
     }
     return answerFromEnvironment(trimmed, env, envState);
@@ -223,9 +276,19 @@ export default function TemplateReviewLayout({
   const send = (text) => {
     const trimmed = (text || "").trim();
     if (!trimmed) return;
-    setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
+    setTurns((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: "user", text: trimmed },
+    ]);
     const answer = reply(trimmed);
-    setTurns((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", steps: [{ kind: "note", text: answer }] }]);
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        steps: [{ kind: "note", text: answer }],
+      },
+    ]);
   };
 
   /*
@@ -234,7 +297,10 @@ export default function TemplateReviewLayout({
     above advances both as each stage settles, so tabs light up
     progressively instead of appearing pre-built.
   */
-  const source = useMemo(() => ({ kind: "template", templateId: env.id }), [env.id]);
+  const source = useMemo(
+    () => ({ kind: "template", templateId: env.id }),
+    [env.id],
+  );
 
   /*
     Nikhil's ask: users need to be able to refresh the environment
@@ -252,29 +318,47 @@ export default function TemplateReviewLayout({
     timers.current = [];
     setDone([]);
     setRunning(true);
-    setTurns([{
-      id: `a-refresh-${Date.now()}`,
-      role: "assistant",
-      steps: [{
-        kind: "note",
-        text: `Re-reading the ${env.name} source and rebuilding tools, rules and scenarios.`,
-      }],
-    }]);
+    setTurns([
+      {
+        id: `a-refresh-${Date.now()}`,
+        role: "assistant",
+        steps: [
+          {
+            kind: "note",
+            text: `Re-reading the ${env.name} source and rebuilding tools, rules and scenarios.`,
+          },
+        ],
+      },
+    ]);
     const play = (stageId, delay = 0) => {
       const stage = builderRun(stageId, narrationSource());
       const turnId = `t-${stageId}-${Date.now()}`;
-      timers.current.push(setTimeout(() => {
-        setTurns((prev) => [...prev, { id: turnId, role: "builder", title: stage.title, steps: [] }]);
-      }, delay));
+      timers.current.push(
+        setTimeout(() => {
+          setTurns((prev) => [
+            ...prev,
+            { id: turnId, role: "builder", title: stage.title, steps: [] },
+          ]);
+        }, delay),
+      );
       stage.steps.forEach((step, i) => {
-        timers.current.push(setTimeout(() => {
-          setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, steps: [...t.steps, step] } : t)));
-          if (i !== stage.steps.length - 1) return;
-          setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
-          const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
-          if (nextId) play(nextId, 500);
-          else setRunning(false);
-        }, delay + 380 * (i + 1)));
+        timers.current.push(
+          setTimeout(
+            () => {
+              setTurns((prev) =>
+                prev.map((t) =>
+                  t.id === turnId ? { ...t, steps: [...t.steps, step] } : t,
+                ),
+              );
+              if (i !== stage.steps.length - 1) return;
+              setDone((d) => (d.includes(stageId) ? d : [...d, stageId]));
+              const nextId = STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1];
+              if (nextId) play(nextId, 500);
+              else setRunning(false);
+            },
+            delay + 380 * (i + 1),
+          ),
+        );
       });
     };
     play("understand", 400);
@@ -303,19 +387,36 @@ export default function TemplateReviewLayout({
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       <Stack
-        direction="row" alignItems="center" spacing={2}
-        sx={{ px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{
+          px: 3,
+          py: 1.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Tooltip arrow title="Back to environments">
           <IconButton size="small" onClick={onBack}>
-            <Iconify icon="solar:alt-arrow-left-linear" width={17} />
+            <Iconify icon="solar:alt-arrow-left-linear" width={16} />
           </IconButton>
         </Tooltip>
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>{env.name}</Typography>
+            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
+              {env.name}
+            </Typography>
             {/*
               Env status pill sits inside the identity cluster —
               parallel to the workspace header — so the reader sees
@@ -329,31 +430,44 @@ export default function TemplateReviewLayout({
               alignItems="center"
               spacing={0.75}
               sx={{
-                px: 1.25, py: 0.5, borderRadius: 1,
+                px: 1.25,
+                py: 0.5,
+                borderRadius: 1,
                 border: "1px solid",
-                borderColor: (t) => running
-                  ? (t.palette.mode === "dark" ? "rgba(120, 87, 252, 0.5)" : "rgba(120, 87, 252, 0.35)")
-                  : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.5)" : "rgba(22, 163, 74, 0.35)"),
-                bgcolor: (t) => running
-                  ? (t.palette.mode === "dark" ? "rgba(120, 87, 252, 0.14)" : "rgba(120, 87, 252, 0.08)")
-                  : (t.palette.mode === "dark" ? "rgba(22, 163, 74, 0.14)" : "rgba(22, 163, 74, 0.08)"),
-                color: running ? "#7857FC" : "#16A34A",
+                borderColor: running
+                  ? "status.discovery.border"
+                  : "status.success.border",
+                bgcolor: running ? "status.discovery.bg" : "status.success.bg",
+                color: running ? "status.discovery.fg" : "status.success.fg",
                 flexShrink: 0,
               }}
             >
-              <Box sx={{
-                width: 7, height: 7, borderRadius: "50%",
-                bgcolor: running ? "#7857FC" : "#16A34A",
-                animation: running ? "pulse 1.4s ease-in-out infinite" : undefined,
-                "@keyframes pulse": { "0%,100%": { opacity: 0.4 }, "50%": { opacity: 1 } },
-              }} />
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+              <Box
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  bgcolor: running
+                    ? "status.discovery.solid"
+                    : "status.success.solid",
+                  animation: running
+                    ? "pulse 1.4s ease-in-out infinite"
+                    : undefined,
+                  "@keyframes pulse": {
+                    "0%,100%": { opacity: 0.4 },
+                    "50%": { opacity: 1 },
+                  },
+                }}
+              />
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 {running ? "Building" : "Ready"}
               </Typography>
             </Stack>
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-            {envState?.agent?.name ? `${envState.agent.name}'s environment — review it, then run it` : "Review the environment, then run it"}
+            {envState?.agent?.name
+              ? `${envState.agent.name}'s environment — review it, then run it`
+              : "Review the environment, then run it"}
           </Typography>
         </Box>
         {/*
@@ -370,16 +484,21 @@ export default function TemplateReviewLayout({
           Nikhil's transcript: refresh exists, but it's not the
           centrepiece.
         */}
-        <Tooltip arrow title="Re-read the source and rebuild tools, rules and scenarios.">
+        <Tooltip
+          arrow
+          title="Re-read the source and rebuild tools, rules and scenarios."
+        >
           <Box component="span">
             <Button
-              variant="outlined" size="small"
+              variant="outlined"
+              size="small"
               onClick={refreshFromSource}
               disabled={running}
               startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
               sx={{
-                color: "text.primary", borderColor: "divider",
-                typography: "s2", fontWeight: 600, flexShrink: 0,
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
               }}
             >
               Refresh
@@ -392,20 +511,31 @@ export default function TemplateReviewLayout({
           const noAgent = !envState?.agent;
           const reason = running
             ? "Building the environment — one moment…"
-            : noAgent ? "Connect an agent first — Connect agent, on Overview. Runs start once one is connected."
-              : readiness.ready ? "" : `${readiness.reason}. Opens the workspace there.`;
-          const go = () => (readiness.ready
-            ? checkRunFit(() => onFinish?.())
-            : navigate(paths.dashboard.simulate.environmentStep(env.id, readiness.step)));
+            : noAgent
+              ? "Connect an agent first — Connect agent, on Overview. Runs start once one is connected."
+              : readiness.ready
+                ? ""
+                : `${readiness.reason}. Opens the workspace there.`;
+          const go = () =>
+            readiness.ready
+              ? checkRunFit(() => onFinish?.())
+              : navigate(
+                  paths.dashboard.simulate.environmentStep(
+                    env.id,
+                    readiness.step,
+                  ),
+                );
           return (
             <Tooltip arrow title={reason}>
               <Box component="span">
                 <Button
-                  variant="contained" color="primary"
+                  variant="contained"
+                  color="primary"
                   onClick={go}
                   disabled={running || noAgent}
-                  startIcon={<Iconify icon="solar:play-circle-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
+                  startIcon={
+                    <Iconify icon="solar:play-circle-linear" width={16} />
+                  }
                 >
                   Run simulation
                 </Button>
@@ -419,30 +549,50 @@ export default function TemplateReviewLayout({
           by a single rule, the same as the workspace. */}
       <Box
         sx={{
-          flex: 1, minHeight: 0, display: "grid",
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
           gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
         }}
       >
-        <Box sx={{
-          height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
-          /* Widths and colour set separately: a responsive "1px solid"
+        <Box
+          sx={{
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            /* Widths and colour set separately: a responsive "1px solid"
              shorthand resets the colour to the text colour. */
-          borderStyle: "solid", borderWidth: 0, borderColor: "divider",
-          borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
-        }}>
+            borderStyle: "solid",
+            borderWidth: 0,
+            borderColor: "divider",
+            borderRightWidth: { xs: 0, lg: 1 },
+            borderBottomWidth: { xs: 1, lg: 0 },
+          }}
+        >
           <AssistantConsole
-            turns={turns} running={running} chips={chips}
-            onSend={send} onChip={(c) => send(c)}
+            turns={turns}
+            running={running}
+            chips={chips}
+            onSend={send}
+            onChip={(c) => send(c)}
             frozen={env?.buildStatus === "building"}
             frozenReason="Environment is still being built"
           />
         </Box>
 
-        <Box sx={{
-          height: "100%", minHeight: 0,
-          display: "flex", flexDirection: "column",
-          overflow: "hidden", px: 2.5, bgcolor: "background.paper",
-        }}>
+        <Box
+          sx={{
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            px: 2.5,
+            bgcolor: "background.paper",
+          }}
+        >
           <DerivedPanels
             env={env}
             envState={envState}
@@ -492,7 +642,11 @@ function buildTemplateReading(env) {
   }));
   const branchCount = Math.max(3, (env.tools || []).length - 1);
   const behavior = [
-    { name: "routing prompt", note: `${branchCount} branches`, origin: "prompt" },
+    {
+      name: "routing prompt",
+      note: `${branchCount} branches`,
+      origin: "prompt",
+    },
     { name: "transfer → front desk", origin: "prompt" },
     { name: "escalate on 2× refusal", origin: "inferred" },
   ];
@@ -518,7 +672,8 @@ function buildTemplateQuestions(env) {
   }
   questions.push({
     id: "policy-enforcement",
-    title: "Are the policy values enforced in your backend, or only stated in the prompt?",
+    title:
+      "Are the policy values enforced in your backend, or only stated in the prompt?",
     why: "We can see the values, not where they're enforced. A rule we only infer is graded more softly than a hard one.",
     kind: "boolean",
   });
@@ -534,9 +689,12 @@ function answerFromEnvironment(text, env, envState) {
   const t = text.toLowerCase();
   const tools = env?.tools || [];
   const rules = env?.rules || [];
-  const scenarios = (envState?.scenarios || []).filter((r) => !r.proposed && !r.retired && !r.archived);
+  const scenarios = (envState?.scenarios || []).filter(
+    (r) => !r.proposed && !r.retired && !r.archived,
+  );
   const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
-  const asksQuestion = /\?$|^(what|which|how|why|explain|summari[sz]e|show|list|tell)\b/.test(t);
+  const asksQuestion =
+    /\?$|^(what|which|how|why|explain|summari[sz]e|show|list|tell)\b/.test(t);
   if (asksQuestion) {
     if (/missing|before we can run|ready/.test(t)) {
       const r = runReadiness(envState, env);
@@ -558,10 +716,14 @@ function answerFromEnvironment(text, env, envState) {
       return `${plural(scenarios.length, "scenario")}, ${plural(tools.length, "tool")}, ${plural(rules.length, "rule")} and ${plural((envState?.evals || []).length, "evaluation")}${envState?.agent?.name ? `, testing ${envState.agent.name}` : ""}.`;
     }
   }
-  const where = /eval|grader|quality bar/.test(t) ? "the Evaluations tab"
-    : /rule|tool|actor|contract/.test(t) ? "the Contract tab"
-      : /version|roll ?back/.test(t) ? "the agent's page"
-        : /scenario|persona|case/.test(t) ? "the Scenarios tab"
+  const where = /eval|grader|quality bar/.test(t)
+    ? "the Evaluations tab"
+    : /rule|tool|actor|contract/.test(t)
+      ? "the Contract tab"
+      : /version|roll ?back/.test(t)
+        ? "the agent's page"
+        : /scenario|persona|case/.test(t)
+          ? "the Scenarios tab"
           : "the tabs on the right";
   return `I can't make that change from this chat. You can do it on ${where} — or ask me to write more scenarios, which I'll propose for review.`;
 }

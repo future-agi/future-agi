@@ -8,16 +8,16 @@ import { statusIcons } from "../sheet-view/icons";
 
 const cellStyles = {
   Processing: {
-    backgroundColor: "blue.o10",
-    color: "blue.500",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   Failed: {
-    backgroundColor: "red.o10",
-    color: "red.500",
+    backgroundColor: "status.danger.bg",
+    color: "status.danger.fg",
   },
   Completed: {
-    backgroundColor: "green.o10",
-    color: "green.500",
+    backgroundColor: "status.success.bg",
+    color: "status.success.fg",
   },
 };
 
@@ -41,7 +41,7 @@ export const ProcessingStatusCell = ({ value, data }) => {
           py: "4px",
           gap: "8px",
           height: "24px",
-          borderRadius: "20px",
+          borderRadius: "12px",
           ...cellStyles[status],
         }}
         direction={"row"}

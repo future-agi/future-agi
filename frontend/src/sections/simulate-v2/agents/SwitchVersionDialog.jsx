@@ -1,10 +1,15 @@
 import PropTypes from "prop-types";
-import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { Alert, Box, Button, Dialog, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { toolFit } from "../_mock/toolFit";
 import { envVersionNameOf } from "../_mock/codeRefs";
-import { agentVersions, currentAgentVersion, isCredentialsVersion, productionAgentVersion, versionNumber } from "../_mock/versions";
+import {
+  agentVersions,
+  currentAgentVersion,
+  isCredentialsVersion,
+  productionAgentVersion,
+  versionNumber,
+} from "../_mock/versions";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -16,7 +21,14 @@ const MONO = "ui-monospace, Menlo, monospace";
  * this environment's world doesn't answer, say so before switching rather
  * than after a run fails.
  */
-export default function SwitchVersionDialog({ open, onClose, env, envState, label, onConfirm }) {
+export default function SwitchVersionDialog({
+  open,
+  onClose,
+  env,
+  envState,
+  label,
+  onConfirm,
+}) {
   if (!env || !envState || !label) return null;
   /* A code agent's versions read as commits — "main @ 3f9a2c1". */
   const nm = (l) => (l ? envVersionNameOf(envState, l, env?.id).main : l);
@@ -27,42 +39,81 @@ export default function SwitchVersionDialog({ open, onClose, env, envState, labe
   const follows = label === productionAgentVersion(envState)?.label;
   /* Credentials are versioned with the agent, so an older version runs with
      the key it had — said, in case that key has since been revoked. */
-  const newerKeys = agentVersions(envState).filter((v) => isCredentialsVersion(v) && versionNumber(v.label) > versionNumber(label));
+  const newerKeys = agentVersions(envState).filter(
+    (v) =>
+      isCredentialsVersion(v) && versionNumber(v.label) > versionNumber(label),
+  );
 
   return (
     <Dialog
-      open={open} onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 480, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
       <Box sx={{ px: 3, pt: 2.5, pb: 2 }}>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>
-          {follows ? `Make production the default in ${env.name}?` : `Make ${name} the default in ${env.name}?`}
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          {follows
+            ? `Make production the default in ${env.name}?`
+            : `Make ${name} the default in ${env.name}?`}
         </Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}>
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
+        >
           {follows
             ? `It tests ${name}, the production version, and moves to each new production version from now on. Nothing runs now; earlier runs stay with ${from || "the version they ran"}. The change is recorded in its history.`
             : `It stays on ${name} — new production versions won't move it until the default is production again. Nothing runs now; earlier runs stay with ${from || "the version they ran"}. The change is recorded in its history.`}
         </Typography>
         {!follows && newerKeys.length > 0 && (
-          <Typography sx={{ typography: "s3", color: "text.secondary", mt: 1.25 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mt: 1.25 }}
+          >
             {`${name} runs with the credentials it had — from before ${newerKeys.map((v) => nm(v.label)).join(", ")}. If that key was revoked, its runs won't reach the agent.`}
           </Typography>
         )}
         {!fit.fits && (
-          <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ mt: 1.75, p: 1.25, borderRadius: 1, bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.08) }}>
-            <Iconify icon="solar:danger-triangle-linear" width={16} sx={{ color: "#CA8A04", mt: 0.125, flexShrink: 0 }} />
-            <Typography sx={{ typography: "s3", color: "text.primary" }}>
-              {`${name} calls ${fit.missing.length === 1 ? "a tool" : "tools"} this environment's world doesn't answer: `}
-              <Box component="span" sx={{ fontFamily: MONO }}>{fit.missing.map((t) => t.name).join(", ")}</Box>
-              {`. Scenarios that need ${fit.missing.length === 1 ? "it" : "them"} come back Not measured until the world is updated from the environment's World tab.`}
-            </Typography>
-          </Stack>
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:danger-triangle-linear" width={16} />}
+            sx={{ mt: 1.75 }}
+          >
+            {`${name} calls ${fit.missing.length === 1 ? "a tool" : "tools"} this environment's world doesn't answer: `}
+            <Box component="span" sx={{ fontFamily: MONO }}>
+              {fit.missing.map((t) => t.name).join(", ")}
+            </Box>
+            {`. Scenarios that need ${fit.missing.length === 1 ? "it" : "them"} come back Not measured until the world is updated from the environment's World tab.`}
+          </Alert>
         )}
       </Box>
-      <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}>
-        <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
-        <Button size="small" variant="contained" color="primary" onClick={onConfirm} sx={{ typography: "s2", fontWeight: 700 }}>
-          {!fit.fits ? "Change anyway" : follows ? "Default to production" : `Make ${name} the default`}
+      <Stack
+        direction="row"
+        justifyContent="flex-end"
+        spacing={1}
+        sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+      >
+        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          onClick={onConfirm}
+        >
+          {!fit.fits
+            ? "Change anyway"
+            : follows
+              ? "Default to production"
+              : `Make ${name} the default`}
         </Button>
       </Stack>
     </Dialog>
@@ -70,6 +121,10 @@ export default function SwitchVersionDialog({ open, onClose, env, envState, labe
 }
 
 SwitchVersionDialog.propTypes = {
-  open: PropTypes.bool, onClose: PropTypes.func, env: PropTypes.object, envState: PropTypes.object,
-  label: PropTypes.string, onConfirm: PropTypes.func,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  label: PropTypes.string,
+  onConfirm: PropTypes.func,
 };

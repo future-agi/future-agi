@@ -3,7 +3,6 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
-import { alpha } from "@mui/material/styles";
 
 import { usePathname } from "src/routes/hooks";
 import { useNavigate } from "react-router";
@@ -48,10 +47,6 @@ export default function NavGatewayPanel() {
         height: "100vh",
         borderRight: (theme) =>
           gatewayOpen ? `solid 1px ${theme.palette.divider}` : "none",
-        bgcolor: (theme) =>
-          theme.palette.mode === "dark"
-            ? alpha(theme.palette.primary.main, 0.04)
-            : alpha(theme.palette.primary.main, 0.02),
         flexShrink: 0,
       }}
     >
@@ -82,11 +77,11 @@ export default function NavGatewayPanel() {
         >
           <Typography
             sx={{
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: 0.8,
-              textTransform: "uppercase",
-              color: "text.disabled",
+              fontSize: 12,
+              fontWeight: 500,
+              letterSpacing: 0,
+              textTransform: "none",
+              color: "text.tertiary",
             }}
           >
             Gateway
@@ -94,9 +89,9 @@ export default function NavGatewayPanel() {
           <IconButton
             size="small"
             onClick={() => setGatewayOpen(false)}
-            sx={{ width: 20, height: 20, color: "text.disabled" }}
+            sx={{ width: 20, color: "text.disabled" }}
           >
-            <Iconify icon="mdi:chevron-left" width={16} />
+            <Iconify icon="solar:alt-arrow-left-linear" width={16} />
           </IconButton>
         </Box>
 
@@ -109,11 +104,11 @@ export default function NavGatewayPanel() {
                 {group.subheader && (
                   <Typography
                     sx={{
-                      fontSize: 9,
-                      fontWeight: 700,
-                      letterSpacing: 0.8,
-                      textTransform: "uppercase",
-                      color: "text.disabled",
+                      fontSize: 12,
+                      fontWeight: 500,
+                      letterSpacing: 0,
+                      textTransform: "none",
+                      color: "text.tertiary",
                       px: 1,
                       pt: groupIdx === 0 ? 0.5 : 1.5,
                       pb: 0.25,
@@ -139,32 +134,30 @@ export default function NavGatewayPanel() {
                         py: "5px",
                         borderRadius: "6px",
                         cursor: "pointer",
-                        color: isActive ? "primary.main" : "text.primary",
-                        bgcolor: isActive
-                          ? (theme) => alpha(theme.palette.primary.main, 0.08)
-                          : "transparent",
+                        // Same as the main sidebar: grey at rest, neutral fill
+                        // and fg.default when current — no purple.
+                        color: isActive ? "text.primary" : "text.secondary",
+                        bgcolor: isActive ? "action.selected" : "transparent",
                         "&:hover": {
-                          bgcolor: (theme) =>
-                            isActive
-                              ? alpha(theme.palette.primary.main, 0.12)
-                              : theme.palette.action.hover,
+                          bgcolor: isActive ? "action.selected" : "action.hover",
+                          color: "text.primary",
                         },
                         transition: "all 0.15s ease",
                       }}
                     >
                       <Box
                         sx={{
-                          width: 18,
-                          height: 18,
+                          width: 14,
+                          height: 14,
                           flexShrink: 0,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          color: isActive ? "primary.main" : "text.primary",
+                          color: "inherit",
                         }}
                       >
                         {item.iconName ? (
-                          <Iconify icon={item.iconName} width={15} />
+                          <Iconify icon={item.iconName} width={14} />
                         ) : item.icon ? (
                           <Box sx={{ "& svg": { width: 15, height: 15 } }}>
                             {item.icon}
@@ -173,10 +166,10 @@ export default function NavGatewayPanel() {
                       </Box>
                       <Typography
                         sx={{
-                          fontSize: "12px",
-                          fontWeight: isActive ? 600 : 500,
+                          fontSize: "13px",
+                          fontWeight: isActive ? 500 : 400,
                           whiteSpace: "nowrap",
-                          lineHeight: 1.2,
+                          lineHeight: "20px",
                         }}
                       >
                         {item.title}

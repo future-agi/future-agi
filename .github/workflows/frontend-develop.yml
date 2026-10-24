@@ -36,6 +36,9 @@ jobs:
       - name: Type check
         run: yarn type-check
 
+      - name: Design system lint
+        run: yarn lint:ds
+
       - name: Run unit tests
         run: yarn test:unit --coverage --reporter=verbose
         env:

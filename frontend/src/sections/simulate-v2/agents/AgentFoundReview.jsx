@@ -22,12 +22,20 @@ const CRED_SLOT = "vault://acme/sim/agent_test_credentials";
 export default function AgentFoundReview({ agent, onSave, onCancel }) {
   const found = foundValuesOf(agent);
   const v = agent.values || {};
-  const [values, setValues] = useState(() => Object.fromEntries(FOUND_FACTS.map((f) => [f.id, found[f.id]])));
+  const [values, setValues] = useState(() =>
+    Object.fromEntries(FOUND_FACTS.map((f) => [f.id, found[f.id]])),
+  );
   /* id → "confirmed" | "corrected" — every fact needs one before saving. */
   const [status, setStatus] = useState({});
-  const [pointers, setPointers] = useState(() => Object.fromEntries(found.runtimePrompts.map((p, i) => [i, p.pointer || ""])));
+  const [pointers, setPointers] = useState(() =>
+    Object.fromEntries(
+      found.runtimePrompts.map((p, i) => [i, p.pointer || ""]),
+    ),
+  );
   /* Safe by default: whatever was marked at connect stays marked. */
-  const [neverReal, setNeverReal] = useState(() => (v.neverRunForReal || []).filter((t) => found.tools.includes(t)));
+  const [neverReal, setNeverReal] = useState(() =>
+    (v.neverRunForReal || []).filter((t) => found.tools.includes(t)),
+  );
   const [credRef, setCredRef] = useState(v.testCredentialsRef || "");
   /* Test credentials given at connect (.env values, a credential file) are
      the ones — shown here, not asked for again. */
@@ -39,11 +47,18 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
   const open = FOUND_FACTS.filter((f) => !status[f.id]);
 
   const save = () => {
-    const corrected = Object.fromEntries(FOUND_FACTS.filter((f) => status[f.id] === "corrected").map((f) => [f.id, values[f.id]]));
-    const runtimePrompts = found.runtimePrompts.map(({ pointer: _old, ...p }, i) => {
-      const pointer = (pointers[i] || "").trim();
-      return pointer ? { ...p, pointer } : p;
-    });
+    const corrected = Object.fromEntries(
+      FOUND_FACTS.filter((f) => status[f.id] === "corrected").map((f) => [
+        f.id,
+        values[f.id],
+      ]),
+    );
+    const runtimePrompts = found.runtimePrompts.map(
+      ({ pointer: _old, ...p }, i) => {
+        const pointer = (pointers[i] || "").trim();
+        return pointer ? { ...p, pointer } : p;
+      },
+    );
     const n = Object.keys(corrected).length;
     onSave(
       foundPatchOf(agent, {
@@ -51,23 +66,39 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
         runtimePrompts: found.runtimePrompts.length ? runtimePrompts : null,
         neverRunForReal: neverReal.filter((t) => tools.includes(t)),
         /* Stored encrypted: what's kept is the reference it's held under. */
-        ...(!givenAtConnect && { testCredentialsRef: keyRefOf(credRef, CRED_SLOT) }),
+        ...(!givenAtConnect && {
+          testCredentialsRef: keyRefOf(credRef, CRED_SLOT),
+        }),
       }),
-      n ? `Saved — ${n} item${n === 1 ? "" : "s"} corrected on ${agent.name}'s record.` : `Saved — what we found in ${agent.name} is confirmed.`,
+      n
+        ? `Saved — ${n} item${n === 1 ? "" : "s"} corrected on ${agent.name}'s record.`
+        : `Saved — what we found in ${agent.name} is confirmed.`,
     );
   };
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden", bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        bgcolor: "background.paper",
+      }}
+    >
       {FOUND_FACTS.map((f, i) => (
         <FactRow
           key={f.id}
           fact={f}
           first={i === 0}
           value={values[f.id]}
-          from={f.id === "model" && found.modelAtRuntime ? "Chosen at run time from configuration — this is the default it falls back to"
-            : f.id === "tests" ? `Every change keeps them passing${found.testChecks?.length ? ` · also ${found.testChecks.join(", ")}` : ""}`
-              : null}
+          from={
+            f.id === "model" && found.modelAtRuntime
+              ? "Chosen at run time from configuration — this is the default it falls back to"
+              : f.id === "tests"
+                ? `Every change keeps them passing${found.testChecks?.length ? ` · also ${found.testChecks.join(", ")}` : ""}`
+                : null
+          }
           status={status[f.id]}
           onConfirm={() => setStatus((s) => ({ ...s, [f.id]: "confirmed" }))}
           onCorrect={(next) => {
@@ -78,19 +109,41 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
       ))}
 
       {found.runtimePrompts.length > 0 && (
-        <DetailRow label="Built at run time" from="Point us at where each one comes from, so a simulation sees the same text production does.">
+        <DetailRow
+          label="Built at run time"
+          from="Point us at where each one comes from, so a simulation sees the same text production does."
+        >
           <Stack spacing={1}>
             {found.runtimePrompts.map((p, i) => (
               <Box key={`${p.where}-${p.what}`}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{p.what}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO, mb: 0.5 }}>{p.where}</Typography>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {p.what}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    fontFamily: MONO,
+                    mb: 0.5,
+                  }}
+                >
+                  {p.where}
+                </Typography>
                 <TextField
-                  size="small" fullWidth
+                  size="small"
+                  fullWidth
                   placeholder="A file, URL or Future AGI prompt"
                   value={pointers[i] || ""}
-                  onChange={(e) => setPointers((x) => ({ ...x, [i]: e.target.value }))}
+                  onChange={(e) =>
+                    setPointers((x) => ({ ...x, [i]: e.target.value }))
+                  }
                   inputProps={{ "aria-label": `Where "${p.what}" comes from` }}
-                  sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
+                  sx={{
+                    "& .MuiInputBase-input": {
+                      typography: "s2",
+                      fontFamily: MONO,
+                    },
+                  }}
                 />
               </Box>
             ))}
@@ -100,9 +153,11 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
 
       <DetailRow
         label="Never run for real"
-        from={neverReal.length
-          ? `${neverReal.length} of ${tools.length} answer from the environment's world in every simulation.`
-          : "None marked — every tool may run as it does in production."}
+        from={
+          neverReal.length
+            ? `${neverReal.length} of ${tools.length} answer from the environment's world in every simulation.`
+            : "None marked — every tool may run as it does in production."
+        }
       >
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
           {tools.map((t) => (
@@ -110,29 +165,90 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
               key={t}
               label={t}
               on={neverReal.includes(t)}
-              onClick={() => setNeverReal((x) => (x.includes(t) ? x.filter((y) => y !== t) : [...x, t]))}
+              onClick={() =>
+                setNeverReal((x) =>
+                  x.includes(t) ? x.filter((y) => y !== t) : [...x, t],
+                )
+              }
             />
           ))}
-          {!tools.length && <Typography sx={{ typography: "s2", color: "text.subtitle" }}>No tools found</Typography>}
+          {!tools.length && (
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+              No tools found
+            </Typography>
+          )}
         </Box>
       </DetailRow>
 
       <DetailRow
         label="Test credentials"
-        from={found.credentialKeys.length ? `It reads ${found.credentialKeys.join(", ")} — names only, we never read the values.` : null}
+        from={
+          found.credentialKeys.length
+            ? `It reads ${found.credentialKeys.join(", ")} — names only, we never read the values.`
+            : null
+        }
       >
         {givenAtConnect ? (
           <Box>
-            <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-              {[...givenEnv.map((e) => ({ k: e.name, val: e.secret ? e.ref : e.value })), ...givenFiles.map((f) => ({ k: f.name, val: "credential file · mounted per run" }))].map((r, i) => (
-                <Stack key={r.k} direction="row" spacing={1.5} sx={{ px: 1.25, py: 0.75, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-                  <Typography noWrap sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, width: 190, flexShrink: 0 }}>{r.k}</Typography>
-                  <Typography noWrap sx={{ typography: "s2", fontFamily: MONO, color: "text.secondary", minWidth: 0 }}>{r.val}</Typography>
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
+            >
+              {[
+                ...givenEnv.map((e) => ({
+                  k: e.name,
+                  val: e.secret ? e.ref : e.value,
+                })),
+                ...givenFiles.map((f) => ({
+                  k: f.name,
+                  val: "credential file · mounted per run",
+                })),
+              ].map((r, i) => (
+                <Stack
+                  key={r.k}
+                  direction="row"
+                  spacing={1.5}
+                  sx={{
+                    px: 1.25,
+                    py: 0.75,
+                    borderTop: i ? "1px solid" : "none",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      fontFamily: MONO,
+                      width: 190,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {r.k}
+                  </Typography>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontFamily: MONO,
+                      color: "text.secondary",
+                      minWidth: 0,
+                    }}
+                  >
+                    {r.val}
+                  </Typography>
                 </Stack>
               ))}
             </Box>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-              Given when you connected — test credentials only, never sent to the improver.
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+            >
+              Given when you connected — test credentials only, never sent to
+              the improver.
             </Typography>
           </Box>
         ) : (
@@ -145,16 +261,35 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
         )}
       </DetailRow>
 
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 1.75,
+          py: 1.25,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-          {open.length ? `Confirm or correct ${open.map((f) => f.label.toLowerCase()).join(", ")} to save.` : "Everything is confirmed or corrected."}
+          {open.length
+            ? `Confirm or correct ${open.map((f) => f.label.toLowerCase()).join(", ")} to save.`
+            : "Everything is confirmed or corrected."}
         </Typography>
-        <Button size="small" onClick={onCancel} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
         <Button
-          size="small" variant="contained" color="primary"
+          size="small"
+          onClick={onCancel}
+          sx={{ color: "text.secondary" }}
+        >
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
           disabled={open.length > 0}
           onClick={save}
-          sx={{ typography: "s3", fontWeight: 700 }}
         >
           Save
         </Button>

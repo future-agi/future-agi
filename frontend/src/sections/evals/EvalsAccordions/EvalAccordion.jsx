@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useRef, useState } from "react";
 import {
   Box,
@@ -7,7 +8,6 @@ import {
   Modal,
   Stack,
   Tab,
-  Tabs,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -183,47 +183,15 @@ const EvalAccordion = ({
                     </Typography>
 
                     {showTabs && (
-                      <Tabs
-                        textColor="primary"
+                      <SegmentedTabs
                         value={item?.type}
                         onChange={(event, newValue) =>
                           handleTabChange(event, newValue, index)
                         }
-                        TabIndicatorProps={{
-                          style: { display: "none" },
-                        }}
-                        sx={{
-                          minHeight: 32,
-                          "& .MuiTab-root": {
-                            minHeight: 32,
-                            padding: "5px 5px",
-                            marginRight: "0px !important",
-                          },
-                          border: "1px solid var(--border-default)",
-                          padding: "2px",
-                          borderRadius: "10px",
-                          fontFamily: theme.typography.fontFamily,
-                        }}
                       >
-                        <Tab
-                          value="text"
-                          sx={{
-                            background:
-                              item?.type == "text" ? "action.selected" : "",
-                            borderRadius: "10px",
-                          }}
-                          label="Text"
-                        />
-                        <Tab
-                          value="image"
-                          sx={{
-                            background:
-                              item?.type == "image" ? "action.selected" : "",
-                            borderRadius: "10px",
-                          }}
-                          label="Image"
-                        />
-                      </Tabs>
+                        <Tab value="text" label="Text" />
+                        <Tab value="image" label="Image" />
+                      </SegmentedTabs>
                     )}
                   </Box>
 
@@ -232,7 +200,7 @@ const EvalAccordion = ({
                       sx={{
                         paddingX: "16px",
                         paddingY: "12px",
-                        borderRadius: "10px",
+                        borderRadius: "8px",
                         backgroundColor: "background.neutral",
                         overflowWrap: "break-word",
                         marginTop: "10px",
@@ -258,13 +226,13 @@ const EvalAccordion = ({
                                 style={{
                                   width: "100%",
                                   padding: "8px",
-                                  borderRadius: "5px",
+                                  borderRadius: "6px",
                                   outline: "none",
                                   borderColor: "transparent",
                                   minHeight: "80px",
                                   background: "transparent",
                                   resize: "none",
-                                  fontSize: "14px",
+                                  fontSize: "13px",
                                   color: theme.palette.text.primary,
                                   fontFamily: theme.typography.fontFamily,
                                   verticalAlign: "top",
@@ -301,7 +269,7 @@ const EvalAccordion = ({
                         sx={{
                           paddingX: "16px",
                           paddingY: "12px",
-                          borderRadius: "10px",
+                          borderRadius: "8px",
                           overflowWrap: "break-word",
                           backgroundColor: "background.neutral",
                           marginTop: "10px",
@@ -338,6 +306,7 @@ const EvalAccordion = ({
                             height="100%"
                             // borderRadius="15px"
                             gap="5px"
+                            // eslint-disable-next-line no-restricted-syntax -- ds: overlay scrim
                             bgcolor="#00000080"
                             sx={{
                               opacity: 0,
@@ -348,7 +317,7 @@ const EvalAccordion = ({
                           >
                             <IconButton sx={{ color: "common.white" }}>
                               <Iconify
-                                icon="mdi:search-add-outline"
+                                icon="solar:magnifier-zoom-in-linear"
                                 onClick={() => {
                                   setSelectedImage(item?.value);
                                   setImageModal(true);
@@ -357,13 +326,13 @@ const EvalAccordion = ({
                               />
                             </IconButton>
                             <IconButton sx={{ color: "common.white" }}>
-                              <Iconify icon="meteor-icons:arrows-rotate" />
+                              <Iconify icon="solar:refresh-linear" />
                             </IconButton>
                             <IconButton
                               sx={{ color: "common.white" }}
                               onClick={(e) => handleImageDelete(e, index, item)}
                             >
-                              <Iconify icon="mynaui:trash-solid" />
+                              <Iconify icon="solar:trash-bin-trash-linear" />
                             </IconButton>
                           </Box>
                           <img
@@ -387,10 +356,11 @@ const EvalAccordion = ({
                           <Box
                             sx={{
                               width: "100%",
-                              maxWidth: "919px",
+                              maxWidth: "960px",
                               bgcolor: "background.paper",
+                              // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
                               boxShadow: 24,
-                              borderRadius: "16px",
+                              borderRadius: "12px",
                               mx: "auto",
                               height: "90vh",
                             }}
@@ -403,7 +373,7 @@ const EvalAccordion = ({
                             >
                               <Typography>Uploaded Image</Typography>
                               <IconButton onClick={() => setImageModal(false)}>
-                                <Iconify icon="mingcute:close-line" />
+                                <Iconify icon="solar:close-linear" />
                               </IconButton>
                             </Stack>
                             {selectedImage && (
@@ -485,7 +455,7 @@ const EvalAccordion = ({
                               sx={{
                                 paddingX: "16px",
                                 paddingY: "12px",
-                                borderRadius: "10px",
+                                borderRadius: "8px",
                                 overflowWrap: "break-word",
                                 backgroundColor: isDragging
                                   ? "action.hover"
@@ -502,7 +472,7 @@ const EvalAccordion = ({
                                 borderColor: isDragging
                                   ? "primary.main"
                                   : "transparent",
-                                transition: "all 0.3s ease",
+                                transition: "all 0.2s ease",
                               }}
                               onClick={() =>
                                 imageFileRefs.current[index]?.click()
@@ -533,7 +503,7 @@ const EvalAccordion = ({
                                       }}
                                     >
                                       <Iconify
-                                        icon="material-symbols:upload"
+                                        icon="solar:upload-minimalistic-linear"
                                         sx={{ cursor: "pointer" }}
                                       />
                                       Drag an image here or

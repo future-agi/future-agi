@@ -2,7 +2,20 @@ import PropTypes from "prop-types";
 import { useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
-import { Box, Grid, Stack, Typography, Button, IconButton, Tooltip, TextField, Divider, Link } from "@mui/material";
+import {
+  Alert,
+  AlertTitle,
+  Box,
+  Grid,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tooltip,
+  TextField,
+  Divider,
+  Link,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { OriginChip } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
@@ -41,10 +54,30 @@ import { clickable, focusRing } from "../components/clickable";
  */
 
 const SECTIONS = [
-  { key: "tools", title: "Tools it can call", subtitle: "From the agent's config and call-graph", icon: "solar:code-square-linear" },
-  { key: "rules", title: "Rules it must hold", subtitle: "Data from policy.yaml — not judgement", icon: "solar:shield-check-linear" },
-  { key: "data", title: "Data it starts with", subtitle: "Fixtures that seed the world every run", icon: "solar:database-linear" },
-  { key: "behavior", title: "How it behaves", subtitle: "Prompt, voice, routing", icon: "solar:playlist-linear" },
+  {
+    key: "tools",
+    title: "Tools it can call",
+    subtitle: "From the agent's config and call-graph",
+    icon: "solar:code-square-linear",
+  },
+  {
+    key: "rules",
+    title: "Rules it must hold",
+    subtitle: "Data from policy.yaml — not judgement",
+    icon: "solar:shield-check-linear",
+  },
+  {
+    key: "data",
+    title: "Data it starts with",
+    subtitle: "Fixtures that seed the world every run",
+    icon: "solar:database-linear",
+  },
+  {
+    key: "behavior",
+    title: "How it behaves",
+    subtitle: "Prompt, voice, routing",
+    icon: "solar:playlist-linear",
+  },
 ];
 
 /* Baseline warnings used when `?readerStatus=warning` is on and the
@@ -97,9 +130,10 @@ export default function AgentReadReceipt({
   const initialStatus = urlOverride || reading?.status || "warning";
   const [readerStatus, setReaderStatus] = useState(initialStatus);
   /* Local view of section issues — Retry-per-section clears them. */
-  const initialIssues = readerStatus === "warning" || urlOverride === "warning"
-    ? (reading?.sectionIssues || DEFAULT_DEMO_ISSUES)
-    : (reading?.sectionIssues || {});
+  const initialIssues =
+    readerStatus === "warning" || urlOverride === "warning"
+      ? reading?.sectionIssues || DEFAULT_DEMO_ISSUES
+      : reading?.sectionIssues || {};
   const [sectionIssues, setSectionIssues] = useState(initialIssues);
 
   /* Retry cycles hard-fail → warning → healthy so a demo can walk
@@ -110,13 +144,17 @@ export default function AgentReadReceipt({
     if (readerStatus === "hardfail") setSectionIssues(DEFAULT_DEMO_ISSUES);
     else setSectionIssues({});
   };
-  const retrySection = (key) => setSectionIssues((prev) => {
-    const next = { ...prev };
-    delete next[key];
-    return next;
-  });
+  const retrySection = (key) =>
+    setSectionIssues((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
 
-  const isResolved = (a) => !!a && !a.skipped && (a.pick != null || (a.other && a.other.trim().length > 0));
+  const isResolved = (a) =>
+    !!a &&
+    !a.skipped &&
+    (a.pick != null || (a.other && a.other.trim().length > 0));
 
   const resolvedCount = useMemo(
     () => questions.filter((q) => isResolved(answers[q.id])).length,
@@ -128,14 +166,16 @@ export default function AgentReadReceipt({
   );
   const openCount = questions.length - resolvedCount - skippedCount;
 
-  const setAnswer = (id, patch) => setAnswers((prev) => ({
-    ...prev,
-    [id]: { ...(prev[id] || {}), ...patch, skipped: false },
-  }));
-  const skipAnswer = (id) => setAnswers((prev) => ({
-    ...prev,
-    [id]: { pick: null, other: "", skipped: true },
-  }));
+  const setAnswer = (id, patch) =>
+    setAnswers((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), ...patch, skipped: false },
+    }));
+  const skipAnswer = (id) =>
+    setAnswers((prev) => ({
+      ...prev,
+      [id]: { pick: null, other: "", skipped: true },
+    }));
 
   const counts = {
     tools: reading.tools?.length || 0,
@@ -143,8 +183,12 @@ export default function AgentReadReceipt({
     data: reading.data?.length || 0,
     behavior: reading.behavior?.length || 0,
   };
-  const inferredCount = [...(reading.behavior || []), ...(reading.tools || []), ...(reading.rules || []), ...(reading.data || [])]
-    .filter((f) => f.origin === "inferred").length;
+  const inferredCount = [
+    ...(reading.behavior || []),
+    ...(reading.tools || []),
+    ...(reading.rules || []),
+    ...(reading.data || []),
+  ].filter((f) => f.origin === "inferred").length;
 
   /* Hard-fail takes over the whole surface. Nothing came back from the
      reader, so rendering four empty sections would be misleading — a
@@ -153,7 +197,10 @@ export default function AgentReadReceipt({
     return (
       <HardFailPage
         agentRef={agentRef}
-        reason={reading?.hardfailReason || "No response from the agent source. The reader gave up after 30s."}
+        reason={
+          reading?.hardfailReason ||
+          "No response from the agent source. The reader gave up after 30s."
+        }
         onRetry={cycleReaderState}
         onChangeSource={onBack}
         onContinueWithDefaults={() => onBuild?.({ __skippedRead: true })}
@@ -164,7 +211,15 @@ export default function AgentReadReceipt({
   const issueCount = Object.keys(sectionIssues).length;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        bgcolor: "background.paper",
+      }}
+    >
       {/* ── warning band — slim strip above the doc body ── */}
       {issueCount > 0 && (
         <ReaderStatusBand
@@ -180,37 +235,79 @@ export default function AgentReadReceipt({
             are no questions, or on small screens. ── */}
       <Box
         sx={{
-          flex: 1, minHeight: 0, display: "grid",
-          gridTemplateColumns: questions.length > 0
-            ? { xs: "1fr", lg: "minmax(0, 1.35fr) minmax(0, 1fr)" }
-            : "1fr",
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns:
+            questions.length > 0
+              ? { xs: "1fr", lg: "minmax(0, 1.35fr) minmax(0, 1fr)" }
+              : "1fr",
         }}
       >
-        <Box sx={{ minWidth: 0, overflowY: "auto", px: { xs: 3, md: 4 }, py: 3 }}>
-
+        <Box
+          sx={{ minWidth: 0, overflowY: "auto", px: { xs: 3, md: 4 }, py: 3 }}
+        >
           {/* Title block */}
           <Box sx={{ mb: 2 }}>
-            <Typography sx={{ typography: "m2", fontWeight: 700 }}>
+            <Typography sx={{ typography: "m2", fontWeight: 600 }}>
               What we read from your agent
             </Typography>
-            <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
-              Every fact below is tagged by how we know it — resolve the open questions on the right before we build.
+            <Typography
+              sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}
+            >
+              Every fact below is tagged by how we know it — resolve the open
+              questions on the right before we build.
             </Typography>
           </Box>
 
           {/* Summary stat bar — one glance at what the read produced. A section
               the reader couldn't complete shows "—" (amber) rather than a count. */}
           <Stack
-            direction="row" alignItems="center" flexWrap="wrap" rowGap={1.25}
-            sx={{ mb: 2.5, px: 2, py: 1.25, borderRadius: 1.5, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
-            divider={<Box sx={{ width: "1px", height: 18, bgcolor: "divider", mx: 2 }} />}
+            direction="row"
+            alignItems="center"
+            flexWrap="wrap"
+            rowGap={1.25}
+            sx={{
+              mb: 2.5,
+              px: 2,
+              py: 1.25,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.neutral",
+            }}
+            divider={
+              <Box
+                sx={{ width: "1px", height: 18, bgcolor: "divider", mx: 2 }}
+              />
+            }
           >
-            <StatChip label="Tools" value={sectionIssues.tools ? "—" : counts.tools} tone={sectionIssues.tools ? "amber" : "neutral"} />
-            <StatChip label="Rules" value={sectionIssues.rules ? "—" : counts.rules} tone={sectionIssues.rules ? "amber" : "neutral"} />
-            <StatChip label="Data" value={sectionIssues.data ? "—" : counts.data} tone={sectionIssues.data ? "amber" : "neutral"} />
-            <StatChip label="Behavior" value={sectionIssues.behavior ? "—" : counts.behavior} tone={sectionIssues.behavior ? "amber" : "neutral"} />
-            {inferredCount > 0 && <StatChip label="Inferred" value={inferredCount} tone="amber" />}
-            {openCount > 0 && <StatChip label="Open" value={openCount} tone="red" />}
+            <StatChip
+              label="Tools"
+              value={sectionIssues.tools ? "—" : counts.tools}
+              tone={sectionIssues.tools ? "amber" : "neutral"}
+            />
+            <StatChip
+              label="Rules"
+              value={sectionIssues.rules ? "—" : counts.rules}
+              tone={sectionIssues.rules ? "amber" : "neutral"}
+            />
+            <StatChip
+              label="Data"
+              value={sectionIssues.data ? "—" : counts.data}
+              tone={sectionIssues.data ? "amber" : "neutral"}
+            />
+            <StatChip
+              label="Behavior"
+              value={sectionIssues.behavior ? "—" : counts.behavior}
+              tone={sectionIssues.behavior ? "amber" : "neutral"}
+            />
+            {inferredCount > 0 && (
+              <StatChip label="Inferred" value={inferredCount} tone="amber" />
+            )}
+            {openCount > 0 && (
+              <StatChip label="Open" value={openCount} tone="red" />
+            )}
           </Stack>
 
           {/* Fact sections — 2×2 grid keeps everything above the fold on a laptop */}
@@ -233,50 +330,71 @@ export default function AgentReadReceipt({
 
         {/* right column — open questions + the build action, kept in view */}
         {questions.length > 0 && (
-          <Box sx={{ minWidth: 0, overflowY: "auto", px: { xs: 3, md: 4 }, py: 3, borderLeft: { lg: "1px solid" }, borderColor: { lg: "divider" } }}>
-              <SectionHead
-                icon="solar:question-circle-linear"
-                title="Open questions"
-                subtitle={openCount === 0
+          <Box
+            sx={{
+              minWidth: 0,
+              overflowY: "auto",
+              px: { xs: 3, md: 4 },
+              py: 3,
+              borderLeft: { lg: "1px solid" },
+              borderColor: { lg: "divider" },
+            }}
+          >
+            <SectionHead
+              icon="solar:question-circle-linear"
+              title="Open questions"
+              subtitle={
+                openCount === 0
                   ? "All answered — the world will be built on named facts"
-                  : `${openCount} of ${questions.length} still open — resolve them before we build against them`}
-                count={questions.length}
-                accent={openCount > 0 ? "#DC2626" : "#16A34A"}
-              />
-              <AskUserQuestionCard
-                step={activeIdx}
-                total={questions.length}
-                question={questions[activeIdx]}
-                answer={answers[questions[activeIdx].id]}
-                onPick={(idx) => {
-                  const q = questions[activeIdx];
-                  setAnswer(q.id, { pick: idx });
-                  /* Auto-advance to the next question on a real choice — but not
+                  : `${openCount} of ${questions.length} still open — resolve them before we build against them`
+              }
+              count={questions.length}
+              role={openCount > 0 ? "danger" : "success"}
+            />
+            <AskUserQuestionCard
+              step={activeIdx}
+              total={questions.length}
+              question={questions[activeIdx]}
+              answer={answers[questions[activeIdx].id]}
+              onPick={(idx) => {
+                const q = questions[activeIdx];
+                setAnswer(q.id, { pick: idx });
+                /* Auto-advance to the next question on a real choice — but not
                      for "Other" (the user still has to type) and not on the last
                      question (it turns into "Build the environment"). */
-                  const optionCount = (q?.options
-                    || (q?.kind === "boolean" ? [0, 1] : [])).length;
-                  const pickedOther = idx === optionCount;
-                  const isLastQ = activeIdx === questions.length - 1;
-                  if (!pickedOther && !isLastQ) {
-                    setActiveIdx((i) => Math.min(questions.length - 1, i + 1));
-                  }
-                }}
-                onOtherChange={(text) => setAnswer(questions[activeIdx].id, { other: text })}
-                onBack={activeIdx > 0 ? () => setActiveIdx((i) => Math.max(0, i - 1)) : null}
-                onSkip={() => {
-                  skipAnswer(questions[activeIdx].id);
-                  if (activeIdx < questions.length - 1) setActiveIdx(activeIdx + 1);
-                }}
-                onNext={() => setActiveIdx((i) => Math.min(questions.length - 1, i + 1))}
-                onBuild={() => onBuild?.(answers)}
-                canSubmit={isResolved(answers[questions[activeIdx].id])}
-                isLast={activeIdx === questions.length - 1}
-                skipped={answers[questions[activeIdx].id]?.skipped}
-                openCount={openCount}
-                resolvedCount={resolvedCount}
-                skippedCount={skippedCount}
-              />
+                const optionCount = (
+                  q?.options || (q?.kind === "boolean" ? [0, 1] : [])
+                ).length;
+                const pickedOther = idx === optionCount;
+                const isLastQ = activeIdx === questions.length - 1;
+                if (!pickedOther && !isLastQ) {
+                  setActiveIdx((i) => Math.min(questions.length - 1, i + 1));
+                }
+              }}
+              onOtherChange={(text) =>
+                setAnswer(questions[activeIdx].id, { other: text })
+              }
+              onBack={
+                activeIdx > 0
+                  ? () => setActiveIdx((i) => Math.max(0, i - 1))
+                  : null
+              }
+              onSkip={() => {
+                skipAnswer(questions[activeIdx].id);
+                if (activeIdx < questions.length - 1)
+                  setActiveIdx(activeIdx + 1);
+              }}
+              onNext={() =>
+                setActiveIdx((i) => Math.min(questions.length - 1, i + 1))
+              }
+              onBuild={() => onBuild?.(answers)}
+              canSubmit={isResolved(answers[questions[activeIdx].id])}
+              isLast={activeIdx === questions.length - 1}
+              skipped={answers[questions[activeIdx].id]?.skipped}
+              openCount={openCount}
+              resolvedCount={resolvedCount}
+              skippedCount={skippedCount}
+            />
           </Box>
         )}
       </Box>
@@ -294,7 +412,13 @@ AgentReadReceipt.propTypes = {
 
 /* ── build footer bar — sits below the questionnaire ─────────────────────── */
 
-function BuildFooter({ resolvedCount, skippedCount, openCount, total, onBuild }) {
+function BuildFooter({
+  resolvedCount,
+  skippedCount,
+  openCount,
+  total,
+  onBuild,
+}) {
   const disabled = openCount > 0;
   const summary = disabled
     ? `${openCount} open ${openCount === 1 ? "question" : "questions"} still block the build`
@@ -303,28 +427,38 @@ function BuildFooter({ resolvedCount, skippedCount, openCount, total, onBuild })
       : "Every question answered — the world will be built on named facts";
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1.5}
+      direction="row"
+      alignItems="center"
+      spacing={1.5}
       sx={{
-        mt: 3, pt: 2, borderTop: "1px solid", borderColor: "divider",
+        mt: 3,
+        pt: 2,
+        borderTop: "1px solid",
+        borderColor: "divider",
       }}
     >
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", color: "text.primary", fontWeight: 600 }}>
-          {disabled ? "Resolve the remaining questions to continue" : "Ready to build"}
+        <Typography
+          sx={{ typography: "s2", color: "text.primary", fontWeight: 600 }}
+        >
+          {disabled
+            ? "Resolve the remaining questions to continue"
+            : "Ready to build"}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
           {summary}
-          {total > 0 && ` · ${resolvedCount + skippedCount} of ${total} resolved`}
+          {total > 0 &&
+            ` · ${resolvedCount + skippedCount} of ${total} resolved`}
         </Typography>
       </Box>
       <Tooltip arrow title={disabled ? summary : ""}>
         <span>
           <Button
-            variant="contained" color="primary"
+            variant="contained"
+            color="primary"
             onClick={onBuild}
             disabled={disabled}
-            endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: 700, px: 2 }}
+            endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={16} />}
           >
             Build the environment
           </Button>
@@ -334,53 +468,108 @@ function BuildFooter({ resolvedCount, skippedCount, openCount, total, onBuild })
   );
 }
 BuildFooter.propTypes = {
-  resolvedCount: PropTypes.number, skippedCount: PropTypes.number,
-  openCount: PropTypes.number, total: PropTypes.number, onBuild: PropTypes.func,
+  resolvedCount: PropTypes.number,
+  skippedCount: PropTypes.number,
+  openCount: PropTypes.number,
+  total: PropTypes.number,
+  onBuild: PropTypes.func,
 };
 
 /* ── metadata strip ───────────────────────────────────────────────────────── */
 
 function StatChip({ label, value, tone = "neutral" }) {
-  const color = tone === "red" ? "#DC2626" : tone === "amber" ? "#CA8A04" : null;
+  const role = tone === "red" ? "danger" : tone === "amber" ? "warning" : null;
   return (
     <Stack direction="row" alignItems="center" spacing={0.875}>
-      <Box sx={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, bgcolor: color || "text.disabled" }} />
-      <Typography sx={{ typography: "s2", fontWeight: 700, color: tone === "red" ? color : "text.primary", fontVariantNumeric: "tabular-nums" }}>
+      <Box
+        sx={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flexShrink: 0,
+          bgcolor: role ? `status.${role}.solid` : "text.disabled",
+        }}
+      />
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          color: tone === "red" ? "status.danger.fg" : "text.primary",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {value}
       </Typography>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        {label}
+      </Typography>
     </Stack>
   );
 }
-StatChip.propTypes = { label: PropTypes.string, value: PropTypes.node, tone: PropTypes.oneOf(["neutral", "amber", "red"]) };
+StatChip.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.node,
+  tone: PropTypes.oneOf(["neutral", "amber", "red"]),
+};
 
 /* ── section head + fact table ────────────────────────────────────────────── */
 
-function SectionHead({ icon, title, subtitle, count, accent }) {
+function SectionHead({ icon, title, subtitle, count, role }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1.25}
-      sx={{ py: 0.75, borderBottom: "1px solid", borderColor: "divider", mb: 0.25 }}
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{
+        py: 0.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        mb: 0.25,
+      }}
     >
       <Box
         sx={{
-          width: 20, height: 20, borderRadius: 0.5, display: "grid", placeItems: "center",
-          bgcolor: (t) => alpha(accent || t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08),
-          color: accent || "text.secondary",
+          width: 20,
+          height: 20,
+          borderRadius: "4px",
+          display: "grid",
+          placeItems: "center",
+          bgcolor: role ? `status.${role}.bg` : "action.selected",
+          color: role ? `status.${role}.fg` : "text.secondary",
           flexShrink: 0,
         }}
       >
         <Iconify icon={icon} width={12} />
       </Box>
-      <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        spacing={0.75}
+        sx={{ flex: 1, minWidth: 0 }}
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
         {count != null && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {count}
           </Typography>
         )}
         {subtitle && (
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", ml: "auto !important" }}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              ml: "auto !important",
+            }}
+          >
             {subtitle}
           </Typography>
         )}
@@ -389,8 +578,11 @@ function SectionHead({ icon, title, subtitle, count, accent }) {
   );
 }
 SectionHead.propTypes = {
-  icon: PropTypes.string, title: PropTypes.string, subtitle: PropTypes.string,
-  count: PropTypes.number, accent: PropTypes.string,
+  icon: PropTypes.string,
+  title: PropTypes.string,
+  subtitle: PropTypes.string,
+  count: PropTypes.number,
+  role: PropTypes.string,
 };
 
 function FactSection({ icon, title, subtitle, count, facts, issue, onRetry }) {
@@ -399,34 +591,70 @@ function FactSection({ icon, title, subtitle, count, facts, issue, onRetry }) {
   return (
     <Box
       sx={{
-        height: "100%", display: "flex", flexDirection: "column",
-        border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
       }}
     >
       {/* card header */}
       <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 1.75, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 1.75,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <Box
           sx={{
-            width: 22, height: 22, borderRadius: 0.75, display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(isIssued ? "#CA8A04" : t.palette.text.primary, isIssued ? 0.14 : (t.palette.mode === "dark" ? 0.08 : 0.06)),
-            color: isIssued ? "#CA8A04" : "text.secondary",
+            width: 22,
+            height: 22,
+            borderRadius: "4px",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            bgcolor: isIssued ? "status.warning.bg" : "action.selected",
+            color: isIssued ? "status.warning.fg" : "text.secondary",
           }}
         >
-          <Iconify icon={icon} width={13} />
+          <Iconify icon={icon} width={14} />
         </Box>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: 700, minWidth: 0 }}>{title}</Typography>
+        <Typography
+          noWrap
+          sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+        >
+          {title}
+        </Typography>
         {!isIssued && count != null && (
-          <Box sx={{ px: 0.625, height: 16, borderRadius: 0.5, display: "inline-flex", alignItems: "center", flexShrink: 0, bgcolor: (t) => alpha(t.palette.text.primary, 0.08) }}>
-            <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>{count}</Typography>
-          </Box>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+              flexShrink: 0,
+            }}
+          >
+            {count}
+          </Typography>
         )}
         {subtitle && (
           <Tooltip arrow title={subtitle}>
-            <Box sx={{ ml: "auto", display: "flex", flexShrink: 0, color: "text.disabled" }}>
-              <Iconify icon="solar:info-circle-linear" width={13} />
+            <Box
+              sx={{
+                ml: "auto",
+                display: "flex",
+                flexShrink: 0,
+                color: "text.disabled",
+              }}
+            >
+              <Iconify icon="solar:info-circle-linear" width={14} />
             </Box>
           </Tooltip>
         )}
@@ -437,32 +665,66 @@ function FactSection({ icon, title, subtitle, count, facts, issue, onRetry }) {
         {isIssued ? (
           <SectionIssue issue={issue} onRetry={onRetry} />
         ) : showFacts ? (
-          <Stack divider={<Divider sx={{ borderColor: (t) => alpha(t.palette.divider, 0.6) }} />}>
+          <Stack
+            divider={
+              <Divider
+                sx={{ borderColor: (t) => alpha(t.palette.divider, 0.6) }}
+              />
+            }
+          >
             {facts.map((f) => (
               <Stack
                 key={f.name}
-                direction="row" alignItems="center" spacing={1.25}
+                direction="row"
+                alignItems="center"
+                spacing={1.25}
                 sx={{
-                  py: 0.75, mx: -0.75, px: 0.75, borderRadius: 0.75,
-                  transition: "background-color .1s ease",
-                  "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.03) },
+                  py: 0.75,
+                  mx: -0.75,
+                  px: 0.75,
+                  borderRadius: "4px",
+                  transition: "background-color .12s ease",
+                  "&:hover": { bgcolor: "action.hover" },
                 }}
               >
                 <Typography
                   noWrap
-                  sx={{ typography: "s2", fontWeight: 500, fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0, color: "text.primary" }}
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 500,
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    flex: 1,
+                    minWidth: 0,
+                    color: "text.primary",
+                  }}
                 >
                   {f.name}
                 </Typography>
                 {f.warning && (
                   <Tooltip arrow title={f.warning}>
-                    <Box sx={{ display: "flex", alignItems: "center", color: "#CA8A04", flexShrink: 0 }}>
-                      <Iconify icon="solar:danger-triangle-bold" width={13} />
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        color: "status.warning.fg",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Iconify icon="solar:danger-triangle-bold" width={14} />
                     </Box>
                   </Tooltip>
                 )}
                 {f.note && (
-                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>{f.note}</Typography>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.subtitle",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {f.note}
+                  </Typography>
                 )}
                 <OriginChip origin={f.origin} showPath={false} />
               </Stack>
@@ -478,51 +740,44 @@ function FactSection({ icon, title, subtitle, count, facts, issue, onRetry }) {
   );
 }
 FactSection.propTypes = {
-  icon: PropTypes.string, title: PropTypes.string, subtitle: PropTypes.string,
-  count: PropTypes.number, facts: PropTypes.array,
-  issue: PropTypes.object, onRetry: PropTypes.func,
+  icon: PropTypes.string,
+  title: PropTypes.string,
+  subtitle: PropTypes.string,
+  count: PropTypes.number,
+  facts: PropTypes.array,
+  issue: PropTypes.object,
+  onRetry: PropTypes.func,
 };
 
 /* ── section-level issue block (inline "why this is empty") ─────────────── */
 
 function SectionIssue({ issue, onRetry }) {
   return (
-    <Stack
-      direction="row" alignItems="flex-start" spacing={1.25}
-      sx={{
-        mt: 1, px: 1.5, py: 1.25,
-        borderRadius: 1,
-        border: "1px solid",
-        borderColor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.35 : 0.3),
-        bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.08 : 0.05),
-      }}
+    <Alert
+      severity="warning"
+      icon={
+        <Iconify
+          icon={issue.icon || "solar:danger-triangle-linear"}
+          width={16}
+        />
+      }
+      sx={{ mt: 1 }}
+      action={
+        onRetry && issue.retryLabel ? (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onRetry}
+            startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+          >
+            {issue.retryLabel}
+          </Button>
+        ) : undefined
+      }
     >
-      <Iconify icon={issue.icon || "solar:danger-triangle-linear"} width={15} sx={{ color: "#CA8A04", flexShrink: 0, mt: "2px" }} />
-      <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
-          {issue.message}
-        </Typography>
-        {issue.hint && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-            {issue.hint}
-          </Typography>
-        )}
-      </Box>
-      {onRetry && issue.retryLabel && (
-        <Button
-          size="small" variant="outlined"
-          onClick={onRetry}
-          startIcon={<Iconify icon="solar:refresh-linear" width={13} />}
-          sx={{
-            typography: "s3", fontWeight: 700,
-            color: "text.primary", borderColor: "divider",
-            "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
-          }}
-        >
-          {issue.retryLabel}
-        </Button>
-      )}
-    </Stack>
+      <AlertTitle>{issue.message}</AlertTitle>
+      {issue.hint}
+    </Alert>
   );
 }
 SectionIssue.propTypes = { issue: PropTypes.object, onRetry: PropTypes.func };
@@ -532,87 +787,128 @@ SectionIssue.propTypes = { issue: PropTypes.object, onRetry: PropTypes.func };
 function ReaderStatusBand({ issueCount, issues, onRetryAll }) {
   const list = Object.keys(issues || {}).join(", ");
   return (
-    <Stack
-      direction="row" alignItems="center" spacing={1.25}
-      sx={{
-        px: 3, py: 1, flexShrink: 0,
-        borderBottom: "1px solid",
-        borderColor: (t) => alpha("#CA8A04", 0.3),
-        bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.08 : 0.05),
-      }}
+    <Alert
+      severity="warning"
+      icon={<Iconify icon="solar:danger-triangle-bold" width={16} />}
+      sx={{ mx: 3, my: 1, flexShrink: 0 }}
+      action={
+        <Button
+          size="small"
+          variant="text"
+          onClick={onRetryAll}
+          startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+        >
+          Retry read
+        </Button>
+      }
     >
-      <Iconify icon="solar:danger-triangle-bold" width={15} sx={{ color: "#CA8A04", flexShrink: 0 }} />
-      <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
-          Reader completed with {issueCount} {issueCount === 1 ? "gap" : "gaps"}
-          <Box component="span" sx={{ color: "text.subtitle", fontWeight: 500 }}>
-            {" "}· {list} could not be read completely
-          </Box>
-        </Typography>
-      </Box>
-      <Button
-        size="small" variant="text"
-        onClick={onRetryAll}
-        startIcon={<Iconify icon="solar:refresh-linear" width={13} />}
-        sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}
-      >
-        Retry read
-      </Button>
-    </Stack>
+      <AlertTitle>
+        {`Reader completed with ${issueCount} ${issueCount === 1 ? "gap" : "gaps"}`}
+        <Box component="span" sx={{ color: "text.tertiary", fontWeight: 400 }}>
+          {` · ${list} could not be read completely`}
+        </Box>
+      </AlertTitle>
+    </Alert>
   );
 }
 ReaderStatusBand.propTypes = {
-  issueCount: PropTypes.number, issues: PropTypes.object, onRetryAll: PropTypes.func,
+  issueCount: PropTypes.number,
+  issues: PropTypes.object,
+  onRetryAll: PropTypes.func,
 };
 
 /* ── hard-fail page — takes over when reading returns nothing ── */
 
-function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWithDefaults }) {
+function HardFailPage({
+  agentRef,
+  reason,
+  onRetry,
+  onChangeSource,
+  onContinueWithDefaults,
+}) {
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        bgcolor: "background.paper",
+      }}
+    >
       <Stack
-        direction="row" alignItems="center" spacing={2}
-        sx={{ px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{
+          px: 3,
+          py: 1.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Tooltip title="Back" arrow>
           <IconButton size="small" onClick={onChangeSource}>
-            <Iconify icon="solar:alt-arrow-left-linear" width={17} />
+            <Iconify icon="solar:alt-arrow-left-linear" width={16} />
           </IconButton>
         </Tooltip>
-        <Typography sx={{ typography: "s2", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.subtitle",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {agentRef}
         </Typography>
       </Stack>
 
-      <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, px: 3, textAlign: "center" }}>
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ flex: 1, px: 3, textAlign: "center" }}
+      >
         <Box
           sx={{
-            width: 56, height: 56, borderRadius: 2, display: "grid", placeItems: "center", mb: 2,
-            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.18 : 0.1),
-            color: "#DC2626",
+            width: 56,
+            height: 56,
+            borderRadius: 2,
+            display: "grid",
+            placeItems: "center",
+            mb: 2,
+            bgcolor: "status.danger.bg",
+            color: "status.danger.fg",
           }}
         >
           <Iconify icon="solar:danger-triangle-bold" width={28} />
         </Box>
-        <Typography sx={{ typography: "m2", fontWeight: 700 }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600 }}>
           We couldn&rsquo;t read your agent
         </Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1, maxWidth: 560 }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            mt: 1,
+            maxWidth: 560,
+          }}
+        >
           {reason}
         </Typography>
         <Stack direction="row" spacing={1.5} sx={{ mt: 3 }}>
           <Button
-            variant="contained" color="primary"
+            variant="contained"
+            color="primary"
             onClick={onRetry}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: 700 }}
+            startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
           >
             Retry read
           </Button>
           <Button
             variant="outlined"
             onClick={onChangeSource}
-            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            sx={{ color: "text.primary", borderColor: "divider" }}
           >
             Change source
           </Button>
@@ -621,7 +917,12 @@ function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWit
           component="button"
           onClick={onContinueWithDefaults}
           underline="hover"
-          sx={{ typography: "s3", color: "text.subtitle", mt: 2, fontWeight: 600 }}
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            mt: 2,
+            fontWeight: 600,
+          }}
         >
           Continue without reading — build with template defaults
         </Link>
@@ -630,15 +931,32 @@ function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWit
   );
 }
 HardFailPage.propTypes = {
-  agentRef: PropTypes.string, reason: PropTypes.string,
-  onRetry: PropTypes.func, onChangeSource: PropTypes.func, onContinueWithDefaults: PropTypes.func,
+  agentRef: PropTypes.string,
+  reason: PropTypes.string,
+  onRetry: PropTypes.func,
+  onChangeSource: PropTypes.func,
+  onContinueWithDefaults: PropTypes.func,
 };
 
 /* ── Claude-style AskUserQuestion card (matches IntakeStage in BuildFromAgent) ── */
 
 function AskUserQuestionCard({
-  step, total, question, answer, onPick, onOtherChange, onBack, onSkip, onNext, onBuild,
-  canSubmit, isLast, skipped, openCount, resolvedCount, skippedCount,
+  step,
+  total,
+  question,
+  answer,
+  onPick,
+  onOtherChange,
+  onBack,
+  onSkip,
+  onNext,
+  onBuild,
+  canSubmit,
+  isLast,
+  skipped,
+  openCount,
+  resolvedCount,
+  skippedCount,
 }) {
   /* On the last question, the primary action becomes "Build the environment"
      — the questionnaire and the build are one continuous act. The
@@ -651,9 +969,14 @@ function AskUserQuestionCard({
     : skippedCount > 0
       ? `${skippedCount} skipped — the affected facts will carry an INFERRED marker in the built world`
       : "";
-  const options = question?.options || (question?.kind === "boolean"
-    ? [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }]
-    : []);
+  const options =
+    question?.options ||
+    (question?.kind === "boolean"
+      ? [
+          { id: "yes", label: "Yes" },
+          { id: "no", label: "No" },
+        ]
+      : []);
   const otherIndex = options.length;
   const otherText = answer?.other?.trim() || "";
   const otherActive = otherText.length > 0;
@@ -664,31 +987,42 @@ function AskUserQuestionCard({
       sx={{
         borderRadius: 2,
         border: "1px solid",
-        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.08),
+        borderColor: "border.default",
         bgcolor: "background.paper",
         overflow: "hidden",
         mt: 1,
       }}
     >
       {/* ── header ── */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 1.75, py: 1.25 }}
+      >
         <Box
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 999, flexShrink: 0,
-            bgcolor: (t) => alpha("#B45309", t.palette.mode === "dark" ? 0.28 : 0.16),
+            px: 0.75,
+            py: 0.125,
+            borderRadius: 999,
+            flexShrink: 0,
+            bgcolor: "status.warning.bg",
             color: "text.secondary",
-            typography: "s3", fontWeight: 700,
+            typography: "s3",
+            fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           }}
         >
           {step + 1}/{total}
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 700, minWidth: 0 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}>
             {question.title}
           </Typography>
           {question.why && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}
+            >
               {question.why}
             </Typography>
           )}
@@ -711,67 +1045,66 @@ function AskUserQuestionCard({
           label="Other"
           selected={otherActive}
           index={otherIndex + 1}
-          onSelect={() => { /* focus via input */ }}
-          bottomChildren={(
+          onSelect={() => {
+            /* focus via input */
+          }}
+          bottomChildren={
             <TextField
-              size="small" fullWidth variant="outlined"
+              size="small"
+              fullWidth
+              variant="outlined"
               value={otherText}
               onChange={(e) => onOtherChange(e.target.value)}
               placeholder="Type your own answer here"
               InputProps={{
                 sx: {
                   typography: "s2",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+                  bgcolor: "action.selected",
                   "& fieldset": { border: "none" },
                 },
               }}
               sx={{ mt: 0.75 }}
             />
-          )}
+          }
         />
       </Stack>
 
       {skipped && (
-        <Stack
-          direction="row" alignItems="center" spacing={0.75}
-          sx={{
-            mx: 1.5, mb: 1, px: 1.25, py: 0.75, borderRadius: 1,
-            bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.08),
-            color: "#CA8A04",
-            width: "fit-content",
-          }}
+        <Alert
+          severity="warning"
+          icon={<Iconify icon="solar:info-circle-linear" width={14} />}
+          sx={{ mx: 1.5, mb: 1, width: "fit-content" }}
         >
-          <Iconify icon="solar:info-circle-linear" width={14} />
-          <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>
-            Skipped — the affected fact will carry an INFERRED marker.
-          </Typography>
-        </Stack>
+          Skipped — the affected fact will carry an INFERRED marker.
+        </Alert>
       )}
 
       {/* ── bottom bar ── */}
       <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
         {onBack ? (
           <Button
-            size="small" onClick={onBack}
+            size="small"
+            onClick={onBack}
             sx={{
-              typography: "s2", fontWeight: 600, color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
-              "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08) },
+              color: "text.primary",
+              bgcolor: "action.selected",
+              "&:hover": { bgcolor: "action.focus" },
             }}
           >
             Back
           </Button>
-        ) : <Box />}
+        ) : (
+          <Box />
+        )}
         <Box flex={1} />
         <Stack direction="row" spacing={1}>
           <Button
-            size="small" onClick={onSkip}
+            size="small"
+            onClick={onSkip}
             sx={{
-              typography: "s2", fontWeight: 600, color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
-              "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08) },
+              color: "text.primary",
+              bgcolor: "action.selected",
+              "&:hover": { bgcolor: "action.focus" },
             }}
           >
             Skip
@@ -781,11 +1114,13 @@ function AskUserQuestionCard({
               <span>
                 <Button
                   size="small"
-                  variant="contained" color="primary"
+                  variant="contained"
+                  color="primary"
                   onClick={() => onBuild?.()}
                   disabled={buildBlocked}
-                  endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-                  sx={{ typography: "s2", fontWeight: 700, px: 1.5 }}
+                  endIcon={
+                    <Iconify icon="solar:alt-arrow-right-linear" width={14} />
+                  }
                 >
                   {buildLabel}
                 </Button>
@@ -793,16 +1128,16 @@ function AskUserQuestionCard({
             </Tooltip>
           ) : (
             <Button
-              size="small" onClick={onNext}
+              size="small"
+              onClick={onNext}
               disabled={!canSubmit}
               sx={{
-                typography: "s2", fontWeight: 600, color: "text.primary",
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.09),
-                px: 1.5, borderRadius: 1,
-                "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.22 : 0.14) },
+                color: "text.primary",
+                bgcolor: "action.focus",
+                "&:hover": { bgcolor: "action.focus" },
                 "&.Mui-disabled": {
                   color: "text.disabled",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
+                  bgcolor: "action.selected",
                 },
               }}
             >
@@ -815,47 +1150,78 @@ function AskUserQuestionCard({
   );
 }
 AskUserQuestionCard.propTypes = {
-  step: PropTypes.number, total: PropTypes.number,
-  question: PropTypes.object, answer: PropTypes.object,
-  onPick: PropTypes.func, onOtherChange: PropTypes.func,
-  onBack: PropTypes.func, onSkip: PropTypes.func, onNext: PropTypes.func,
+  step: PropTypes.number,
+  total: PropTypes.number,
+  question: PropTypes.object,
+  answer: PropTypes.object,
+  onPick: PropTypes.func,
+  onOtherChange: PropTypes.func,
+  onBack: PropTypes.func,
+  onSkip: PropTypes.func,
+  onNext: PropTypes.func,
   onBuild: PropTypes.func,
-  canSubmit: PropTypes.bool, isLast: PropTypes.bool, skipped: PropTypes.bool,
-  openCount: PropTypes.number, resolvedCount: PropTypes.number, skippedCount: PropTypes.number,
+  canSubmit: PropTypes.bool,
+  isLast: PropTypes.bool,
+  skipped: PropTypes.bool,
+  openCount: PropTypes.number,
+  resolvedCount: PropTypes.number,
+  skippedCount: PropTypes.number,
 };
 
-function AskOptionRow({ label, description, selected, index, onSelect, bottomChildren }) {
+function AskOptionRow({
+  label,
+  description,
+  selected,
+  index,
+  onSelect,
+  bottomChildren,
+}) {
   return (
     <Box
       {...clickable(onSelect, { role: "radio", checked: selected })}
-      sx={{ ...focusRing,
-        p: 1.25, borderRadius: 1.25, cursor: "pointer",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.03),
+      sx={{
+        ...focusRing,
+        p: 1.25,
+        borderRadius: "8px",
+        cursor: "pointer",
+        bgcolor: "action.hover",
         "&:hover": {
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+          bgcolor: "action.selected",
         },
       }}
     >
       <Stack direction="row" alignItems="flex-start" spacing={1.25}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+          <Typography
+            sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
+          >
             {label}
           </Typography>
           {description && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}
+            >
               {description}
             </Typography>
           )}
         </Box>
         <Box
           sx={{
-            minWidth: 22, height: 20, px: 0.75, borderRadius: 0.75, flexShrink: 0, mt: "1px",
-            display: "grid", placeItems: "center",
+            minWidth: 22,
+            height: 20,
+            px: 0.75,
+            borderRadius: "4px",
+            flexShrink: 0,
+            mt: "1px",
+            display: "grid",
+            placeItems: "center",
             border: "1px solid",
-            borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
-            bgcolor: selected ? "#7857FC" : "transparent",
-            color: selected ? "#fff" : "text.subtitle",
-            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+            borderColor: selected ? "status.discovery.solid" : "border.default",
+            bgcolor: selected ? "status.discovery.solid" : "transparent",
+            color: selected ? "status.discovery.onSolid" : "text.subtitle",
+            typography: "s3",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
           }}
         >
           {index}
@@ -866,14 +1232,24 @@ function AskOptionRow({ label, description, selected, index, onSelect, bottomChi
   );
 }
 AskOptionRow.propTypes = {
-  label: PropTypes.string, description: PropTypes.string,
-  selected: PropTypes.bool, index: PropTypes.number,
-  onSelect: PropTypes.func, bottomChildren: PropTypes.node,
+  label: PropTypes.string,
+  description: PropTypes.string,
+  selected: PropTypes.bool,
+  index: PropTypes.number,
+  onSelect: PropTypes.func,
+  bottomChildren: PropTypes.node,
 };
 
 /* ── LEGACY: keeping around during transition; removable once no callers ── */
 
-function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer, onSkip }) {
+function QuestionStepper({
+  questions,
+  answers,
+  activeIdx,
+  setActiveIdx,
+  onAnswer,
+  onSkip,
+}) {
   const total = questions.length;
   const q = questions[activeIdx];
   const answer = answers[q?.id];
@@ -887,13 +1263,18 @@ function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer
     <Box
       sx={{
         mt: 1,
-        border: "1px solid", borderColor: "divider", borderRadius: 1.5,
-        bgcolor: "background.paper", overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        overflow: "hidden",
       }}
     >
       {/* progress row */}
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
       >
         {questions.map((qq, i) => {
@@ -904,36 +1285,57 @@ function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer
           const bg = active
             ? "primary.main"
             : done
-              ? "#16A34A"
+              ? "status.success.solid"
               : skipped
-                ? "#CA8A04"
+                ? "status.warning.solid"
                 : "transparent";
           const border = active
             ? "primary.main"
             : done
-              ? "#16A34A"
+              ? "status.success.solid"
               : skipped
-                ? "#CA8A04"
+                ? "status.warning.solid"
                 : "divider";
           return (
             <Stack
               key={qq.id}
-              direction="row" alignItems="center" spacing={0.5}
-              {...clickable(() => setActiveIdx(i), { label: `Question ${i + 1}`, pressed: active })}
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              {...clickable(() => setActiveIdx(i), {
+                label: `Question ${i + 1}`,
+                pressed: active,
+              })}
               sx={{ ...focusRing, cursor: "pointer" }}
             >
               <Box
                 sx={{
-                  width: 20, height: 20, borderRadius: "50%",
-                  display: "grid", placeItems: "center",
-                  border: "1.5px solid", borderColor: border,
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1.5px solid",
+                  borderColor: border,
                   bgcolor: active ? bg : "transparent",
-                  color: active ? "primary.contrastText" : done ? "#16A34A" : skipped ? "#CA8A04" : "text.subtitle",
+                  color: active
+                    ? "primary.contrastText"
+                    : done
+                      ? "status.success.fg"
+                      : skipped
+                        ? "status.warning.fg"
+                        : "text.subtitle",
                 }}
               >
-                {done ? <Iconify icon="solar:check-circle-bold" width={12} />
-                  : skipped ? <Iconify icon="solar:minus-circle-linear" width={12} />
-                    : <Typography sx={{ typography: "s3", fontWeight: 700 }}>{i + 1}</Typography>}
+                {done ? (
+                  <Iconify icon="solar:check-circle-bold" width={12} />
+                ) : skipped ? (
+                  <Iconify icon="solar:minus-circle-linear" width={12} />
+                ) : (
+                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                    {i + 1}
+                  </Typography>
+                )}
               </Box>
               {i < total - 1 && (
                 <Box sx={{ width: 22, height: 1, bgcolor: "divider" }} />
@@ -942,20 +1344,40 @@ function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer
           );
         })}
         <Box flex={1} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {activeIdx + 1} / {total}
         </Typography>
       </Stack>
 
       {/* question body */}
       <Box sx={{ px: 2.5, py: 2 }}>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>{q.title}</Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5, maxWidth: 780 }}>{q.why}</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          {q.title}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            mt: 0.5,
+            maxWidth: 780,
+          }}
+        >
+          {q.why}
+        </Typography>
 
         <Box sx={{ mt: 1.5 }}>
           {q.kind === "boolean" && (
             <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1}>
-              {[{ id: "yes", label: "Yes, enforced" }, { id: "no", label: "No, prompt only" }].map((opt) => (
+              {[
+                { id: "yes", label: "Yes, enforced" },
+                { id: "no", label: "No, prompt only" },
+              ].map((opt) => (
                 <ChoiceButton
                   key={opt.id}
                   label={opt.label}
@@ -979,63 +1401,73 @@ function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer
           )}
           {q.kind === "text" && (
             <TextField
-              size="small" fullWidth multiline minRows={2} maxRows={4}
+              size="small"
+              fullWidth
+              multiline
+              minRows={2}
+              maxRows={4}
               placeholder="Your answer…"
-              value={answer && !answer.skipped ? (answer.value || "") : ""}
+              value={answer && !answer.skipped ? answer.value || "" : ""}
               onChange={(e) => onAnswer(q.id, e.target.value)}
             />
           )}
         </Box>
 
         {isSkipped && (
-          <Stack
-            direction="row" alignItems="center" spacing={0.75}
-            sx={{
-              mt: 2, px: 1.25, py: 0.75, borderRadius: 1,
-              bgcolor: (t) => alpha("#CA8A04", t.palette.mode === "dark" ? 0.12 : 0.08),
-              color: "#CA8A04",
-              width: "fit-content",
-            }}
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:info-circle-linear" width={14} />}
+            sx={{ mt: 2, width: "fit-content" }}
           >
-            <Iconify icon="solar:info-circle-linear" width={14} />
-            <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>
-              Skipped — the affected fact will carry an INFERRED marker in the built world.
-            </Typography>
-          </Stack>
+            Skipped — the affected fact will carry an INFERRED marker in the
+            built world.
+          </Alert>
         )}
       </Box>
 
       <Divider />
 
       {/* nav footer */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2.5, py: 1.25 }}
+      >
         <Button
-          size="small" variant="text"
+          size="small"
+          variant="text"
           disabled={activeIdx === 0}
           onClick={goBack}
           startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={14} />}
-          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
           Previous
         </Button>
         <Box flex={1} />
         {!isAnswered && !isSkipped && (
           <Button
-            size="small" variant="outlined"
-            onClick={() => { onSkip(q.id); if (activeIdx < total - 1) goNext(); }}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", borderColor: "divider" }}
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              onSkip(q.id);
+              if (activeIdx < total - 1) goNext();
+            }}
+            sx={{ color: "text.secondary", borderColor: "divider" }}
           >
             Skip for now
           </Button>
         )}
         <Button
-          size="small" variant={isAnswered ? "contained" : "outlined"}
+          size="small"
+          variant={isAnswered ? "contained" : "outlined"}
           onClick={goNext}
           disabled={activeIdx === total - 1}
           endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
           sx={{
-            typography: "s2", fontWeight: 700,
-            ...(isAnswered ? {} : { color: "text.primary", borderColor: "divider" }),
+            ...(isAnswered
+              ? {}
+              : { color: "text.primary", borderColor: "divider" }),
           }}
         >
           Next
@@ -1045,18 +1477,21 @@ function QuestionStepper({ questions, answers, activeIdx, setActiveIdx, onAnswer
   );
 }
 QuestionStepper.propTypes = {
-  questions: PropTypes.array, answers: PropTypes.object,
-  activeIdx: PropTypes.number, setActiveIdx: PropTypes.func,
-  onAnswer: PropTypes.func, onSkip: PropTypes.func,
+  questions: PropTypes.array,
+  answers: PropTypes.object,
+  activeIdx: PropTypes.number,
+  setActiveIdx: PropTypes.func,
+  onAnswer: PropTypes.func,
+  onSkip: PropTypes.func,
 };
 
 function ChoiceButton({ label, active, onClick }) {
   return (
     <Button
-      size="small" variant={active ? "contained" : "outlined"}
+      size="small"
+      variant={active ? "contained" : "outlined"}
       onClick={onClick}
       sx={{
-        typography: "s2", fontWeight: 700, px: 1.5,
         ...(active ? {} : { color: "text.primary", borderColor: "divider" }),
       }}
     >
@@ -1064,4 +1499,8 @@ function ChoiceButton({ label, active, onClick }) {
     </Button>
   );
 }
-ChoiceButton.propTypes = { label: PropTypes.string, active: PropTypes.bool, onClick: PropTypes.func };
+ChoiceButton.propTypes = {
+  label: PropTypes.string,
+  active: PropTypes.bool,
+  onClick: PropTypes.func,
+};

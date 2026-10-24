@@ -32,13 +32,13 @@ const FIXED_TABS = [
   {
     key: "sessions",
     label: "Sessions",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     shortcut: "1",
   },
   {
     key: "traces",
     label: "Trace",
-    icon: "mdi:link-variant",
+    icon: "solar:link-linear",
     shortcut: "2",
   },
 ];
@@ -371,7 +371,11 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
             "&:hover": { bgcolor: "background.neutral" },
           }}
         >
-          <Iconify icon="mdi:plus" width={16} sx={{ color: "text.primary" }} />
+          <Iconify
+            icon="solar:add-linear"
+            width={16}
+            sx={{ color: "text.primary" }}
+          />
         </ButtonBase>
       </CustomTooltip>
 

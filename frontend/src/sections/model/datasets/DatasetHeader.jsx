@@ -56,7 +56,7 @@ const DatasetHeader = forwardRef(
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+                  <Iconify icon="solar:magnifier-linear" width={16} sx={{ color: "divider" }} />
                 </InputAdornment>
               ),
             }}
@@ -93,7 +93,7 @@ const DatasetHeader = forwardRef(
                   overlap="circular"
                 >
                   <Iconify
-                    icon="mingcute:filter-2-fill"
+                    icon="solar:filter-linear"
                     sx={{ color: "primary.main" }}
                   />
                 </Badge>
@@ -108,7 +108,7 @@ const DatasetHeader = forwardRef(
               ref={sortButtonRef}
               startIcon={
                 <Iconify
-                  icon="material-symbols:sort"
+                  icon="solar:sort-from-top-to-bottom-linear"
                   sx={{ color: "primary.main" }}
                 />
               }
@@ -125,7 +125,7 @@ const DatasetHeader = forwardRef(
               onClick={() => setActionDropDownOpen(true)}
               startIcon={
                 <Iconify
-                  icon="eva:checkmark-circle-2-fill"
+                  icon="solar:check-circle-bold"
                   sx={{ color: "primary.main" }}
                 />
               }
@@ -168,7 +168,7 @@ const DatasetHeader = forwardRef(
               onClick={() => onExportClick()}
               startIcon={
                 <Iconify
-                  icon="mingcute:file-export-fill"
+                  icon="solar:export-linear"
                   sx={{ color: "primary.main" }}
                 />
               }

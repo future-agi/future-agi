@@ -46,7 +46,7 @@ const UnifiedCallTranscript = ({
       gap={1.5}
       overflow="auto"
       flexGrow={1}
-      borderRadius={0.5}
+      borderRadius="4px"
       width="100%"
       sx={{
         display: "flex",
@@ -64,14 +64,11 @@ const UnifiedCallTranscript = ({
             borderColor: "divider",
             borderRadius: 1,
             p: 3,
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.02)"
-                : "grey.50",
+            backgroundColor: "background.neutral",
           }}
         >
           <Iconify
-            icon="mdi:message-text-outline"
+            icon="solar:chat-round-line-linear"
             width={36}
             sx={{ color: "text.disabled" }}
           />

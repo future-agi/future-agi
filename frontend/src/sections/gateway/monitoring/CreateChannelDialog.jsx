@@ -59,7 +59,13 @@ const CreateChannelDialog = ({ open, onClose, gatewayId }) => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Add Notification Channel</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>

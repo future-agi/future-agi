@@ -1,19 +1,20 @@
-import { darkElevatedStyles } from "../dark-elevated";
-
-// ----------------------------------------------------------------------
-
+// Design system tooltip: inverse surface, 12px text, radius.sm, max 240px.
 export function tooltip(theme) {
-  const lightMode = theme.palette.mode === "light";
-
   return {
     MuiTooltip: {
       styleOverrides: {
         tooltip: {
-          backgroundColor: theme.palette.grey[lightMode ? 800 : 700],
-          ...darkElevatedStyles(theme, { borderOnly: true }),
+          backgroundColor: theme.palette.background.inverse,
+          color: theme.palette.mode === "dark" ? "#18181B" : "#FAFAFA",
+          fontSize: 12,
+          lineHeight: "16px",
+          fontWeight: 400,
+          padding: "4px 8px",
+          borderRadius: 4,
+          maxWidth: 240,
         },
         arrow: {
-          color: theme.palette.grey[lightMode ? 800 : 700],
+          color: theme.palette.background.inverse,
         },
       },
     },

@@ -1,6 +1,8 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
+import { statusColors } from "src/utils/runStatus";
 
 /**
  * Screenshot with click position overlays.
@@ -17,12 +19,12 @@ import { Box, Typography } from "@mui/material";
  *   - clicksFromSpans: { xPath, yPath, labelPath?, actionPath? }
  */
 
-const STATUS_COLORS = {
-  OK: "#16a34a",
-  ERROR: "#dc2626",
-  ok: "#16a34a",
-  error: "#dc2626",
-  default: "#7B56DB",
+// Marker status -> role in the one status map; no status stays brand.
+const STATUS_ROLE = {
+  OK: "success",
+  ERROR: "danger",
+  ok: "success",
+  error: "danger",
 };
 
 function ClickMarker({
@@ -42,7 +44,10 @@ function ClickMarker({
   const scaleY = imageHeight ? containerHeight / imageHeight : 1;
   const cx = x * scaleX;
   const cy = y * scaleY;
-  const color = STATUS_COLORS[status] || STATUS_COLORS.default;
+  const theme = useTheme();
+  const color = STATUS_ROLE[status]
+    ? statusColors(theme, STATUS_ROLE[status]).solid
+    : theme.palette.primary.main;
 
   const [hovered, setHovered] = useState(false);
 
@@ -70,8 +75,8 @@ function ClickMarker({
         textAnchor="middle"
         dominantBaseline="middle"
         fill="#fff"
-        fontSize={9}
-        fontWeight={700}
+        fontSize={11}
+        fontWeight={600}
         fontFamily="Inter, sans-serif"
       >
         {step ?? "•"}
@@ -101,11 +106,11 @@ function ClickMarker({
             x={cx + 20}
             y={cy + 10}
             fill="#aaa"
-            fontSize={9}
+            fontSize={11}
             fontFamily="Inter, sans-serif"
           >
             Step {step} · ({Math.round(x)}, {Math.round(y)})
-            {status === "ERROR" ? " · FAILED" : ""}
+            {status === "ERROR" ? " · Failed" : ""}
           </text>
         </g>
       )}
@@ -255,7 +260,10 @@ export default function WidgetScreenshot({ config }) {
         >
           {clicks.length} click{clicks.length !== 1 ? "s" : ""}
           {clicks.some((c) => c.status === "ERROR") && (
-            <Box component="span" sx={{ color: "#ef4444", ml: 0.5 }}>
+            <Box
+              component="span"
+              sx={{ color: (t) => statusColors(t, "danger").fg, ml: 0.5 }}
+            >
               · {clicks.filter((c) => c.status === "ERROR").length} failed
             </Box>
           )}

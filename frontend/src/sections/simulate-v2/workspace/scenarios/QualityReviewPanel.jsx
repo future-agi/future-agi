@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { Fragment, useEffect, useState } from "react";
-import { Box, Button, IconButton, InputBase, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  InputBase,
+  Stack,
+  Tooltip,
+  Typography,
+  ButtonBase,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { validate } from "../../_mock/contract";
 import { asSentence } from "../../_mock/scenarioBrief";
@@ -28,33 +37,67 @@ const NOTE = {
   ready: "scenarios read right and every rule is tested",
 };
 
-const chipState = (gate) => ({ id: `gate-${gate.state}`, label: gate.label, note: NOTE[gate.state], why: gate.reason });
+const chipState = (gate) => ({
+  id: `gate-${gate.state}`,
+  label: gate.label,
+  note: NOTE[gate.state],
+  why: gate.reason,
+});
 
 const pct = (x) => `${Math.round(x * 100)}%`;
 
-const Sep = () => <Box component="span" sx={{ color: "text.disabled" }}>{" · "}</Box>;
+const Sep = () => (
+  <Box component="span" sx={{ color: "text.disabled" }}>
+    {" · "}
+  </Box>
+);
 
 /** The one-line status on the Scenarios tab. */
 export function QualityReviewStrip({ gate, onOpen }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1.25}
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
       sx={{
-        mb: 1.5, px: 2, py: 1, borderRadius: 1.5, flexWrap: "wrap", rowGap: 0.75,
-        border: "1px solid", borderColor: "divider",
+        mb: 1.5,
+        px: 2,
+        py: 1,
+        borderRadius: "8px",
+        flexWrap: "wrap",
+        rowGap: 0.75,
+        border: "1px solid",
+        borderColor: "divider",
       }}
     >
-      <Iconify icon="solar:shield-check-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}>
+      <Iconify
+        icon="solar:shield-check-linear"
+        width={16}
+        sx={{ color: "text.tertiary", flexShrink: 0 }}
+      />
+      <Typography
+        sx={{ typography: "s2", fontWeight: 600, whiteSpace: "nowrap" }}
+      >
         Quality review
       </Typography>
       <StateChip state={chipState(gate)} />
-      <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 220, fontVariantNumeric: "tabular-nums" }}>
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          flex: 1,
+          minWidth: 220,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {`${gate.admitted} of ${gate.total} pass the quality gate`}
         {gate.quarantined.length > 0 && (
           <>
             <Sep />
-            <Box component="span" sx={{ color: "#DC2626" }}>{`${gate.quarantined.length} set aside`}</Box>
+            <Box
+              component="span"
+              sx={{ color: "status.danger.fg" }}
+            >{`${gate.quarantined.length} set aside`}</Box>
           </>
         )}
         <Sep />
@@ -64,16 +107,20 @@ export function QualityReviewStrip({ gate, onOpen }) {
         {`${gate.coverage.covered} of ${gate.coverage.rules} rules covered`}
       </Typography>
       <Button
-        variant="outlined" size="small"
+        variant="outlined"
+        size="small"
         onClick={onOpen}
-        sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
       >
         {gate.state === "spot-check" ? "Spot-check" : "Review"}
       </Button>
     </Stack>
   );
 }
-QualityReviewStrip.propTypes = { gate: PropTypes.object.isRequired, onOpen: PropTypes.func };
+QualityReviewStrip.propTypes = {
+  gate: PropTypes.object.isRequired,
+  onOpen: PropTypes.func,
+};
 
 /* The strip's parts on their own, for the Scenarios toolbar's "Needs review"
    list: the state chip, and the three facts on one line. */
@@ -89,7 +136,10 @@ export function QualityReviewFacts({ gate }) {
       {gate.quarantined.length > 0 && (
         <>
           <Sep />
-          <Box component="span" sx={{ color: "#DC2626" }}>{`${gate.quarantined.length} set aside`}</Box>
+          <Box
+            component="span"
+            sx={{ color: "status.danger.fg" }}
+          >{`${gate.quarantined.length} set aside`}</Box>
         </>
       )}
       <Sep />
@@ -103,32 +153,66 @@ export function QualityReviewFacts({ gate }) {
 QualityReviewFacts.propTypes = { gate: PropTypes.object.isRequired };
 
 /** The drawer: the quality gate, the spot-check, coverage. */
-export default function QualityReviewPanel({ gate, rows, env, connect = false, onAnswer, onOpenScenario, onClose, locked = false }) {
+export default function QualityReviewPanel({
+  gate,
+  rows,
+  env,
+  connect = false,
+  onAnswer,
+  onOpenScenario,
+  onClose,
+  locked = false,
+}) {
   const byId = new Map((rows || []).map((r) => [r.id, r]));
   const sample = gate.sample.map((id) => byId.get(id)).filter(Boolean);
   return (
     <Stack sx={{ height: "100%" }}>
       <Stack
-        direction="row" alignItems="flex-start" spacing={1.5}
-        sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.5}
+        sx={{
+          px: 2.5,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography sx={{ typography: "m2", fontWeight: 600 }}>Quality review</Typography>
+            <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+              Quality review
+            </Typography>
             <StateChip state={chipState(gate)} />
           </Stack>
-          <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
-            How far the scenarios can be trusted: each passes the quality gate before it joins the set, a person
-            agrees a sample is realistic and checked right, and every rule is tested.
+          <Typography
+            sx={{ typography: "s2", color: "text.tertiary", mt: 0.25 }}
+          >
+            How far the scenarios can be trusted: each passes the quality gate
+            before it joins the set, a person agrees a sample is realistic and
+            checked right, and every rule is tested.
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="solar:close-circle-linear" width={18} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:close-circle-linear"
+            width={20}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
       </Stack>
 
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        <Typography sx={{ px: 2.5, pt: 1.75, pb: 0.25, typography: "s2", color: gate.state === "ready" ? "text.primary" : "text.secondary" }}>
+        <Typography
+          sx={{
+            px: 2.5,
+            pt: 1.75,
+            pb: 0.25,
+            typography: "s2",
+            color: gate.state === "ready" ? "text.primary" : "text.secondary",
+          }}
+        >
           {gate.reason}
         </Typography>
 
@@ -136,25 +220,60 @@ export default function QualityReviewPanel({ gate, rows, env, connect = false, o
         <Part
           title="Quality gate"
           figure={`${gate.admitted} of ${gate.total}`}
-          sub={connect
-            ? "Ready, solvable, not vacuous (or positive evidence where declining is correct), mutation controls and exploit control — the world-only gates don't apply without a world."
-            : "Staged, solvable, not vacuous (or positive evidence where declining is correct), mutation controls, alternate valid paths, setup can't earn credit, and exploit control."}
+          sub={
+            connect
+              ? "Ready, solvable, not vacuous (or positive evidence where declining is correct), mutation controls and exploit control — the world-only gates don't apply without a world."
+              : "Staged, solvable, not vacuous (or positive evidence where declining is correct), mutation controls, alternate valid paths, setup can't earn credit, and exploit control."
+          }
         >
           {gate.quarantined.length === 0 ? (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>Every scenario in the set passes.</Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              Every scenario in the set passes.
+            </Typography>
           ) : (
             <Stack spacing={1}>
               {gate.quarantined.map((q) => (
-                <Stack key={q.id} direction="row" spacing={1} alignItems="flex-start">
-                  <Iconify icon="solar:shield-cross-linear" width={14} sx={{ color: "#DC2626", flexShrink: 0, mt: "3px" }} />
+                <Stack
+                  key={q.id}
+                  direction="row"
+                  spacing={1}
+                  alignItems="flex-start"
+                >
+                  <Iconify
+                    icon="solar:shield-cross-linear"
+                    width={14}
+                    sx={{ color: "status.danger.fg", flexShrink: 0, mt: "3px" }}
+                  />
                   <Box flex={1} minWidth={0}>
                     {/* Title first, like the Scenarios table; the slug only when there's no title. */}
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{scenarioTitle(q.title) || q.name}</Typography>
-                    {q.summary && <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{q.summary}</Typography>}
-                    <Typography sx={{ typography: "s3", color: "text.secondary", lineHeight: 1.55 }}>{q.reason}</Typography>
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s2_1", fontWeight: 500 }}
+                    >
+                      {scenarioTitle(q.title) || q.name}
+                    </Typography>
+                    {q.summary && (
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {q.summary}
+                      </Typography>
+                    )}
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.secondary",
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {q.reason}
+                    </Typography>
                   </Box>
                   {onOpenScenario && (
-                    <TextAction onClick={() => onOpenScenario(q.id)}>Open</TextAction>
+                    <TextAction onClick={() => onOpenScenario(q.id)}>
+                      Open
+                    </TextAction>
                   )}
                 </Stack>
               ))}
@@ -165,13 +284,26 @@ export default function QualityReviewPanel({ gate, rows, env, connect = false, o
         {/* ── the human spot-check ── */}
         <Part
           title="Human spot-check"
-          figure={gate.agreement == null ? `0 of ${gate.sampled}` : `${pct(gate.agreement)} agree`}
+          figure={
+            gate.agreement == null
+              ? `0 of ${gate.sampled}`
+              : `${pct(gate.agreement)} agree`
+          }
           sub={`${gate.answered} of ${gate.sampled} checked · the bar is ${pct(gate.bar)} agreement over the whole sample${gate.carried ? ` · ${gate.carried} carried from ${gate.carriedFrom}, unchanged since` : ""}.`}
         >
           {sample.length === 0 ? (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>No scenarios to sample yet.</Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              No scenarios to sample yet.
+            </Typography>
           ) : (
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />} sx={{ mx: -2.5 }}>
+            <Stack
+              divider={
+                <Box
+                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                />
+              }
+              sx={{ mx: -2.5 }}
+            >
               {sample.map((row) => (
                 <SpotCheckRow
                   key={row.id}
@@ -193,11 +325,16 @@ export default function QualityReviewPanel({ gate, rows, env, connect = false, o
           last
         >
           {gate.coverage.uncovered.length === 0 ? (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>Every rule is tested.</Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              Every rule is tested.
+            </Typography>
           ) : (
             <Stack spacing={0.5}>
               {gate.coverage.uncovered.map((r) => (
-                <Typography key={r} sx={{ typography: "s2", color: "text.secondary" }}>{`No scenario tests "${r}"`}</Typography>
+                <Typography
+                  key={r}
+                  sx={{ typography: "s2", color: "text.secondary" }}
+                >{`No scenario tests "${r}"`}</Typography>
               ))}
             </Stack>
           )}
@@ -219,29 +356,65 @@ QualityReviewPanel.propTypes = {
 
 function Part({ title, figure, sub, children, last = false }) {
   return (
-    <Box sx={{ px: 2.5, py: 2, borderBottom: last ? 0 : "1px solid", borderColor: "divider" }}>
+    <Box
+      sx={{
+        px: 2.5,
+        py: 2,
+        borderBottom: last ? 0 : "1px solid",
+        borderColor: "divider",
+      }}
+    >
       <Stack direction="row" alignItems="baseline" spacing={1}>
-        <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>{title}</Typography>
-        <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary", fontVariantNumeric: "tabular-nums" }}>{figure}</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>
+          {title}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            color: "text.primary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {figure}
+        </Typography>
       </Stack>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, mb: 1.25 }}>{sub}</Typography>
+      <Typography
+        sx={{ typography: "s3", color: "text.tertiary", mt: 0.25, mb: 1.25 }}
+      >
+        {sub}
+      </Typography>
       {children}
     </Box>
   );
 }
-Part.propTypes = { title: PropTypes.string, figure: PropTypes.string, sub: PropTypes.string, children: PropTypes.node, last: PropTypes.bool };
+Part.propTypes = {
+  title: PropTypes.string,
+  figure: PropTypes.string,
+  sub: PropTypes.string,
+  children: PropTypes.node,
+  last: PropTypes.bool,
+};
 
 const VERDICTS = [
   { id: "right", label: "Right", tip: "Realistic, and its checks are right" },
-  { id: "not-right", label: "Not right", tip: "Unrealistic, or a check is wrong — say what" },
+  {
+    id: "not-right",
+    label: "Not right",
+    tip: "Unrealistic, or a check is wrong — say what",
+  },
 ];
 
 /* One sampled scenario: what it asks, what passes it, and the verdict. */
 function SpotCheckRow({ row, env, answer, onAnswer }) {
   const s = validate(row, env);
   const [note, setNote] = useState(answer?.note || "");
-  useEffect(() => { setNote(answer?.note || ""); }, [answer?.note]);
-  const checks = (s?.checks || []).map((c) => c.label.toLowerCase().replace(/_/g, " "));
+  useEffect(() => {
+    setNote(answer?.note || "");
+  }, [answer?.note]);
+  const checks = (s?.checks || []).map((c) =>
+    c.label.toLowerCase().replace(/_/g, " "),
+  );
   const pick = (verdict) => {
     if (!onAnswer) return;
     if (answer?.verdict === verdict) onAnswer({ verdict: null });
@@ -256,33 +429,57 @@ function SpotCheckRow({ row, env, answer, onAnswer }) {
           </Typography>
           {/* The caller variation — never the title a second time. */}
           {row.summary && row.summary !== row.title && (
-            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary}</Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {row.summary}
+            </Typography>
           )}
         </Box>
         <Stack
           direction="row"
-          sx={{ flexShrink: 0, border: "1px solid", borderColor: "divider", borderRadius: 0.75, p: "1px" }}
+          sx={{
+            flexShrink: 0,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "4px",
+            p: "1px",
+          }}
         >
           {VERDICTS.map((v) => {
             const on = answer?.verdict === v.id;
             return (
-              <Tooltip key={v.id} arrow title={onAnswer ? v.tip : "Fork this environment to spot-check."}>
-                <Box
-                  component="button"
+              <Tooltip
+                key={v.id}
+                arrow
+                title={
+                  onAnswer ? v.tip : "Fork this environment to spot-check."
+                }
+              >
+                <ButtonBase
                   type="button"
                   aria-pressed={on}
                   disabled={!onAnswer}
                   onClick={() => pick(v.id)}
                   sx={{
-                    p: 0, px: 1, height: 22, border: 0, borderRadius: 0.5, font: "inherit",
-                    typography: "s3", fontWeight: on ? 700 : 500, cursor: onAnswer ? "pointer" : "default",
-                    color: on ? "text.primary" : "text.subtitle",
+                    p: 0,
+                    px: 1,
+                    height: 22,
+                    border: 0,
+                    borderRadius: "4px",
+                    font: "inherit",
+                    typography: "s3",
+                    fontWeight: on ? 600 : 500,
+                    cursor: onAnswer ? "pointer" : "default",
+                    color: on ? "text.primary" : "text.tertiary",
                     bgcolor: on ? "action.selected" : "transparent",
-                    "&:hover": onAnswer && !on ? { color: "text.primary" } : undefined,
+                    "&:hover":
+                      onAnswer && !on ? { color: "text.primary" } : undefined,
                   }}
                 >
                   {v.label}
-                </Box>
+                </ButtonBase>
               </Tooltip>
             );
           })}
@@ -290,15 +487,35 @@ function SpotCheckRow({ row, env, answer, onAnswer }) {
       </Stack>
       <Box
         sx={{
-          mt: 0.75, display: "grid", gridTemplateColumns: "84px minmax(0, 1fr)", columnGap: 1.5, rowGap: 0.25,
-          "& .sc-l": { typography: "s3", color: "text.subtitle", lineHeight: 1.55 },
-          "& .sc-v": { typography: "s3", color: "text.secondary", lineHeight: 1.55 },
+          mt: 0.75,
+          display: "grid",
+          gridTemplateColumns: "84px minmax(0, 1fr)",
+          columnGap: 1.5,
+          rowGap: 0.25,
+          "& .sc-l": {
+            typography: "s3",
+            color: "text.tertiary",
+            lineHeight: 1.55,
+          },
+          "& .sc-v": {
+            typography: "s3",
+            color: "text.secondary",
+            lineHeight: 1.55,
+          },
         }}
       >
         {row.task && (
           <>
             <Typography className="sc-l">Asks</Typography>
-            <Typography className="sc-v" sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+            <Typography
+              className="sc-v"
+              sx={{
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
               {row.task}
             </Typography>
           </>
@@ -306,7 +523,9 @@ function SpotCheckRow({ row, env, answer, onAnswer }) {
         {(row.expected || row.idealOutcome) && (
           <>
             <Typography className="sc-l">Passes when</Typography>
-            <Typography className="sc-v">{asSentence(row.expected || row.idealOutcome)}</Typography>
+            <Typography className="sc-v">
+              {asSentence(row.expected || row.idealOutcome)}
+            </Typography>
           </>
         )}
         {checks.length > 0 && (
@@ -330,10 +549,18 @@ function SpotCheckRow({ row, env, answer, onAnswer }) {
           value={note}
           disabled={!onAnswer}
           onChange={(e) => setNote(e.target.value)}
-          onBlur={() => { if (onAnswer && note !== (answer.note || "")) onAnswer({ verdict: "not-right", note }); }}
+          onBlur={() => {
+            if (onAnswer && note !== (answer.note || ""))
+              onAnswer({ verdict: "not-right", note });
+          }}
           placeholder="What's wrong — an unrealistic caller, a check that's off, a missing step…"
           sx={{
-            mt: 1, px: 1.25, py: 0.75, borderRadius: 1, border: "1px solid", borderColor: "divider",
+            mt: 1,
+            px: 1.25,
+            py: 0.75,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
             typography: "s2",
           }}
         />
@@ -346,4 +573,9 @@ function SpotCheckRow({ row, env, answer, onAnswer }) {
     </Box>
   );
 }
-SpotCheckRow.propTypes = { row: PropTypes.object, env: PropTypes.object, answer: PropTypes.object, onAnswer: PropTypes.func };
+SpotCheckRow.propTypes = {
+  row: PropTypes.object,
+  env: PropTypes.object,
+  answer: PropTypes.object,
+  onAnswer: PropTypes.func,
+};

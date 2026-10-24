@@ -46,12 +46,12 @@ const SESSION_BULK_ACTIONS = [
   {
     id: "replay",
     label: "Replay Sessions",
-    icon: "mdi:play-outline",
+    icon: "solar:play-linear",
   },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
-    icon: "mdi:clipboard-list-outline",
+    icon: "solar:clipboard-list-linear",
   },
 ];
 

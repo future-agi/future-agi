@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -21,7 +22,7 @@ export default function OneDHeatmap() {
       // height: 80,
       type: "heatmap",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       parentHeightOffset: 0,
       toolbar: {
         show: false,
@@ -65,7 +66,7 @@ export default function OneDHeatmap() {
       enabled: false, // This will disable the tooltip
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
   };
 

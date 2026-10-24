@@ -410,7 +410,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     expect(gridState.props.cacheBlockSize).toBe(25);
     expect(gridState.props.suppressPaginationPanel).toBe(true);
     expect(gridState.props.onPaginationChanged).toBeUndefined();
-    expect(screen.getByLabelText("Results per page")).toHaveTextContent("25");
+    expect(screen.getByLabelText("Rows per page")).toHaveValue("25");
 
     const params = makeParams();
     gridState.api = params.api;
@@ -424,11 +424,9 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     });
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Go to page 2" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled(),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(params.api.paginationGoToPage).toHaveBeenCalledWith(1);
     expect(pageChanged).toHaveBeenCalledOnce();
     expect(pageChanged.mock.calls[0][0].detail).toEqual({ page: 2 });
@@ -436,11 +434,8 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
     expect(params.api.refreshServerSide).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByText(/^Page 2 of/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     // The page button itself does not prefetch; AG Grid requests page two only
     // after performing the explicit pagination transition.
     expect(getMock).toHaveBeenCalledTimes(1);
@@ -454,17 +449,14 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
       rowCount: 28,
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-        "aria-current",
-        "true",
-      ),
+      expect(screen.getByText(/^Page 2 of/)).toBeInTheDocument(),
     );
     await waitFor(() =>
       expect(screen.queryByText("Loading page…")).not.toBeInTheDocument(),
     );
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Go to previous page" }),
+      screen.getByRole("button", { name: "Previous page" }),
     );
     expect(finalPageParams.api.paginationGoToPage).toHaveBeenCalledWith(0);
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
@@ -518,9 +510,9 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
 
     const firstPage = makeParams();
     await getRows(firstPage);
-    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 
     const secondPage = makeParams(25, 50);
     gridState.api = secondPage.api;
@@ -534,7 +526,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(gridState.props.loading).toBe(false);
     });
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 
     const renderedSecondPageRow =
       kind === "trace"
@@ -601,8 +593,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     await waitFor(() => expect(gridState.props).not.toBeNull());
     await getRows(makeParams());
 
-    await userEvent.click(screen.getByRole("combobox"));
-    await userEvent.click(screen.getByRole("option", { name: "50" }));
+    await userEvent.selectOptions(screen.getByLabelText("Rows per page"), "50");
 
     await waitFor(() => {
       expect(gridState.props.paginationPageSize).toBe(50);
@@ -1040,9 +1031,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     expect(params.fail).not.toHaveBeenCalled();
     if (kind === "trace") {
       expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
-      expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-        "No traces found",
-      );
+      expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     }
   });
 
@@ -1400,9 +1389,7 @@ describe("trace grid empty-state lifecycle", () => {
     });
 
     await waitFor(() => expect(gridState.props.loading).toBe(false));
-    expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-      "No traces found",
-    );
+    expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 });

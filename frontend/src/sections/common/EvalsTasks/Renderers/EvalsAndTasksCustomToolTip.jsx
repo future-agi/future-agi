@@ -39,8 +39,9 @@ const EvalsAndTasksCustomTooltip = ({ value, colDef }) => {
         backgroundColor: "background.paper",
         border: "1px solid lightgray",
         borderRadius: "12px",
+        // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
         boxShadow: "-5px 5px 10px rgba(0, 0, 0, 0.1)",
-        fontSize: "14px",
+        fontSize: "13px",
         paddingBottom: "4px",
         paddingX: 1,
         color: "text.primary",
@@ -92,7 +93,7 @@ const EvalsAndTasksCustomTooltip = ({ value, colDef }) => {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   height={25}
                   width={25}
                   sx={{ color: "text.disabled" }}
@@ -136,9 +137,6 @@ const EvalsAndTasksCustomTooltip = ({ value, colDef }) => {
                 backgroundColor: (theme) =>
                   alpha(theme.palette.primary.main, 0.1),
                 color: "primary.main",
-                borderRadius: "4px",
-                fontWeight: 500,
-                px: 0.5,
                 "&:hover": {
                   backgroundColor: (theme) =>
                     alpha(theme.palette.primary.main, 0.1),

@@ -2,7 +2,14 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Tooltip, TextField, InputAdornment, Tab,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Tooltip,
+  TextField,
+  InputAdornment,
+  Tab,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs, CustomTabs } from "src/components/tabs/tabs";
@@ -55,43 +62,78 @@ const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
 */
 const SURFACE_COPY = {
   voice: { id: "Call ID", analytics: "Call analytics", log: "Call log" },
-  chat: { id: "Conversation ID", analytics: "Chat analytics", log: "Tool calls" },
-  browser: { id: "Session ID", analytics: "Session analytics", log: "Tool calls" },
-  terminal: { id: "Session ID", analytics: "Shell analytics", log: "Tool calls" },
+  chat: {
+    id: "Conversation ID",
+    analytics: "Chat analytics",
+    log: "Tool calls",
+  },
+  browser: {
+    id: "Session ID",
+    analytics: "Session analytics",
+    log: "Tool calls",
+  },
+  terminal: {
+    id: "Session ID",
+    analytics: "Shell analytics",
+    log: "Tool calls",
+  },
   tools: { id: "Trace ID", analytics: "Trace analytics", log: "Tool calls" },
   email: { id: "Thread ID", analytics: "Thread analytics", log: "Tool calls" },
-  sim: { id: "Conversation ID", analytics: "Conversation analytics", log: "Tool calls" },
+  sim: {
+    id: "Conversation ID",
+    analytics: "Conversation analytics",
+    log: "Tool calls",
+  },
 };
 
-export default function CallDrawer({ task, env, envState, focus, focusEvalName, initialPane, onClose, onPrev, onNext, verdict = null }) {
+export default function CallDrawer({
+  task,
+  env,
+  envState,
+  focus,
+  focusEvalName,
+  initialPane,
+  onClose,
+  onPrev,
+  onNext,
+  verdict = null,
+}) {
   /* Opened from a diagnosis that named a step, so open on the trajectory with
      that step lit rather than on the transcript with the reader hunting.
      Opened from Insights evidence, it lands on the trace, pinned to the span
      where the scenario went wrong. */
-  const [pane, setPane] = useState(initialPane || (focus ? "graph" : "transcript"));
+  const [pane, setPane] = useState(
+    initialPane || (focus ? "graph" : "transcript"),
+  );
   const [side, setSide] = useState(focusEvalName ? "evals" : "analytics");
   /* Same row shape the voice drawer feeds EvalsTabView, so both drawers show
      the explanation + error localization identically. */
-  const evalRows = useMemo(() => (task.evalResults || []).map((r) => {
-    const loc = localizeEval(task, r);
-    return {
-      id: r.id,
-      eval_name: r.name,
-      score: Math.round((r.score ?? 0) * 100),
-      passed: !!r.passed,
-      explanation: r.reason,
-      ...(loc ? {
-        error_analysis: loc.error_analysis,
-        error_localizer_status: loc.error_localizer_status,
-        selected_input_key: loc.selected_input_key,
-        datapoint: {
-          selected_input_key: loc.selected_input_key,
-          input_data: loc.input_data,
-          input_types: loc.input_types,
-        },
-      } : {}),
-    };
-  }), [task]);
+  const evalRows = useMemo(
+    () =>
+      (task.evalResults || []).map((r) => {
+        const loc = localizeEval(task, r);
+        return {
+          id: r.id,
+          eval_name: r.name,
+          score: Math.round((r.score ?? 0) * 100),
+          passed: !!r.passed,
+          explanation: r.reason,
+          ...(loc
+            ? {
+                error_analysis: loc.error_analysis,
+                error_localizer_status: loc.error_localizer_status,
+                selected_input_key: loc.selected_input_key,
+                datapoint: {
+                  selected_input_key: loc.selected_input_key,
+                  input_data: loc.input_data,
+                  input_types: loc.input_types,
+                },
+              }
+            : {}),
+        };
+      }),
+    [task],
+  );
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -110,15 +152,23 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
     [env, envState, task],
   );
 
-  const log = task.callLog || { calls: [], missing: [], unsupportedClaim: null };
+  const log = task.callLog || {
+    calls: [],
+    missing: [],
+    unsupportedClaim: null,
+  };
   const turns = useMemo(() => task.steps || [], [task.steps]);
   const shown = turns.filter((s) => {
     if (roleFilter !== "all" && s.role !== roleFilter) return false;
-    if (query && !s.text?.toLowerCase().includes(query.toLowerCase())) return false;
+    if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
+      return false;
     return true;
   });
 
-  const words = turns.reduce((a, s) => a + (s.text?.split(/\s+/).length || 0), 0);
+  const words = turns.reduce(
+    (a, s) => a + (s.text?.split(/\s+/).length || 0),
+    0,
+  );
   /* How the run was spent, in the verbs this surface actually has. */
   const actionTally = useMemo(() => {
     const counts = {};
@@ -126,69 +176,132 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
       const verb = t.action || t.tool || t.kind || (t.cmd ? "command" : null);
       if (verb) counts[verb] = (counts[verb] || 0) + 1;
     });
-    return Object.entries(counts).map(([action, count]) => ({ action, count })).slice(0, 6);
+    return Object.entries(counts)
+      .map(([action, count]) => ({ action, count }))
+      .slice(0, 6);
   }, [turns]);
   const failed = (task.evalResults || []).filter((r) => !r.passed);
   const agentTurns = turns.filter((s) => s.role === "agent").length;
-  const talk = turns.length ? Math.round((agentTurns / turns.length) * 100) : 50;
+  const talk = turns.length
+    ? Math.round((agentTurns / turns.length) * 100)
+    : 50;
 
   return (
     <Stack sx={{ height: "100%" }}>
       <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-          {copy.id} : <Box component="span" sx={{ color: "text.primary" }}>{task.id}</Box>
+          {copy.id} :{" "}
+          <Box component="span" sx={{ color: "text.primary" }}>
+            {task.id}
+          </Box>
         </Typography>
         <Tooltip arrow title={`Copy ${copy.id.toLowerCase()}`}>
-          <IconButton size="small" onClick={() => navigator.clipboard?.writeText(task.id)}>
-            <Iconify icon="solar:copy-linear" width={14} sx={{ color: "text.subtitle" }} />
+          <IconButton
+            size="small"
+            onClick={() => navigator.clipboard?.writeText(task.id)}
+          >
+            <Iconify
+              icon="solar:copy-linear"
+              width={14}
+              sx={{ color: "text.tertiary" }}
+            />
           </IconButton>
         </Tooltip>
         <VerdictCauseChip verdict={verdict || task.verdictCause} task={task} />
         <Box flex={1} />
         <IconButton size="small" onClick={onPrev} disabled={!onPrev}>
-          <Iconify icon="eva:arrow-ios-upward-fill" width={16} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:alt-arrow-up-linear"
+            width={16}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
         <IconButton size="small" onClick={onNext} disabled={!onNext}>
-          <Iconify icon="eva:arrow-ios-downward-fill" width={16} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            width={16}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
         <IconButton size="small" onClick={onClose}>
-          <Iconify icon="mingcute:close-line" width={16} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:close-linear"
+            width={16}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
       </Stack>
 
-      <Stack direction={{ xs: "column", md: "row" }} sx={{ flex: 1, minHeight: 0 }}>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        sx={{ flex: 1, minHeight: 0 }}
+      >
         {/* ── left: the artifact ── */}
-        <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, pt: 1.5 }}>
-            <Iconify icon={surface.icon} width={15} sx={{ color: "text.subtitle" }} />
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>{surface.label}</Typography>
+        <Stack
+          sx={{
+            flex: 1.15,
+            minWidth: 0,
+            borderRight: { md: "1px solid" },
+            borderColor: { md: "divider" },
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 2, pt: 1.5 }}
+          >
+            <Iconify
+              icon={surface.icon}
+              width={16}
+              sx={{ color: "text.tertiary" }}
+            />
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {surface.label}
+            </Typography>
           </Stack>
 
-          <CustomTabs
-            value={pane}
-            onChange={(_, v) => setPane(v)}
-            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
+          <Box
+            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab value="transcript" label={conversational ? "Transcript" : "Actions"} sx={{ minHeight: 40 }} />
-            <Tab value="checklist" label="Checklist" sx={{ minHeight: 40 }} />
-            <Tab value="graph" label="Graph" sx={{ minHeight: 40 }} />
-            <Tab value="trace" label="Trace" sx={{ minHeight: 40 }} />
-            {envState?.twinBacking && (
-              <Tab value="twin" label="World state" sx={{ minHeight: 40 }} />
-            )}
-            {envState?.twinBacking && (
-              <Tab value="requests" label="Raw requests" sx={{ minHeight: 40 }} />
-            )}
-          </CustomTabs>
+            <CustomTabs value={pane} onChange={(_, v) => setPane(v)}>
+              <Tab
+                value="transcript"
+                label={conversational ? "Transcript" : "Actions"}
+              />
+              <Tab value="checklist" label="Checklist" />
+              <Tab value="graph" label="Graph" />
+              <Tab value="trace" label="Trace" />
+              {envState?.twinBacking && (
+                <Tab value="twin" label="World state" />
+              )}
+              {envState?.twinBacking && (
+                <Tab value="requests" label="Raw requests" />
+              )}
+            </CustomTabs>
+          </Box>
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {/* A run that produced actions rather than speech gets the actions,
                 and — where the surface has one — the screen they happened on. */}
             {pane === "transcript" && !conversational && (
-              <ActionTrace task={task} stage={stage} at={stepIndex} onScrub={setStepIndex} />
+              <ActionTrace
+                task={task}
+                stage={stage}
+                at={stepIndex}
+                onScrub={setStepIndex}
+              />
             )}
 
             {pane === "transcript" && conversational && (
@@ -196,20 +309,36 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                 {voice && <Recording turns={turns.length} />}
                 {voice && <TalkRatio agent={talk} />}
 
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25 }}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ px: 2, py: 1.25 }}
+                >
                   <TextField
-                    size="small" fullWidth placeholder="Search transcript"
-                    value={query} onChange={(e) => setQuery(e.target.value)}
+                    size="small"
+                    fullWidth
+                    placeholder="Search transcript"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
                     InputProps={{
                       sx: { typography: "s2" },
                       startAdornment: (
                         <InputAdornment position="start">
-                          <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
+                          <Iconify
+                            icon="solar:magnifer-linear"
+                            width={14}
+                            sx={{ color: "text.tertiary" }}
+                          />
                         </InputAdornment>
                       ),
                     }}
                   />
-                  <SegmentedTabs value={roleFilter} onChange={(_, v) => setRoleFilter(v)} sx={{ flexShrink: 0 }}>
+                  <SegmentedTabs
+                    value={roleFilter}
+                    onChange={(_, v) => setRoleFilter(v)}
+                    sx={{ flexShrink: 0 }}
+                  >
                     <Tab value="all" label="All" />
                     <Tab value="agent" label="Assistant" />
                     <Tab value="customer" label="Customer" />
@@ -222,27 +351,62 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                       <Box
                         sx={{
                           borderLeft: "2px solid",
-                          borderColor: (t) => (s.role === "agent" ? t.palette.primary.main : t.palette.text.disabled),
-                          bgcolor: (t) => (s.role === "agent"
-                            ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.06 : 0.04)
-                            : "background.neutral"),
-                          px: 1.75, py: 1.25,
+                          borderColor: (t) =>
+                            s.role === "agent"
+                              ? t.palette.primary.main
+                              : t.palette.text.disabled,
+                          bgcolor:
+                            s.role === "agent"
+                              ? "status.discovery.bg"
+                              : "background.neutral",
+                          px: 1.75,
+                          py: 1.25,
                         }}
                       >
-                        <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
-                          {`0:${String(i).padStart(2, "0")}`} · {ROLE_LABEL[s.role] || s.role}
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            fontFamily: "ui-monospace, Menlo, monospace",
+                          }}
+                        >
+                          {`0:${String(i).padStart(2, "0")}`} ·{" "}
+                          {ROLE_LABEL[s.role] || s.role}
                         </Typography>
-                        <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>
+                        <Typography sx={{ typography: "s1", mt: 0.25 }}>
+                          {s.text}
+                        </Typography>
                       </Box>
                       {/* Dead air is part of a voice call's state, so it is a
                           row in the transcript rather than a gap between rows. */}
                       {voice && i < shown.length - 1 && (
-                        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 1.75, py: 0.5 }}>
-                          <Iconify icon="solar:hourglass-line-linear" width={11} sx={{ color: "text.disabled" }} />
-                          <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace" }}>
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.75}
+                          sx={{ px: 1.75, py: 0.5 }}
+                        >
+                          <Iconify
+                            icon="solar:hourglass-line-linear"
+                            width={12}
+                            sx={{ color: "text.disabled" }}
+                          />
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              color: "text.disabled",
+                              fontFamily: "ui-monospace, Menlo, monospace",
+                            }}
+                          >
                             1.0s silence
                           </Typography>
-                          <Box sx={{ flex: 1, borderBottom: "1px dashed", borderColor: "divider" }} />
+                          <Box
+                            sx={{
+                              flex: 1,
+                              borderBottom: "1px dashed",
+                              borderColor: "divider",
+                            }}
+                          />
                         </Stack>
                       )}
                     </React.Fragment>
@@ -263,43 +427,115 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                     supporting, and the verdict they roll up to — then the
                     reference path step by step. */}
                 <SubGoalRollup task={task} env={env} envState={envState} />
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, pt: 1 }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                    textTransform: "none",
+                    letterSpacing: 0.4,
+                    pt: 1,
+                  }}
+                >
                   Reference path
                 </Typography>
-                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ pb: 0.5 }}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                    {detail.checklist.pct}% · {detail.checklist.pass + detail.checklist.partial}/{detail.checklist.steps.length} steps
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1.5}
+                  sx={{ pb: 0.5 }}
+                >
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {detail.checklist.pct}% ·{" "}
+                    {detail.checklist.pass + detail.checklist.partial}/
+                    {detail.checklist.steps.length} steps
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "#16A34A" }}>{detail.checklist.pass} pass</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.secondary" }}>{detail.checklist.partial} partial</Typography>
-                  <Typography sx={{ typography: "s3", color: "#DC2626" }}>{detail.checklist.missed} missed</Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "status.success.fg" }}
+                  >
+                    {detail.checklist.pass} pass
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {detail.checklist.partial} partial
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "status.danger.fg" }}
+                  >
+                    {detail.checklist.missed} missed
+                  </Typography>
                 </Stack>
                 {detail.checklist.steps.map((c) => {
-                  const tone = c.status === "addressed" ? "#16A34A" : c.status === "partial" ? "text.secondary" : "#DC2626";
+                  const tone =
+                    c.status === "addressed"
+                      ? "status.success.fg"
+                      : c.status === "partial"
+                        ? "text.secondary"
+                        : "status.danger.fg";
                   return (
                     <Stack
-                      key={c.id} direction="row" spacing={1.25} alignItems="flex-start"
-                      sx={{ p: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+                      key={c.id}
+                      direction="row"
+                      spacing={1.25}
+                      alignItems="flex-start"
+                      sx={{
+                        p: 1.5,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 1,
+                      }}
                     >
                       <Iconify
-                        icon={c.status === "addressed" ? "solar:check-circle-bold" : c.status === "partial" ? "solar:info-circle-bold" : "solar:close-circle-bold"}
-                        width={15}
+                        icon={
+                          c.status === "addressed"
+                            ? "solar:check-circle-bold"
+                            : c.status === "partial"
+                              ? "solar:info-circle-bold"
+                              : "solar:close-circle-bold"
+                        }
+                        width={16}
                         sx={{ color: tone, flexShrink: 0, mt: "1px" }}
                       />
                       <Box flex={1} minWidth={0}>
                         <Stack direction="row" alignItems="center" spacing={1}>
-                          <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              fontFamily: "ui-monospace, Menlo, monospace",
+                            }}
+                          >
                             {c.name}
                           </Typography>
-                          <Typography sx={{ typography: "s3", fontWeight: 700, color: tone, textTransform: "uppercase" }}>
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              fontWeight: 600,
+                              color: tone,
+                              textTransform: "none",
+                            }}
+                          >
                             {c.status}
                           </Typography>
                         </Stack>
-                        <Typography sx={{ typography: "s2", color: "text.secondary", fontStyle: "italic" }}>
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            color: "text.secondary",
+                            fontStyle: "italic",
+                          }}
+                        >
                           &ldquo;{c.expectation}&rdquo;
                         </Typography>
                         {!c.evidence && c.status !== "addressed" && (
-                          <Typography sx={{ typography: "s3", color: "text.disabled", mt: 0.25 }}>
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              color: "text.disabled",
+                              mt: 0.25,
+                            }}
+                          >
                             No matching step — the agent never touched this.
                           </Typography>
                         )}
@@ -325,12 +561,37 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
 
             {pane === "graph" && (
               <Box sx={{ p: 2 }}>
-                <CallGraph spine={detail.graph.spine} branches={detail.graph.branches} focus={focus} />
-                <Box sx={{ mt: 1.5, p: 1.5, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-                  <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 0.5 }}>
+                <CallGraph
+                  spine={detail.graph.spine}
+                  branches={detail.graph.branches}
+                  focus={focus}
+                />
+                <Box
+                  sx={{
+                    mt: 1.5,
+                    p: 1.5,
+                    borderRadius: 1,
+                    border: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      color: "text.tertiary",
+                      textTransform: "none",
+                      letterSpacing: 0.4,
+                      mb: 0.5,
+                    }}
+                  >
                     Falcon analysis
                   </Typography>
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{detail.analysis}</Typography>
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    {detail.analysis}
+                  </Typography>
                 </Box>
               </Box>
             )}
@@ -341,9 +602,18 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
-              <Meta label="Type" value={env?.direction === "inbound" ? "Inbound" : "Outbound"} />
-              <Meta label="Status" value={task.status === "passed" ? "completed" : task.status} />
-              <Meta label="Duration" value={`${((task.durationMs || 0) / 1000).toFixed(1)}s`} />
+              <Meta
+                label="Type"
+                value={env?.direction === "inbound" ? "Inbound" : "Outbound"}
+              />
+              <Meta
+                label="Status"
+                value={task.status === "passed" ? "completed" : task.status}
+              />
+              <Meta
+                label="Duration"
+                value={`${((task.durationMs || 0) / 1000).toFixed(1)}s`}
+              />
               <Meta label="Turns" value={turns.length} />
               <Meta label="Provider" value="future-agi-sandbox" />
             </Stack>
@@ -353,20 +623,44 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
               grader failures below it are not the agent's to answer for. */}
           {detail && !detail.measured && (
             <Stack
-              direction="row" spacing={1.25} alignItems="flex-start"
+              direction="row"
+              spacing={1.25}
+              alignItems="flex-start"
               sx={{
-                mx: 2, mb: 1.5, p: 1.5, borderRadius: 1, border: "1px solid",
+                mx: 2,
+                mb: 1.5,
+                p: 1.5,
+                borderRadius: 1,
+                border: "1px solid",
                 borderColor: alpha(detail.domain.color, 0.35),
-                bgcolor: (t) => alpha(detail.domain.color, t.palette.mode === "dark" ? 0.1 : 0.05),
+                bgcolor: (t) =>
+                  alpha(
+                    detail.domain.color,
+                    t.palette.mode === "dark" ? 0.1 : 0.05,
+                  ),
               }}
             >
-              <Iconify icon="solar:shield-cross-bold" width={15} sx={{ color: detail.domain.color, flexShrink: 0, mt: "1px" }} />
+              <Iconify
+                icon="solar:shield-cross-bold"
+                width={16}
+                sx={{ color: detail.domain.color, flexShrink: 0, mt: "1px" }}
+              />
               <Box minWidth={0}>
-                <Typography sx={{ typography: "s2", fontWeight: 700, color: textTone(detail.domain.color) }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    color: textTone(detail.domain.color),
+                  }}
+                >
                   {detail.domain.label} — this scenario produced no verdict
                 </Typography>
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>{detail.fault}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {detail.fault}
+                </Typography>
+                <Typography
+                  sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+                >
                   {detail.domain.next}
                 </Typography>
               </Box>
@@ -376,58 +670,99 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
           {detail?.measured && failed.length > 0 && (
             <Stack
               sx={{
-                mx: 2, mb: 1.5, p: 1.5, borderRadius: 1, border: "1px solid",
-                borderColor: alpha("#DC2626", 0.35),
-                bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
+                mx: 2,
+                mb: 1.5,
+                p: 1.5,
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "status.danger.border",
+                bgcolor: "status.danger.bg",
               }}
               spacing={1}
             >
               {failed.map((r) => (
-                <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "#DC2626", flexShrink: 0, mt: "1px" }} />
+                <Stack
+                  key={r.id}
+                  direction="row"
+                  spacing={1.25}
+                  alignItems="flex-start"
+                >
+                  <Iconify
+                    icon="solar:close-circle-bold"
+                    width={16}
+                    sx={{ color: "status.danger.fg", flexShrink: 0, mt: "1px" }}
+                  />
                   <Box minWidth={0}>
-                    <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                       {r.name} failed ({Math.round(r.score * 100)})
                     </Typography>
-                    <Typography sx={{ typography: "s2", color: "text.secondary" }}>{r.reason}</Typography>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      {r.reason}
+                    </Typography>
                   </Box>
                 </Stack>
               ))}
             </Stack>
           )}
 
-          <CustomTabs
-            value={side}
-            onChange={(_, v) => setSide(v)}
-            variant="scrollable" scrollButtons={false}
-            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
+          <Box
+            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab value="analytics" label={copy.analytics} sx={{ minHeight: 40 }} />
-            <Tab value="calls" label={`${copy.log} (${log.calls.length})`} sx={{ minHeight: 40 }} />
-            <Tab value="evals" label={`Evals (${(task.evalResults || []).length})`} sx={{ minHeight: 40 }} />
-            <Tab value="messages" label="Messages" sx={{ minHeight: 40 }} />
-            <Tab value="attributes" label="Attributes" sx={{ minHeight: 40 }} />
-          </CustomTabs>
+            <CustomTabs
+              value={side}
+              onChange={(_, v) => setSide(v)}
+              variant="scrollable"
+              scrollButtons={false}
+            >
+              <Tab value="analytics" label={copy.analytics} />
+              <Tab value="calls" label={`${copy.log} (${log.calls.length})`} />
+              <Tab
+                value="evals"
+                label={`Evals (${(task.evalResults || []).length})`}
+              />
+              <Tab value="messages" label="Messages" />
+              <Tab value="attributes" label="Attributes" />
+            </CustomTabs>
+          </Box>
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {side === "analytics" && (
-              <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                }}
+              >
                 {/* Only what this surface can actually be measured on. A dash in
                     every second cell is a drawer built for a different run. */}
-                <Cell label="Duration" value={`${((task.durationMs || 0) / 1000).toFixed(1)}s`} />
+                <Cell
+                  label="Duration"
+                  value={`${((task.durationMs || 0) / 1000).toFixed(1)}s`}
+                />
                 {conversational ? (
                   <>
                     <Cell label="Turns" value={turns.length} />
                     <Cell label="Words" value={words} />
                     <Cell label="Latency" value={voice ? "500ms" : "—"} />
-                    <Cell label={voice ? "Silence" : "Idle"} value={voice ? `${(turns.length - 1).toFixed(2)}s` : "—"} />
+                    <Cell
+                      label={voice ? "Silence" : "Idle"}
+                      value={voice ? `${(turns.length - 1).toFixed(2)}s` : "—"}
+                    />
                     <Cell label="TTFW" value={voice ? "0ms" : "—"} />
-                    <Cell label="Talk ratio" value={voice ? `${talk}/${100 - talk}` : "—"} />
+                    <Cell
+                      label="Talk ratio"
+                      value={voice ? `${talk}/${100 - talk}` : "—"}
+                    />
                   </>
                 ) : (
                   <>
                     <Cell label="Steps" value={turns.length} />
-                    <Cell label="Avg step" value={`${Math.round((task.durationMs || 0) / Math.max(1, turns.length))}ms`} />
+                    <Cell
+                      label="Avg step"
+                      value={`${Math.round((task.durationMs || 0) / Math.max(1, turns.length))}ms`}
+                    />
                     {actionTally.map((a) => (
                       <Cell key={a.action} label={a.action} value={a.count} />
                     ))}
@@ -435,7 +770,10 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                     <Cell label="Never called" value={log.missing.length} />
                   </>
                 )}
-                <Cell label="Tokens" value={(task.tokens || 0).toLocaleString()} />
+                <Cell
+                  label="Tokens"
+                  value={(task.tokens || 0).toLocaleString()}
+                />
               </Box>
             )}
 
@@ -451,17 +789,34 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
               <Stack>
                 {log.unsupportedClaim && (
                   <Stack
-                    direction="row" spacing={1.25} alignItems="flex-start"
+                    direction="row"
+                    spacing={1.25}
+                    alignItems="flex-start"
                     sx={{
-                      m: 2, p: 1.5, borderRadius: 1, border: "1px solid",
-                      borderColor: alpha("#DC2626", 0.35),
-                      bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
+                      m: 2,
+                      p: 1.5,
+                      borderRadius: 1,
+                      border: "1px solid",
+                      borderColor: "status.danger.border",
+                      bgcolor: "status.danger.bg",
                     }}
                   >
-                    <Iconify icon="solar:danger-triangle-bold" width={15} sx={{ color: "#DC2626", flexShrink: 0, mt: "1px" }} />
+                    <Iconify
+                      icon="solar:danger-triangle-bold"
+                      width={16}
+                      sx={{
+                        color: "status.danger.fg",
+                        flexShrink: 0,
+                        mt: "1px",
+                      }}
+                    />
                     <Box minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>Said, but not done</Typography>
-                      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                        Said, but not done
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s2", color: "text.secondary" }}
+                      >
                         {log.unsupportedClaim}
                       </Typography>
                     </Box>
@@ -470,20 +825,46 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
 
                 {log.calls.map((c) => (
                   <Stack
-                    key={c.id} direction="row" spacing={1.5} alignItems="flex-start"
-                    sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
+                    key={c.id}
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="flex-start"
+                    sx={{
+                      px: 2,
+                      py: 1.5,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
                   >
                     <Iconify
-                      icon={c.wrote ? "solar:pen-new-square-linear" : "solar:eye-linear"}
-                      width={15}
-                      sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }}
+                      icon={
+                        c.wrote
+                          ? "solar:pen-new-square-linear"
+                          : "solar:eye-linear"
+                      }
+                      width={16}
+                      sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
                     />
                     <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace" }}>
-                        {c.name}({Object.entries(c.args).map(([k, v]) => `${k}: ${v}`).join(", ")})
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          fontWeight: 600,
+                          fontFamily: "ui-monospace, Menlo, monospace",
+                        }}
+                      >
+                        {c.name}(
+                        {Object.entries(c.args)
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join(", ")}
+                        )
                       </Typography>
-                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                        {c.wrote ? "wrote to the world" : "read only"} · returned {c.rows} {c.rows === 1 ? "row" : "rows"} · {c.ms}ms
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {c.wrote ? "wrote to the world" : "read only"} ·
+                        returned {c.rows} {c.rows === 1 ? "row" : "rows"} ·{" "}
+                        {c.ms}ms
                       </Typography>
                     </Box>
                   </Stack>
@@ -493,15 +874,40 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                     Absence is the point, so it is a row rather than a gap. */}
                 {log.missing.map((name) => (
                   <Stack
-                    key={name} direction="row" spacing={1.5} alignItems="flex-start"
-                    sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
+                    key={name}
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="flex-start"
+                    sx={{
+                      px: 2,
+                      py: 1.5,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
                   >
-                    <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "#DC2626", flexShrink: 0, mt: "2px" }} />
+                    <Iconify
+                      icon="solar:close-circle-bold"
+                      width={16}
+                      sx={{
+                        color: "status.danger.fg",
+                        flexShrink: 0,
+                        mt: "2px",
+                      }}
+                    />
                     <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", color: "text.subtitle" }}>
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          fontWeight: 600,
+                          fontFamily: "ui-monospace, Menlo, monospace",
+                          color: "text.tertiary",
+                        }}
+                      >
                         {name}
                       </Typography>
-                      <Typography sx={{ typography: "s3", color: "#DC2626" }}>
+                      <Typography
+                        sx={{ typography: "s3", color: "status.danger.fg" }}
+                      >
                         never called — this scenario needed it
                       </Typography>
                     </Box>
@@ -509,7 +915,9 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                 ))}
 
                 {log.calls.length === 0 && log.missing.length === 0 && (
-                  <Typography sx={{ p: 2, typography: "s2", color: "text.subtitle" }}>
+                  <Typography
+                    sx={{ p: 2, typography: "s2", color: "text.tertiary" }}
+                  >
                     This scenario needed no tools — the agent only had to talk.
                   </Typography>
                 )}
@@ -529,17 +937,34 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
             {side === "messages" && (
               <Box
                 component="pre"
-                sx={{ m: 0, p: 2, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary", whiteSpace: "pre-wrap" }}
+                sx={{
+                  m: 0,
+                  p: 2,
+                  typography: "s3",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  color: "text.secondary",
+                  whiteSpace: "pre-wrap",
+                }}
               >
-                {JSON.stringify(turns.map((s) => ({ role: s.role, content: s.text })), null, 2)}
+                {JSON.stringify(
+                  turns.map((s) => ({ role: s.role, content: s.text })),
+                  null,
+                  2,
+                )}
               </Box>
             )}
 
             {side === "attributes" && (
               <Stack>
                 <Attr label="scenario" value={task.title} />
-                <Attr label="persona" value={`${task.persona?.name} · ${task.persona?.age} · ${task.persona?.voice}`} />
-                <Attr label="traits" value={(task.persona?.traits || []).join(", ")} />
+                <Attr
+                  label="persona"
+                  value={`${task.persona?.name} · ${task.persona?.age} · ${task.persona?.voice}`}
+                />
+                <Attr
+                  label="traits"
+                  value={(task.persona?.traits || []).join(", ")}
+                />
                 <Attr label="expected" value={task.expected} />
                 <Attr label="critical" value={String(!!task.critical)} />
               </Stack>
@@ -552,9 +977,16 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
 }
 
 CallDrawer.propTypes = {
-  task: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, focus: PropTypes.string,
-  focusEvalName: PropTypes.string, initialPane: PropTypes.string,
-  onClose: PropTypes.func, onPrev: PropTypes.func, onNext: PropTypes.func, verdict: PropTypes.object,
+  task: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  focus: PropTypes.string,
+  focusEvalName: PropTypes.string,
+  initialPane: PropTypes.string,
+  onClose: PropTypes.func,
+  onPrev: PropTypes.func,
+  onNext: PropTypes.func,
+  verdict: PropTypes.object,
 };
 
 /*
@@ -566,44 +998,82 @@ CallDrawer.propTypes = {
 function VerdictCauseChip({ verdict, task }) {
   if (!verdict) return null;
   const fail = !verdict.pulled && verdict.cause?.startsWith("fail-");
-  const tip = verdict.pulled ? `${verdict.reason} Outside every count.`
+  const tip = verdict.pulled
+    ? `${verdict.reason} Outside every count.`
     : VERDICT_CAUSES[verdict.cause]?.note || "";
-  const label = verdict.cause === "fail-required" && !verdict.pulled ? verdictLineOf(verdict) : verdict.label;
+  const label =
+    verdict.cause === "fail-required" && !verdict.pulled
+      ? verdictLineOf(verdict)
+      : verdict.label;
   const retried = verdict.retried || task?.retried;
   return (
-    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ minWidth: 0 }}
+    >
       <Tooltip arrow title={tip || ""}>
         <Box
           sx={{
-            px: 0.75, height: 22, display: "inline-flex", alignItems: "center", borderRadius: 0.75, flexShrink: 0,
-            border: "1px solid", borderStyle: verdict.cause?.startsWith("inc-") || verdict.pulled ? "dashed" : "solid",
-            borderColor: fail ? alpha("#DC2626", 0.3) : "divider",
-            bgcolor: fail ? (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.16 : 0.08) : "transparent",
-            color: fail ? "#DC2626" : "text.secondary",
+            px: 0.75,
+            height: 22,
+            display: "inline-flex",
+            alignItems: "center",
+            borderRadius: "4px",
+            flexShrink: 0,
+            border: "1px solid",
+            borderStyle:
+              verdict.cause?.startsWith("inc-") || verdict.pulled
+                ? "dashed"
+                : "solid",
+            borderColor: fail ? "status.danger.border" : "divider",
+            bgcolor: fail ? "status.danger.bg" : "transparent",
+            color: fail ? "status.danger.fg" : "text.secondary",
           }}
         >
-          <Typography noWrap sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>{label}</Typography>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+          >
+            {label}
+          </Typography>
         </Box>
       </Tooltip>
       {retried && (
-        <Tooltip arrow title={`First try ended ${retried.kind === "error" ? "error" : "test invalid"} — ${String(retried.first || "").replace(/\.$/, "")}.`}>
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Tooltip
+          arrow
+          title={`First try ended ${retried.kind === "error" ? "error" : "test invalid"} — ${String(retried.first || "").replace(/\.$/, "")}.`}
+        >
+          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
             {retried.recovered ? "Retried once" : "Retried once · same again"}
           </Typography>
         </Tooltip>
       )}
       {verdict.stale && (
-        <Tooltip arrow title="It ran, but counts toward no decision until it's updated or archived.">
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{`${STALE_LABEL[verdict.stale] || "Stale"} · not counted`}</Typography>
+        <Tooltip
+          arrow
+          title="It ran, but counts toward no decision until it's updated or archived."
+        >
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.tertiary" }}
+          >{`${STALE_LABEL[verdict.stale] || "Stale"} · not counted`}</Typography>
         </Tooltip>
       )}
       {task?.regraded?.changed && (
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{`Re-graded · was ${task.regraded.from}`}</Typography>
+        <Typography
+          noWrap
+          sx={{ typography: "s3", color: "text.tertiary" }}
+        >{`Re-graded · was ${task.regraded.from}`}</Typography>
       )}
     </Stack>
   );
 }
-VerdictCauseChip.propTypes = { verdict: PropTypes.object, task: PropTypes.object };
+VerdictCauseChip.propTypes = {
+  verdict: PropTypes.object,
+  task: PropTypes.object,
+};
 
 /**
  * The recording, stated as absent.
@@ -614,17 +1084,54 @@ VerdictCauseChip.propTypes = { verdict: PropTypes.object, task: PropTypes.object
 function Recording({ turns }) {
   return (
     <Box sx={{ px: 2, pt: 1.5 }}>
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", letterSpacing: 0.4, textTransform: "uppercase", mb: 0.75 }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+          letterSpacing: 0.4,
+          textTransform: "none",
+          mb: 0.75,
+        }}
+      >
         Recording
       </Typography>
-      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ opacity: 0.45 }}>
-        <Iconify icon="solar:play-bold" width={18} sx={{ color: "text.subtitle" }} />
-        <Stack direction="row" alignItems="center" spacing={0.25} sx={{ flex: 1, height: 22 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{ opacity: 0.45 }}
+      >
+        <Iconify
+          icon="solar:play-bold"
+          width={20}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.25}
+          sx={{ flex: 1, height: 22 }}
+        >
           {Array.from({ length: 64 }, (_, i) => (
-            <Box key={i} sx={{ flex: 1, height: 2, borderRadius: 1, bgcolor: "text.disabled" }} />
+            <Box
+              key={i}
+              sx={{
+                flex: 1,
+                height: 2,
+                borderRadius: 1,
+                bgcolor: "text.disabled",
+              }}
+            />
           ))}
         </Stack>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           0:00 / 0:{String(turns * 4).padStart(2, "0")}
         </Typography>
       </Stack>
@@ -639,14 +1146,31 @@ Recording.propTypes = { turns: PropTypes.number };
 function TalkRatio({ agent }) {
   return (
     <Box sx={{ px: 2, pt: 1.5 }}>
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", letterSpacing: 0.4, textTransform: "uppercase", mb: 0.75 }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+          letterSpacing: 0.4,
+          textTransform: "none",
+          mb: 0.75,
+        }}
+      >
         Talk ratio
       </Typography>
-      <Stack direction="row" sx={{ height: 8, borderRadius: 1, overflow: "hidden", bgcolor: "background.neutral" }}>
+      <Stack
+        direction="row"
+        sx={{
+          height: 8,
+          borderRadius: 1,
+          overflow: "hidden",
+          bgcolor: "background.neutral",
+        }}
+      >
         <Box sx={{ width: `${agent}%`, bgcolor: "primary.main" }} />
         <Box sx={{ width: `${100 - agent}%`, bgcolor: "text.disabled" }} />
       </Stack>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
         {agent}% agent · {100 - agent}% customer
       </Typography>
     </Box>
@@ -674,13 +1198,18 @@ function ActionTrace({ task, stage, at, onScrub }) {
   const focus = app ? focusOf(steps[index]) : null;
 
   const line = (st) => {
-    if (st.action) return `${st.target || ""}${st.value ? ` = "${st.value}"` : ""}`;
-    if (st.tool) return `${st.tool}(${Object.entries(st.args || {}).map(([k, v]) => `${k}: ${v}`).join(", ")})`;
+    if (st.action)
+      return `${st.target || ""}${st.value ? ` = "${st.value}"` : ""}`;
+    if (st.tool)
+      return `${st.tool}(${Object.entries(st.args || {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ")})`;
     if (st.cmd) return st.cmd;
     if (st.subject) return st.subject;
     return st.obs || "";
   };
-  const verb = (st) => st.action || st.tool || st.kind || (st.cmd ? "shell" : "step");
+  const verb = (st) =>
+    st.action || st.tool || st.kind || (st.cmd ? "shell" : "step");
   const note = (st) => st.thought || st.note || st.result || st.out || "";
 
   return (
@@ -689,20 +1218,48 @@ function ActionTrace({ task, stage, at, onScrub }) {
         <Box sx={{ px: 2, pt: 1.5 }}>
           <Box
             sx={{
-              borderRadius: 1.25, overflow: "hidden", border: "1px solid", borderColor: "divider",
+              borderRadius: "8px",
+              overflow: "hidden",
+              border: "1px solid",
+              borderColor: "divider",
               bgcolor: "background.paper",
             }}
           >
             <Stack
-              direction="row" alignItems="center" spacing={1}
-              sx={{ px: 1.25, py: 0.75, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 1.25,
+                py: 0.75,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.neutral",
+              }}
             >
               <Stack direction="row" spacing={0.5}>
+                {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
                 {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
-                  <Box key={c} sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: c, opacity: 0.85 }} />
+                  <Box
+                    key={c}
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      bgcolor: c,
+                      opacity: 0.85,
+                    }}
+                  />
                 ))}
               </Stack>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                }}
+              >
                 {urlFor(app, state)}
               </Typography>
             </Stack>
@@ -710,8 +1267,11 @@ function ActionTrace({ task, stage, at, onScrub }) {
               <BrowserApp app={app} state={state} focus={focus} />
             </Box>
           </Box>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-            Step {index + 1} of {steps.length} — click a row to rewind the page to that point.
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
+          >
+            Step {index + 1} of {steps.length} — click a row to rewind the page
+            to that point.
           </Typography>
         </Box>
       )}
@@ -722,49 +1282,87 @@ function ActionTrace({ task, stage, at, onScrub }) {
           const future = i > index;
           return (
             <React.Fragment key={st.id || i}>
-            <Stack
-              direction="row" alignItems="flex-start" spacing={1.25}
-              {...clickable(() => onScrub(i))}
-              sx={{
-                px: 1.25, py: 0.875, borderRadius: 1, cursor: "pointer",
-                border: "1px solid",
-                borderColor: active ? "primary.main" : "divider",
-                bgcolor: "transparent",
-                opacity: future ? 0.45 : 1,
-                "&:hover": { bgcolor: "action.hover" },
-                ...focusRing,
-              }}
-            >
-              <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace", width: 22, flexShrink: 0 }}>
-                {String(i + 1).padStart(2, "0")}
-              </Typography>
-              <Box
+              <Stack
+                direction="row"
+                alignItems="flex-start"
+                spacing={1.25}
+                {...clickable(() => onScrub(i))}
                 sx={{
-                  px: 0.75, borderRadius: 0.5, flexShrink: 0,
-                  bgcolor: (t) => alpha("#EA580C", t.palette.mode === "dark" ? 0.18 : 0.1),
+                  px: 1.25,
+                  py: 0.875,
+                  borderRadius: 1,
+                  cursor: "pointer",
+                  border: "1px solid",
+                  borderColor: active ? "primary.main" : "divider",
+                  bgcolor: "transparent",
+                  opacity: future ? 0.45 : 1,
+                  "&:hover": { bgcolor: "action.hover" },
+                  ...focusRing,
                 }}
               >
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary", fontFamily: "ui-monospace, Menlo, monospace" }}>
-                  {verb(st)}
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.disabled",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    width: 22,
+                    flexShrink: 0,
+                  }}
+                >
+                  {String(i + 1).padStart(2, "0")}
                 </Typography>
-              </Box>
-              <Box flex={1} minWidth={0}>
-                <Typography sx={{ typography: "s2", fontFamily: "ui-monospace, Menlo, monospace", wordBreak: "break-word" }}>
-                  {line(st)}
+                <Box
+                  sx={{
+                    px: 0.75,
+                    borderRadius: "4px",
+                    flexShrink: 0,
+                    bgcolor: "status.warning.bg",
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      color: "text.primary",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
+                    {verb(st)}
+                  </Typography>
+                </Box>
+                <Box flex={1} minWidth={0}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {line(st)}
+                  </Typography>
+                  {note(st) && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {note(st)}
+                    </Typography>
+                  )}
+                </Box>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.disabled",
+                    flexShrink: 0,
+                  }}
+                >
+                  {((st.duration || 0) / 1000).toFixed(1)}s
                 </Typography>
-                {note(st) && (
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{note(st)}</Typography>
-                )}
-              </Box>
-              <Typography sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}>
-                {((st.duration || 0) / 1000).toFixed(1)}s
-              </Typography>
-            </Stack>
+              </Stack>
             </React.Fragment>
           );
         })}
         {steps.length === 0 && (
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
             This task recorded no steps.
           </Typography>
         )}
@@ -774,14 +1372,33 @@ function ActionTrace({ task, stage, at, onScrub }) {
 }
 
 ActionTrace.propTypes = {
-  task: PropTypes.object, stage: PropTypes.string, at: PropTypes.number, onScrub: PropTypes.func,
+  task: PropTypes.object,
+  stage: PropTypes.string,
+  at: PropTypes.number,
+  onScrub: PropTypes.func,
 };
 
 function Meta({ label, value }) {
   return (
-    <Stack direction="row" spacing={0.5} sx={{ px: 1, py: 0.5, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label} :</Typography>
-      <Typography sx={{ typography: "s3", color: "text.primary", fontWeight: 500 }}>{value}</Typography>
+    <Stack
+      direction="row"
+      spacing={0.5}
+      sx={{
+        px: 1,
+        py: 0.5,
+        borderRadius: "4px",
+        border: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {label} :
+      </Typography>
+      <Typography
+        sx={{ typography: "s3", color: "text.primary", fontWeight: 500 }}
+      >
+        {value}
+      </Typography>
     </Stack>
   );
 }
@@ -789,11 +1406,34 @@ Meta.propTypes = { label: PropTypes.string, value: PropTypes.any };
 
 function Cell({ label, value }) {
   return (
-    <Box sx={{ p: 1.75, borderBottom: "1px solid", borderRight: "1px solid", borderColor: "divider" }}>
-      <Typography noWrap sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", letterSpacing: 0.3, textTransform: "uppercase" }}>
+    <Box
+      sx={{
+        p: 1.75,
+        borderBottom: "1px solid",
+        borderRight: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography
+        noWrap
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+          letterSpacing: 0.3,
+          textTransform: "none",
+        }}
+      >
         {label}
       </Typography>
-      <Typography sx={{ typography: "m2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace", lineHeight: 1.3 }}>
+      <Typography
+        sx={{
+          typography: "m2",
+          fontWeight: 600,
+          fontFamily: "ui-monospace, Menlo, monospace",
+          lineHeight: 1.3,
+        }}
+      >
         {value}
       </Typography>
     </Box>
@@ -803,11 +1443,30 @@ Cell.propTypes = { label: PropTypes.string, value: PropTypes.any };
 
 function Attr({ label, value }) {
   return (
-    <Stack direction="row" spacing={2} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
-      <Typography sx={{ width: 96, flexShrink: 0, typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+    <Stack
+      direction="row"
+      spacing={2}
+      sx={{
+        px: 2,
+        py: 1.25,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography
+        sx={{
+          width: 96,
+          flexShrink: 0,
+          typography: "s3",
+          color: "text.tertiary",
+          fontFamily: "ui-monospace, Menlo, monospace",
+        }}
+      >
         {label}
       </Typography>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{value || "—"}</Typography>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        {value || "—"}
+      </Typography>
     </Stack>
   );
 }
@@ -819,9 +1478,21 @@ Attr.propTypes = { label: PropTypes.string, value: PropTypes.string };
   misses are reported and don't fail it.
 */
 const SUBGOAL_STATUS = {
-  met: { icon: "solar:check-circle-linear", color: "#16A34A", label: "Met" },
-  failed: { icon: "solar:close-circle-linear", color: "#DC2626", label: "Failed" },
-  inconclusive: { icon: "solar:question-circle-linear", color: "text.subtitle", label: "Inconclusive" },
+  met: {
+    icon: "solar:check-circle-linear",
+    color: "status.success.fg",
+    label: "Met",
+  },
+  failed: {
+    icon: "solar:close-circle-linear",
+    color: "status.danger.fg",
+    label: "Failed",
+  },
+  inconclusive: {
+    icon: "solar:question-circle-linear",
+    color: "text.tertiary",
+    label: "Inconclusive",
+  },
 };
 
 function SubGoalRollup({ task, env, envState }) {
@@ -829,11 +1500,25 @@ function SubGoalRollup({ task, env, envState }) {
   if (!items.length) return null;
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-      <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700, color: rollup.verdict === "failed" ? "#DC2626" : "text.primary" }}>
+      <Box
+        sx={{
+          px: 1.5,
+          py: 1,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            color:
+              rollup.verdict === "failed" ? "status.danger.fg" : "text.primary",
+          }}
+        >
           {rollupLine(rollup)}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {`${items.filter((x) => x.status === "met").length} of ${items.length} sub-goals met · score ${rollup.score}`}
         </Typography>
       </Box>
@@ -841,19 +1526,65 @@ function SubGoalRollup({ task, env, envState }) {
         const st = SUBGOAL_STATUS[x.status];
         return (
           <Stack
-            key={x.key} direction="row" alignItems="center" spacing={1}
-            sx={{ px: 1.5, py: 0.75, "&:not(:last-of-type)": { borderBottom: "1px solid", borderColor: "divider" } }}
+            key={x.key}
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              "&:not(:last-of-type)": {
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              },
+            }}
           >
-            <Iconify icon={st.icon} width={14} sx={{ color: st.color, flexShrink: 0 }} />
-            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{x.text}</Typography>
-            <Typography sx={{ typography: "s3", fontWeight: x.mark === "critical" ? 700 : 500, color: x.mark === "critical" ? "text.primary" : "text.subtitle", flexShrink: 0 }}>
-              {x.mark === "critical" ? "Critical · decides" : "Supporting · reported"}
+            <Iconify
+              icon={st.icon}
+              width={14}
+              sx={{ color: st.color, flexShrink: 0 }}
+            />
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {x.text}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", width: 76, textAlign: "right", flexShrink: 0 }}>{st.label}</Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: x.mark === "critical" ? 600 : 500,
+                color: x.mark === "critical" ? "text.primary" : "text.tertiary",
+                flexShrink: 0,
+              }}
+            >
+              {x.mark === "critical"
+                ? "Critical · decides"
+                : "Supporting · reported"}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                width: 76,
+                textAlign: "right",
+                flexShrink: 0,
+              }}
+            >
+              {st.label}
+            </Typography>
           </Stack>
         );
       })}
     </Box>
   );
 }
-SubGoalRollup.propTypes = { task: PropTypes.object, env: PropTypes.object, envState: PropTypes.object };
+SubGoalRollup.propTypes = {
+  task: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};

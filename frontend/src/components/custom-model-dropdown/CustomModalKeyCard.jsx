@@ -145,9 +145,7 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
             size="small"
             color="primary"
             sx={{
-              paddingX: (theme) => theme.spacing(3),
               minWidth: "90px",
-              height: (theme) => theme.spacing(38 / 8),
             }}
             onClick={() => setOpenModal(true)}
           >

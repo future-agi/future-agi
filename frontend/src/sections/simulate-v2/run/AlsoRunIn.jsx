@@ -1,7 +1,15 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Tooltip, Popover } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Tooltip,
+  Popover,
+  ButtonBase,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 
 /**
@@ -20,18 +28,35 @@ import Iconify from "src/components/iconify";
  * Renders nothing when no other environment tests this agent.
  */
 export default function AlsoRunIn({
-  candidates = [], value = [], onChange, agentVersion, disabled = false, disabledReason = "", variant = "button", hideLabel = false,
+  candidates = [],
+  value = [],
+  onChange,
+  agentVersion,
+  disabled = false,
+  disabledReason = "",
+  variant = "button",
+  hideLabel = false,
 }) {
   const [anchor, setAnchor] = useState(null);
   if (!candidates.length) return null;
 
-  const toggle = (id) => onChange?.(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
-  const picked = value.filter((id) => candidates.some((c) => c.envId === id && c.ready));
+  const toggle = (id) =>
+    onChange?.(
+      value.includes(id) ? value.filter((x) => x !== id) : [...value, id],
+    );
+  const picked = value.filter((id) =>
+    candidates.some((c) => c.envId === id && c.ready),
+  );
 
   const chips = (
     <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
       {candidates.map((c) => (
-        <EnvChip key={c.envId} candidate={c} on={picked.includes(c.envId)} onToggle={() => toggle(c.envId)} />
+        <EnvChip
+          key={c.envId}
+          candidate={c}
+          on={picked.includes(c.envId)}
+          onToggle={() => toggle(c.envId)}
+        />
       ))}
     </Stack>
   );
@@ -40,7 +65,9 @@ export default function AlsoRunIn({
     return (
       <Box>
         {!hideLabel && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.75 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}
+          >
             Also run in{agentVersion ? ` · agent ${agentVersion} in each` : ""}
           </Typography>
         )}
@@ -51,20 +78,26 @@ export default function AlsoRunIn({
 
   return (
     <>
-      <Tooltip arrow title={disabled ? disabledReason : "Run the same agent version in other environments too, as a group"}>
+      <Tooltip
+        arrow
+        title={
+          disabled
+            ? disabledReason
+            : "Run the same agent version in other environments too, as a group"
+        }
+      >
         <span>
           <Button
             size="small"
             variant="outlined"
             disabled={disabled}
             onClick={(e) => setAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="solar:layers-linear" width={13} />}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
+            startIcon={<Iconify icon="solar:layers-linear" width={14} />}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
             sx={{
-              typography: "s2", fontWeight: 600, fontSize: 12.5,
               color: "text.primary",
               borderColor: "divider",
-              px: 1.25, py: 0.5, minWidth: 0,
+              minWidth: 0,
               whiteSpace: "nowrap",
               "&:hover": {
                 borderColor: (t) => alpha(t.palette.text.primary, 0.4),
@@ -87,35 +120,65 @@ export default function AlsoRunIn({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{ paper: { sx: { width: 320, mt: 0.5 } } }}
       >
-        <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{ typography: "s3", fontWeight: 600, color: "text.primary" }}
+          >
             Also run in
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
-            {agentVersion ? `Agent ${agentVersion}` : "The same agent version"} in each — one run per
-            environment, started together and read side by side.
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontSize: 12,
+              mt: 0.25,
+            }}
+          >
+            {agentVersion ? `Agent ${agentVersion}` : "The same agent version"}{" "}
+            in each — one run per environment, started together and read side by
+            side.
           </Typography>
         </Box>
         <Box sx={{ px: 1.5, py: 1.25 }}>{chips}</Box>
         {picked.length > 0 && (
           <Stack
-            direction="row" alignItems="center"
-            sx={{ px: 1.5, py: 0.875, borderTop: "1px solid", borderColor: "divider" }}
+            direction="row"
+            alignItems="center"
+            sx={{
+              px: 1.5,
+              py: 0.875,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
           >
-            <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-              {picked.length + 1} runs · this environment and {picked.length} more
-            </Typography>
             <Typography
-              component="button"
+              sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+            >
+              {picked.length + 1} runs · this environment and {picked.length}{" "}
+              more
+            </Typography>
+            <ButtonBase
               onClick={() => onChange?.([])}
               sx={{
-                typography: "s3", fontWeight: 600, color: "text.secondary",
-                border: 0, bgcolor: "transparent", cursor: "pointer", p: 0,
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.secondary",
+                border: 0,
+                bgcolor: "transparent",
+                cursor: "pointer",
+                p: 0,
                 "&:hover": { color: "text.primary" },
               }}
             >
               Clear
-            </Typography>
+            </ButtonBase>
           </Stack>
         )}
       </Popover>
@@ -138,15 +201,19 @@ AlsoRunIn.propTypes = {
    can't run the same agent version yet stays listed, disabled, saying why. */
 function EnvChip({ candidate, on, onToggle }) {
   const chip = (
-    <Box
-      component="button"
+    <ButtonBase
       type="button"
       disabled={!candidate.ready}
       onClick={onToggle}
       aria-pressed={on}
       sx={{
-        display: "inline-flex", alignItems: "center", gap: 0.5,
-        height: 26, px: 0.875, borderRadius: 0.75, maxWidth: "100%",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        height: 26,
+        px: 0.875,
+        borderRadius: "4px",
+        maxWidth: "100%",
         border: "1px solid",
         borderColor: on ? "text.disabled" : "divider",
         bgcolor: on ? "action.selected" : "transparent",
@@ -154,25 +221,37 @@ function EnvChip({ candidate, on, onToggle }) {
         cursor: candidate.ready ? "pointer" : "default",
         opacity: candidate.ready ? 1 : 0.5,
         font: "inherit",
-        "&:hover": candidate.ready ? { bgcolor: on ? "action.selected" : "action.hover", borderColor: "text.disabled" } : {},
+        "&:hover": candidate.ready
+          ? {
+              bgcolor: on ? "action.selected" : "action.hover",
+              borderColor: "text.disabled",
+            }
+          : {},
       }}
     >
       <Iconify
-        icon={on ? "eva:checkmark-fill" : "mingcute:add-line"}
+        icon={on ? "solar:check-linear" : "solar:add-linear"}
         width={12}
-        sx={{ color: on ? "text.primary" : "text.subtitle", flexShrink: 0 }}
+        sx={{ color: on ? "text.primary" : "text.tertiary", flexShrink: 0 }}
       />
-      <Typography noWrap sx={{ typography: "s3", fontWeight: on ? 700 : 600, minWidth: 0 }}>
+      <Typography
+        noWrap
+        sx={{ typography: "s3", fontWeight: on ? 600 : 500, minWidth: 0 }}
+      >
         {candidate.envName}
       </Typography>
       {(candidate.envShown || candidate.envVersion) && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+        >
           environment {candidate.envShown || candidate.envVersion}
         </Typography>
       )}
-    </Box>
+    </ButtonBase>
   );
-  return candidate.ready ? chip : (
+  return candidate.ready ? (
+    chip
+  ) : (
     <Tooltip arrow title={candidate.reason}>
       <span style={{ display: "inline-flex", maxWidth: "100%" }}>{chip}</span>
     </Tooltip>

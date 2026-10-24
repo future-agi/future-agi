@@ -36,7 +36,7 @@ const GridTable = forwardRef(
     return (
       <Box height={"100%"}>
         <AgGridReact
-          rowHeight={42}
+          rowHeight={36}
           ref={ref}
           theme={agTheme}
           defaultColDef={defaultColDef}

@@ -1,12 +1,6 @@
+import SelectionBar from "src/components/selection-bar";
 import PropTypes from "prop-types";
-import {
-  Avatar,
-  AvatarGroup,
-  Box,
-  Button,
-  Divider,
-  Typography,
-} from "@mui/material";
+import { Avatar, AvatarGroup, Box, Button, Typography } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +19,8 @@ import {
   useCreateGraph,
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
+import ListToolbar from "src/components/list-toolbar";
+import PageHeader from "src/components/page-header";
 
 const PAGE_SIZE_DEFAULT = 25;
 
@@ -193,17 +189,13 @@ export default function AgentListView({ embedded = false }) {
                 "& .MuiAvatar-root": {
                   width: 24,
                   height: 24,
-                  fontSize: 10,
-                  border: "1px solid",
-                  borderColor: "primary.main",
-                  bgcolor: "background.paper",
-                  color: "primary.main",
+                  fontSize: 12,
                 },
               }}
             >
               {collabs.map((c, i) => (
                 <CustomTooltip size="small" arrow key={i} title={c?.email} show>
-                  <Avatar sx={{ width: 24, height: 24, fontSize: 10 }}>
+                  <Avatar sx={{ width: 24, height: 24, fontSize: 12 }}>
                     {(c?.name?.[0] || "?").toUpperCase()}
                   </Avatar>
                 </CustomTooltip>
@@ -281,60 +273,39 @@ export default function AgentListView({ embedded = false }) {
         display: "flex",
         flexDirection: "column",
         p: embedded ? 0 : 2,
-        gap: 1.5,
         overflow: "hidden",
         minHeight: 0,
       }}
     >
       {/* Header — the Agents landing supplies its own when embedded. */}
       {!embedded && (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Box>
-          <Typography
-            typography="m2"
-            fontWeight="fontWeightMedium"
-            color="text.primary"
-          >
-            Agent Playground
-          </Typography>
-          <Typography typography="s1" color="text.secondary">
-            Break down complex tasks into sequential steps that build upon each
-            other
-          </Typography>
-        </Box>
-        <Button
-          variant="outlined"
-          size="small"
-          sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
-          component="a"
-          href="https://docs.futureagi.com/docs/agent-playground"
-          target="_blank"
-        >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
-      </Box>
+        <PageHeader
+          title="Agent playground"
+          description="Break down complex tasks into sequential steps that build upon each other"
+          sx={{ mb: 0 }}
+          actions={
+            <Button
+              variant="outlined"
+              size="small"
+              sx={{ minWidth: 105 }}
+              component="a"
+              href="https://docs.futureagi.com/docs/agent-playground"
+              target="_blank"
+            >
+              <SvgColor
+                src="/assets/icons/agent/docs.svg"
+                sx={{ height: 16, width: 16, mr: 1 }}
+              />
+              <Typography typography="s2" fontWeight="fontWeightMedium">
+                View Docs
+              </Typography>
+            </Button>
+          }
+        />
       )}
 
       {/* Search + bulk actions / create */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+      <ListToolbar>
         <FormSearchField
           searchQuery={searchQuery}
           onChange={(e) => {
@@ -343,91 +314,32 @@ export default function AgentListView({ embedded = false }) {
           }}
           size="small"
           placeholder="Search"
-          sx={{
-            minWidth: "250px",
-            "& .MuiOutlinedInput-root": { height: "30px" },
-          }}
+          sx={{ width: 280 }}
         />
+        <Box sx={{ flex: 1 }} />
         {selectedCount > 0 ? (
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 2,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
-              px: 2,
-              py: 0.5,
-            }}
-          >
-            <Typography
-              typography="s1"
-              fontWeight="fontWeightMedium"
-              color="primary.main"
-            >
-              {selectedCount} Selected
-            </Typography>
-            <Divider
-              orientation="vertical"
-              flexItem
-              sx={{ borderRightWidth: 0.25 }}
-            />
-            <CustomTooltip
-              show={!canDeleteAgent}
-              type=""
-              size="small"
-              title="You don't have permission to delete agents."
-              arrow
-            >
-              <span>
-                <Button
-                  size="small"
-                  disabled={!canDeleteAgent}
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_delete.svg"
-                      sx={{ width: 20, height: 20, color: "text.disabled" }}
-                    />
-                  }
-                  sx={{ color: "text.secondary" }}
-                  onClick={() => setDeleteDialogOpen(true)}
-                >
-                  <Typography
-                    typography="s1"
-                    fontWeight="fontWeightRegular"
-                    color="text.primary"
-                  >
-                    Delete
-                  </Typography>
-                </Button>
-              </span>
-            </CustomTooltip>
-            <Button
-              size="small"
-              sx={{ color: "text.secondary" }}
-              onClick={() => setRowSelection({})}
-            >
-              <Typography
-                typography="s1"
-                fontWeight="fontWeightRegular"
-                color="text.primary"
-              >
-                Cancel
-              </Typography>
-            </Button>
-          </Box>
+          <SelectionBar
+            count={selectedCount}
+            onCancel={() => setRowSelection({})}
+            actions={[
+              {
+                label: "Delete",
+                icon: "solar:trash-bin-trash-linear",
+                onClick: () => setDeleteDialogOpen(true),
+                disabled: !canDeleteAgent,
+                tooltip: canDeleteAgent
+                  ? undefined
+                  : "You don't have permission to delete agents.",
+              },
+            ]}
+          />
         ) : embedded ? null : (
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             <Button
               variant="outlined"
               size="small"
-              sx={{ px: 1 }}
               startIcon={
-                <SvgColor
-                  src="/assets/icons/ic_docs_single.svg"
-                  sx={{ height: 20, width: 20 }}
-                />
+                <SvgColor src="/assets/icons/ic_docs_single.svg" width={20} />
               }
               component="a"
               href="https://docs.futureagi.com/docs/agent-playground"
@@ -451,10 +363,7 @@ export default function AgentListView({ embedded = false }) {
                   onClick={() => createAgent()}
                   disabled={!canCreateAgent}
                   startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_add.svg"
-                      sx={{ height: 20, width: 20 }}
-                    />
+                    <SvgColor src="/assets/icons/ic_add.svg" width={20} />
                   }
                 >
                   Create Agent
@@ -463,7 +372,7 @@ export default function AgentListView({ embedded = false }) {
             </CustomTooltip>
           </Box>
         )}
-      </Box>
+      </ListToolbar>
 
       {/* Table */}
       <DataTable

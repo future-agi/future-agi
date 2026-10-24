@@ -20,6 +20,7 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -149,7 +150,7 @@ export const ExtractEntitiesChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Extract Entities" : "Extract Entities"}
           </Typography>
           <IconButton
@@ -159,7 +160,7 @@ export const ExtractEntitiesChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -195,7 +196,7 @@ export const ExtractEntitiesChild = ({
             fullWidth
           />
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Typography fontWeight={700} fontSize="12px" color="text.secondary">
+            <Typography fontWeight={600} fontSize="12px" color="text.secondary">
               Instructions (To extract entities)
             </Typography>
             <FormTextFieldV2
@@ -208,7 +209,7 @@ export const ExtractEntitiesChild = ({
               maxRows={4}
               sx={{
                 backgroundColor: "background.neutral",
-                borderRadius: "10px",
+                borderRadius: "8px",
               }}
               placeholder="Enter instructions here"
             />
@@ -307,10 +308,12 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExtractEntities);
   return (
     <Drawer
       anchor="right"
       open={openExtractEntities}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -318,8 +321,7 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

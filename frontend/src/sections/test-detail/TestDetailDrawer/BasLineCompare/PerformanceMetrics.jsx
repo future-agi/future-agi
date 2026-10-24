@@ -26,15 +26,15 @@ const MetricCard = ({ title, value, change, changePercent, changeText }) => {
 
   // Get the appropriate color
   const changeColor = isPositive
-    ? "green.500"
+    ? "status.success.fg"
     : isNegative
-      ? "red.500"
+      ? "status.danger.fg"
       : "text.disabled";
 
   const changeBgColor = isPositive
-    ? "green.o5"
+    ? "status.success.bg"
     : isNegative
-      ? "red.o5"
+      ? "status.danger.bg"
       : "action.hover";
 
   // Get the change type text
@@ -44,7 +44,7 @@ const MetricCard = ({ title, value, change, changePercent, changeText }) => {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "background.paper",
       }}
     >
@@ -80,7 +80,7 @@ const MetricCard = ({ title, value, change, changePercent, changeText }) => {
               sx={{
                 bgcolor: changeBgColor,
                 padding: (theme) => theme.spacing(0.25, 1),
-                borderRadius: 0.5,
+                borderRadius: "4px",
               }}
             >
               {change !== null && `${change > 0 ? "+" : ""}${change}`}
@@ -152,7 +152,7 @@ export default function PerformanceMetrics({
               height: "24px",
               width: "24px",
               transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-              transition: "transform 0.3s ease",
+              transition: "transform 0.2s ease",
               transformOrigin: "center",
             }}
             src="/assets/icons/custom/lucide--chevron-down.svg"

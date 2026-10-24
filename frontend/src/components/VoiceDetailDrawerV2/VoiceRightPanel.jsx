@@ -109,36 +109,36 @@ const VoiceRightPanel = ({
       {
         label: "Call Analytics",
         value: TABS.ANALYTICS,
-        icon: "mdi:chart-line",
+        icon: "solar:graph-up-linear",
       },
       {
         label: "Evals",
         value: TABS.EVALUATIONS,
-        icon: "mdi:checkbox-marked-circle-outline",
+        icon: "solar:check-circle-linear",
       },
       {
         label: "Messages",
         value: TABS.MESSAGES,
-        icon: "mdi:message-text-outline",
+        icon: "solar:chat-round-line-linear",
       },
     ];
     if (hasLogs) {
       t.push({
         label: "Logs",
         value: TABS.LOGS,
-        icon: "mdi:format-list-bulleted",
+        icon: "solar:list-linear",
       });
     }
     t.push({
       label: "Attributes",
       value: TABS.ATTRIBUTES,
-      icon: "mdi:code-json",
+      icon: "solar:code-linear",
     });
     if (!hideAnnotationTab) {
       t.push({
         label: "Annotations",
         value: TABS.ANNOTATIONS,
-        icon: "mdi:pencil-outline",
+        icon: "solar:pen-linear",
       });
     }
 
@@ -146,7 +146,7 @@ const VoiceRightPanel = ({
       t.push({
         label: "Scenario",
         value: TABS.SCENARIO,
-        icon: "mdi:script-text-outline",
+        icon: "solar:document-text-linear",
       });
     }
     return t;
@@ -377,13 +377,12 @@ const VoiceRightPanel = ({
                 color="primary"
                 size="small"
                 disabled={data?.status !== TestRunExecutionStatus.COMPLETED}
-                startIcon={<Iconify icon="mdi:swap-horizontal" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:transfer-horizontal-linear" width={14} />
+                }
                 onClick={() => onCompareBaseline(true)}
                 sx={{
                   whiteSpace: "nowrap",
-                  fontSize: 11,
-                  height: 26,
-                  textTransform: "none",
                 }}
               >
                 Compare with baseline
@@ -493,17 +492,11 @@ const VoiceRightPanel = ({
                   <Button
                     size="small"
                     variant="outlined"
-                    startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                    startIcon={<Iconify icon="solar:add-linear" width={14} />}
                     onClick={() => onAction("annotate")}
                     sx={{
-                      textTransform: "none",
-                      fontSize: 12,
-                      fontWeight: 500,
                       borderColor: "divider",
                       color: "text.primary",
-                      borderRadius: "4px",
-                      px: 1.5,
-                      py: 0.25,
                     }}
                   >
                     Add Label

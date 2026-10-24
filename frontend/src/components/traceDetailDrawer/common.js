@@ -2,13 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
 const chipBackgroundColor = {
-  Passed: "green.o10",
-  Failed: "red.o10",
+  Passed: "status.success.bg",
+  Failed: "status.danger.bg",
 };
 
 const chipLabelColor = {
-  Passed: "green.500",
-  Failed: "red.500",
+  Passed: "status.success.fg",
+  Failed: "status.danger.fg",
 };
 
 const keywordMapping = {
@@ -42,17 +42,17 @@ export const getChipLabel = (data) => {
 const getColorBasedOnScore = (numericValue) => {
   let color, backgroundColor;
   if (numericValue <= 49) {
-    color = "red.500";
-    backgroundColor = "red.o10";
+    color = "status.danger.fg";
+    backgroundColor = "status.danger.bg";
   } else if (numericValue <= 79) {
-    color = "orange.500";
-    backgroundColor = "orange.o10";
+    color = "status.warning.fg";
+    backgroundColor = "status.warning.bg";
   } else if (numericValue <= 100) {
-    color = "green.500";
-    backgroundColor = "green.o10";
+    color = "status.success.fg";
+    backgroundColor = "status.success.bg";
   } else {
-    color = "green.500";
-    backgroundColor = "green.o10";
+    color = "status.success.fg";
+    backgroundColor = "status.success.bg";
   }
   return {
     color,
@@ -70,7 +70,7 @@ export const getChipColor = (data) => {
   } else if (Array.isArray(score)) {
     return "action.hover";
   }
-  return "red.o10";
+  return "status.danger.bg";
 };
 
 export const getFontColor = (data) => {
@@ -83,7 +83,7 @@ export const getFontColor = (data) => {
   } else if (Array.isArray(score)) {
     return "primary.main";
   }
-  return "red.500";
+  return "status.danger.fg";
 };
 
 // Fields pre-checked by default when adding to dataset

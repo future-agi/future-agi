@@ -29,7 +29,7 @@ const ColumnSection = ({ control, errors }) => {
           <Button
             variant="outlined"
             color="primary"
-            sx={{ borderRadius: "4px", textWrap: "nowrap", marginLeft: 1 }}
+            sx={{ textWrap: "nowrap", marginLeft: 1 }}
             size="small"
             onClick={addColumn}
             startIcon={

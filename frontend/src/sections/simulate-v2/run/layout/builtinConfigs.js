@@ -18,6 +18,7 @@ const CFG = {
   success_donut: {
     source: "tasks", chart: "donut", metric: "count",
     groupBy: "outcome_binary",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colorMap: { Successful: "#16A34A", Unsuccessful: "#DC2626", "Not measured": "#94A3B8" },
     drilldown: true,
     info: "The single-line answer: what share of tasks the agent actually completed. Everything else on this page tries to explain the delta between this number and 100%.",
@@ -25,6 +26,7 @@ const CFG = {
   outcome_donut: {
     source: "tasks", chart: "donut", metric: "count",
     groupBy: "status",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colorMap: { Passed: "#16A34A", Flaky: "#F59E0B", Failed: "#DC2626", "Not measured": "#94A3B8" },
     drilldown: true,
     info: "Splits the run's scenarios four ways: passed, flaky (passed on some attempts), failed, or not measured because something upstream of the agent broke. Grey = infrastructure; amber = an inconsistent agent.",
@@ -33,6 +35,7 @@ const CFG = {
   sentiment_donut: {
     source: "tasks", chart: "donut", metric: "count",
     groupBy: "sentiment",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colorMap: { positive: "#16A34A", neutral: "#94A3B8", negative: "#DC2626" },
     drilldown: true,
     info: "How the simulated caller sounded by the end. A big negative wedge even on passing tasks usually means the agent got the answer right the wrong way.",
@@ -40,6 +43,7 @@ const CFG = {
   disconnection_donut: {
     source: "tasks", chart: "donut", metric: "count",
     groupBy: "disconnection",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colorMap: { complete: "#7857FC", escalated: "#F59E0B", incomplete: "#94A3B8", timeout: "#DB2777", dropped: "#0EA5E9", error: "#DC2626" },
     drilldown: true,
     info: "How each task actually ended. Big Timeout/Error slices are infra smells; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task.",
@@ -92,6 +96,7 @@ const CFG = {
   voice_cost_breakdown: {
     source: "voice_pipeline", chart: "bar", metric: "sum_cost",
     groupBy: "pipeline_stage",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colorMap: { LLM: "#7857FC", TTS: "#0EA5E9", STT: "#16A34A", Transport: "#F59E0B" },
     info: "Per-call spend, split by voice-pipeline stage. If LLM dominates → overspending on tokens. If TTS/STT → look at voice provider tier.",
   },

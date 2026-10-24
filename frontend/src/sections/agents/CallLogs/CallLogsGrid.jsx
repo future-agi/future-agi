@@ -10,24 +10,13 @@ import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import {
-  Box,
-  Button,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
-  Skeleton,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Skeleton, Typography, useTheme } from "@mui/material";
 import {
   getCallLogsColumnDefs,
   useCallLogs,
   prefetchCallLogs,
 } from "../helper";
-import Iconify from "src/components/iconify";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import TestDetailSideDrawer from "src/sections/test-detail/TestDetailDrawer/TestDetailSideDrawer";
 import {
@@ -86,7 +75,7 @@ const CustomColLoadingSkeleton = () => (
     variant="rectangular"
     width="80%"
     height={15}
-    sx={{ mx: 1, borderRadius: 0.5 }}
+    sx={{ mx: 1, borderRadius: "4px" }}
   />
 );
 
@@ -133,12 +122,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       headerColumnBorder: false,
       wrapperBorder: { width: 0 },
       wrapperBorderRadius: 0,
-      rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+      rowBorder: { width: 1, color: theme.palette.divider },
       headerFontSize: "13px",
       headerFontWeight: 500,
       headerBackgroundColor: "transparent",
       headerTextColor: theme.palette.text.primary,
-      rowHoverColor: "rgba(120,87,252,0.04)",
+      rowHoverColor: theme.palette.action.hover,
     }),
     [theme],
   );
@@ -196,13 +185,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const rowId = params.data?.id || params.data?.trace_id;
       if (rowId && activeCallId && rowId === activeCallId) {
         return {
-          backgroundColor: "rgba(120, 87, 252, 0.08)",
+          backgroundColor: theme.palette.action.selected,
           cursor: "pointer",
         };
       }
       return { cursor: "pointer" };
     },
-    [activeCallId],
+    [activeCallId, theme.palette.action.selected],
   );
   // Reset the opaque chain synchronously whenever any query-shaping input
   // changes. A cursor is signed against the complete normalized request, not
@@ -736,10 +725,10 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               px: 1.5,
               py: 0.75,
               fontSize: 12,
-              color: "warning.main",
-              bgcolor: "warning.lighter",
+              color: "status.warning.fg",
+              bgcolor: "status.warning.bg",
               borderBottom: "1px solid",
-              borderColor: "warning.light",
+              borderColor: "status.warning.border",
             }}
           >
             {readMessage}
@@ -773,16 +762,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               cursorContinuationPaused
                 ? null
                 : NoRowsOverlay(
-                    <Typography
-                      sx={{
-                        fontSize: 14,
-                        fontWeight: 400,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {readMessage ||
-                        (showErrors ? "No error found" : "No calls found")}
-                    </Typography>,
+                    readMessage ||
+                      (showErrors ? "No error found" : "No calls found"),
                   )
             }
             getRowStyle={getRowStyle}
@@ -848,95 +829,28 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         />
 
         {/* Footer controls */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, borderTop: "1px solid var(--border-default)" }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={(e) => {
-                preserveRowsDuringRefreshRef.current = false;
-                retainedRefreshRowsRef.current = [];
-                cursorPagination.current.reset();
-                setPage(1);
-                setPageLimit(Number(e.target.value));
-              }}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {OBSERVE_LIST_PAGE_SIZE_OPTIONS.map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Pagination
-            count={isUsableListRead ? totalPages : 1}
-            variant="outlined"
-            shape="rounded"
-            page={isUsableListRead ? page : 1}
-            color="primary"
-            disabled={!isUsableListRead}
-            onChange={(e, value) => {
-              if (value === page) return;
-              preserveRowsDuringRefreshRef.current = false;
-              retainedRefreshRowsRef.current = [];
-              if (module === "project") dispatchObservePageChanged(value);
-              setPage(value);
-            }}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={{
-                  borderRadius: "4px",
-                  bgcolor: "background.paper",
-                }}
-                slots={{
-                  previous: () => (
-                    <Box display={"flex"} alignItems={"center"} gap={0.5}>
-                      <Iconify
-                        icon="octicon:chevron-left-24"
-                        width={18}
-                        height={18}
-                        sx={{
-                          path: { strokeWidth: 1.5 },
-                        }}
-                      />{" "}
-                      Back
-                    </Box>
-                  ),
-                  next: () => (
-                    <Box display={"flex"} alignItems={"center"} gap={0.5}>
-                      Next{" "}
-                      <Iconify
-                        icon="octicon:chevron-right-24"
-                        width={18}
-                        height={18}
-                        sx={{
-                          path: { strokeWidth: 1.5 },
-                        }}
-                      />
-                    </Box>
-                  ),
-                }}
-              />
-            )}
-          />
-        </Stack>
+        <DataTablePagination
+          page={(isUsableListRead ? page : 1) - 1}
+          pageSize={pageLimit}
+          pageCount={isUsableListRead ? totalPages : 1}
+          pageSizeOptions={OBSERVE_LIST_PAGE_SIZE_OPTIONS}
+          disabled={!isUsableListRead}
+          onPageSizeChange={(size) => {
+            preserveRowsDuringRefreshRef.current = false;
+            retainedRefreshRowsRef.current = [];
+            cursorPagination.current.reset();
+            setPage(1);
+            setPageLimit(size);
+          }}
+          onPageChange={(p) => {
+            const value = p + 1;
+            if (value === page) return;
+            preserveRowsDuringRefreshRef.current = false;
+            retainedRefreshRowsRef.current = [];
+            if (module === "project") dispatchObservePageChanged(value);
+            setPage(value);
+          }}
+        />
       </Box>
     </Box>
   );

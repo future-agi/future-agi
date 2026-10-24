@@ -1,18 +1,10 @@
-import {
-  Box,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box } from "@mui/material";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useQueryClient } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
 import React, { useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
-import Iconify from "../../../components/iconify";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { getOptimizationRunDetailColumDef } from "./common";
@@ -29,45 +21,12 @@ const OptimizationNoRowsOverlay = () => (
 
 const PAGE_SIZES = [10, 25, 50];
 
-const PreviousButton = () => (
-  <Box display={"flex"} alignItems={"center"} gap={0.5}>
-    <Iconify
-      icon="octicon:chevron-left-24"
-      width={18}
-      height={18}
-      sx={{ path: { strokeWidth: 1.5 } }}
-    />{" "}
-    Back
-  </Box>
-);
-
-const NextButton = () => (
-  <Box display={"flex"} alignItems={"center"} gap={0.5}>
-    Next{" "}
-    <Iconify
-      icon="octicon:chevron-right-24"
-      width={18}
-      height={18}
-      sx={{ path: { strokeWidth: 1.5 } }}
-    />
-  </Box>
-);
-
-const paginationSlots = {
-  previous: PreviousButton,
-  next: NextButton,
-};
-
-const paginationItemSx = {
-  borderRadius: "4px",
-  bgcolor: "background.paper",
-};
-
 const OptimizationRunDetail = () => {
   const gridTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [, setTotalPages] = useState(1);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const gridRef = useRef(null);
@@ -109,6 +68,7 @@ const OptimizationRunDetail = () => {
           const rows = data?.result?.table;
           const total = data?.result?.metadata?.total_rows;
           const totalPages = Math.ceil(total / pageSize);
+          setTotalRows(total || 0);
           if (totalPages !== totalPagesRef.current) {
             totalPagesRef.current = totalPages;
             setTotalPages(totalPages);
@@ -237,7 +197,7 @@ const OptimizationRunDetail = () => {
             ref={gridRef}
             theme={gridTheme}
             onGridReady={onGridReady}
-            rowHeight={65}
+            rowHeight={44}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             suppressServerSideFullWidthLoadingRow={true}
@@ -260,52 +220,16 @@ const OptimizationRunDetail = () => {
           />
         </Box>
 
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, py: 1.5 }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={handlePageLimitChange}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {PAGE_SIZES.map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Pagination
-            count={totalPages}
-            variant="outlined"
-            shape="rounded"
-            page={page}
-            color="primary"
-            onChange={handlePageChange}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={paginationItemSx}
-                slots={paginationSlots}
-              />
-            )}
-          />
-        </Stack>
+        <DataTablePagination
+          page={page - 1}
+          pageSize={pageLimit}
+          total={totalRows}
+          pageSizeOptions={PAGE_SIZES}
+          onPageChange={(p) => handlePageChange(null, p + 1)}
+          onPageSizeChange={(n) =>
+            handlePageLimitChange({ target: { value: n } })
+          }
+        />
       </Box>
     </Box>
   );

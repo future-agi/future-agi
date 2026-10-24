@@ -166,7 +166,8 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
     <Dialog
       open={open}
       onClose={() => onCloseClick()}
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
       aria-labelledby="upload-file-dialog-title"
       aria-describedby="upload-file-dialog-description"
@@ -198,7 +199,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
               Upload a File
             </Typography>
             <IconButton onClick={() => onCloseClick()}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText
@@ -249,7 +250,6 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
                     sx={{
                       paddingY: (theme) => theme.spacing(0.75),
                       paddingX: (theme) => theme.spacing(3),
-                      borderRadius: (theme) => theme.spacing(1),
                       background: (theme) => theme.palette.divider,
                       color: "text.primary",
                       borderColor: "text.disabled",

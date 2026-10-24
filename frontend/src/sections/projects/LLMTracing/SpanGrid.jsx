@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -254,12 +254,12 @@ const SpanGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: theme.typography.fontWeightMedium,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme],
     );
@@ -952,16 +952,7 @@ const SpanGrid = React.forwardRef(
             continuationNotice
               ? null
               : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {getQueryReadMessage(readStateRef.current) ||
-                      "No spans found"}
-                  </Typography>,
+                  getQueryReadMessage(readStateRef.current) || "No spans found",
                 )
           }
           onCellClicked={handleCellClick}

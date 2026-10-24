@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useRef } from "react";
 import { Helmet } from "react-helmet-async";
-import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
+import { Box, Divider, Paper, useTheme } from "@mui/material";
 import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import UsersView from "src/sections/projects/UsersView/UsersView";
 import UsersPageTabBar from "src/sections/projects/UsersView/UsersPageTabBar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -100,46 +101,11 @@ const UserList = () => {
         {/* === Header === */}
         <Paper sx={headerPaperStyles}>
           <Box display="flex" flexDirection="column" width="100%">
-            <Box
-              display="flex"
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ minHeight: 38 }}
-            >
-              <Box display="flex" alignItems="center" gap={1.5}>
-                <Box
-                  sx={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 0.75,
-                    height: 26,
-                    px: 1.5,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    bgcolor: "background.paper",
-                  }}
-                >
-                  <Iconify
-                    icon="mdi:account-multiple-outline"
-                    width={16}
-                    sx={{ color: "text.secondary" }}
-                  />
-                  <Typography
-                    variant="body2"
-                    sx={{ fontWeight: 600, color: "text.primary" }}
-                  >
-                    Users
-                  </Typography>
-                </Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "text.secondary", ml: 0.5 }}
-                >
-                  All users across your projects
-                </Typography>
-              </Box>
-            </Box>
+            <PageHeader
+              title="Users"
+              description="All users across your projects"
+              sx={{ mb: 0 }}
+            />
             <Divider sx={{ mt: 1.5, borderColor: "divider" }} />
           </Box>
         </Paper>

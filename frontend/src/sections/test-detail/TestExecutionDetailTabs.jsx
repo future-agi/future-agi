@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Tab, Tabs, useTheme } from "@mui/material";
+import { Box, Button, Tab, Tabs } from "@mui/material";
+import TabSvgIcon from "src/components/tabs/tab-svg-icon";
 import SvgColor from "src/components/svg-color";
 import { useTestDetailStoreShallow } from "./states";
 import { useFixMyAgentBlocked } from "./common";
@@ -15,7 +16,6 @@ const TestExecutionDetailTabsComponent = ({
   onTabChange,
   agentType: _agentType,
 }) => {
-  const theme = useTheme();
   const { setFixMyAgentDrawerOpen } = useTestDetailStoreShallow((state) => ({
     setFixMyAgentDrawerOpen: state.setFixMyAgentDrawerOpen,
   }));
@@ -50,64 +50,14 @@ const TestExecutionDetailTabsComponent = ({
         alignItems: "center",
       }}
     >
-      <Tabs
-        value={currentTab?.id || tabs[0]?.id}
-        onChange={handleTabChange}
-        textColor="primary"
-        TabIndicatorProps={{
-          style: {
-            backgroundColor: theme.palette.primary.main,
-          },
-        }}
-        sx={{
-          minHeight: 42,
-          "& .MuiTabs-flexContainer": {
-            gap: 0,
-          },
-          "& .MuiTab-root": {
-            minHeight: 42,
-            paddingX: theme.spacing(1.5),
-            margin: theme.spacing(0),
-            marginRight: theme.spacing(0) + "!important",
-            minWidth: "auto",
-            fontWeight: "fontWeightMedium",
-            typography: "s1",
-            color: "text.disabled",
-            textTransform: "none",
-            transition: theme.transitions.create(
-              ["color", "background-color"],
-              {
-                duration: theme.transitions.duration.short,
-              },
-            ),
-            "&.Mui-selected": {
-              color: "primary.main",
-              fontWeight: "fontWeightSemiBold",
-            },
-            "&:not(.Mui-selected)": {
-              color: `${theme.palette.text.disabled}`,
-            },
-            "&:first-of-type": {
-              marginLeft: 0,
-            },
-          },
-        }}
-      >
+      <Tabs value={currentTab?.id || tabs[0]?.id} onChange={handleTabChange}>
         {tabs.map((tab) => {
           return (
             <Tab
               key={tab.id}
               label={tab.title}
               value={tab.id}
-              icon={
-                <SvgColor
-                  sx={{
-                    height: "20px",
-                    width: "20px",
-                  }}
-                  src={tab.icon}
-                />
-              }
+              icon={<TabSvgIcon src={tab.icon} size={20} />}
             />
           );
         })}

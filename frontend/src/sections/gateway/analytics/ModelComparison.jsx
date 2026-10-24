@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Typography,
   Skeleton,
   Stack,
@@ -16,6 +15,7 @@ import {
   TableSortLabel,
   InputAdornment,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { useAnalyticsModels } from "./hooks/useAnalyticsModels";
 
@@ -171,7 +171,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
 
   if (isLoading) {
     return (
-      <Card sx={{ p: 3 }}>
+      <Section variant="panel" sx={{ p: 3 }}>
         <Stack spacing={2}>
           <Skeleton variant="text" width={200} height={24} />
           <Skeleton
@@ -188,7 +188,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
             />
           ))}
         </Stack>
-      </Card>
+      </Section>
     );
   }
 
@@ -209,7 +209,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
@@ -219,7 +219,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
         </Typography>
       </Stack>
 
-      <Card sx={{ p: 0 }}>
+      <Section variant="panel" sx={{ p: 0 }}>
         {sortedModels.length > 0 ? (
           <TableContainer>
             <Table size="small">
@@ -284,7 +284,7 @@ const ModelComparison = ({ start, end, gatewayId }) => {
             </Typography>
           </Box>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 };

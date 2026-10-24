@@ -11,6 +11,7 @@ import {
   Stack,
   Tooltip,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -24,19 +25,19 @@ import { canonicalEntries, canonicalValues } from "src/utils/utils";
 const TYPE_CFG = {
   code: {
     label: "Code",
-    icon: "mdi:code-braces",
-    color: "#f59e0b",
-    bg: "rgba(245,158,11,0.1)",
+    icon: "solar:code-linear",
+    color: "status.warning.fg",
+    bg: "status.warning.bg",
   },
   agent: {
     label: "Agent",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
     color: "accent.pass",
     bg: "rgba(22,163,74,0.1)",
   },
   llm: {
     label: "LLM",
-    icon: "mdi:brain",
+    icon: "solar:brain-linear",
     color: "accent.brand",
     bg: "rgba(120,87,252,0.1)",
   },
@@ -96,7 +97,7 @@ const EvalRow = ({
   const t = isComposite
     ? {
         label: "Composite",
-        icon: "mdi:layers-outline",
+        icon: "solar:layers-linear",
         color: "accent.violet",
         bg: "rgba(139,92,246,0.1)",
       }
@@ -139,15 +140,17 @@ const EvalRow = ({
       }}
     >
       {/* ── Main clickable row ── */}
-      <Box
+      <ButtonBase
+        component="div"
         onClick={() => setOpen((p) => !p)}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
+          textAlign: "left",
           alignItems: "center",
           gap: 0.75,
           px: 1.25,
           py: 0.85,
-          cursor: "pointer",
         }}
       >
         {showRun && !isProjectEvals && (
@@ -186,8 +189,8 @@ const EvalRow = ({
             px: 0.6,
             py: 0.15,
             borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 700,
+            fontSize: "12px",
+            fontWeight: 600,
             color: t.color,
             bgcolor: t.bg,
             flexShrink: 0,
@@ -208,7 +211,9 @@ const EvalRow = ({
                 width={14}
                 sx={{
                   color:
-                    rawStatus === "notstarted" ? "#f59e0b" : "primary.main",
+                    rawStatus === "notstarted"
+                      ? "status.warning.fg"
+                      : "primary.main",
                   flexShrink: 0,
                 }}
               />
@@ -219,7 +224,7 @@ const EvalRow = ({
           <Tooltip title="Completed" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
-                icon="mdi:check-circle"
+                icon="solar:check-circle-bold"
                 width={14}
                 sx={{ color: "accent.pass", flexShrink: 0 }}
               />
@@ -230,7 +235,7 @@ const EvalRow = ({
           <Tooltip title="Error" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
-                icon="mdi:alert-circle"
+                icon="solar:danger-circle-linear"
                 width={14}
                 sx={{ color: "accent.fail", flexShrink: 0 }}
               />
@@ -241,9 +246,9 @@ const EvalRow = ({
           <Tooltip title="User stopped evaluation" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
-                icon="mdi:stop-circle"
+                icon="solar:stop-circle-linear"
                 width={14}
-                sx={{ color: "#f59e0b", flexShrink: 0 }}
+                sx={{ color: "status.warning.fg", flexShrink: 0 }}
               />
             </Box>
           </Tooltip>
@@ -264,8 +269,8 @@ const EvalRow = ({
                   sx={{ p: 0.4 }}
                 >
                   <Iconify
-                    icon="mdi:stop-circle-outline"
-                    width={17}
+                    icon="solar:stop-circle-linear"
+                    width={16}
                     sx={{ color: "error.main" }}
                   />
                 </IconButton>
@@ -279,9 +284,11 @@ const EvalRow = ({
                 >
                   <Iconify
                     icon={
-                      isCompleted ? "mdi:refresh" : "mdi:play-circle-outline"
+                      isCompleted
+                        ? "solar:refresh-linear"
+                        : "solar:play-circle-linear"
                     }
-                    width={17}
+                    width={16}
                     sx={{ color: "primary.main" }}
                   />
                 </IconButton>
@@ -295,8 +302,8 @@ const EvalRow = ({
                 sx={{ p: 0.4 }}
               >
                 <Iconify
-                  icon="mdi:pencil-outline"
-                  width={15}
+                  icon="solar:pen-linear"
+                  width={16}
                   sx={{ color: "text.secondary" }}
                 />
               </IconButton>
@@ -318,8 +325,8 @@ const EvalRow = ({
                 sx={{ p: 0.4, "&:hover": { color: "error.main" } }}
               >
                 <Iconify
-                  icon="mdi:trash-can-outline"
-                  width={15}
+                  icon="solar:trash-bin-trash-linear"
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </IconButton>
@@ -328,11 +335,13 @@ const EvalRow = ({
         </Box>
 
         <Iconify
-          icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+          }
           width={16}
           sx={{ color: "text.disabled", flexShrink: 0 }}
         />
-      </Box>
+      </ButtonBase>
 
       {/* ── Subtitle: mapping + time ── */}
       <Box
@@ -354,7 +363,7 @@ const EvalRow = ({
             <Typography
               key={variable}
               variant="caption"
-              sx={{ fontSize: "11px", color: "text.secondary" }}
+              sx={{ fontSize: "12px", color: "text.secondary" }}
             >
               <Box
                 component="span"
@@ -362,7 +371,7 @@ const EvalRow = ({
                   fontFamily: "monospace",
                   fontWeight: 600,
                   color: "text.primary",
-                  fontSize: "11px",
+                  fontSize: "12px",
                 }}
               >
                 {variable}
@@ -386,7 +395,7 @@ const EvalRow = ({
         {item.updated_at && (
           <Typography
             variant="caption"
-            sx={{ fontSize: "10px", color: "text.disabled", ml: "auto" }}
+            sx={{ fontSize: "12px", color: "text.disabled", ml: "auto" }}
           >
             {ago(item.updated_at)}
           </Typography>
@@ -407,13 +416,13 @@ const EvalRow = ({
               confirmAction === "delete" ? "error.main" : "primary.main",
             bgcolor:
               confirmAction === "delete"
-                ? "rgba(220,38,38,0.04)"
-                : "rgba(124,77,255,0.04)",
+                ? "status.danger.bg"
+                : "status.discovery.bg",
           }}
         >
           <Typography
             variant="caption"
-            sx={{ fontSize: "11.5px", flex: 1, color: "text.secondary" }}
+            sx={{ fontSize: "12px", flex: 1, color: "text.secondary" }}
           >
             {confirmAction === "delete"
               ? "Delete this evaluation and its results?"
@@ -426,10 +435,7 @@ const EvalRow = ({
             variant="text"
             onClick={() => setConfirmAction(null)}
             sx={{
-              textTransform: "none",
-              fontSize: "11px",
               minWidth: 0,
-              px: 1,
               color: "text.secondary",
             }}
           >
@@ -446,11 +452,7 @@ const EvalRow = ({
               setConfirmAction(null);
             }}
             sx={{
-              textTransform: "none",
-              fontSize: "11px",
               minWidth: 0,
-              px: 1.5,
-              borderRadius: "4px",
             }}
           >
             {confirmAction === "delete"
@@ -475,10 +477,7 @@ const EvalRow = ({
             py: 1,
             borderTop: "1px solid",
             borderColor: "divider",
-            bgcolor: (th) =>
-              th.palette.mode === "dark"
-                ? "rgba(255,255,255,0.02)"
-                : "rgba(0,0,0,0.012)",
+            bgcolor: "background.neutral",
           }}
         >
           <Stack spacing={1.25}>
@@ -499,7 +498,7 @@ const EvalRow = ({
                     >
                       <Tag label={v} mono />
                       <Iconify
-                        icon="mdi:arrow-right-thin"
+                        icon="solar:arrow-right-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -515,12 +514,12 @@ const EvalRow = ({
               <Sec title="Composite">
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                   <CChip
-                    icon="mdi:layers-outline"
+                    icon="solar:layers-linear"
                     label={`${item.aggregation_function?.replace(/_/g, " ") || "weighted avg"}`}
                   />
                   {item.children_count != null && (
                     <CChip
-                      icon="mdi:format-list-numbered"
+                      icon="solar:list-ordered-linear"
                       label={`${item.children_count} children`}
                     />
                   )}
@@ -529,10 +528,12 @@ const EvalRow = ({
             ) : (
               <Sec title="Model & Runtime">
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                  {item.model && <CChip icon="mdi:chip" label={item.model} />}
+                  {item.model && (
+                    <CChip icon="solar:cpu-linear" label={item.model} />
+                  )}
                   {rc.agent_mode && (
                     <CChip
-                      icon="mdi:robot-outline"
+                      icon="solar:bot-linear"
                       label={
                         rc.agent_mode === "agent"
                           ? "Agent"
@@ -546,10 +547,10 @@ const EvalRow = ({
                     <CChip
                       icon={
                         item.output_type === "pass_fail"
-                          ? "mdi:check-decagram"
+                          ? "solar:check-circle-bold"
                           : item.output_type === "percentage"
                             ? "mdi:percent"
-                            : "mdi:format-list-bulleted"
+                            : "solar:list-linear"
                       }
                       label={
                         item.output_type === "pass_fail"
@@ -571,17 +572,17 @@ const EvalRow = ({
               <Sec title="Advanced">
                 <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                   {rc.check_internet && (
-                    <CChip icon="mdi:web" label="Internet" hl />
+                    <CChip icon="solar:global-linear" label="Internet" hl />
                   )}
                   {rc.summary && rc.summary !== "concise" && (
                     <CChip
-                      icon="mdi:text-short"
+                      icon="solar:notes-linear"
                       label={`Summary: ${rc.summary}`}
                     />
                   )}
                   {rc.pass_threshold != null && rc.pass_threshold !== 0.5 && (
                     <CChip
-                      icon="mdi:target"
+                      icon="solar:target-linear"
                       label={`Threshold: ${rc.pass_threshold}`}
                     />
                   )}
@@ -609,26 +610,17 @@ const EvalRow = ({
             {/* ── Tags ── */}
             {item.eval_template_tags?.length > 0 && (
               <Sec title="Tags">
-                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.4 }}>
-                  {item.eval_template_tags.slice(0, 8).map((tag) => (
-                    <Chip
-                      key={tag}
-                      label={tag}
-                      size="small"
-                      variant="outlined"
-                      sx={{ height: 18, fontSize: "10px", borderRadius: "4px" }}
-                    />
-                  ))}
+                <Typography sx={{ fontSize: "12px", color: "text.primary" }}>
+                  {item.eval_template_tags.slice(0, 8).join(" · ")}
                   {item.eval_template_tags.length > 8 && (
-                    <Typography
-                      variant="caption"
-                      color="text.disabled"
-                      sx={{ fontSize: "10px", lineHeight: "18px" }}
+                    <Box
+                      component="span"
+                      sx={{ color: "text.tertiary", ml: 0.75 }}
                     >
                       +{item.eval_template_tags.length - 8}
-                    </Typography>
+                    </Box>
                   )}
-                </Box>
+                </Typography>
               </Sec>
             )}
           </Stack>
@@ -644,9 +636,9 @@ const Sec = ({ title, children }) => (
   <Box>
     <Typography
       sx={{
-        fontSize: "9px",
-        fontWeight: 700,
-        textTransform: "uppercase",
+        fontSize: "12px",
+        fontWeight: 600,
+        textTransform: "none",
         letterSpacing: "0.6px",
         color: "text.disabled",
         mb: 0.3,
@@ -659,32 +651,12 @@ const Sec = ({ title, children }) => (
 );
 
 const Tag = ({ label, mono, outlined }) => (
-  <Box
-    sx={{
-      px: 0.6,
-      py: 0.1,
-      borderRadius: "3px",
-      fontSize: "11px",
-      fontWeight: 500,
-      lineHeight: "16px",
-      ...(mono
-        ? {
-            fontFamily: "monospace",
-            bgcolor: "action.selected",
-            color: "text.primary",
-          }
-        : {}),
-      ...(outlined
-        ? {
-            border: "1px solid",
-            borderColor: "divider",
-            color: "text.secondary",
-          }
-        : {}),
-    }}
-  >
-    {label}
-  </Box>
+  <Chip
+    size="small"
+    variant={outlined ? "outlined" : "filled"}
+    label={label}
+    sx={mono ? { fontFamily: "monospace" } : undefined}
+  />
 );
 
 const CChip = ({ icon, label, hl }) => (
@@ -693,14 +665,9 @@ const CChip = ({ icon, label, hl }) => (
     icon={<Iconify icon={icon} width={12} />}
     label={label}
     sx={{
-      height: 20,
-      fontSize: "10px",
-      fontWeight: 500,
-      borderRadius: "4px",
-      bgcolor: hl ? "rgba(33,150,243,0.08)" : "background.neutral",
-      color: hl ? "info.main" : "text.secondary",
+      bgcolor: hl ? "status.info.bg" : "background.neutral",
+      color: hl ? "status.info.fg" : "text.secondary",
       "& .MuiChip-icon": {
-        fontSize: 12,
         ml: 0.25,
         color: hl ? "info.main" : "text.secondary",
       },
@@ -713,7 +680,7 @@ const Row = ({ label, value }) => (
   <Box sx={{ display: "flex", gap: 0.75 }}>
     <Typography
       sx={{
-        fontSize: "11px",
+        fontSize: "12px",
         color: "text.disabled",
         width: 55,
         flexShrink: 0,
@@ -721,7 +688,7 @@ const Row = ({ label, value }) => (
     >
       {label}
     </Typography>
-    <Typography sx={{ fontSize: "11px", color: "text.primary" }} noWrap>
+    <Typography sx={{ fontSize: "12px", color: "text.primary" }} noWrap>
       {value}
     </Typography>
   </Box>
@@ -820,13 +787,9 @@ const SavedEvalsList = ({
           <Button
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:plus" width={14} />}
+            startIcon={<Iconify icon="solar:add-linear" width={14} />}
             onClick={handleAddClick}
             sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              fontWeight: 500,
-              borderRadius: "6px",
               flexShrink: 0,
             }}
           >
@@ -893,13 +856,10 @@ const SavedEvalsList = ({
                 size="small"
                 variant="outlined"
                 color="error"
-                startIcon={<Iconify icon="mdi:trash-can-outline" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:trash-bin-trash-linear" width={14} />
+                }
                 onClick={() => setConfirmBulkDelete(true)}
-                sx={{
-                  textTransform: "none",
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                }}
               >
                 Delete
               </Button>
@@ -908,16 +868,11 @@ const SavedEvalsList = ({
           <Button
             size="small"
             variant="contained"
-            startIcon={<Iconify icon="mdi:play-circle-outline" width={16} />}
+            startIcon={<Iconify icon="solar:play-circle-linear" width={16} />}
             onClick={async () => {
               const toRun = hasSel ? selected : evals;
               await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
               onClose?.();
-            }}
-            sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              borderRadius: "6px",
             }}
           >
             {hasSel
@@ -940,7 +895,6 @@ const SavedEvalsList = ({
             color="error"
             size="small"
             onClick={handleBulkDelete}
-            sx={{ paddingX: "24px" }}
           >
             Delete
           </Button>

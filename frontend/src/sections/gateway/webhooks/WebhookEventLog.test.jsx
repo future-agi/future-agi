@@ -41,7 +41,7 @@ describe("WebhookEventLog", () => {
 
     const table = within(screen.getByRole("table"));
     expect(table.getByText("error.occurred")).toBeInTheDocument();
-    expect(table.getByText("failed")).toBeInTheDocument();
+    expect(table.getByText("Failed")).toBeInTheDocument();
     expect(table.getByText("2/5")).toBeInTheDocument();
     expect(table.getByText("503")).toBeInTheDocument();
     expect(table.getByText("temporary delivery failure")).toBeInTheDocument();

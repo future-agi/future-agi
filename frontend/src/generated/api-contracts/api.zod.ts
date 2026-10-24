@@ -10476,7 +10476,7 @@ export const FalconAiSkillsListResponse = zod.object({
 export const falconAiSkillsCreateBodyNameMax = 100;
 
 export const falconAiSkillsCreateBodyDescriptionDefault = ``;
-export const falconAiSkillsCreateBodyIconDefault = `mdi:star`;
+export const falconAiSkillsCreateBodyIconDefault = `solar:star-bold`;
 export const falconAiSkillsCreateBodyIconMax = 50;
 
 export const falconAiSkillsCreateBodyToolNamesDefault = [];

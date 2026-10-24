@@ -229,7 +229,9 @@ const PlaceholdersList = ({ onValidationChange }) => {
             <Box
               sx={{
                 border: "1px solid",
-                borderColor: errors[placeholderName] ? "red.500" : "divider",
+                borderColor: errors[placeholderName]
+                  ? "status.danger.border"
+                  : "divider",
                 "& .monaco-editor .lines-content.monaco-editor-background": {
                   backgroundColor: "var(--bg-paper) !important",
                 },
@@ -257,7 +259,7 @@ const PlaceholdersList = ({ onValidationChange }) => {
             </Box>
             <HelperText
               text={errors[placeholderName]?.message}
-              sx={{ color: "red.500" }}
+              sx={{ color: "status.danger.fg" }}
             />
           </Box>
         ))}

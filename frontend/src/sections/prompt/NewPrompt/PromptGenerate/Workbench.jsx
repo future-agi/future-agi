@@ -103,7 +103,7 @@ const Workbench = ({
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mdi:plus" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={() => {
                 append({
                   id: getRandomId(),

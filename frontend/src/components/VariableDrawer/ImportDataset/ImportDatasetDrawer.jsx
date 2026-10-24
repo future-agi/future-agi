@@ -25,6 +25,7 @@ import {
   buildVariableData,
   getMappingValue,
 } from "./utils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
   const { setValuesChanged } = usePromptWorkbenchContext();
@@ -129,9 +130,9 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
             <Typography fontSize={16} fontWeight={600} color={"text.primary"}>
               Import from Dataset
             </Typography>
-            <IconButton onClick={onClose} sx={{ p: 0 }}>
+            <IconButton onClick={onClose}>
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 color="text.primary"
                 width="24px"
               />
@@ -197,7 +198,7 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               scrollbarWidth: "none",
               msOverflowStyle: "none",
               "&::-webkit-scrollbar": {
@@ -206,7 +207,7 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
             }}
           >
             <Box sx={{ p: theme.spacing(2), pt: theme.spacing(1) }}>
-              <Typography fontSize={14} fontWeight={600} color={"text.primary"}>
+              <Typography fontSize={13} fontWeight={600} color={"text.primary"}>
                 Map columns to variable
               </Typography>
               <ShowComponent condition={datasetValue && isLoadingDatasetDetail}>
@@ -270,7 +271,6 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
               disabled={!isFormValid}
               variant="contained"
               color="primary"
-              sx={{ px: theme.spacing(8) }}
             >
               Apply
             </Button>
@@ -288,11 +288,13 @@ ImportDatasetDrawerChild.propTypes = {
 };
 
 const ImportDatasetDrawer = ({ open, onClose, variables, setVariableData }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       ModalProps={{
         BackdropProps: {
           style: { backgroundColor: "transparent" },

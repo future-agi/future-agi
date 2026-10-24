@@ -1,8 +1,20 @@
 import PropTypes from "prop-types";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Chip, Collapse, IconButton, Tooltip, Menu, MenuItem, ListItemText } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Collapse,
+  IconButton,
+  Tooltip,
+  Menu,
+  MenuItem,
+  ListItemText,
+  Tab,
+  Tabs,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
 import { connectedAgentPath } from "../../improvements/improvementNav";
@@ -40,10 +52,13 @@ import { scenarioTitle } from "../../_mock/scenarios";
 
 /* A change that fixes a critical scenario outranks one that lifts the average. */
 const priorityOf = (p, tasks) => {
-  const blockers = p.addresses.filter((id) => tasks.find((t) => t.id === id)?.critical).length;
-  if (blockers) return { label: "Critical", color: "#DC2626", level: 0 };
-  if (p.addresses.length > 2) return { label: "High", color: "#CA8A04", text: "text.primary", level: 1 };
-  return { label: "Medium", color: "#6B7280", level: 2 };
+  const blockers = p.addresses.filter(
+    (id) => tasks.find((t) => t.id === id)?.critical,
+  ).length;
+  if (blockers) return { label: "Critical", role: "danger", level: 0 };
+  if (p.addresses.length > 2)
+    return { label: "High", role: "warning", text: "text.primary", level: 1 };
+  return { label: "Medium", role: "neutral", level: 2 };
 };
 
 /*
@@ -59,12 +74,18 @@ const analyzedRuns = new Set();
 const SCAN_MS = 9000;
 const hashId = (s) => {
   let h = 0;
-  for (let i = 0; i < String(s).length; i += 1) h = ((h << 5) - h + String(s).charCodeAt(i)) | 0;
+  for (let i = 0; i < String(s).length; i += 1)
+    h = ((h << 5) - h + String(s).charCodeAt(i)) | 0;
   return Math.abs(h);
 };
 const readMs = (t, base) => {
   const outcome = outcomeOf(t);
-  const weight = outcome === "failed" || outcome === "flaky" ? 1.35 : outcome === "unmeasured" ? 0.6 : 0.85;
+  const weight =
+    outcome === "failed" || outcome === "flaky"
+      ? 1.35
+      : outcome === "unmeasured"
+        ? 0.6
+        : 0.85;
   return Math.round(base * weight * (0.7 + (hashId(t?.id) % 60) / 100));
 };
 
@@ -82,36 +103,6 @@ const liveWhy = (why, n) => {
   );
 };
 
-function TabButton({ active, onClick, icon, children, disabled }) {
-  return (
-    <Box
-      role="tab"
-      aria-selected={!!active}
-      {...clickable(disabled ? null : onClick, { role: "tab", disabled })}
-      sx={{
-        ...focusRing,
-        display: "inline-flex", alignItems: "center", gap: 0.5,
-        py: 1.25, cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.45 : 1,
-        borderBottom: "2px solid",
-        borderColor: active ? "text.primary" : "transparent",
-        color: active ? "text.primary" : "text.subtitle",
-        "&:hover": { color: "text.primary" },
-      }}
-    >
-      <Iconify icon={icon} width={14} />
-      <Typography sx={{ typography: "s2", fontWeight: active ? 700 : 500 }}>{children}</Typography>
-    </Box>
-  );
-}
-TabButton.propTypes = {
-  active: PropTypes.bool,
-  onClick: PropTypes.func,
-  icon: PropTypes.string,
-  children: PropTypes.node,
-  disabled: PropTypes.bool,
-};
-
 /*
   Which of the agent's constraints a fix touches, in one quiet line — each
   named, with what the fix does to it and whether that's allowed. A fix the
@@ -124,8 +115,15 @@ function ScopeLine({ scope, available, onChangeConstraints }) {
     <>
       {" · "}
       <Box
-        component="span" {...clickable(onChangeConstraints, { role: "link" })}
-        sx={{ fontWeight: 700, color: "text.secondary", cursor: "pointer", "&:hover": { color: "text.primary" }, ...focusRing }}
+        component="span"
+        {...clickable(onChangeConstraints, { role: "link" })}
+        sx={{
+          fontWeight: 600,
+          color: "text.secondary",
+          cursor: "pointer",
+          "&:hover": { color: "text.primary" },
+          ...focusRing,
+        }}
       >
         Change constraints
       </Box>
@@ -141,24 +139,61 @@ function ScopeLine({ scope, available, onChangeConstraints }) {
       {c.ceiling ? ` (${c.ceiling})` : ""}
       {": "}
       {c.says}
-      {c.path && <>{" "}<Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{c.path}</Box></>}
+      {c.path && (
+        <>
+          {" "}
+          <Box
+            component="span"
+            sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
+          >
+            {c.path}
+          </Box>
+        </>
+      )}
       {" — "}
-      <Box component="span" sx={c.blocked ? { color: "text.secondary", fontWeight: 600 } : undefined}>{c.verdict}</Box>
-      {c.id === "changes" && !c.blocked && unavailable && ` · ${unavailable.charAt(0).toLowerCase()}${unavailable.slice(1)}`}
+      <Box
+        component="span"
+        sx={
+          c.blocked ? { color: "text.secondary", fontWeight: 600 } : undefined
+        }
+      >
+        {c.verdict}
+      </Box>
+      {c.id === "changes" &&
+        !c.blocked &&
+        unavailable &&
+        ` · ${unavailable.charAt(0).toLowerCase()}${unavailable.slice(1)}`}
     </Box>
   ));
 
   return (
     <Tooltip
-      arrow placement="top-start"
-      title={blocked ? "An improvement only tries changes this agent's constraints allow — it will skip this one." : ""}
+      arrow
+      placement="top-start"
+      title={
+        blocked
+          ? "An improvement only tries changes this agent's constraints allow — it will skip this one."
+          : ""
+      }
     >
-      <Stack direction="row" alignItems="flex-start" spacing={0.625} sx={{ mt: 1 }}>
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={0.625}
+        sx={{ mt: 1 }}
+      >
         <Iconify
-          icon={scope.environment ? "solar:test-tube-linear" : blocked ? "solar:lock-keyhole-minimalistic-linear" : "solar:shield-check-linear"}
-          width={13} sx={{ color: "text.disabled", flexShrink: 0, mt: "2px" }}
+          icon={
+            scope.environment
+              ? "solar:test-tube-linear"
+              : blocked
+                ? "solar:lock-keyhole-minimalistic-linear"
+                : "solar:shield-check-linear"
+          }
+          width={14}
+          sx={{ color: "text.disabled", flexShrink: 0, mt: "2px" }}
         />
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {scope.environment ? scope.label : checks}
           {link}
         </Typography>
@@ -173,14 +208,36 @@ ScopeLine.propTypes = {
 };
 
 export default function DiagnosisPane({
-  tasks, report, trace, proposals, verdict,
-  applied, setApplied, current, projected, willFix,
-  measured, failing, onOpenTask, onViewIssue, onOptimize, onClose,
-  env, envState, patch, handoff: handoffProps, runId, previous = [], onOpenPrevious, onHandToAgent,
+  tasks,
+  report,
+  trace,
+  proposals,
+  verdict,
+  applied,
+  setApplied,
+  current,
+  projected,
+  willFix,
+  measured,
+  failing,
+  onOpenTask,
+  onViewIssue,
+  onOptimize,
+  onClose,
+  env,
+  envState,
+  patch,
+  handoff: handoffProps,
+  runId,
+  previous = [],
+  onOpenPrevious,
+  onHandToAgent,
 }) {
   /* First open of this runId: play the analyzer animation. Every
      subsequent open in this session: skip straight to the results. */
-  const [phase, setPhase] = useState(() => (runId && analyzedRuns.has(runId) ? "done" : "running"));
+  const [phase, setPhase] = useState(() =>
+    runId && analyzedRuns.has(runId) ? "done" : "running",
+  );
   useEffect(() => {
     if (phase === "done" && runId) analyzedRuns.add(runId);
   }, [phase, runId]);
@@ -197,7 +254,10 @@ export default function DiagnosisPane({
       const t = setTimeout(() => setPhase("done"), 650);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => setScanned((n) => n + 1), readMs(tasks[scanned], baseMs));
+    const t = setTimeout(
+      () => setScanned((n) => n + 1),
+      readMs(tasks[scanned], baseMs),
+    );
     return () => clearTimeout(t);
   }, [running, scanned, total, tasks, baseMs]);
   const rescan = () => {
@@ -227,43 +287,64 @@ export default function DiagnosisPane({
   const { state } = useSimStore();
   const { agents } = useConnectedAgents();
   const agentKey = envAgentKey(envState?.agent, env?.id);
-  const agent = useMemo(() => agents.find((a) => a.key === agentKey) || null, [agents, agentKey]);
+  const agent = useMemo(
+    () => agents.find((a) => a.key === agentKey) || null,
+    [agents, agentKey],
+  );
   const limits = useMemo(() => limitsOf(state, agentKey), [state, agentKey]);
-  const available = useMemo(() => (agent ? surfaceAvailability(agent) : {}), [agent]);
+  const available = useMemo(
+    () => (agent ? surfaceAvailability(agent) : {}),
+    [agent],
+  );
   const model = useMemo(() => {
     if (!agent || !env) return null;
     const def = agentDefinitionOf({ agent, env, envState });
     return def.model?.visible ? def.model.name : null;
   }, [agent, env, envState]);
   const changeConstraints = agent
-    ? () => { onClose?.(); navigate(connectedAgentPath(agent.id, "constraints")); }
+    ? () => {
+        onClose?.();
+        navigate(connectedAgentPath(agent.id, "constraints"));
+      }
     : null;
 
-  const sorted = useMemo(() => (
-    [...proposals].sort((a, b) =>
-      priorityOf(a, tasks).level - priorityOf(b, tasks).level
-      || b.addresses.length - a.addresses.length)
-  ), [proposals, tasks]);
+  const sorted = useMemo(
+    () =>
+      [...proposals].sort(
+        (a, b) =>
+          priorityOf(a, tasks).level - priorityOf(b, tasks).level ||
+          b.addresses.length - a.addresses.length,
+      ),
+    [proposals, tasks],
+  );
 
   /* Where each call sits in the reading order, and the point in the scan at
      which each issue has enough calls behind it to be shown. */
   const found = useMemo(() => {
     const at = new Map(tasks.map((t, i) => [t.id, i]));
     const list = sorted.map((p, rank) => {
-      const idx = p.addresses.map((id) => at.get(id)).filter((i) => i != null).sort((a, b) => a - b);
+      const idx = p.addresses
+        .map((id) => at.get(id))
+        .filter((i) => i != null)
+        .sort((a, b) => a - b);
       const k = Math.min(CONFIRM_AFTER, idx.length);
       return { p, rank, idx, foundAt: k ? idx[k - 1] + 1 : 0 };
     });
     /* Paced across the whole read, one at a time: two calls usually confirm
        every issue in the first few, which made them land all at once. Each
        now waits for its share of the scan and a gap after the one before. */
-    const live = list.filter((f) => f.idx.length).sort((a, b) => a.foundAt - b.foundAt || a.rank - b.rank);
+    const live = list
+      .filter((f) => f.idx.length)
+      .sort((a, b) => a.foundAt - b.foundAt || a.rank - b.rank);
     const n = live.length;
     const slot = total / (n + 1);
     const gap = Math.max(1, Math.floor(slot * 0.6));
     let prev = 0;
     live.forEach((f, i) => {
-      f.foundAt = Math.min(total, Math.max(f.foundAt, prev + gap, Math.round((i + 1) * slot)));
+      f.foundAt = Math.min(
+        total,
+        Math.max(f.foundAt, prev + gap, Math.round((i + 1) * slot)),
+      );
       prev = f.foundAt;
     });
     return list;
@@ -274,14 +355,23 @@ export default function DiagnosisPane({
      grow with the scan instead of arriving fully formed. */
   const shownIssues = useMemo(() => {
     if (!running) return sorted.map((p, i) => ({ p, rank: i + 1 }));
-    const pct = (n) => (measured.length ? Math.round((n / measured.length) * 100) : 0);
+    const pct = (n) =>
+      measured.length ? Math.round((n / measured.length) * 100) : 0;
     /* Newest first while reading, so each one arrives where it's seen. */
     return found
       .filter((f) => f.idx.length && scanned >= f.foundAt)
       .sort((a, b) => b.foundAt - a.foundAt || a.rank - b.rank)
       .map(({ p, idx }) => {
         const seen = idx.filter((i) => i < scanned).map((i) => tasks[i].id);
-        return { p: { ...p, addresses: seen, lift: pct(seen.length), why: liveWhy(p.why, seen.length) }, rank: null };
+        return {
+          p: {
+            ...p,
+            addresses: seen,
+            lift: pct(seen.length),
+            why: liveWhy(p.why, seen.length),
+          },
+          rank: null,
+        };
       });
   }, [running, sorted, found, scanned, tasks, measured.length]);
 
@@ -293,7 +383,9 @@ export default function DiagnosisPane({
   const lastOrder = useRef(orderKey);
   useLayoutEffect(() => {
     const tops = {};
-    Object.entries(cardEls.current).forEach(([id, el]) => { if (el) tops[id] = el.offsetTop; });
+    Object.entries(cardEls.current).forEach(([id, el]) => {
+      if (el) tops[id] = el.offsetTop;
+    });
     if (lastOrder.current !== orderKey && !running) {
       Object.entries(tops).forEach(([id, top]) => {
         const dy = (lastTops.current[id] ?? top) - top;
@@ -326,20 +418,33 @@ export default function DiagnosisPane({
   })();
   const brief = () => {
     const top = new Set(sorted[0]?.addresses || []);
-    const byTop = [...failing].sort((a, b) => Number(top.has(b.id)) - Number(top.has(a.id)));
+    const byTop = [...failing].sort(
+      (a, b) => Number(top.has(b.id)) - Number(top.has(a.id)),
+    );
     const flagged = report.filter((a) => a.severity && a.severity !== "low");
     return codingAgentBrief({
       agent: agent ? { name: agent.name, key: agent.key } : null,
       env,
       issue: {
         title: `${failing.length} of ${measured.length} measured scenarios failing in ${env?.name || "this environment"}`,
-        severity: sorted[0] ? priorityOf(sorted[0], tasks).label.toLowerCase() : null,
+        severity: sorted[0]
+          ? priorityOf(sorted[0], tasks).label.toLowerCase()
+          : null,
       },
       runId,
       pairing: runPairing,
-      rootCause: [verdict, ...flagged.map((a) => `- ${a.label}: ${a.headline}`)].join("\n"),
-      suggestedFix: sorted.map((p) => ({ ...p, scope: fixScope(p, { env, limits }) })),
-      evidence: byTop.map((t) => ({ source: scenarioTitle(t.title) || t.id, text: decidingMoment(t).text })),
+      rootCause: [
+        verdict,
+        ...flagged.map((a) => `- ${a.label}: ${a.headline}`),
+      ].join("\n"),
+      suggestedFix: sorted.map((p) => ({
+        ...p,
+        scope: fixScope(p, { env, limits }),
+      })),
+      evidence: byTop.map((t) => ({
+        source: scenarioTitle(t.title) || t.id,
+        text: decidingMoment(t).text,
+      })),
       failingScenarios: failing.map((t) => scenarioTitle(t.title) || t.id),
       limits,
       model,
@@ -350,17 +455,27 @@ export default function DiagnosisPane({
      addresses as evidence. Visible scenarios only — never a held-back one,
      which is only fair to judge on if nobody has seen it. */
   const briefFor = (p) => () => {
-    const visible = tasks.filter((t) => p.addresses.includes(t.id) && !t.held && !t.heldBack && !t.heldOut);
+    const visible = tasks.filter(
+      (t) => p.addresses.includes(t.id) && !t.held && !t.heldBack && !t.heldOut,
+    );
     return codingAgentBrief({
       agent: agent ? { name: agent.name, key: agent.key } : null,
       env,
-      issue: { title: p.title, severity: priorityOf(p, tasks)?.label?.toLowerCase() || null },
+      issue: {
+        title: p.title,
+        severity: priorityOf(p, tasks)?.label?.toLowerCase() || null,
+      },
       runId,
       pairing: runPairing,
       rootCause: p.why,
       suggestedFix: [{ ...p, scope: fixScope(p, { env, limits }) }],
-      evidence: visible.map((t) => ({ source: scenarioTitle(t.title) || t.id, text: decidingMoment(t).text })),
-      failingScenarios: visible.filter((t) => t.status !== "passed").map((t) => scenarioTitle(t.title) || t.id),
+      evidence: visible.map((t) => ({
+        source: scenarioTitle(t.title) || t.id,
+        text: decidingMoment(t).text,
+      })),
+      failingScenarios: visible
+        .filter((t) => t.status !== "passed")
+        .map((t) => scenarioTitle(t.title) || t.id),
       limits,
       model,
     });
@@ -400,22 +515,42 @@ export default function DiagnosisPane({
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       {/* ── header ── */}
       <Stack
-        direction="row" alignItems="center" spacing={1.25}
-        sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{
+          px: 2.5,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Box
           sx={{
-            width: 30, height: 30, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
-            border: "1px solid", borderColor: "divider", bgcolor: "background.paper", color: "text.secondary",
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            color: "text.secondary",
           }}
         >
           <Iconify icon="solar:magic-stick-3-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Debug failures</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            Debug failures
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {failing.length} failing of {measured.length} measured
-            {tasks.length - measured.length ? ` · ${tasks.length - measured.length} not measured` : ""}
+            {tasks.length - measured.length
+              ? ` · ${tasks.length - measured.length} not measured`
+              : ""}
           </Typography>
         </Box>
         {/* Earlier improvement runs reopen from here — the one place a
@@ -425,8 +560,7 @@ export default function DiagnosisPane({
             size="small"
             onClick={(e) => setPreviousAnchor(e.currentTarget)}
             sx={{
-              typography: "s3", fontWeight: 700, color: "text.secondary",
-              textTransform: "none", height: 28, px: 1,
+              color: "text.secondary",
               "&:hover": { bgcolor: "transparent", color: "text.primary" },
             }}
           >
@@ -442,12 +576,22 @@ export default function DiagnosisPane({
           slotProps={{ paper: { sx: { minWidth: 260 } } }}
         >
           {previous.map((r) => (
-            <MenuItem key={r.id} onClick={() => { setPreviousAnchor(null); onOpenPrevious?.(r.id); }}>
+            <MenuItem
+              key={r.id}
+              onClick={() => {
+                setPreviousAnchor(null);
+                onOpenPrevious?.(r.id);
+              }}
+            >
               <ListItemText
                 primary={r.name}
                 secondary={r.sub}
-                primaryTypographyProps={{ sx: { typography: "s2", fontWeight: 600 } }}
-                secondaryTypographyProps={{ sx: { typography: "s3", color: "text.subtitle" } }}
+                primaryTypographyProps={{
+                  sx: { typography: "s2", fontWeight: 600 },
+                }}
+                secondaryTypographyProps={{
+                  sx: { typography: "s3", color: "text.tertiary" },
+                }}
               />
             </MenuItem>
           ))}
@@ -456,10 +600,11 @@ export default function DiagnosisPane({
           <Button
             size="small"
             onClick={exportReport}
-            startIcon={<Iconify icon="solar:upload-minimalistic-linear" width={14} />}
+            startIcon={
+              <Iconify icon="solar:upload-minimalistic-linear" width={14} />
+            }
             sx={{
-              typography: "s3", fontWeight: 700, color: "text.secondary",
-              textTransform: "none", height: 28, px: 1,
+              color: "text.secondary",
               "&:hover": { bgcolor: "transparent", color: "text.primary" },
             }}
           >
@@ -469,49 +614,82 @@ export default function DiagnosisPane({
         {phase === "done" && (
           <Tooltip arrow title="Read the run again">
             <IconButton size="small" onClick={rescan}>
-              <Iconify icon="solar:refresh-linear" width={16} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:refresh-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Tooltip>
         )}
         <IconButton size="small" onClick={onClose}>
-          <Iconify icon="eva:close-fill" width={17} />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       </Stack>
 
       {/* ── tab bar — there from the start so nothing jumps when the scan
             ends; Imagine waits for the diagnosis it reads from. ── */}
       {!(phase === "done" && nothingToFix) && (
-        <Stack
-          direction="row" spacing={2} role="tablist" aria-label="Debug failures"
-          sx={{ px: 2.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        <Box
+          sx={{
+            px: 2.5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <TabButton active={tab === "diagnosis"} onClick={() => setTab("diagnosis")} icon="solar:document-medicine-linear">
-            Diagnosis
-          </TabButton>
-          <TabButton
-            active={tab === "imagine"} onClick={() => setTab("imagine")} icon="solar:magic-stick-3-linear"
-            disabled={running || nothingToFix}
+          <Tabs
+            value={tab}
+            onChange={(_, v) => setTab(v)}
+            aria-label="Debug failures"
           >
-            Imagine
-          </TabButton>
-        </Stack>
+            <Tab
+              value="diagnosis"
+              label="Diagnosis"
+              icon={
+                <Iconify icon="solar:document-medicine-linear" width={14} />
+              }
+              iconPosition="start"
+            />
+            <Tab
+              value="imagine"
+              label="Imagine"
+              icon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
+              iconPosition="start"
+              disabled={running || nothingToFix}
+            />
+          </Tabs>
+        </Box>
       )}
 
       {phase === "done" && nothingToFix && (
-        <Stack alignItems="center" justifyContent="center" spacing={1.5} sx={{ flex: 1, px: 4, textAlign: "center" }}>
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          spacing={1.5}
+          sx={{ flex: 1, px: 4, textAlign: "center" }}
+        >
           <Box
             sx={{
-              width: 44, height: 44, borderRadius: 1.5, display: "grid", placeItems: "center",
-              bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1), color: "#16A34A",
+              width: 44,
+              height: 44,
+              borderRadius: "8px",
+              display: "grid",
+              placeItems: "center",
+              bgcolor: "status.success.bg",
+              color: "status.success.fg",
             }}
           >
-            <Iconify icon="solar:cup-star-linear" width={22} />
+            <Iconify icon="solar:cup-star-linear" width={20} />
           </Box>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Nothing to fix</Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            Every measured scenario passed and no analyzer found a problem with the measurement. Improving
-            against this run would spend conversations confirming the score it started from — add harder scenarios
-            to find the edges instead.
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            Nothing to fix
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+            Every measured scenario passed and no analyzer found a problem with
+            the measurement. Improving against this run would spend
+            conversations confirming the score it started from — add harder
+            scenarios to find the edges instead.
           </Typography>
         </Stack>
       )}
@@ -534,27 +712,51 @@ export default function DiagnosisPane({
                  they wait for the last call and then report together ── */}
             <Box sx={{ px: 2.5, pt: 2.5 }}>
               <Stack
-                direction="row" alignItems="center" spacing={0.75}
-                {...clickable(running ? null : () => setShowDiagnosis((v) => !v), { expanded: showDiagnosis })}
-                sx={{ cursor: running ? "default" : "pointer", mb: 1, ...focusRing }}
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+                {...clickable(
+                  running ? null : () => setShowDiagnosis((v) => !v),
+                  { expanded: showDiagnosis },
+                )}
+                sx={{
+                  cursor: running ? "default" : "pointer",
+                  mb: 1,
+                  ...focusRing,
+                }}
               >
-                <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1 }}>Diagnosis</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  Diagnosis
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   {running
                     ? `${report.length} analyzers · report once every call is read`
                     : `${report.length} analyzers`}
                 </Typography>
                 {!running && (
                   <Iconify
-                    icon={showDiagnosis ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
-                    width={15} sx={{ color: "text.subtitle" }}
+                    icon={
+                      showDiagnosis
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
+                    width={16}
+                    sx={{ color: "text.tertiary" }}
                   />
                 )}
               </Stack>
               <Collapse in={!running && showDiagnosis}>
                 <Stack
-                  divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-                  sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+                  divider={
+                    <Box
+                      sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                    />
+                  }
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                  }}
                 >
                   {report.map((a, i) => {
                     return (
@@ -562,38 +764,87 @@ export default function DiagnosisPane({
                         key={a.id}
                         sx={{
                           animation: `diag-in 320ms ease ${i * 90}ms both`,
-                          "@keyframes diag-in": { from: { opacity: 0, transform: "translateY(-4px)" } },
+                          "@keyframes diag-in": {
+                            from: { opacity: 0, transform: "translateY(-4px)" },
+                          },
                         }}
                       >
                         <Stack
-                          direction="row" alignItems="center" spacing={1}
-                          {...clickable(() => setOpen((o) => ({ ...o, [a.id]: !o[a.id] })), { expanded: !!open[a.id] })}
-                          sx={{ px: 1.25, py: 0.625, cursor: "pointer", "&:hover": { bgcolor: "action.hover" }, ...focusRing }}
+                          direction="row"
+                          alignItems="center"
+                          spacing={1}
+                          {...clickable(
+                            () => setOpen((o) => ({ ...o, [a.id]: !o[a.id] })),
+                            { expanded: !!open[a.id] },
+                          )}
+                          sx={{
+                            px: 1.25,
+                            py: 0.625,
+                            cursor: "pointer",
+                            "&:hover": { bgcolor: "action.hover" },
+                            ...focusRing,
+                          }}
                         >
-                          <Typography sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>{a.label}</Typography>
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {a.label}
+                          </Typography>
                           {a.always && (
-                            <Typography sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}>· always on</Typography>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.disabled",
+                                flexShrink: 0,
+                              }}
+                            >
+                              · always on
+                            </Typography>
                           )}
                           <Typography
                             noWrap
                             sx={{
-                              typography: "s3", fontWeight: 500, flex: 1, minWidth: 0,
+                              typography: "s3",
+                              fontWeight: 500,
+                              flex: 1,
+                              minWidth: 0,
                               color: "text.secondary",
                             }}
                           >
                             {a.headline}
                           </Typography>
                           <Iconify
-                            icon={open[a.id] ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
-                            width={12} sx={{ color: "text.subtitle", flexShrink: 0 }}
+                            icon={
+                              open[a.id]
+                                ? "solar:alt-arrow-up-linear"
+                                : "solar:alt-arrow-down-linear"
+                            }
+                            width={12}
+                            sx={{ color: "text.tertiary", flexShrink: 0 }}
                           />
                         </Stack>
                         <Collapse in={!!open[a.id]}>
                           <Box sx={{ px: 1.25, pb: 1.75 }}>
-                            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                mb: 0.5,
+                              }}
+                            >
                               reads {a.reads}
                             </Typography>
-                            <Typography sx={{ typography: "s2", color: "text.secondary", mb: a.rows?.length ? 1.25 : 0 }}>
+                            <Typography
+                              sx={{
+                                typography: "s2",
+                                color: "text.secondary",
+                                mb: a.rows?.length ? 1.25 : 0,
+                              }}
+                            >
                               {a.detail}
                             </Typography>
                             <Stack spacing={0.75}>
@@ -602,13 +853,33 @@ export default function DiagnosisPane({
                                   <Typography sx={{ typography: "s2" }}>
                                     {r.label}
                                     {r.value != null && (
-                                      <Box component="span" sx={{ color: "text.subtitle", ml: 0.75 }}>{r.value}</Box>
+                                      <Box
+                                        component="span"
+                                        sx={{
+                                          color: "text.tertiary",
+                                          ml: 0.75,
+                                        }}
+                                      >
+                                        {r.value}
+                                      </Box>
                                     )}
                                   </Typography>
                                   {r.note && (
-                                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{r.note}</Typography>
+                                    <Typography
+                                      sx={{
+                                        typography: "s3",
+                                        color: "text.tertiary",
+                                      }}
+                                    >
+                                      {r.note}
+                                    </Typography>
                                   )}
-                                  <TaskLinks ids={r.tasks} tasks={tasks} step={r.step} onOpen={onOpenTask} />
+                                  <TaskLinks
+                                    ids={r.tasks}
+                                    tasks={tasks}
+                                    step={r.step}
+                                    onOpen={onOpenTask}
+                                  />
                                 </Box>
                               ))}
                             </Stack>
@@ -619,7 +890,10 @@ export default function DiagnosisPane({
                   })}
                 </Stack>
                 <Box sx={{ mt: 0.5, mx: -1 }}>
-                  <RunTraceLog label={`Read ${tasks.length} conversations`} steps={trace} />
+                  <RunTraceLog
+                    label={`Read ${tasks.length} conversations`}
+                    steps={trace}
+                  />
                 </Box>
               </Collapse>
             </Box>
@@ -629,25 +903,58 @@ export default function DiagnosisPane({
             <Collapse in={!running}>
               <Box
                 sx={{
-                  mx: 2.5, mt: 2.5, px: 1.75, py: 1.5, borderRadius: 1,
-                  border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+                  mx: 2.5,
+                  mt: 2.5,
+                  px: 1.75,
+                  py: 1.5,
+                  borderRadius: "8px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "background.paper",
                 }}
               >
                 <Stack direction="row" alignItems="flex-start" spacing={1.25}>
-                  <Iconify icon="solar:lightbulb-bolt-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>{verdict}</Typography>
+                  <Iconify
+                    icon="solar:lightbulb-bolt-linear"
+                    width={16}
+                    sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+                  />
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {verdict}
+                  </Typography>
                 </Stack>
                 {causeCount > 0 && topFrees > 0 && (
-                  <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1, pl: 3.375 }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      color: "text.secondary",
+                      mt: 1,
+                      pl: 3.375,
+                    }}
+                  >
                     These <b>{failing.length} failures</b> collapse into{" "}
-                    <b>{causeCount} {causeCount === 1 ? "cause" : "causes"}</b>. Fix the top one and{" "}
-                    <b>{topFrees} {topFrees === 1 ? "scenario flips" : "scenarios flip"}</b> green.
+                    <b>
+                      {causeCount} {causeCount === 1 ? "cause" : "causes"}
+                    </b>
+                    . Fix the top one and{" "}
+                    <b>
+                      {topFrees}{" "}
+                      {topFrees === 1 ? "scenario flips" : "scenarios flip"}
+                    </b>{" "}
+                    green.
                   </Typography>
                 )}
                 {alreadyPass > 0 && (
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75, pl: 3.375 }}>
-                    {alreadyPass} of {measured.length} measured scenarios already pass — the gaps are
-                    concentrated, not scattered.
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      mt: 0.75,
+                      pl: 3.375,
+                    }}
+                  >
+                    {alreadyPass} of {measured.length} measured scenarios
+                    already pass — the gaps are concentrated, not scattered.
                   </Typography>
                 )}
               </Box>
@@ -658,41 +965,62 @@ export default function DiagnosisPane({
               quieter alternative. Same source-aware hand-off as a winner's;
               a version is saved only when the change lands.
             */}
-            {!running && (handoff || handoffProps?.landedVersion) && !!included.length && (
-              <Box sx={{ px: 2.5, pt: 2.5 }}>
-                {/* Never blocked — but never passed off as checked either. */}
-                <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ mb: 1.25 }}>
-                  <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }} />
-                  <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                    Not searched and not checked against your must-pass scenarios. Re-run it once it lands, before you release it.
-                  </Typography>
-                </Stack>
-                <OmegaHandoff
-                  env={env}
-                  envState={envState}
-                  patch={patch}
-                  included={included}
-                  projected={projected}
-                  projectedOn="if every addressed scenario passes"
-                  current={current}
-                  willFix={willFix}
-                  handoffKey={handoffProps?.key}
-                  landedVersion={handoffProps?.landedVersion}
-                  provenance={handoffProps?.provenance}
-                  onLand={(info) => handoffProps?.onLand?.(info, included, projected)}
-                  onRerun={handoffProps?.onRerun}
-                />
-              </Box>
-            )}
+            {!running &&
+              (handoff || handoffProps?.landedVersion) &&
+              !!included.length && (
+                <Box sx={{ px: 2.5, pt: 2.5 }}>
+                  {/* Never blocked — but never passed off as checked either. */}
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="flex-start"
+                    sx={{ mb: 1.25 }}
+                  >
+                    <Iconify
+                      icon="solar:info-circle-linear"
+                      width={14}
+                      sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
+                    />
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      Not searched and not checked against your must-pass
+                      scenarios. Re-run it once it lands, before you release it.
+                    </Typography>
+                  </Stack>
+                  <OmegaHandoff
+                    env={env}
+                    envState={envState}
+                    patch={patch}
+                    included={included}
+                    projected={projected}
+                    projectedOn="if every addressed scenario passes"
+                    current={current}
+                    willFix={willFix}
+                    handoffKey={handoffProps?.key}
+                    landedVersion={handoffProps?.landedVersion}
+                    provenance={handoffProps?.provenance}
+                    onLand={(info) =>
+                      handoffProps?.onLand?.(info, included, projected)
+                    }
+                    onRerun={handoffProps?.onRerun}
+                  />
+                </Box>
+              )}
 
             {/* ── fixable: change the agent, in priority order ── */}
             <Box sx={{ px: 2.5, pt: 2.5, pb: 2.5 }}>
-              <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{ mb: 1 }}
+              >
                 <Box flex={1} minWidth={0}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                     {running ? "Issues found" : "Fix in this order"}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                     {running
                       ? `${shownIssues.length} so far · ranked once every call is read`
                       : "ranked by severity, then how many scenarios each one frees"}
@@ -700,18 +1028,29 @@ export default function DiagnosisPane({
                 </Box>
                 {/* For teams whose coding agent makes the edit — it gets the
                     evidence and the constraints, and submits back here. */}
-                {!running && !!sorted.length && <CopyBriefButton size="small" getBrief={brief} target={{ kind: "run", envId: env?.id, runId }} onOpened={onHandToAgent} />}
+                {!running && !!sorted.length && (
+                  <CopyBriefButton
+                    size="small"
+                    getBrief={brief}
+                    target={{ kind: "run", envId: env?.id, runId }}
+                    onOpened={onHandToAgent}
+                  />
+                )}
               </Stack>
               {running && !shownIssues.length && (
                 <Box
                   sx={{
-                    px: 2, py: 2.5, borderRadius: 1, border: "1px dashed", borderColor: "divider",
+                    px: 2,
+                    py: 2.5,
+                    borderRadius: 1,
+                    border: "1px dashed",
+                    borderColor: "divider",
                     textAlign: "center",
                   }}
                 >
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    Each issue appears here as soon as two calls confirm it, with the calls it affects and the change
-                    that addresses it.
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Each issue appears here as soon as two calls confirm it,
+                    with the calls it affects and the change that addresses it.
                   </Typography>
                 </Box>
               )}
@@ -722,12 +1061,16 @@ export default function DiagnosisPane({
                   return (
                     <Box
                       key={p.id}
-                      ref={(el) => { cardEls.current[p.id] = el; }}
+                      ref={(el) => {
+                        cardEls.current[p.id] = el;
+                      }}
                       sx={{
                         /* Presentation-only card — every proposal is
                            included; the improvement run acts on the whole
                            diagnosis, not a user-picked subset. */
-                        p: 1.75, borderRadius: 1, border: "1px solid",
+                        p: 1.75,
+                        borderRadius: 1,
+                        border: "1px solid",
                         borderColor: "divider",
                         bgcolor: "transparent",
                         /* A card arrives with a short fade and slide — no accent
@@ -741,47 +1084,87 @@ export default function DiagnosisPane({
                         }),
                       }}
                     >
-                      <Stack direction="row" alignItems="flex-start" spacing={1.5}>
+                      <Stack
+                        direction="row"
+                        alignItems="flex-start"
+                        spacing={1.5}
+                      >
                         {/* Rank — the order to work through them. Until every
                             call is read there is no order yet; the slot is
                             held so the card does not shift when it lands. */}
                         {rank != null ? (
-                          <Typography sx={{
-                            typography: "s1", fontWeight: 800, color: "text.disabled",
-                            width: 18, textAlign: "center", flexShrink: 0, lineHeight: 1.35,
-                            fontVariantNumeric: "tabular-nums",
-                          }}>
+                          <Typography
+                            sx={{
+                              typography: "s1",
+                              fontWeight: 600,
+                              color: "text.disabled",
+                              width: 18,
+                              textAlign: "center",
+                              flexShrink: 0,
+                              lineHeight: 1.35,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
                             {rank}
                           </Typography>
                         ) : (
                           <Box sx={{ width: 18, flexShrink: 0 }} />
                         )}
                         <Box flex={1} minWidth={0}>
-                          <Stack direction="row" alignItems="center" spacing={0.625} flexWrap="wrap" rowGap={0.375} sx={{ mb: 0.375 }}>
-                            <Chip
-                              size="small" label={p.kind}
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.625}
+                            flexWrap="wrap"
+                            rowGap={0.375}
+                            sx={{ mb: 0.375 }}
+                          >
+                            <Typography
+                              component="span"
                               sx={{
-                                height: 18, borderRadius: 0.5, color: "text.secondary",
-                                border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                                "& .MuiChip-label": { px: 0.625, typography: "s3", fontWeight: 600 },
+                                typography: "s3",
+                                fontWeight: 600,
+                                color: "text.secondary",
                               }}
-                            />
+                            >
+                              {p.kind}
+                            </Typography>
                             {pr && (
-                              <Chip
-                                size="small" label={pr.label}
+                              <Typography
+                                component="span"
                                 sx={{
-                                  height: 18, borderRadius: 0.5, color: pr.text || pr.color,
-                                  border: "1px solid", borderColor: alpha(pr.color, 0.4), bgcolor: "transparent",
-                                  "& .MuiChip-label": { px: 0.625, typography: "s3", fontWeight: 700 },
+                                  typography: "s3",
+                                  fontWeight: 600,
+                                  color: pr.text || `status.${pr.role}.fg`,
                                 }}
-                              />
+                              >
+                                {pr.label}
+                              </Typography>
                             )}
-                            <Typography sx={{ typography: "s3", color: "#16A34A", fontWeight: 700 }}>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "status.success.fg",
+                                fontWeight: 600,
+                              }}
+                            >
                               +{p.lift}%
                             </Typography>
                           </Stack>
-                          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{p.title}</Typography>
-                          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{p.why}</Typography>
+                          <Typography
+                            sx={{ typography: "s2", fontWeight: 600 }}
+                          >
+                            {p.title}
+                          </Typography>
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              color: "text.tertiary",
+                              mt: 0.25,
+                            }}
+                          >
+                            {p.why}
+                          </Typography>
                           {/*
                             Impact + action row. Replaces the wall of
                             per-task chips (TaskLinks) that used to
@@ -792,26 +1175,51 @@ export default function DiagnosisPane({
                             "View" filters the trace table to the
                             exact task ids this finding addresses.
                           */}
-                          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1 }}>
-                            <Stack direction="row" alignItems="center" spacing={0.5}>
-                              <Iconify icon="solar:play-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
-                              <Typography sx={{
-                                typography: "s3", fontWeight: 600, color: "text.secondary",
-                                fontVariantNumeric: "tabular-nums",
-                              }}>
-                                {p.addresses.length} call{p.addresses.length === 1 ? "" : "s"} affected
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={1.5}
+                            sx={{ mt: 1 }}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              spacing={0.5}
+                            >
+                              <Iconify
+                                icon="solar:play-circle-linear"
+                                width={14}
+                                sx={{ color: "text.tertiary" }}
+                              />
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  fontWeight: 600,
+                                  color: "text.secondary",
+                                  fontVariantNumeric: "tabular-nums",
+                                }}
+                              >
+                                {p.addresses.length} call
+                                {p.addresses.length === 1 ? "" : "s"} affected
                               </Typography>
                             </Stack>
                             {onViewIssue && p.addresses.length > 0 && (
                               <Button
-                                size="small" variant="outlined"
-                                onClick={() => onViewIssue(p.title, p.addresses)}
-                                startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+                                size="small"
+                                variant="outlined"
+                                onClick={() =>
+                                  onViewIssue(p.title, p.addresses)
+                                }
+                                startIcon={
+                                  <Iconify icon="solar:eye-linear" width={14} />
+                                }
                                 sx={{
-                                  typography: "s3", fontWeight: 700,
-                                  color: "text.primary", borderColor: "divider",
-                                  height: 26, px: 1,
-                                  "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
+                                  color: "text.primary",
+                                  borderColor: "divider",
+                                  "&:hover": {
+                                    borderColor: "text.primary",
+                                    bgcolor: "transparent",
+                                  },
                                 }}
                               >
                                 View affected calls
@@ -819,26 +1227,56 @@ export default function DiagnosisPane({
                             )}
                             {/* This proposal alone, for a coding agent. */}
                             {!running && (
-                              <CopyBriefButton size="small" getBrief={briefFor(p)} target={{ kind: "run", envId: env?.id, runId }} onOpened={onHandToAgent} />
+                              <CopyBriefButton
+                                size="small"
+                                getBrief={briefFor(p)}
+                                target={{ kind: "run", envId: env?.id, runId }}
+                                onOpened={onHandToAgent}
+                              />
                             )}
                           </Stack>
                           <Stack spacing={0.375} sx={{ mt: 1.125 }}>
                             {p.diff.map((d) => (
                               <Stack
-                                key={d.text} direction="row" spacing={0.875}
+                                key={d.text}
+                                direction="row"
+                                spacing={0.875}
                                 sx={{
-                                  px: 1.125, py: 0.75, borderRadius: 0.75,
-                                  bgcolor: (t) => alpha(d.type === "add" ? "#16A34A" : "#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
+                                  px: 1.125,
+                                  py: 0.75,
+                                  borderRadius: "4px",
+                                  bgcolor:
+                                    d.type === "add"
+                                      ? "status.success.bg"
+                                      : "status.danger.bg",
                                 }}
                               >
-                                <Typography sx={{ typography: "s3", fontWeight: 700, color: d.type === "add" ? "#16A34A" : "#DC2626", flexShrink: 0 }}>
+                                <Typography
+                                  sx={{
+                                    typography: "s3",
+                                    fontWeight: 600,
+                                    color:
+                                      d.type === "add"
+                                        ? "status.success.fg"
+                                        : "status.danger.fg",
+                                    flexShrink: 0,
+                                  }}
+                                >
                                   {d.type === "add" ? "+" : "−"}
                                 </Typography>
                                 <Typography
                                   sx={{
-                                    typography: "s3", fontFamily: "ui-monospace, Menlo, monospace",
-                                    color: d.type === "add" ? "text.primary" : "text.disabled",
-                                    textDecoration: d.type === "add" ? "none" : "line-through",
+                                    typography: "s3",
+                                    fontFamily:
+                                      "ui-monospace, Menlo, monospace",
+                                    color:
+                                      d.type === "add"
+                                        ? "text.primary"
+                                        : "text.disabled",
+                                    textDecoration:
+                                      d.type === "add"
+                                        ? "none"
+                                        : "line-through",
                                   }}
                                 >
                                   {d.text}
@@ -846,7 +1284,11 @@ export default function DiagnosisPane({
                               </Stack>
                             ))}
                           </Stack>
-                          <ScopeLine scope={scope} available={available[scope.surface]} onChangeConstraints={changeConstraints} />
+                          <ScopeLine
+                            scope={scope}
+                            available={available[scope.surface]}
+                            onChangeConstraints={changeConstraints}
+                          />
                         </Box>
                       </Stack>
                     </Box>
@@ -859,7 +1301,13 @@ export default function DiagnosisPane({
           {/* ── the footer that never scrolls away ── */}
           <Stack
             spacing={1.25}
-            sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+            sx={{
+              px: 2.5,
+              py: 2,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
           >
             {/*
               The primary path is an improvement run: it searches over the
@@ -880,11 +1328,15 @@ export default function DiagnosisPane({
             >
               <Box>
                 <Button
-                  fullWidth variant="contained" color="primary"
+                  size="small"
+                  fullWidth
+                  variant="contained"
+                  color="primary"
                   disabled={running || !included.length}
                   onClick={onOptimize}
-                  startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
+                  startIcon={
+                    <Iconify icon="solar:magic-stick-3-bold" width={16} />
+                  }
                 >
                   Run self improvement
                 </Button>
@@ -903,13 +1355,13 @@ export default function DiagnosisPane({
                 disabled={running || !included.length}
                 onClick={() => setHandoff((v) => !v)}
                 sx={{
-                  typography: "s3", fontWeight: 600,
-                  color: "text.subtitle",
-                  textTransform: "none",
+                  color: "text.tertiary",
                   "&:hover": { bgcolor: "transparent", color: "text.primary" },
                 }}
               >
-                {handoff ? "Hide hand-off" : "or hand these changes over without a search"}
+                {handoff
+                  ? "Hide hand-off"
+                  : "or hand these changes over without a search"}
               </Button>
             </Box>
           </Stack>

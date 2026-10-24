@@ -113,7 +113,7 @@ const AddedEvaluationCard = ({
             variant="body2"
             color="text.primary"
             fontWeight={600}
-            fontSize="14px"
+            fontSize="13px"
           >
             {name}
           </Typography>
@@ -152,7 +152,7 @@ const AddedEvaluationCard = ({
                 variant="soft"
                 color="primary"
                 sx={{
-                  padding: 1,
+                  // eslint-disable-next-line no-restricted-syntax -- ds: layout (fill row)
                   height: "100%",
                   display: "flex",
                   flexDirection: "row",

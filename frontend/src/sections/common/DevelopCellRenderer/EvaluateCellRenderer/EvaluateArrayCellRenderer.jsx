@@ -1,18 +1,12 @@
-import { Box, Chip, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import React, { useMemo } from "react";
 import RenderMeta from "../RenderMeta";
 import PropTypes from "prop-types";
 
-const choicesBorderColourMap = {
-  neutral: "primary.main",
-  pass: "green.500",
-  fail: "red.500",
-};
-
 const choicesFontColourMap = {
-  neutral: "primary.main",
-  pass: "green.500",
-  fail: "red.500",
+  neutral: "text.primary",
+  pass: "status.success.fg",
+  fail: "status.danger.fg",
 };
 
 const EvaluateArrayCellRenderer = ({
@@ -50,7 +44,6 @@ const EvaluateArrayCellRenderer = ({
       return typeof value === "string" && value.trim() ? [value.trim()] : [];
     }
   }, [value]);
-  const theme = useTheme();
 
   return (
     <Box
@@ -73,22 +66,24 @@ const EvaluateArrayCellRenderer = ({
       >
         {/* Empty result renders nothing (it means "no result yet", not "None"). */}
         {finalArray?.length
-          ? finalArray?.map((item) => (
-              <Chip
+          ? finalArray?.map((item, idx) => (
+              <Typography
                 key={item}
-                label={item}
-                size="small"
-                variant="outlined"
+                component="span"
                 sx={{
-                  borderRadius: theme.spacing(0.5),
-                  borderColor:
-                    choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
                   color:
                     choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
                   fontWeight: 400,
                   typography: "s3",
                 }}
-              />
+              >
+                {idx > 0 && (
+                  <Box component="span" sx={{ color: "text.tertiary", mr: 1 }}>
+                    ·
+                  </Box>
+                )}
+                {item}
+              </Typography>
             ))
           : null}
       </Box>

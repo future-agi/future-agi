@@ -19,7 +19,16 @@ import { pendingEnvChanges, saveEnvChangesPatch } from "../_mock/versions";
  * someone wants. So there are three ways out — fix the environment and run,
  * run anyway, or cancel — and the recommended one is the loud button.
  */
-export default function RunFitDialog({ open, onClose, env, envState, patch, agent, onRun, locked = false }) {
+export default function RunFitDialog({
+  open,
+  onClose,
+  env,
+  envState,
+  patch,
+  agent,
+  onRun,
+  locked = false,
+}) {
   const rebuild = useRebuildForAgent(env, envState, patch);
   if (!open || !agent) return null;
 
@@ -29,11 +38,14 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
   const gapOnly = fit.fits && gap.missing.length > 0;
   const gapNames = gap.missing.map((t) => t.name);
   const gapServers = gap.groups.map((g) => g.server.label).join(" and ");
-  const allUnsaved = gap.missing.length > 0 && gap.unsaved.length === gap.missing.length;
+  const allUnsaved =
+    gap.missing.length > 0 && gap.unsaved.length === gap.missing.length;
   const waiting = pendingEnvChanges(envState).length;
   const latest = latestEnvVersion(env, envState);
-  const latestFits = latest && latest.label !== fit.envVersion
-    && toolFit(env, envState, { agent, envVersion: latest.label }).fits;
+  const latestFits =
+    latest &&
+    latest.label !== fit.envVersion &&
+    toolFit(env, envState, { agent, envVersion: latest.label }).fits;
   const n = fit.missing.length;
   /* Environment versions as people read them (snapshots of world, scenarios, evals). */
   const nextLabel = nextSnapshotLabel(env, envState);
@@ -64,11 +76,21 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
         const gw = gatewayServerForHost(server.host);
         const viaGw = gw ? gatewayServerTools(gw.gateway.serverId) : null;
         const names = new Set(tools.map((t) => t.name));
-        const src = viaGw?.ok ? { server: viaGw.server, picked: viaGw.tools.filter((t) => names.has(t.name)) } : { server, picked: tools };
+        const src = viaGw?.ok
+          ? {
+              server: viaGw.server,
+              picked: viaGw.tools.filter((t) => names.has(t.name)),
+            }
+          : { server, picked: tools };
         es = { ...es, ...addAndSaveMcpToolsPatch(env, es, src).statePatch };
       });
     }
-    patch({ toolEnv: es.toolEnv, envVersions: es.envVersions, activeEnvVersion: es.activeEnvVersion, unsavedEnvChanges: es.unsavedEnvChanges || [] });
+    patch({
+      toolEnv: es.toolEnv,
+      envVersions: es.envVersions,
+      activeEnvVersion: es.activeEnvVersion,
+      unsavedEnvChanges: es.unsavedEnvChanges || [],
+    });
     onClose();
     /* The run pins the version it finds when it opens — start it once the saved one is in. */
     setTimeout(onRun, 0);
@@ -81,20 +103,43 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
         open={open}
         onClose={onClose}
         maxWidth={false}
-        PaperProps={{ sx: { width: 560, maxWidth: "calc(100% - 32px)", p: 3, borderRadius: 2, backgroundImage: "none" } }}
+        PaperProps={{
+          sx: {
+            width: 560,
+            maxWidth: "calc(100% - 32px)",
+            p: 3,
+            borderRadius: 2,
+            backgroundImage: "none",
+          },
+        }}
       >
-        <Box sx={{ width: 36, height: 36, borderRadius: 1, display: "grid", placeItems: "center", mb: 1.75, bgcolor: "action.hover", color: "text.primary" }}>
+        <Box
+          sx={{
+            width: 36,
+            height: 36,
+            borderRadius: 1,
+            display: "grid",
+            placeItems: "center",
+            mb: 1.75,
+            bgcolor: "action.hover",
+            color: "text.primary",
+          }}
+        >
           <Iconify icon="solar:plug-circle-linear" width={20} />
         </Box>
-        <Typography sx={{ typography: "m3", fontWeight: 700 }}>
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
           {`${envState?.agent?.name || `Agent ${agent}`} gets ${n === 1 ? "a tool" : `${n} tools`} from ${gapServers} environment ${fitShown} doesn't answer`}
         </Typography>
-        <Typography component="div" sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
-          Its MCP server lists <ToolList tools={gap.missing} />. Scenarios where it calls {n === 1 ? "it" : "them"} get no answer back, so
-          they come back as <b>not measured</b> — the rest of the run still tests it.
+        <Typography
+          component="div"
+          sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
+        >
+          Its MCP server lists <ToolList tools={gap.missing} />. Scenarios where
+          it calls {n === 1 ? "it" : "them"} get no answer back, so they come
+          back as <b>not measured</b> — the rest of the run still tests it.
         </Typography>
         <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {locked
               ? "This is a template preview, so its world can't change here — fork it to add them."
               : allUnsaved
@@ -103,21 +148,40 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2.5 }}>
-          <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Cancel</Button>
+          <Button
+            size="small"
+            onClick={onClose}
+            sx={{ color: "text.secondary" }}
+          >
+            Cancel
+          </Button>
           <Box flex={1} />
           <Button
-            size="small" variant="outlined" onClick={runAnyway}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider", "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" } }}
+            size="small"
+            variant="outlined"
+            onClick={runAnyway}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              "&:hover": {
+                borderColor: "text.disabled",
+                bgcolor: "action.hover",
+              },
+            }}
           >
             Run on environment {fitShown} anyway
           </Button>
           {!locked && (
             <Button
-              size="small" variant="contained" color="primary" onClick={addGapAndRun}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={addGapAndRun}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
             >
-              {allUnsaved ? "Save and run" : `Add ${n === 1 ? "it" : "them"} and run`}
+              {allUnsaved
+                ? "Save and run"
+                : `Add ${n === 1 ? "it" : "them"} and run`}
             </Button>
           )}
         </Stack>
@@ -130,60 +194,97 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
       open={open}
       onClose={onClose}
       maxWidth={false}
-      PaperProps={{ sx: { width: 560, maxWidth: "calc(100% - 32px)", p: 3, borderRadius: 2, backgroundImage: "none" } }}
+      PaperProps={{
+        sx: {
+          width: 560,
+          maxWidth: "calc(100% - 32px)",
+          p: 3,
+          borderRadius: 2,
+          backgroundImage: "none",
+        },
+      }}
     >
       <Box
         sx={{
-          width: 36, height: 36, borderRadius: 1, display: "grid", placeItems: "center", mb: 1.75,
-          bgcolor: "action.hover", color: "text.primary",
+          width: 36,
+          height: 36,
+          borderRadius: 1,
+          display: "grid",
+          placeItems: "center",
+          mb: 1.75,
+          bgcolor: "action.hover",
+          color: "text.primary",
         }}
       >
         <Iconify icon="solar:plug-circle-linear" width={20} />
       </Box>
-      <Typography sx={{ typography: "m3", fontWeight: 700 }}>
-        Agent {agent} calls {n === 1 ? "a tool" : `${n} tools`} environment {fitShown} can&apos;t answer
+      <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+        Agent {agent} calls {n === 1 ? "a tool" : `${n} tools`} environment{" "}
+        {fitShown} can&apos;t answer
       </Typography>
-      <Typography component="div" sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
-        It calls <ToolList tools={fit.missing} />, which this world doesn&apos;t know how to answer. Scenarios where it
-        calls {n === 1 ? "it" : "them"} get no answer back, so they can&apos;t be scored and come back as{" "}
+      <Typography
+        component="div"
+        sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
+      >
+        It calls <ToolList tools={fit.missing} />, which this world doesn&apos;t
+        know how to answer. Scenarios where it calls {n === 1 ? "it" : "them"}{" "}
+        get no answer back, so they can&apos;t be scored and come back as{" "}
         <b>not measured</b> — the rest of the run still tests {agent}.
-        {gap.missing.length > 0 && ` It also gets ${gapNames.join(", ")} from ${gapServers}, which this world doesn't answer — add ${gap.missing.length === 1 ? "it" : "them"} on the World tab.`}
+        {gap.missing.length > 0 &&
+          ` It also gets ${gapNames.join(", ")} from ${gapServers}, which this world doesn't answer — add ${gap.missing.length === 1 ? "it" : "them"} on the World tab.`}
       </Typography>
 
       <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {locked
             ? "This is a template preview, so its world can't be rebuilt or switched here — fork it to fix the environment."
             : latestFits
-            ? `Environment ${latestShown} already answers ${n === 1 ? "this tool" : "these tools"} — switch to it for a clean run.`
-            : `Rebuilding makes environment ${nextLabel}: the world learns ${n === 1 ? "the tool" : "the tools"}, and new scenarios are added to test ${n === 1 ? "it" : "them"}. Older environment versions stay as they are.`}
+              ? `Environment ${latestShown} already answers ${n === 1 ? "this tool" : "these tools"} — switch to it for a clean run.`
+              : `Rebuilding makes environment ${nextLabel}: the world learns ${n === 1 ? "the tool" : "the tools"}, and new scenarios are added to test ${n === 1 ? "it" : "them"}. Older environment versions stay as they are.`}
         </Typography>
       </Box>
 
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2.5 }}>
-        <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>
+        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
         <Box flex={1} />
         <Button
-          size="small" variant="outlined"
+          size="small"
+          variant="outlined"
           onClick={runAnyway}
           sx={{
-            typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider",
-            "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" },
+            color: "text.primary",
+            borderColor: "divider",
+            "&:hover": {
+              borderColor: "text.disabled",
+              bgcolor: "action.hover",
+            },
           }}
         >
           Run on environment {fitShown} anyway
         </Button>
         {!locked && (
-        <Button
-          size="small" variant="contained" color="primary"
-          onClick={fixAndRun}
-          startIcon={<Iconify icon={latestFits ? "solar:transfer-horizontal-linear" : "solar:refresh-linear"} width={15} />}
-          sx={{ typography: "s2", fontWeight: 700 }}
-        >
-          {latestFits ? `Use environment ${latestShown} and run` : "Rebuild and run"}
-        </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={fixAndRun}
+            startIcon={
+              <Iconify
+                icon={
+                  latestFits
+                    ? "solar:transfer-horizontal-linear"
+                    : "solar:refresh-linear"
+                }
+                width={16}
+              />
+            }
+          >
+            {latestFits
+              ? `Use environment ${latestShown} and run`
+              : "Rebuild and run"}
+          </Button>
         )}
       </Stack>
     </Dialog>

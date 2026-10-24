@@ -39,9 +39,9 @@ export const FEATURE_LABELS = {
 // ── Add-on Icons ────────────────────────────────────────────────────────
 
 export const ADDON_ICONS = {
-  boost: "mdi:flash",
-  scale: "mdi:speedometer",
-  enterprise: "mdi:office-building",
+  boost: "solar:bolt-linear",
+  scale: "solar:speedometer-middle-linear",
+  enterprise: "solar:buildings-linear",
 };
 
 // ── Add-on Descriptions (incremental value over previous tier) ──────────

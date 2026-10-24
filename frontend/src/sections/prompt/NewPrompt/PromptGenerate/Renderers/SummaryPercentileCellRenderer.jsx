@@ -16,7 +16,7 @@ const SummaryPercentileCellRenderer = (props) => {
           height: "100%",
         }}
       >
-        <Typography fontSize="14px" fontWeight={400} color="text.primary">
+        <Typography fontSize="13px" fontWeight={400} color="text.primary">
           {props.value}
         </Typography>
       </Box>
@@ -33,7 +33,7 @@ const SummaryPercentileCellRenderer = (props) => {
         alignItems: "center",
       }}
     >
-      <Typography fontSize="14px" fontWeight={400} color="text.primary">
+      <Typography fontSize="13px" fontWeight={400} color="text.primary">
         {props.value}%
       </Typography>
     </Box>

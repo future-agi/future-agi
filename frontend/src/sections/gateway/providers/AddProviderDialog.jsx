@@ -400,7 +400,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>
@@ -659,11 +665,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               )}
             />
             {fetchError && (
-              <Alert
-                severity="warning"
-                variant="outlined"
-                sx={{ mt: 1, py: 0 }}
-              >
+              <Alert severity="warning" variant="outlined" sx={{ mt: 1 }}>
                 {fetchError}
               </Alert>
             )}

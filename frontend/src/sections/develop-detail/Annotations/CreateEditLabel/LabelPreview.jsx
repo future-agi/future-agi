@@ -53,7 +53,7 @@ const LabelPreview = ({ control }) => {
           py: theme.spacing(2),
         }}
       >
-        <Typography fontSize="14px" fontWeight={500}>
+        <Typography fontSize="13px" fontWeight={500}>
           Preview
         </Typography>
       </Box>

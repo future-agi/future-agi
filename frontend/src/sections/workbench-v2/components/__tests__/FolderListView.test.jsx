@@ -97,13 +97,8 @@ describe("FolderListView — pagination (TH-4245)", () => {
   it("renders pagination count derived from API total_pages", async () => {
     renderView();
 
-    const pagination = await screen.findByRole("navigation");
-    expect(
-      within(pagination).getByRole("button", { name: /go to page 5/i }),
-    ).toBeInTheDocument();
-    expect(
-      within(pagination).queryByRole("button", { name: /go to page 6/i }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText("Page 1 of 5")).toBeInTheDocument();
+    expect(screen.queryByText(/of 6$/)).not.toBeInTheDocument();
   });
 
   it("recalculates pagination count when pageLimit changes (no ghost pages)", async () => {
@@ -116,27 +111,15 @@ describe("FolderListView — pagination (TH-4245)", () => {
 
     renderView();
 
-    const pagination = await screen.findByRole("navigation");
-    await waitFor(() =>
-      expect(
-        within(pagination).getByRole("button", { name: /go to page 5/i }),
-      ).toBeInTheDocument(),
-    );
+    expect(await screen.findByText("Page 1 of 5")).toBeInTheDocument();
 
-    // Change "Result per page" from 10 -> 50
-    fireEvent.mouseDown(screen.getByRole("combobox"));
-    fireEvent.click(await screen.findByRole("option", { name: "50" }));
+    // Change "Rows per page" from 10 -> 50
+    fireEvent.change(screen.getByLabelText("Rows per page"), {
+      target: { value: "50" },
+    });
 
-    await waitFor(() =>
-      expect(
-        within(pagination).queryByRole("button", { name: /go to page 5/i }),
-      ).not.toBeInTheDocument(),
-    );
-    expect(
-      within(pagination).queryByRole("button", { name: /go to page 2/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(pagination).getByRole("button", { name: /page 1/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
+    expect(screen.queryByText("Page 1 of 5")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next page/i })).toBeDisabled();
   });
 });

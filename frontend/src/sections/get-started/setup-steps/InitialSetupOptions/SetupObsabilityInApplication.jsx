@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React, { useState } from "react";
 import HeaderContent from "./HeaderContent";
 import VideoContent from "./VideoContent";
@@ -31,15 +31,14 @@ const SetupObsabilityInApplication = ({ setCurrentLabel }) => {
           title="Set observability in application"
           description="This tour will guide you through the key features and functionalities"
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.disabled" }}
           onClick={() => setCurrentLabel("inviteTeamMembers")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
       <Box sx={{ height: "330px", overflowY: "auto" }}>
         <VideoContent

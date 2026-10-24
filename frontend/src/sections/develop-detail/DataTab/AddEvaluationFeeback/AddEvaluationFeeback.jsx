@@ -37,9 +37,10 @@ import {
   serializeFeedbackValue,
   toArray,
 } from "./feedback_value";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // Subtle grey tint used behind the eval explanation / value panels.
-const PANEL_TINT_BG = "rgba(147, 143, 163, 0.08)";
+const PANEL_TINT_BG = "background.neutral";
 // Re-tune radio group: strip the field's default border/padding.
 const RETUNE_GROUP_SX = {
   border: "none",
@@ -85,17 +86,19 @@ const AddEvaluationFeeback = ({ module = "dataset", onRefreshGrid }) => {
     select: (d) => d.data?.result?.feedback?.[0],
   });
 
+  const covered = useDrawerCovered(Boolean(data));
   return (
     <Drawer
       anchor="right"
       open={Boolean(data)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -314,11 +317,11 @@ const EvaluationFeeback = ({
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} color="text.primary">
+          <Typography fontWeight={600} color="text.primary">
             Add feedback
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <div style={{ borderBottom: "1px solid var(--border-light)" }} />
@@ -474,7 +477,7 @@ export const FeedBackForm = ({
     >
       <Typography
         sx={{
-          fontSize: "18px",
+          fontSize: "16px",
           fontWeight: "600",
           lineHeight: "26px",
         }}
@@ -483,7 +486,7 @@ export const FeedBackForm = ({
       </Typography>
       <Typography
         sx={{
-          fontSize: "14px",
+          fontSize: "13px",
           fontWeight: "400",
           lineHeight: "21px",
         }}
@@ -502,14 +505,14 @@ export const FeedBackForm = ({
           <Box mb={reasonText ? 1.25 : 0}>
             <Typography
               fontSize={12}
-              fontWeight={700}
+              fontWeight={600}
               letterSpacing="0.02em"
               color="text.secondary"
               textTransform="uppercase"
             >
               Current output
             </Typography>
-            <Typography fontSize={14} color="text.primary">
+            <Typography fontSize={13} color="text.primary">
               {currentValue}
             </Typography>
           </Box>
@@ -518,7 +521,7 @@ export const FeedBackForm = ({
           <CellMarkdown spacing={0} text={reasonText} />
         ) : (
           !currentValue && (
-            <Typography color="text.disabled" fontSize={14}>
+            <Typography color="text.disabled" fontSize={13}>
               Unable to fetch Explanation
             </Typography>
           )
@@ -578,8 +581,8 @@ const ChoiceCheckboxGroup = ({ control, label, choices, renderLabel }) => {
             {label && (
               <Typography
                 sx={{
-                  fontSize: "14px",
-                  fontWeight: "700",
+                  fontSize: "13px",
+                  fontWeight: "600",
                   lineHeight: "18.2px",
                   letterSpacing: "0.02em",
                   color: "text.secondary",
@@ -630,8 +633,8 @@ const AllInputField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "14px",
-            fontWeight: "700",
+            fontSize: "13px",
+            fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
             color: "text.secondary",
@@ -657,8 +660,8 @@ const AllSelectField = ({ label, ...rest }) => {
       {label && (
         <Typography
           sx={{
-            fontSize: "14px",
-            fontWeight: "700",
+            fontSize: "13px",
+            fontWeight: "600",
             lineHeight: "18.2px",
             letterSpacing: "0.02em",
             color: "text.secondary",
@@ -708,8 +711,8 @@ const RadioField = ({
           {label && (
             <Typography
               sx={{
-                fontSize: "14px",
-                fontWeight: "700",
+                fontSize: "13px",
+                fontWeight: "600",
                 lineHeight: "18.2px",
                 letterSpacing: "0.02em",
                 color: "text.secondary",
@@ -805,7 +808,7 @@ RadioField.propTypes = {
 const Label1 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re-tune
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -819,7 +822,7 @@ const Label1 = () => {
 const Label2 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re-calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -833,7 +836,7 @@ const Label2 = () => {
 const Label3 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "13px", fontWeight: "600" }}>
         Re-tune and re-calculate for this dataset
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>

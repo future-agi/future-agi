@@ -178,7 +178,7 @@ describe("AnnotationLabelsView", () => {
   it("renders search field and type filter", () => {
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByPlaceholderText("Search labels...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Active" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Archived" }),

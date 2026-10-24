@@ -73,7 +73,9 @@ const DevelopBarLeftSection = ({
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
+  const isSyntheticDataset = Boolean(
+    tableData?.data?.result?.synthetic_dataset,
+  );
   const theme = useTheme();
   const { search, setSearch } = useDevelopSearchStore();
   const setCellHeight = useDevelopCellHeight((s) => s.setCellHeight);
@@ -255,7 +257,7 @@ const DevelopBarLeftSection = ({
               endAdornment: search && (
                 <InputAdornment position="end">
                   <Iconify
-                    icon="mingcute:close-line"
+                    icon="solar:close-linear"
                     onClick={() => setSearchExtended("")}
                     sx={{ color: "text.secondary", cursor: "pointer" }}
                   />

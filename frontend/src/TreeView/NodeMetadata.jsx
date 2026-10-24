@@ -21,15 +21,23 @@ export const NodeMetadata = ({ duration, tokens, cost }) => {
   return (
     <div className="tree-node-metadata">
       <span className="tree-node-metadata__item">
-        <Iconify icon="tabler:clock" width={16} color="black.1000" />
+        <Iconify
+          icon="solar:clock-circle-linear"
+          width={16}
+          color="text.primary"
+        />
         {formatDuration(duration)}
       </span>
       <span className="tree-node-metadata__item">
-        <Iconify icon="tabler:hash" width={16} color="black.1000" />
+        <Iconify icon="solar:hashtag-linear" width={16} color="text.primary" />
         {tokens}
       </span>
       <span className="tree-node-metadata__item">
-        <Iconify icon="tabler:coins" width={16} color="black.1000" />
+        <Iconify
+          icon="solar:dollar-minimalistic-linear"
+          width={16}
+          color="text.primary"
+        />
         {formatCost(cost)}
       </span>
     </div>

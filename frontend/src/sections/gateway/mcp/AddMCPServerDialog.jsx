@@ -146,7 +146,13 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         {isEditing ? "Edit MCP Server" : "Add MCP Server"}
       </DialogTitle>

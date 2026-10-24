@@ -4,14 +4,13 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Paper from "@mui/material/Paper";
 import Iconify from "src/components/iconify";
-import { alpha, useTheme } from "@mui/material/styles";
 import useFalconStore from "../store/useFalconStore";
 
 const SYSTEM_COMMANDS = [
   {
     command: "/clear",
     description: "New conversation",
-    icon: "mdi:broom",
+    icon: "solar:magic-stick-3-linear",
     type: "system",
   },
 ];
@@ -22,8 +21,6 @@ export default function SlashCommandPicker({
   anchorRef: _anchorRef,
   pickerRef,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [selectedIndex, setSelectedIndex] = useState(0);
   const skills = useFalconStore((s) => s.skills);
 
@@ -35,7 +32,7 @@ export default function SlashCommandPicker({
       .map((skill) => ({
         command: `/${skill.slug}`,
         description: skill.description || skill.name,
-        icon: skill.icon || "mdi:lightning-bolt",
+        icon: skill.icon || "solar:bolt-linear",
         type: "skill",
         skill,
       })),
@@ -113,13 +110,6 @@ export default function SlashCommandPicker({
         right: 0,
         mb: 0.5,
         mx: 2,
-        borderRadius: "12px",
-        border: 1,
-        borderColor: "divider",
-        bgcolor: "background.paper",
-        boxShadow: isDark
-          ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-          : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
         overflow: "hidden",
         zIndex: 10,
         maxHeight: 360,
@@ -134,9 +124,9 @@ export default function SlashCommandPicker({
               sx={{
                 color: "text.disabled",
                 fontWeight: 600,
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
+                fontSize: 12,
+                textTransform: "none",
+                letterSpacing: 0,
               }}
             >
               Commands
@@ -149,8 +139,6 @@ export default function SlashCommandPicker({
                 key={cmd.command}
                 cmd={cmd}
                 isSelected={globalIdx === selectedIndex}
-                isDark={isDark}
-                theme={theme}
                 onSelect={onSelect}
               />
             );
@@ -166,9 +154,9 @@ export default function SlashCommandPicker({
               sx={{
                 color: "text.disabled",
                 fontWeight: 600,
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
+                fontSize: 12,
+                textTransform: "none",
+                letterSpacing: 0,
               }}
             >
               Skills
@@ -181,8 +169,6 @@ export default function SlashCommandPicker({
                 key={cmd.command}
                 cmd={cmd}
                 isSelected={globalIdx === selectedIndex}
-                isDark={isDark}
-                theme={theme}
                 onSelect={onSelect}
               />
             );
@@ -193,7 +179,7 @@ export default function SlashCommandPicker({
   );
 }
 
-function CommandRow({ cmd, isSelected, isDark, theme, onSelect }) {
+function CommandRow({ cmd, isSelected, onSelect }) {
   return (
     <Box
       onClick={() => onSelect(cmd)}
@@ -207,17 +193,11 @@ function CommandRow({ cmd, isSelected, isDark, theme, onSelect }) {
         mb: 0.25,
         borderRadius: "8px",
         cursor: "pointer",
-        bgcolor: isSelected
-          ? isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.primary.main, 0.08)
-          : "transparent",
+        bgcolor: isSelected ? "action.selected" : "transparent",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.primary.main, 0.08),
+          bgcolor: "action.hover",
         },
-        transition: "background-color 0.1s ease",
+        transition: "background-color 0.12s ease",
       }}
     >
       <Iconify
@@ -255,8 +235,6 @@ function CommandRow({ cmd, isSelected, isDark, theme, onSelect }) {
 CommandRow.propTypes = {
   cmd: PropTypes.object.isRequired,
   isSelected: PropTypes.bool,
-  isDark: PropTypes.bool,
-  theme: PropTypes.object,
   onSelect: PropTypes.func.isRequired,
 };
 

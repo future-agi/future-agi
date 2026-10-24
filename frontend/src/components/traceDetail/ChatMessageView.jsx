@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
@@ -9,13 +9,13 @@ import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
 const ROLE_STYLES = {
-  system: { accent: "neutral", icon: "mdi:cog-outline" },
-  user: { accent: "info", icon: "mdi:account-outline" },
-  assistant: { accent: "agent", icon: "mdi:robot-outline" },
-  model: { accent: "agent", icon: "mdi:robot-outline" }, // Gemini uses "model" for assistant
-  tool: { accent: "tool", icon: "mdi:wrench-outline" },
-  developer: { accent: "pass", icon: "mdi:code-braces" },
-  function: { accent: "tool", icon: "mdi:function-variant" },
+  system: { accent: "neutral", icon: "solar:settings-linear" },
+  user: { accent: "info", icon: "solar:user-linear" },
+  assistant: { accent: "agent", icon: "solar:bot-linear" },
+  model: { accent: "agent", icon: "solar:bot-linear" }, // Gemini uses "model" for assistant
+  tool: { accent: "tool", icon: "solar:toolbox-linear" },
+  developer: { accent: "pass", icon: "solar:code-linear" },
+  function: { accent: "tool", icon: "solar:programming-linear" },
 };
 
 const getRoleStyle = (role) => {
@@ -178,14 +178,14 @@ const MessageCard = ({ message }) => {
           {role}
         </Typography>
         {name && (
-          <Typography sx={{ fontSize: 11, color: style.color, opacity: 0.7 }}>
+          <Typography sx={{ fontSize: 12, color: style.color, opacity: 0.7 }}>
             : {name}
           </Typography>
         )}
         {toolCallId && (
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "text.disabled",
               ml: "auto",
               fontFamily: "monospace",
@@ -205,7 +205,7 @@ const MessageCard = ({ message }) => {
           lineHeight: 1.5,
           color: "text.primary",
           "& p": { m: 0 },
-          "& pre": { whiteSpace: "pre-wrap", fontSize: 11 },
+          "& pre": { whiteSpace: "pre-wrap", fontSize: 12 },
         }}
       >
         {textContent ? (
@@ -337,7 +337,7 @@ const ChatMessageView = ({
               }}
             >
               <Iconify
-                icon="mdi:brain"
+                icon="solar:brain-linear"
                 width={14}
                 sx={{ color: "text.secondary" }}
               />
@@ -347,7 +347,7 @@ const ChatMessageView = ({
                 {model}
               </Typography>
               {provider && (
-                <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                   ({provider})
                 </Typography>
               )}
@@ -359,37 +359,37 @@ const ChatMessageView = ({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 0.25,
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
               }}
             >
               {promptTokens ? (
                 <>
-                  <Typography component="span" sx={{ fontSize: 11 }}>
+                  <Typography component="span" sx={{ fontSize: 12 }}>
                     {promptTokens.toLocaleString()}
                   </Typography>
                   <Iconify
-                    icon="mdi:arrow-down"
-                    width={11}
+                    icon="solar:arrow-down-linear"
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
                   <Box component="span" sx={{ mx: 0.25 }}>
                     {" "}
                   </Box>
-                  <Typography component="span" sx={{ fontSize: 11 }}>
+                  <Typography component="span" sx={{ fontSize: 12 }}>
                     {(completionTokens || 0).toLocaleString()}
                   </Typography>
                   <Iconify
-                    icon="mdi:arrow-up"
-                    width={11}
+                    icon="solar:arrow-up-linear"
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography component="span" sx={{ fontSize: 11, ml: 0.5 }}>
+                  <Typography component="span" sx={{ fontSize: 12, ml: 0.5 }}>
                     (Σ {(totalTokens || 0).toLocaleString()})
                   </Typography>
                 </>
               ) : (
-                <Typography component="span" sx={{ fontSize: 11 }}>
+                <Typography component="span" sx={{ fontSize: 12 }}>
                   {(totalTokens || 0).toLocaleString()} tokens
                 </Typography>
               )}
@@ -402,20 +402,14 @@ const ChatMessageView = ({
       {shouldCollapse && (
         <>
           <MessageCard message={visibleMessages[0]} />
-          <Box
+          <Button
+            size="small"
+            variant="text"
+            fullWidth
             onClick={() => setShowAll(true)}
-            sx={{
-              textAlign: "center",
-              py: 0.5,
-              cursor: "pointer",
-              color: "primary.main",
-              fontSize: 12,
-              fontWeight: 500,
-              "&:hover": { textDecoration: "underline" },
-            }}
           >
             Show {hiddenCount} more message{hiddenCount > 1 ? "s" : ""}...
-          </Box>
+          </Button>
           {visibleMessages.slice(1).map((msg, i) => (
             <MessageCard key={i + 1} message={msg} />
           ))}
@@ -425,19 +419,14 @@ const ChatMessageView = ({
         allMessages.map((msg, i) => <MessageCard key={i} message={msg} />)}
 
       {showAll && allMessages.length > COLLAPSE_THRESHOLD && (
-        <Box
+        <Button
+          size="small"
+          variant="text"
+          fullWidth
           onClick={() => setShowAll(false)}
-          sx={{
-            textAlign: "center",
-            py: 0.5,
-            cursor: "pointer",
-            color: "text.secondary",
-            fontSize: 11,
-            "&:hover": { color: "primary.main" },
-          }}
         >
           Collapse messages
-        </Box>
+        </Button>
       )}
     </Stack>
   );

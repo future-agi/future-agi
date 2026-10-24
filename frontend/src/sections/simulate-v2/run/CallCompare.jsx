@@ -2,8 +2,17 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Tooltip, Tab, TextField,
-  InputAdornment, Switch, Collapse, Button,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Tooltip,
+  Tab,
+  TextField,
+  InputAdornment,
+  Switch,
+  Collapse,
+  Button,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -14,7 +23,11 @@ import { runIdentityOf } from "../_mock/runIdentity";
 import { creditsText } from "./runsTableFormat";
 import { hashSeed } from "../_mock/runStream";
 import {
-  callDetail, callDeltas, transcriptDiff, diffTally, graphDiff,
+  callDetail,
+  callDeltas,
+  transcriptDiff,
+  diffTally,
+  graphDiff,
 } from "../_mock/callDetail";
 import { DomainChip } from "../components/primitives";
 import { textTone } from "../components/textTone";
@@ -43,12 +56,22 @@ import { clickable, focusRing } from "../components/clickable";
  * "this run stopped talking two steps earlier than the one you shipped".
  */
 
-const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const mmss = (s) =>
+  `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 const ROLE_LABEL = { agent: "ASSISTANT", customer: "USER" };
 
 export default function CallCompare({
-  open, row, rows = [], runs = [], env, envState, diff, onDiff, onClose, onOpenRow,
+  open,
+  row,
+  rows = [],
+  runs = [],
+  env,
+  envState,
+  diff,
+  onDiff,
+  onClose,
+  onOpenRow,
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const [tab, setTab] = useState("transcript");
@@ -94,11 +117,28 @@ export default function CallCompare({
       <Stack sx={{ height: "100%", minHeight: 0 }}>
         {/* ── identity and the things you do to the whole panel ── */}
         <Stack
-          direction="row" alignItems="center" spacing={1}
-          sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <Typography sx={{ typography: "s2", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
-            Call ID : <Box component="span" sx={{ color: "text.primary" }}>{row.id}</Box>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.tertiary",
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}
+          >
+            Call ID :{" "}
+            <Box component="span" sx={{ color: "text.primary" }}>
+              {row.id}
+            </Box>
           </Typography>
           <Tooltip arrow title="Copy scenario id">
             <IconButton
@@ -108,7 +148,11 @@ export default function CallCompare({
                 enqueueSnackbar("Scenario id copied", { variant: "success" });
               }}
             >
-              <Iconify icon="solar:copy-linear" width={14} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:copy-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Tooltip>
 
@@ -116,26 +160,60 @@ export default function CallCompare({
 
           {/* Moving through the table without closing the panel: the whole
               point of opening a row is to compare it with the next one. */}
-          <Tooltip arrow title={rows[index - 1] ? `Previous — ${rows[index - 1].title}` : "First scenario"}>
+          <Tooltip
+            arrow
+            title={
+              rows[index - 1]
+                ? `Previous — ${rows[index - 1].title}`
+                : "First scenario"
+            }
+          >
             <span>
-              <IconButton size="small" disabled={!rows[index - 1]} onClick={() => go(-1)}>
-                <Iconify icon="eva:arrow-ios-upward-fill" width={16} sx={{ color: "text.subtitle" }} />
+              <IconButton
+                size="small"
+                disabled={!rows[index - 1]}
+                onClick={() => go(-1)}
+              >
+                <Iconify
+                  icon="solar:alt-arrow-up-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary" }}
+                />
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip arrow title={rows[index + 1] ? `Next — ${rows[index + 1].title}` : "Last scenario"}>
+          <Tooltip
+            arrow
+            title={
+              rows[index + 1]
+                ? `Next — ${rows[index + 1].title}`
+                : "Last scenario"
+            }
+          >
             <span>
-              <IconButton size="small" disabled={!rows[index + 1]} onClick={() => go(1)}>
-                <Iconify icon="eva:arrow-ios-downward-fill" width={16} sx={{ color: "text.subtitle" }} />
+              <IconButton
+                size="small"
+                disabled={!rows[index + 1]}
+                onClick={() => go(1)}
+              >
+                <Iconify
+                  icon="solar:alt-arrow-down-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary" }}
+                />
               </IconButton>
             </span>
           </Tooltip>
           <Tooltip arrow title={wide ? "Exit full width" : "Full width"}>
             <IconButton size="small" onClick={() => setWide((w) => !w)}>
               <Iconify
-                icon={wide ? "solar:minimize-square-minimalistic-linear" : "solar:maximize-square-minimalistic-linear"}
-                width={15}
-                sx={{ color: "text.subtitle" }}
+                icon={
+                  wide
+                    ? "solar:minimize-square-minimalistic-linear"
+                    : "solar:maximize-square-minimalistic-linear"
+                }
+                width={16}
+                sx={{ color: "text.tertiary" }}
               />
             </IconButton>
           </Tooltip>
@@ -143,56 +221,124 @@ export default function CallCompare({
             <IconButton
               size="small"
               onClick={() => {
-                navigator.clipboard?.writeText(`${window.location.href}#${row.id}`);
+                navigator.clipboard?.writeText(
+                  `${window.location.href}#${row.id}`,
+                );
                 enqueueSnackbar("Link copied", { variant: "success" });
               }}
             >
-              <Iconify icon="solar:share-linear" width={15} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:share-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Tooltip>
           <Tooltip arrow title="Close">
             <IconButton size="small" onClick={onClose}>
-              <Iconify icon="mingcute:close-line" width={16} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:close-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Tooltip>
         </Stack>
 
         {/* ── which surface this was, and what it is being read against ── */}
         <Stack
-          direction="row" alignItems="center" spacing={1}
-          sx={{ px: 2, pt: 1.25, pb: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            pt: 1.25,
+            pb: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <Iconify icon={surface.icon} width={15} sx={{ color: "primary.main" }} />
-          <Typography sx={{ typography: "s2", fontWeight: 700, color: "primary.main" }}>
+          <Iconify
+            icon={surface.icon}
+            width={16}
+            sx={{ color: "primary.main" }}
+          />
+          <Typography
+            sx={{ typography: "s2", fontWeight: 600, color: "primary.main" }}
+          >
             {surface.label}
           </Typography>
           <Box sx={{ width: "1px", height: 14, bgcolor: "divider", mx: 1 }} />
-          <Typography noWrap sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             {row.title}
           </Typography>
         </Stack>
 
         <Stack
-          direction="row" alignItems="center" spacing={1}
-          sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <Iconify icon="solar:copy-linear" width={14} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Iconify
+            icon="solar:copy-linear"
+            width={14}
+            sx={{ color: "text.tertiary" }}
+          />
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+            }}
+          >
             Comparing {row.cells.length} runs
           </Typography>
           <Box flex={1} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>Show Diff</Typography>
-          <Switch size="small" checked={!!diff} onChange={(e) => onDiff?.(e.target.checked)} />
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            Show Diff
+          </Typography>
+          <Switch
+            size="small"
+            checked={!!diff}
+            onChange={(e) => onDiff?.(e.target.checked)}
+          />
         </Stack>
 
         {/* ── the columns ── */}
-        <Stack direction="row" sx={{ flex: 1, minHeight: 0, overflowX: "auto" }}>
+        <Stack
+          direction="row"
+          sx={{ flex: 1, minHeight: 0, overflowX: "auto" }}
+        >
           {row.cells.map((cell, i) => (
             <RunColumn
               key={cell.runId}
               cell={cell}
               run={runs.find((r) => r.id === cell.runId)}
-              name={runIdentityOf(runs.find((r) => r.id === cell.runId), envState, env).label}
+              name={
+                runIdentityOf(
+                  runs.find((r) => r.id === cell.runId),
+                  envState,
+                  env,
+                ).label
+              }
               detail={details[i]}
               baseline={i === 0 ? null : baseline}
               isBaseline={i === 0}
@@ -223,42 +369,81 @@ CallCompare.propTypes = {
 
 /* ── one run's column ────────────────────────────────────────────────────── */
 
-function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff, tab, onTab }) {
+function RunColumn({
+  cell,
+  run,
+  name,
+  detail,
+  baseline,
+  isBaseline,
+  voice,
+  diff,
+  tab,
+  onTab,
+}) {
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   return (
     <Stack
       sx={{
-        flex: 1, minWidth: 430,
-        borderRight: "1px solid", borderColor: "divider",
+        flex: 1,
+        minWidth: 430,
+        borderRight: "1px solid",
+        borderColor: "divider",
         "&:last-of-type": { borderRight: "none" },
       }}
     >
       {/* who this column is */}
       <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Box
           sx={{
-            width: 20, height: 20, borderRadius: 0.75, flexShrink: 0,
-            display: "grid", placeItems: "center", typography: "s3", fontWeight: 700,
+            width: 20,
+            height: 20,
+            borderRadius: "4px",
+            flexShrink: 0,
+            display: "grid",
+            placeItems: "center",
+            typography: "s3",
+            fontWeight: 600,
             color: textTone(cell.color),
-            bgcolor: (t) => alpha(cell.color, t.palette.mode === "dark" ? 0.2 : 0.12),
+            bgcolor: (t) =>
+              alpha(cell.color, t.palette.mode === "dark" ? 0.2 : 0.12),
           }}
         >
           {cell.letter}
         </Box>
-        <Typography noWrap sx={{ typography: "s1", fontWeight: 700, flex: 1, minWidth: 0 }}>
-          {run?.kind === "trial" ? `Run ${run.trialN}${run.selfImprovementName ? ` · ${run.selfImprovementName}` : ""}` : `Run ${run?.ordinal}`} · {name}
+        <Typography
+          noWrap
+          sx={{ typography: "s1", fontWeight: 600, flex: 1, minWidth: 0 }}
+        >
+          {run?.kind === "trial"
+            ? `Run ${run.trialN}${run.selfImprovementName ? ` · ${run.selfImprovementName}` : ""}`
+            : `Run ${run?.ordinal}`}{" "}
+          · {name}
         </Typography>
         {detail && !detail.measured && <DomainChip domain={detail.domain} />}
         {isBaseline && (
           <Typography
             sx={{
-              px: 0.875, py: 0.25, borderRadius: 0.5, flexShrink: 0,
-              typography: "s3", fontWeight: 700, color: "primary.main",
-              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.2 : 0.12),
+              px: 0.875,
+              py: 0.25,
+              borderRadius: "4px",
+              flexShrink: 0,
+              typography: "s3",
+              fontWeight: 600,
+              color: "primary.main",
+              bgcolor: "status.discovery.bg",
             }}
           >
             Baseline
@@ -268,8 +453,9 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
 
       {!detail ? (
         <Box sx={{ p: 3 }}>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            This scenario did not run here, so there is nothing to compare against the other columns.
+          <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+            This scenario did not run here, so there is nothing to compare
+            against the other columns.
           </Typography>
         </Box>
       ) : (
@@ -281,22 +467,46 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
           */}
           {!detail.measured && (
             <Stack
-              direction="row" alignItems="flex-start" spacing={1}
+              direction="row"
+              alignItems="flex-start"
+              spacing={1}
               sx={{
-                mx: 2, mt: 1.25, p: 1.25, borderRadius: 1, border: "1px solid",
+                mx: 2,
+                mt: 1.25,
+                p: 1.25,
+                borderRadius: 1,
+                border: "1px solid",
                 borderColor: (t) => alpha(detail.domain.color, 0.4),
-                bgcolor: (t) => alpha(detail.domain.color, t.palette.mode === "dark" ? 0.12 : 0.06),
+                bgcolor: (t) =>
+                  alpha(
+                    detail.domain.color,
+                    t.palette.mode === "dark" ? 0.12 : 0.06,
+                  ),
               }}
             >
-              <Iconify icon="solar:shield-cross-bold" width={15} sx={{ color: detail.domain.color, flexShrink: 0, mt: "1px" }} />
+              <Iconify
+                icon="solar:shield-cross-bold"
+                width={16}
+                sx={{ color: detail.domain.color, flexShrink: 0, mt: "1px" }}
+              />
               <Box minWidth={0}>
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700, color: textTone(detail.domain.color) }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      color: textTone(detail.domain.color),
+                    }}
+                  >
                     {detail.domain.label} — not measured
                   </Typography>
                 </Stack>
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>{detail.fault}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {detail.fault}
+                </Typography>
+                <Typography
+                  sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+                >
                   {detail.domain.retry} {detail.domain.next}
                 </Typography>
               </Box>
@@ -304,13 +514,35 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
           )}
 
           {/* ── the call's own facts ── */}
-          <Stack direction="row" flexWrap="wrap" rowGap={0.75} spacing={0.75} sx={{ px: 2, py: 1.25 }}>
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            rowGap={0.75}
+            spacing={0.75}
+            sx={{ px: 2, py: 1.25 }}
+          >
             <Meta label="Type" value={detail.type} />
-            <Meta label="Status" value={detail.outcome.label} color={detail.outcome.color} />
-            <Meta label="Duration" value={`0m ${Math.round(detail.durationS)}s`} />
-            <Meta label="Avg Latency" value={`${(detail.latencyMs / 1000).toFixed(1)}s`} />
+            <Meta
+              label="Status"
+              value={detail.outcome.label}
+              color={detail.outcome.color}
+            />
+            <Meta
+              label="Duration"
+              value={`0m ${Math.round(detail.durationS)}s`}
+            />
+            <Meta
+              label="Avg Latency"
+              value={`${(detail.latencyMs / 1000).toFixed(1)}s`}
+            />
           </Stack>
-          <Stack direction="row" flexWrap="wrap" rowGap={0.75} spacing={0.75} sx={{ px: 2, pb: 1.25 }}>
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            rowGap={0.75}
+            spacing={0.75}
+            sx={{ px: 2, pb: 1.25 }}
+          >
             <Meta label="Phone" value={detail.phone} mono />
             <Meta label="Provider" value={detail.provider} />
           </Stack>
@@ -326,9 +558,18 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
               line, and a row that appears in two of three columns shifts every
               one of them out of alignment. */}
           {diff && isBaseline && (
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ px: 2, pb: 1.25, minHeight: 34 }}>
-              <Iconify icon="solar:flag-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ px: 2, pb: 1.25, minHeight: 34 }}
+            >
+              <Iconify
+                icon="solar:flag-linear"
+                width={13}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 Everything to the right is read against this run.
               </Typography>
             </Stack>
@@ -338,22 +579,53 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
               comparison to make, and drawing the panel as if there were one
               would imply this run changed something. */}
           {diff && !isBaseline && !baseline && (
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ px: 2, pb: 1.25, minHeight: 34 }}>
-              <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                The baseline run never covered this scenario, so there is nothing to diff against.
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ px: 2, pb: 1.25, minHeight: 34 }}
+            >
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                The baseline run never covered this scenario, so there is
+                nothing to diff against.
               </Typography>
             </Stack>
           )}
 
           {diff && baseline && (
             <Stack
-              direction="row" alignItems="center" flexWrap="wrap" rowGap={0.75} spacing={0.75}
+              direction="row"
+              alignItems="center"
+              flexWrap="wrap"
+              rowGap={0.75}
+              spacing={0.75}
               sx={{ px: 2, pb: 1.25, minHeight: 34 }}
             >
-              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
-                <Iconify icon="solar:transfer-horizontal-linear" width={13} sx={{ color: "text.subtitle" }} />
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.3 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.5}
+                sx={{ flexShrink: 0 }}
+              >
+                <Iconify
+                  icon="solar:transfer-horizontal-linear"
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                    textTransform: "none",
+                    letterSpacing: 0.3,
+                  }}
+                >
                   Δ baseline
                 </Typography>
               </Stack>
@@ -361,7 +633,9 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
                 <DeltaChip key={d.id} delta={d} />
               ))}
               {callDeltas(detail, baseline).length === 0 && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>identical on every measure</Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  identical on every measure
+                </Typography>
               )}
             </Stack>
           )}
@@ -369,10 +643,13 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
           {/* ── the numbers ── */}
           <Box
             sx={{
-              mx: 2, mb: 1.5,
+              mx: 2,
+              mb: 1.5,
               display: "grid",
               gridTemplateColumns: "repeat(4, 1fr)",
-              border: "1px solid", borderColor: "divider", borderRadius: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
               overflow: "hidden",
             }}
           >
@@ -381,13 +658,20 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
             <Stat label="Latency" value={`${detail.latencyMs}ms`} />
             <Stat
               label="User / AI"
-              value={(
+              value={
                 <>
-                  <Box component="span" sx={{ color: "text.primary" }}>{detail.stats.userPct}</Box>
-                  <Box component="span" sx={{ color: "text.disabled" }}> / </Box>
-                  <Box component="span" sx={{ color: "#7857FC" }}>{detail.stats.aiPct}</Box>
+                  <Box component="span" sx={{ color: "text.primary" }}>
+                    {detail.stats.userPct}
+                  </Box>
+                  <Box component="span" sx={{ color: "text.disabled" }}>
+                    {" "}
+                    /{" "}
+                  </Box>
+                  <Box component="span" sx={{ color: "primary.main" }}>
+                    {detail.stats.aiPct}
+                  </Box>
                 </>
-              )}
+              }
             />
             {/* The environment's payout for this episode, next to the numbers
                 it was computed from. Hover for the terms — a return nobody can
@@ -395,13 +679,20 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
                 is how a reward spec gets fixed. */}
             <Stat
               label="Return"
-              value={detail.return == null ? "—" : detail.return.total.toFixed(2)}
-              hint={detail.return
-                ? `${detail.return.terms.map((t) => `${t.label} ${t.value > 0 ? "+" : ""}${t.value.toFixed(2)}`).join(" · ")} — ${detail.rewardSpec}`
-                : "No verdict, so no return. Zero would be what an agent scores by doing nothing."}
+              value={
+                detail.return == null ? "—" : detail.return.total.toFixed(2)
+              }
+              hint={
+                detail.return
+                  ? `${detail.return.terms.map((t) => `${t.label} ${t.value > 0 ? "+" : ""}${t.value.toFixed(2)}`).join(" · ")} — ${detail.rewardSpec}`
+                  : "No verdict, so no return. Zero would be what an agent scores by doing nothing."
+              }
             />
             <Stat label="Words" value={detail.stats.words} />
-            <Stat label="Silence" value={voice ? `${detail.stats.silenceS.toFixed(2)}s` : "—"} />
+            <Stat
+              label="Silence"
+              value={voice ? `${detail.stats.silenceS.toFixed(2)}s` : "—"}
+            />
             <Stat label="TTFW" value={`${detail.stats.ttfwMs}ms`} />
             <Stat label="User int." value={detail.stats.userInt} />
             <Stat label="AI int." value={detail.stats.aiInt} />
@@ -412,33 +703,85 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
             <Box sx={{ px: 2, pb: 1.5 }}>
               <SectionLabel>
                 Latency pipeline
-                <Box component="span" sx={{ float: "right", color: "text.secondary", fontWeight: 600 }}>
+                <Box
+                  component="span"
+                  sx={{
+                    float: "right",
+                    color: "text.secondary",
+                    fontWeight: 600,
+                  }}
+                >
                   Total {(detail.latencyMs / 1000).toFixed(2)}s
                 </Box>
               </SectionLabel>
-              <Stack direction="row" sx={{ height: 20, borderRadius: 0.75, overflow: "hidden", mt: 0.75 }}>
+              <Stack
+                direction="row"
+                sx={{
+                  height: 20,
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                  mt: 0.75,
+                }}
+              >
                 {detail.latency.map((l) => (
                   <Box
                     key={l.id}
                     sx={{
                       width: `${(l.ms / detail.latencyMs) * 100}%`,
                       bgcolor: l.color,
-                      display: "grid", placeItems: "center",
-                      borderRight: "1px solid", borderColor: "background.paper",
+                      display: "grid",
+                      placeItems: "center",
+                      borderRight: "1px solid",
+                      borderColor: "background.paper",
                     }}
                   >
-                    <Typography noWrap sx={{ typography: "s3", fontWeight: 700, color: "#fff", px: 0.5 }}>
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "common.white",
+                        px: 0.5,
+                      }}
+                    >
                       {l.ms}ms
                     </Typography>
                   </Box>
                 ))}
               </Stack>
-              <Stack direction="row" flexWrap="wrap" rowGap={0.5} spacing={1.5} sx={{ mt: 0.75 }}>
+              <Stack
+                direction="row"
+                flexWrap="wrap"
+                rowGap={0.5}
+                spacing={1.5}
+                sx={{ mt: 0.75 }}
+              >
                 {detail.latency.map((l) => (
-                  <Stack key={l.id} direction="row" alignItems="center" spacing={0.5}>
-                    <Box sx={{ width: 7, height: 7, borderRadius: 0.25, bgcolor: l.color, flexShrink: 0 }} />
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {l.label} <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{l.ms}ms</Box>
+                  <Stack
+                    key={l.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                  >
+                    <Box
+                      sx={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: "4px",
+                        bgcolor: l.color,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {l.label}{" "}
+                      <Box
+                        component="span"
+                        sx={{ color: "text.primary", fontWeight: 600 }}
+                      >
+                        {l.ms}ms
+                      </Box>
                     </Typography>
                   </Stack>
                 ))}
@@ -450,23 +793,70 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
           <Box sx={{ px: 2, pb: 1.5 }}>
             <SectionLabel>
               Cost breakdown
-              <Box component="span" sx={{ float: "right", color: "text.secondary", fontWeight: 600 }}>
+              <Box
+                component="span"
+                sx={{
+                  float: "right",
+                  color: "text.secondary",
+                  fontWeight: 600,
+                }}
+              >
                 {`Total ${creditsText(detail.costTotal)}`}
               </Box>
             </SectionLabel>
             <Stack spacing={0.25} sx={{ mt: 0.5 }}>
               {detail.cost.map((c) => (
-                <Stack key={c.id} direction="row" alignItems="center" spacing={1.25} sx={{ py: 0.75 }}>
-                  <Iconify icon={c.icon} width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Typography noWrap sx={{ typography: "s2", width: 108, flexShrink: 0 }}>{c.label}</Typography>
-                  <Box sx={{ flex: 1, minWidth: 0, height: 4, borderRadius: 2, bgcolor: "background.neutral" }}>
-                    <Box sx={{ width: `${c.pct}%`, height: 1, borderRadius: 2, bgcolor: "#2563EB" }} />
+                <Stack
+                  key={c.id}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1.25}
+                  sx={{ py: 0.75 }}
+                >
+                  <Iconify
+                    icon={c.icon}
+                    width={14}
+                    sx={{ color: "text.tertiary", flexShrink: 0 }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s2", width: 108, flexShrink: 0 }}
+                  >
+                    {c.label}
+                  </Typography>
+                  <Box
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      height: 4,
+                      borderRadius: 2,
+                      bgcolor: "background.neutral",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: `${c.pct}%`,
+                        height: 1,
+                        borderRadius: 2,
+                        bgcolor: "status.info.solid",
+                      }}
+                    />
                   </Box>
                   <Box sx={{ width: 62, flexShrink: 0, textAlign: "right" }}>
-                    <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 600,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {creditsText(c.amount)}
                     </Typography>
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{c.pct}%</Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {c.pct}%
+                    </Typography>
                   </Box>
                 </Stack>
               ))}
@@ -477,60 +867,106 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
           <Box sx={{ px: 2, pb: 1.5 }}>
             <SectionLabel>AI summary</SectionLabel>
             <Stack
-              direction="row" alignItems="flex-start" spacing={1}
-              {...clickable(() => setSummaryOpen((o) => !o), { expanded: summaryOpen })}
+              direction="row"
+              alignItems="flex-start"
+              spacing={1}
+              {...clickable(() => setSummaryOpen((o) => !o), {
+                expanded: summaryOpen,
+              })}
               sx={{
-                mt: 0.5, px: 1.25, py: 1, borderRadius: 1, cursor: "pointer",
-                border: "1px solid", borderColor: "divider",
+                mt: 0.5,
+                px: 1.25,
+                py: 1,
+                borderRadius: 1,
+                cursor: "pointer",
+                border: "1px solid",
+                borderColor: "divider",
                 "&:hover": { bgcolor: "action.hover" },
                 ...focusRing,
               }}
             >
-              <Iconify icon="solar:magic-stick-3-linear" width={14} sx={{ color: "#7857FC", flexShrink: 0, mt: "2px" }} />
+              <Iconify
+                icon="solar:magic-stick-3-linear"
+                width={14}
+                sx={{ color: "primary.main", flexShrink: 0, mt: "2px" }}
+              />
               <Typography
                 sx={{
-                  typography: "s2", color: "text.secondary", flex: 1, minWidth: 0,
-                  ...(summaryOpen ? {} : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
+                  typography: "s2",
+                  color: "text.secondary",
+                  flex: 1,
+                  minWidth: 0,
+                  ...(summaryOpen
+                    ? {}
+                    : {
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }),
                 }}
               >
                 {detail.summary}
               </Typography>
               <Iconify
-                icon={summaryOpen ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
+                icon={
+                  summaryOpen
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
                 width={14}
-                sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }}
+                sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
               />
             </Stack>
           </Box>
 
           {/* ── the artifacts ── */}
-          <CustomTabs
-            value={tab}
-            onChange={(_, v) => onTab(v)}
-            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
+          <Box
+            sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <Tab
-              value="transcript" sx={{ minHeight: 40 }}
-              icon={<Iconify icon="solar:document-text-linear" width={14} />}
-              iconPosition="start" label="Transcript"
-            />
-            <Tab
-              value="checklist" sx={{ minHeight: 40 }}
-              icon={<Iconify icon="solar:checklist-minimalistic-linear" width={14} />}
-              iconPosition="start" label="Checklist"
-            />
-            <Tab
-              value="graph" sx={{ minHeight: 40 }}
-              icon={<Iconify icon="solar:routing-2-linear" width={14} />}
-              iconPosition="start" label="Graph"
-            />
-          </CustomTabs>
+            <CustomTabs value={tab} onChange={(_, v) => onTab(v)}>
+              <Tab
+                value="transcript"
+                icon={<Iconify icon="solar:document-text-linear" width={14} />}
+                iconPosition="start"
+                label="Transcript"
+              />
+              <Tab
+                value="checklist"
+                icon={
+                  <Iconify
+                    icon="solar:checklist-minimalistic-linear"
+                    width={14}
+                  />
+                }
+                iconPosition="start"
+                label="Checklist"
+              />
+              <Tab
+                value="graph"
+                icon={<Iconify icon="solar:routing-2-linear" width={14} />}
+                iconPosition="start"
+                label="Graph"
+              />
+            </CustomTabs>
+          </Box>
 
           {tab === "transcript" && (
-            <TranscriptPane detail={detail} baseline={baseline} diff={diff} voice={voice} />
+            <TranscriptPane
+              detail={detail}
+              baseline={baseline}
+              diff={diff}
+              voice={voice}
+            />
           )}
           {tab === "checklist" && <ChecklistPane detail={detail} />}
-          {tab === "graph" && <GraphPane detail={detail} baseline={baseline} diff={diff} onTab={onTab} />}
+          {tab === "graph" && (
+            <GraphPane
+              detail={detail}
+              baseline={baseline}
+              diff={diff}
+              onTab={onTab}
+            />
+          )}
         </Box>
       )}
     </Stack>
@@ -538,9 +974,16 @@ function RunColumn({ cell, run, name, detail, baseline, isBaseline, voice, diff,
 }
 
 RunColumn.propTypes = {
-  cell: PropTypes.object, run: PropTypes.object, name: PropTypes.string, detail: PropTypes.object,
-  baseline: PropTypes.object, isBaseline: PropTypes.bool, voice: PropTypes.bool,
-  diff: PropTypes.bool, tab: PropTypes.string, onTab: PropTypes.func,
+  cell: PropTypes.object,
+  run: PropTypes.object,
+  name: PropTypes.string,
+  detail: PropTypes.object,
+  baseline: PropTypes.object,
+  isBaseline: PropTypes.bool,
+  voice: PropTypes.bool,
+  diff: PropTypes.bool,
+  tab: PropTypes.string,
+  onTab: PropTypes.func,
 };
 
 /* ── transcript ──────────────────────────────────────────────────────────── */
@@ -553,14 +996,18 @@ function TranscriptPane({ detail, baseline, diff, voice }) {
      version says where the shipped one said something else. */
   const showDiff = diff && !!baseline;
   const rows = useMemo(
-    () => (showDiff ? transcriptDiff(detail.turns, baseline.turns) : detail.turns.map((t) => ({ ...t, diff: "same" }))),
+    () =>
+      showDiff
+        ? transcriptDiff(detail.turns, baseline.turns)
+        : detail.turns.map((t) => ({ ...t, diff: "same" })),
     [showDiff, detail.turns, baseline],
   );
   const tally = diffTally(rows);
 
   const shown = rows.filter((t) => {
     if (role !== "all" && t.role !== role) return false;
-    if (query && !t.text.toLowerCase().includes(query.toLowerCase())) return false;
+    if (query && !t.text.toLowerCase().includes(query.toLowerCase()))
+      return false;
     return true;
   });
 
@@ -568,20 +1015,36 @@ function TranscriptPane({ detail, baseline, diff, voice }) {
     <Box sx={{ pb: 2 }}>
       {voice && <Recording detail={detail} />}
 
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1.25 }}
+      >
         <TextField
-          size="small" fullWidth placeholder="Search transcript"
-          value={query} onChange={(e) => setQuery(e.target.value)}
+          size="small"
+          fullWidth
+          placeholder="Search transcript"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
           InputProps={{
             sx: { typography: "s2" },
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:magnifer-linear"
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
+                />
               </InputAdornment>
             ),
           }}
         />
-        <SegmentedTabs value={role} onChange={(_, v) => setRole(v)} sx={{ flexShrink: 0 }}>
+        <SegmentedTabs
+          value={role}
+          onChange={(_, v) => setRole(v)}
+          sx={{ flexShrink: 0 }}
+        >
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
           <Tab value="customer" label="Customer" />
@@ -589,12 +1052,30 @@ function TranscriptPane({ detail, baseline, diff, voice }) {
       </Stack>
 
       {showDiff && (
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, pb: 1 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ px: 2, pb: 1 }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+            }}
+          >
             Transcript diff
           </Typography>
-          <Count n={tally.changed} label="changed" color="#B98A3C" textColor="text.secondary" />
-          <Count n={tally.added} label="added" color="#5AA47B" />
+          <Count
+            n={tally.changed}
+            label="changed"
+            role="warning"
+            textColor="text.secondary"
+          />
+          <Count n={tally.added} label="added" role="success" />
         </Stack>
       )}
 
@@ -603,18 +1084,39 @@ function TranscriptPane({ detail, baseline, diff, voice }) {
           <React.Fragment key={t.id}>
             <Turn turn={t} showDiff={showDiff} />
             {voice && t.silenceAfter >= 1 && i < shown.length - 1 && (
-              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 1.5, py: 0.5 }}>
-                <Iconify icon="solar:hourglass-line-linear" width={11} sx={{ color: "text.disabled" }} />
-                <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace" }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+                sx={{ px: 1.5, py: 0.5 }}
+              >
+                <Iconify
+                  icon="solar:hourglass-line-linear"
+                  width={12}
+                  sx={{ color: "text.disabled" }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.disabled",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                  }}
+                >
                   {t.silenceAfter.toFixed(1)}s silence
                 </Typography>
-                <Box sx={{ flex: 1, borderBottom: "1px dashed", borderColor: "divider" }} />
+                <Box
+                  sx={{
+                    flex: 1,
+                    borderBottom: "1px dashed",
+                    borderColor: "divider",
+                  }}
+                />
               </Stack>
             )}
           </React.Fragment>
         ))}
         {shown.length === 0 && (
-          <Typography sx={{ typography: "s2", color: "text.subtitle", py: 2 }}>
+          <Typography sx={{ typography: "s2", color: "text.tertiary", py: 2 }}>
             Nothing in this transcript matches.
           </Typography>
         )}
@@ -624,44 +1126,71 @@ function TranscriptPane({ detail, baseline, diff, voice }) {
 }
 
 TranscriptPane.propTypes = {
-  detail: PropTypes.object, baseline: PropTypes.object, diff: PropTypes.bool, voice: PropTypes.bool,
+  detail: PropTypes.object,
+  baseline: PropTypes.object,
+  diff: PropTypes.bool,
+  voice: PropTypes.bool,
 };
 
 function Turn({ turn, showDiff }) {
   const changed = showDiff && turn.diff === "changed";
   const added = showDiff && turn.diff === "added";
-  const accent = changed ? "#B98A3C" : added ? "#5AA47B" : null;
+  const accent = changed ? "warning" : added ? "success" : null;
 
   return (
     <Box
       sx={{
         borderLeft: "2px solid",
-        borderColor: (t) => (accent || (turn.role === "agent" ? t.palette.primary.main : t.palette.text.disabled)),
-        bgcolor: (t) => (accent
-          ? alpha(accent, t.palette.mode === "dark" ? 0.1 : 0.06)
+        borderColor: accent
+          ? `status.${accent}.solid`
           : turn.role === "agent"
-            ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.06 : 0.04)
-            : "background.neutral"),
-        px: 1.5, py: 1, mb: 0.5,
+            ? "primary.main"
+            : "text.disabled",
+        bgcolor: accent
+          ? `status.${accent}.bg`
+          : turn.role === "agent"
+            ? "status.discovery.bg"
+            : "background.neutral",
+        px: 1.5,
+        py: 1,
+        mb: 0.5,
       }}
     >
       <Stack direction="row" alignItems="center" spacing={0.75}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {mmss(turn.at)}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.disabled",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {turn.dur.toFixed(1)}s
         </Typography>
         {showDiff && (
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle" }}>
+          <Typography
+            sx={{ typography: "s3", fontWeight: 600, color: "text.tertiary" }}
+          >
             {ROLE_LABEL[turn.role]}
           </Typography>
         )}
         {accent && (
           <Typography
             sx={{
-              px: 0.625, borderRadius: 0.5, typography: "s3", fontWeight: 700, color: textTone(accent, "text.secondary"),
-              bgcolor: (t) => alpha(accent, t.palette.mode === "dark" ? 0.2 : 0.12),
+              px: 0.625,
+              borderRadius: "4px",
+              typography: "s3",
+              fontWeight: 600,
+              color: `status.${accent}.fg`,
+              bgcolor: `status.${accent}.bg`,
             }}
           >
             {changed ? "Changed" : "Added"}
@@ -674,7 +1203,10 @@ function Turn({ turn, showDiff }) {
       {changed && (
         <Typography
           sx={{
-            typography: "s2", mt: 0.375, color: "text.disabled", textDecoration: "line-through",
+            typography: "s2",
+            mt: 0.375,
+            color: "text.disabled",
+            textDecoration: "line-through",
           }}
         >
           {turn.was}
@@ -690,9 +1222,18 @@ Turn.propTypes = { turn: PropTypes.object, showDiff: PropTypes.bool };
 /* ── checklist ───────────────────────────────────────────────────────────── */
 
 const STEP_TONE = {
-  addressed: { color: "#16A34A", icon: "solar:check-circle-bold", label: "Addressed" },
-  partial: { color: "#CA8A04", text: "text.secondary", icon: "solar:info-circle-bold", label: "Partial" },
-  missed: { color: "#DC2626", icon: "solar:close-circle-bold", label: "Missed" },
+  addressed: {
+    role: "success",
+    icon: "solar:check-circle-bold",
+    label: "Addressed",
+  },
+  partial: {
+    role: "warning",
+    text: "text.secondary",
+    icon: "solar:info-circle-bold",
+    label: "Partial",
+  },
+  missed: { role: "danger", icon: "solar:close-circle-bold", label: "Missed" },
 };
 
 function ChecklistPane({ detail }) {
@@ -700,19 +1241,46 @@ function ChecklistPane({ detail }) {
 
   return (
     <Box sx={{ pb: 2 }}>
-      <Stack direction="row" alignItems="center" flexWrap="wrap" rowGap={0.5} spacing={1.5} sx={{ px: 2, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        flexWrap="wrap"
+        rowGap={0.5}
+        spacing={1.5}
+        sx={{ px: 2, py: 1.25 }}
+      >
         <Typography
           sx={{
-            px: 0.875, py: 0.25, borderRadius: 0.5, typography: "s3", fontWeight: 700,
-            color: pct >= 80 ? "#16A34A" : pct >= 40 ? "text.primary" : "#DC2626",
-            bgcolor: (t) => alpha(pct >= 80 ? "#16A34A" : pct >= 40 ? "#CA8A04" : "#DC2626", t.palette.mode === "dark" ? 0.18 : 0.1),
+            px: 0.875,
+            py: 0.25,
+            borderRadius: "4px",
+            typography: "s3",
+            fontWeight: 600,
+            color:
+              pct >= 80
+                ? "status.success.fg"
+                : pct >= 40
+                  ? "text.primary"
+                  : "status.danger.fg",
+            bgcolor:
+              pct >= 80
+                ? "status.success.bg"
+                : pct >= 40
+                  ? "status.warning.bg"
+                  : "status.danger.bg",
           }}
         >
           {pct}% · {pass + partial}/{steps.length} steps
         </Typography>
-        <Count n={pass} label="pass" color="#16A34A" dot />
-        <Count n={partial} label="partial" color="#CA8A04" textColor="text.primary" dot />
-        <Count n={missed} label="missed" color="#DC2626" dot />
+        <Count n={pass} label="pass" role="success" dot />
+        <Count
+          n={partial}
+          label="partial"
+          role="warning"
+          textColor="text.primary"
+          dot
+        />
+        <Count n={missed} label="missed" role="danger" dot />
       </Stack>
 
       <Stack sx={{ px: 2 }} spacing={1}>
@@ -734,62 +1302,139 @@ function ChecklistStep({ step, total }) {
   const [open, setOpen] = useState(step.status !== "addressed");
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+      }}
+    >
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         {...clickable(() => setOpen((o) => !o), { expanded: open })}
-        sx={{ px: 1.5, py: 1, cursor: "pointer", "&:hover": { bgcolor: "action.hover" }, ...focusRing }}
+        sx={{
+          px: 1.5,
+          py: 1,
+          cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
+          ...focusRing,
+        }}
       >
-        <Iconify icon={tone.icon} width={15} sx={{ color: tone.color, flexShrink: 0 }} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>
-          {String(step.index + 1).padStart(2, "0")}/{String(total).padStart(2, "0")}
+        <Iconify
+          icon={tone.icon}
+          width={16}
+          sx={{ color: `status.${tone.role}.fg`, flexShrink: 0 }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            flexShrink: 0,
+          }}
+        >
+          {String(step.index + 1).padStart(2, "0")}/
+          {String(total).padStart(2, "0")}
         </Typography>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            fontFamily: "ui-monospace, Menlo, monospace",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {step.name}
         </Typography>
         <Typography
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-            typography: "s3", fontWeight: 700, color: tone.text || tone.color, textTransform: "uppercase",
-            bgcolor: (t) => alpha(tone.color, t.palette.mode === "dark" ? 0.18 : 0.1),
+            px: 0.75,
+            py: 0.125,
+            borderRadius: "4px",
+            flexShrink: 0,
+            typography: "s3",
+            fontWeight: 600,
+            color: tone.text || `status.${tone.role}.fg`,
+            textTransform: "none",
+            bgcolor: `status.${tone.role}.bg`,
           }}
         >
           {tone.label}
         </Typography>
         <Iconify
-          icon={open ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
+          icon={
+            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+          }
           width={14}
-          sx={{ color: "text.subtitle", flexShrink: 0 }}
+          sx={{ color: "text.tertiary", flexShrink: 0 }}
         />
       </Stack>
 
       <Collapse in={open}>
         <Box sx={{ px: 1.5, pb: 1.25 }}>
-          <Typography sx={{ typography: "s2", fontStyle: "italic", color: "text.secondary" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              fontStyle: "italic",
+              color: "text.secondary",
+            }}
+          >
             &ldquo;{step.expectation}&rdquo;
           </Typography>
           {step.evidence ? (
             <Stack
-              direction="row" alignItems="flex-start" spacing={1}
+              direction="row"
+              alignItems="flex-start"
+              spacing={1}
               sx={{
-                mt: 0.875, p: 1, borderRadius: 0.75,
+                mt: 0.875,
+                p: 1,
+                borderRadius: "4px",
                 bgcolor: "background.neutral",
               }}
             >
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  flexShrink: 0,
+                }}
+              >
                 ▸ {mmss(step.evidence.at)}
               </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
                 {step.evidence.text}
               </Typography>
               {/* How sure the grader is, said out loud — a partial with 66%
                   behind it is a different instruction from a partial at 95%. */}
-              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", flexShrink: 0 }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.tertiary",
+                  flexShrink: 0,
+                }}
+              >
                 {step.evidence.confidence}%
               </Typography>
             </Stack>
           ) : (
-            <Typography sx={{ typography: "s2", color: "text.disabled", mt: 0.5 }}>
+            <Typography
+              sx={{ typography: "s2", color: "text.disabled", mt: 0.5 }}
+            >
               No matching turn — the agent never touched this step.
             </Typography>
           )}
@@ -815,9 +1460,12 @@ function GraphPane({ detail, baseline, diff, onTab }) {
   const hint = useMemo(() => {
     const byId = new Map(detail.checklist.steps.map((s) => [s.id, s]));
     return (n) => {
-      if (n.kind === "baseline") return `${n.label} — the baseline went here; this run did not.`;
-      if (n.kind === "skipped") return `${n.label} — this scenario needed it and the agent never called it.`;
-      if (n.kind === "alternate") return `${n.label} — the branch the rule could have taken. It did not.`;
+      if (n.kind === "baseline")
+        return `${n.label} — the baseline went here; this run did not.`;
+      if (n.kind === "skipped")
+        return `${n.label} — this scenario needed it and the agent never called it.`;
+      if (n.kind === "alternate")
+        return `${n.label} — the branch the rule could have taken. It did not.`;
       const step = byId.get(n.id);
       if (step) {
         return `${n.label} — ${step.status}${step.evidence ? ` · ${step.evidence.confidence}% confidence` : ""}. Click to open it in the checklist.`;
@@ -827,9 +1475,15 @@ function GraphPane({ detail, baseline, diff, onTab }) {
   }, [detail]);
 
   const g = useMemo(
-    () => (showDiff
-      ? graphDiff(detail.graph, baseline.graph)
-      : { spine: detail.graph.spine, branches: detail.graph.branches, added: 0, missingCount: 0 }),
+    () =>
+      showDiff
+        ? graphDiff(detail.graph, baseline.graph)
+        : {
+            spine: detail.graph.spine,
+            branches: detail.graph.branches,
+            added: 0,
+            missingCount: 0,
+          },
     [showDiff, detail, baseline],
   );
 
@@ -838,28 +1492,60 @@ function GraphPane({ detail, baseline, diff, onTab }) {
     ...b,
     nodes: b.nodes.map((n) => ({ ...n, hint: hint(n) })),
   }));
-  const skipped = detail.graph.branches.filter((b) => b.kind === "skipped").length;
+  const skipped = detail.graph.branches.filter(
+    (b) => b.kind === "skipped",
+  ).length;
 
   return (
     <Box sx={{ pb: 2 }}>
-      <Stack direction="row" alignItems="center" flexWrap="wrap" rowGap={0.5} spacing={1} sx={{ px: 2, py: 1.25 }}>
-        <Iconify icon="solar:routing-2-linear" width={13} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        flexWrap="wrap"
+        rowGap={0.5}
+        spacing={1}
+        sx={{ px: 2, py: 1.25 }}
+      >
+        <Iconify
+          icon="solar:routing-2-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.tertiary",
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
+        >
           {showDiff ? "vs baseline" : "trajectory"}
         </Typography>
         {showDiff ? (
           <>
-            <Count n={g.added} label="added" color="#5AA47B" prefix="+" />
-            <Count n={g.missingCount} label="missing" color="#C2603F" prefix="−" />
+            <Count n={g.added} label="added" role="success" prefix="+" />
+            <Count
+              n={g.missingCount}
+              label="missing"
+              role="danger"
+              prefix="−"
+            />
           </>
         ) : (
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {spine.length} steps · {detail.turns.length} turns
           </Typography>
         )}
         {/* A skipped step is the finding, so it is stated in the header rather
             than left for someone to spot in the drawing. */}
-        {skipped > 0 && <Count n={skipped} label={skipped === 1 ? "step skipped" : "steps skipped"} color="#C2603F" />}
+        {skipped > 0 && (
+          <Count
+            n={skipped}
+            label={skipped === 1 ? "step skipped" : "steps skipped"}
+            role="danger"
+          />
+        )}
       </Stack>
 
       {/* The route is a way in, not a dead end: a node names a checklist step,
@@ -868,27 +1554,60 @@ function GraphPane({ detail, baseline, diff, onTab }) {
         spine={spine}
         branches={branches}
         diff={showDiff}
-        onNodeClick={(n) => { if (!["baseline", "alternate"].includes(n.kind)) onTab("checklist"); }}
+        onNodeClick={(n) => {
+          if (!["baseline", "alternate"].includes(n.kind)) onTab("checklist");
+        }}
         sx={{ mx: 2 }}
       />
       <GraphLegend diff={showDiff} />
 
       {/* The read, under the route it is about. */}
-      <Box sx={{ mx: 2, mt: 1, p: 1.5, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
-          <Iconify icon="solar:magic-stick-3-linear" width={14} sx={{ color: "#7857FC" }} />
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+      <Box
+        sx={{
+          mx: 2,
+          mt: 1,
+          p: 1.5,
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ mb: 0.5 }}
+        >
+          <Iconify
+            icon="solar:magic-stick-3-linear"
+            width={14}
+            sx={{ color: "primary.main" }}
+          />
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+            }}
+          >
             Falcon analysis
           </Typography>
         </Stack>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>{detail.analysis}</Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {detail.analysis}
+        </Typography>
       </Box>
     </Box>
   );
 }
 
 GraphPane.propTypes = {
-  detail: PropTypes.object, baseline: PropTypes.object, diff: PropTypes.bool, onTab: PropTypes.func,
+  detail: PropTypes.object,
+  baseline: PropTypes.object,
+  diff: PropTypes.bool,
+  onTab: PropTypes.func,
 };
 
 /* ── small pieces ────────────────────────────────────────────────────────── */
@@ -897,8 +1616,12 @@ function SectionLabel({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: 700, color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.4, display: "block",
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.tertiary",
+        textTransform: "none",
+        letterSpacing: 0.4,
+        display: "block",
       }}
     >
       {children}
@@ -910,13 +1633,24 @@ SectionLabel.propTypes = { children: PropTypes.node };
 function Meta({ label, value, color, mono }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={0.625}
-      sx={{ px: 0.875, py: 0.375, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}
+      direction="row"
+      alignItems="center"
+      spacing={0.625}
+      sx={{
+        px: 0.875,
+        py: 0.375,
+        borderRadius: "4px",
+        border: "1px solid",
+        borderColor: "divider",
+      }}
     >
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{label} :</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {label} :
+      </Typography>
       <Typography
         sx={{
-          typography: "s3", fontWeight: 700,
+          typography: "s3",
+          fontWeight: 600,
           color: textTone(color || "text.primary"),
           fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined,
         }}
@@ -926,62 +1660,135 @@ function Meta({ label, value, color, mono }) {
     </Stack>
   );
 }
-Meta.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTypes.string, mono: PropTypes.bool };
+Meta.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.node,
+  color: PropTypes.string,
+  mono: PropTypes.bool,
+};
 
 function Stat({ label, value, hint }) {
   const cell = (
-    <Box sx={{ px: 1.25, py: 1, borderRight: "1px solid", borderBottom: "1px solid", borderColor: "divider" }}>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.3 }}>
+    <Box
+      sx={{
+        px: 1.25,
+        py: 1,
+        borderRight: "1px solid",
+        borderBottom: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography
+        noWrap
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          textTransform: "none",
+          letterSpacing: 0.3,
+        }}
+      >
         {label}
       </Typography>
-      <Typography sx={{ typography: "m2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+      <Typography
+        sx={{
+          typography: "m2",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {value}
       </Typography>
     </Box>
   );
-  return hint ? <Tooltip arrow title={hint}>{cell}</Tooltip> : cell;
+  return hint ? (
+    <Tooltip arrow title={hint}>
+      {cell}
+    </Tooltip>
+  ) : (
+    cell
+  );
 }
-Stat.propTypes = { label: PropTypes.string, value: PropTypes.node, hint: PropTypes.string };
+Stat.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.node,
+  hint: PropTypes.string,
+};
 
-function Count({ n, label, color, textColor, dot, prefix }) {
+function Count({ n, label, role, textColor, dot, prefix }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.5}>
-      {dot && <Box sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: color, flexShrink: 0 }} />}
+      {dot && (
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            bgcolor: `status.${role}.solid`,
+            flexShrink: 0,
+          }}
+        />
+      )}
       <Typography
         sx={{
-          typography: "s3", fontWeight: 700, color: textColor || color,
-          ...(dot ? {} : {
-            px: 0.625, py: 0.125, borderRadius: 0.5,
-            bgcolor: (t) => alpha(color, t.palette.mode === "dark" ? 0.18 : 0.1),
-          }),
+          typography: "s3",
+          fontWeight: 600,
+          color: textColor || `status.${role}.fg`,
+          ...(dot
+            ? {}
+            : {
+                px: 0.625,
+                py: 0.125,
+                borderRadius: "4px",
+                bgcolor: `status.${role}.bg`,
+              }),
         }}
       >
-        {prefix || ""}{n} {label}
+        {prefix || ""}
+        {n} {label}
       </Typography>
     </Stack>
   );
 }
 Count.propTypes = {
-  n: PropTypes.number, label: PropTypes.string, color: PropTypes.string, textColor: PropTypes.string,
-  dot: PropTypes.bool, prefix: PropTypes.string,
+  n: PropTypes.number,
+  label: PropTypes.string,
+  role: PropTypes.string,
+  textColor: PropTypes.string,
+  dot: PropTypes.bool,
+  prefix: PropTypes.string,
 };
 
 function DeltaChip({ delta }) {
   const up = delta.value > 0;
   const good = delta.neutral ? null : delta.lowerIsBetter ? !up : up;
-  const color = good == null ? "text.subtitle" : good ? "#5AA47B" : "#C2603F";
+  const color =
+    good == null
+      ? "text.tertiary"
+      : good
+        ? "status.success.fg"
+        : "status.danger.fg";
   return (
     <Stack
-      direction="row" alignItems="center" spacing={0.5}
-      sx={{ px: 0.875, py: 0.375, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
+      sx={{
+        px: 0.875,
+        py: 0.375,
+        borderRadius: "4px",
+        border: "1px solid",
+        borderColor: "divider",
+      }}
     >
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{delta.label}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+        {delta.label}
+      </Typography>
       <Iconify
-        icon={up ? "eva:arrow-upward-fill" : "eva:arrow-downward-fill"}
+        icon={up ? "solar:arrow-up-linear" : "solar:arrow-down-linear"}
         width={12}
         sx={{ color }}
       />
-      <Typography sx={{ typography: "s3", fontWeight: 700, color }}>
+      <Typography sx={{ typography: "s3", fontWeight: 600, color }}>
         {delta.format(delta.value)}
       </Typography>
     </Stack>
@@ -1006,7 +1813,9 @@ DeltaChip.propTypes = { delta: PropTypes.object };
  * transcript, which is the artifact we actually have.
  */
 const TALK = {
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   customer: "#E0913A",
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   assistant: (mode) => (mode === "dark" ? "#E4E4E7" : "#52525B"),
 };
 
@@ -1026,7 +1835,10 @@ function Recording({ detail }) {
 
   const downloadTranscript = () => {
     const text = turns
-      .map((t) => `[${mmss(t.at)}] ${t.role === "agent" ? "Assistant" : "Customer"}: ${t.text}`)
+      .map(
+        (t) =>
+          `[${mmss(t.at)}] ${t.role === "agent" ? "Assistant" : "Customer"}: ${t.text}`,
+      )
       .join("\n");
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
     const a = document.createElement("a");
@@ -1041,35 +1853,49 @@ function Recording({ detail }) {
       {/* Silence is the baseline showing through — the gaps are the point. */}
       <Box
         sx={{
-          position: "absolute", left: 0, right: 0, top: "50%",
-          borderTop: "1px dashed", borderColor: "divider",
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: "50%",
+          borderTop: "1px dashed",
+          borderColor: "divider",
         }}
       />
-      {turns.filter((t) => t.role === role).map((t) => (
-        <Stack
-          key={t.id}
-          direction="row" alignItems="center" justifyContent="space-between"
-          sx={{
-            position: "absolute", top: 0, bottom: 0,
-            left: `${(t.at / total) * 100}%`,
-            width: `${Math.max(0.5, (t.dur / total) * 100)}%`,
-          }}
-        >
-          {/* Thin and evenly spread rather than stretched to fill: a bar as
+      {turns
+        .filter((t) => t.role === role)
+        .map((t) => (
+          <Stack
+            key={t.id}
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            sx={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: `${(t.at / total) * 100}%`,
+              width: `${Math.max(0.5, (t.dur / total) * 100)}%`,
+            }}
+          >
+            {/* Thin and evenly spread rather than stretched to fill: a bar as
               wide as the gap beside it reads as a bar chart, and this is meant
               to read as a signal. Fixed-width, shrinking only when a long turn
               is crowded into a narrow column. */}
-          {barsFor(t).map((h, i) => (
-            <Box
-              key={i}
-              sx={{
-                flex: "0 1 1.5px", maxWidth: "1.5px", minWidth: "1px",
-                height: `${h * 100}%`, borderRadius: "1px", bgcolor: color,
-              }}
-            />
-          ))}
-        </Stack>
-      ))}
+            {barsFor(t).map((h, i) => (
+              <Box
+                key={i}
+                sx={{
+                  flex: "0 1 1.5px",
+                  maxWidth: "1.5px",
+                  minWidth: "1px",
+                  height: `${h * 100}%`,
+                  borderRadius: "1px",
+                  bgcolor: color,
+                }}
+              />
+            ))}
+          </Stack>
+        ))}
     </Box>
   );
 
@@ -1079,8 +1905,11 @@ function Recording({ detail }) {
 
       <Box
         sx={{
-          mt: 0.75, p: 1.25, borderRadius: 1,
-          border: "1px solid", borderColor: "divider",
+          mt: 0.75,
+          p: 1.25,
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
           bgcolor: "background.neutral",
         }}
       >
@@ -1091,8 +1920,13 @@ function Recording({ detail }) {
             <Box
               key={t}
               sx={{
-                position: "absolute", top: 0, bottom: 0, left: `${(t / total) * 100}%`,
-                borderLeft: "1px solid", borderColor: "divider", opacity: 0.6,
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: `${(t / total) * 100}%`,
+                borderLeft: "1px solid",
+                borderColor: "divider",
+                opacity: 0.6,
               }}
             />
           ))}
@@ -1105,9 +1939,11 @@ function Recording({ detail }) {
             <Typography
               key={t}
               sx={{
-                position: "absolute", left: `${(t / total) * 100}%`,
+                position: "absolute",
+                left: `${(t / total) * 100}%`,
                 transform: i === 0 ? "none" : "translateX(-50%)",
-                typography: "s3", color: "text.disabled",
+                typography: "s3",
+                color: "text.disabled",
                 fontFamily: "ui-monospace, Menlo, monospace",
               }}
             >
@@ -1118,43 +1954,93 @@ function Recording({ detail }) {
       </Box>
 
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.875 }}>
-        <Tooltip arrow title="Audio unavailable — the waveform is drawn from the transcript">
+        <Tooltip
+          arrow
+          title="Audio unavailable — the waveform is drawn from the transcript"
+        >
           <span>
             <IconButton
-              size="small" disabled
-              sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+              size="small"
+              disabled
+              sx={{ border: "1px solid", borderColor: "divider" }}
             >
-              <Iconify icon="solar:play-bold" width={13} />
+              <Iconify icon="solar:play-bold" width={14} />
             </IconButton>
           </span>
         </Tooltip>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {mmss(total)}
         </Typography>
         <Box flex={1} />
-        <Tooltip arrow title="Downloads the transcript — there is no audio to download">
+        <Tooltip
+          arrow
+          title="Downloads the transcript — there is no audio to download"
+        >
           <Button
-            size="small" variant="outlined" color="inherit"
+            size="small"
+            variant="outlined"
+            color="inherit"
             onClick={downloadTranscript}
-            startIcon={<Iconify icon="solar:download-minimalistic-linear" width={14} />}
-            sx={{ typography: "s2", fontWeight: 600, borderColor: "divider", color: "text.secondary" }}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={14} />
+            }
+            sx={{ borderColor: "divider", color: "text.secondary" }}
           >
             Download
           </Button>
         </Tooltip>
       </Stack>
 
-      <Stack direction="row" alignItems="center" flexWrap="wrap" rowGap={0.5} spacing={1.5} sx={{ mt: 1.25 }}>
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        flexWrap="wrap"
+        rowGap={0.5}
+        spacing={1.5}
+        sx={{ mt: 1.25 }}
+      >
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.tertiary",
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
+        >
           Talk ratio
         </Typography>
         <Stack direction="row" alignItems="center" spacing={0.5}>
-          <Box sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: TALK.customer }} />
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Customer {detail.stats.userPct}%</Typography>
+          <Box
+            sx={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              bgcolor: TALK.customer,
+            }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Customer {detail.stats.userPct}%
+          </Typography>
         </Stack>
         <Stack direction="row" alignItems="center" spacing={0.5}>
-          <Box sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: assistant }} />
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Assistant {detail.stats.aiPct}%</Typography>
+          <Box
+            sx={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              bgcolor: assistant,
+            }}
+          />
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Assistant {detail.stats.aiPct}%
+          </Typography>
         </Stack>
       </Stack>
       {/* Who held the floor, in the order they held it — an assistant that
@@ -1166,7 +2052,7 @@ function Recording({ detail }) {
             key={t.id}
             sx={{
               flex: Math.max(1, t.dur * 10),
-              borderRadius: 0.5,
+              borderRadius: "4px",
               bgcolor: t.role === "agent" ? assistant : TALK.customer,
             }}
           />

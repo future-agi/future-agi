@@ -1,26 +1,14 @@
+import { statusColors } from "src/utils/runStatus";
+
 export const getStatusColor = (status, theme) => {
-  switch (status) {
-    case "completed":
-      return {
-        bg: "#00A2511A",
-        icon: "#00A251",
-      };
-    case "running":
-      return {
-        bg: "#348AEF1A",
-        icon: "#348AEF",
-      };
-    case "failed":
-      return {
-        bg: theme?.palette?.red?.["o10"] ?? "#D92D201A",
-        icon: theme?.palette?.red?.["700"] ?? "#D92D20",
-      };
-    default:
-      return {
-        bg: "#1A1A1A1A",
-        icon: "text.secondary",
-      };
-  }
+  const roleFor = {
+    completed: "success",
+    running: "info",
+    failed: "danger",
+  }[status];
+  if (!theme) return { bg: undefined, icon: "text.secondary" };
+  const c = statusColors(theme, roleFor || "neutral");
+  return { bg: c.bg, icon: roleFor ? c.fg : "text.secondary" };
 };
 
 export const getDocsLinkBasedOnOptimizer = (optimiserName) => {

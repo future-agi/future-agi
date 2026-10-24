@@ -93,10 +93,6 @@ export default function NodeSelectionPopper({
               p: 1.5,
               maxHeight: 400,
               overflowY: "auto",
-              backgroundColor: "background.paper",
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
               maxWidth: "250px",
             }}
           >

@@ -362,7 +362,7 @@ const PromptActions = () => {
           </NavLink>
           <span style={{ display: "inline-block", marginTop: "6px" }}>
             <Iconify
-              icon="fluent:chevron-right-12-regular"
+              icon="solar:alt-arrow-right-linear"
               width={24}
               height={24}
             />
@@ -372,31 +372,23 @@ const PromptActions = () => {
             condition={RolePermission.PROMPTS[PERMISSIONS.CREATE][userRole]}
           >
             <CustomTooltip show title="Add New Prompt" arrow size="small">
-              <Box
+              <IconButton
+                size="small"
                 sx={{
-                  cursor: "pointer",
                   border: "1px solid",
                   borderColor: "divider",
                   color: "text.disabled",
-                  borderRadius: theme.spacing(0.5),
-                  padding: theme.spacing(0.5),
-                  lineHeight: 0,
-                  height: "32px",
-                  width: "32px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
                   flexShrink: 0,
                 }}
                 onClick={handleWritePrompt}
               >
                 <ShowComponent condition={!isLoadingCreate}>
-                  <Iconify icon="eva:plus-fill" width="16px" height="16px" />
+                  <Iconify icon="solar:add-linear" width="16px" height="16px" />
                 </ShowComponent>
                 <ShowComponent condition={isLoadingCreate}>
                   <CircularProgress size={16} sx={{ color: "text.primary" }} />
                 </ShowComponent>
-              </Box>
+              </IconButton>
             </CustomTooltip>
           </ShowComponent>
           {!isLoadingCreate ? (
@@ -467,7 +459,7 @@ const PromptActions = () => {
                     variant="rectangular"
                     width={25}
                     height={23}
-                    sx={{ borderRadius: "2px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 )}
                 {baseVersion?.isDraft ? <DraftBadge>Draft</DraftBadge> : null}
@@ -495,10 +487,7 @@ const PromptActions = () => {
                           backgroundColor: getTagColorMap(label?.name, theme)
                             ?.backgroundColor,
                           color: getTagColorMap(label?.name, theme)?.color,
-                          borderRadius: "100px",
                           typography: "s3",
-                          fontWeight: "fontWeightMedium",
-                          height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
                               ?.hoverBackgroundColor,
@@ -514,12 +503,7 @@ const PromptActions = () => {
                 !isLoadingCreate &&
                 RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole] && (
                   <span style={{ display: "inline-block" }}>
-                    <IconButton
-                      onClick={handleEdit}
-                      sx={{
-                        padding: 0.5,
-                      }}
-                    >
+                    <IconButton onClick={handleEdit}>
                       <SvgColor
                         src="/assets/icons/ic_edit_pencil.svg"
                         sx={{
@@ -567,11 +551,10 @@ const PromptActions = () => {
               >
                 <span style={{ display: "inline-block" }}>
                   <Button
+                    size="small"
                     variant="contained"
                     color="primary"
                     sx={{
-                      borderRadius: "4px",
-                      height: "30px",
                       whiteSpace: "nowrap",
                     }}
                     disabled={
@@ -586,10 +569,7 @@ const PromptActions = () => {
                       });
                     }}
                     startIcon={
-                      <SvgColor
-                        sx={{ width: "20px", height: "20px" }}
-                        src="/assets/icons/ic_commit.svg"
-                      />
+                      <SvgColor width={20} src="/assets/icons/ic_commit.svg" />
                     }
                   >
                     <Typography variant="s1" fontWeight={"fontWeightMedium"}>
@@ -641,12 +621,11 @@ const PromptActions = () => {
               }}
             >
               <Button
+                size="small"
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
-                  height: "30px",
                   "&:hover": {
                     backgroundColor: `${theme.palette.background.neutral} !important`,
                   },
@@ -793,7 +772,7 @@ const PromptActions = () => {
             style: {
               backgroundColor: theme.palette.primary.main,
               height: "2px",
-              borderRadius: "20px",
+              borderRadius: "12px",
             },
           }}
           sx={{ ...tabSx, borderColor: "divider" }}
@@ -862,9 +841,9 @@ const PromptActions = () => {
           <Tab
             icon={
               <Iconify
-                icon="mdi:chat-processing-outline"
-                width={18}
-                height={18}
+                icon="solar:chat-round-line-linear"
+                width={20}
+                height={20}
               />
             }
             iconPosition="start"

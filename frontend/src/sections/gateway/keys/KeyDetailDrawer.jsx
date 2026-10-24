@@ -17,6 +17,7 @@ import {
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import Chart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
@@ -26,12 +27,7 @@ import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost, formatDateTime as formatDate } from "../utils/formatters";
-
-const STATUS_COLORS = {
-  active: "success",
-  revoked: "error",
-  expired: "warning",
-};
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const InfoRow = ({ label, children }) => (
   <Stack
@@ -143,13 +139,16 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
   const isRevoked = keyData?.status === "revoked";
   const isExpired = keyData?.status === "expired";
 
+  const covered = useDrawerCovered(open);
+
   return (
     <>
       <Drawer
+        sx={coveredDrawerSx(covered)}
         anchor="right"
         open={open}
         onClose={onClose}
-        PaperProps={{ sx: { width: { xs: "100%", sm: 420 }, p: 3 } }}
+        PaperProps={{ sx: { width: { xs: "100%", sm: 480 }, p: 3 } }}
       >
         {isLoading ? (
           <Stack spacing={2}>
@@ -176,23 +175,18 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                 </Typography>
               </Box>
               <Stack direction="row" spacing={0.5} alignItems="center">
-                <Chip
-                  label={keyData.status}
-                  color={STATUS_COLORS[keyData.status] || "default"}
-                  size="small"
-                  variant="outlined"
-                />
+                <StatusBadge status={keyData.status} />
                 {keyData.status === "active" && (
                   <IconButton
                     onClick={() => setEditOpen(true)}
                     size="small"
                     title="Edit"
                   >
-                    <Iconify icon="mdi:pencil-outline" width={18} />
+                    <Iconify icon="solar:pen-linear" width={20} />
                   </IconButton>
                 )}
                 <IconButton onClick={onClose} size="small">
-                  <Iconify icon="mdi:close" width={18} />
+                  <Iconify icon="solar:close-linear" width={20} />
                 </IconButton>
               </Stack>
             </Stack>
@@ -241,7 +235,6 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                       sx={{
                         borderColor: "divider",
                         color: "text.secondary",
-                        fontSize: "0.75rem",
                       }}
                     />
                   ))}
@@ -269,7 +262,6 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                       sx={{
                         borderColor: "divider",
                         color: "text.secondary",
-                        fontSize: "0.75rem",
                       }}
                     />
                   ))}
@@ -363,7 +355,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
               <Button
                 size="small"
                 variant="outlined"
-                startIcon={<Iconify icon="mdi:text-box-outline" width={16} />}
+                startIcon={<Iconify icon="solar:notes-linear" width={16} />}
                 onClick={() => {
                   onClose();
                   navigate(

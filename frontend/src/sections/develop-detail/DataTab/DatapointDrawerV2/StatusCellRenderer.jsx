@@ -1,7 +1,9 @@
 import React from "react";
-import { Box, Chip, Skeleton, useTheme } from "@mui/material";
+import { Box, Skeleton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
-import { getStatusColor, normalizeEvalResult } from "../common";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
+import { evalResultRole, normalizeEvalResult } from "../common";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 
@@ -26,7 +28,7 @@ const StatusCellRenderer = ({ cellValue, status, isLoading, type }) => {
       <Box
         sx={{
           marginLeft: theme.spacing(1),
-          color: theme.palette.error.main,
+          color: statusColors(theme, "danger").fg,
           fontSize: "13px",
         }}
       >
@@ -52,54 +54,37 @@ const StatusCellRenderer = ({ cellValue, status, isLoading, type }) => {
   const result = normalizeEvalResult(cellValue, type);
   if (result.kind === "empty") return null;
 
-  const chipSx = (v) => ({
-    ...getStatusColor(v, theme),
-    transition: "none",
-    "&:hover": {
-      backgroundColor: getStatusColor(v, theme).backgroundColor,
-      boxShadow: "none",
-    },
-  });
-
   if (result.kind === "score") {
     const pct = result.score <= 1 ? result.score * 100 : result.score;
     return (
-      <Chip
-        variant="soft"
+      <StatusBadge
         label={`${Math.round(pct)}%`}
-        size="small"
-        sx={chipSx(result.score)}
+        role={evalResultRole(result.score)}
+        dot={false}
       />
     );
   }
 
   if (result.kind === "passfail") {
     return (
-      <Chip
-        variant="soft"
+      <StatusBadge
         label={result.label}
-        size="small"
-        sx={chipSx(result.label)}
+        role={evalResultRole(result.label)}
+        dot={false}
       />
     );
   }
 
-  // choices — show first chip plus a +N counter if more.
+  // choices — show first badge plus a +N counter if more.
   const first = result.items[0];
   return (
-    <Box>
-      <Chip
-        variant="soft"
-        label={first}
-        size="small"
-        sx={{ ...chipSx(first), marginRight: "10px" }}
-      />
+    <Box sx={{ display: "flex", alignItems: "center", gap: "10px" }}>
+      <StatusBadge label={first} role={evalResultRole(first)} dot={false} />
       {result.items.length > 1 && (
-        <Chip
-          variant="soft"
+        <StatusBadge
           label={`+${result.items.length - 1}`}
-          size="small"
-          sx={chipSx(first)}
+          role={evalResultRole(first)}
+          dot={false}
         />
       )}
     </Box>

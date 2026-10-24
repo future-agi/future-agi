@@ -1,10 +1,19 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import {
-  Box, Stack, Typography, Button, IconButton, Tooltip, Checkbox,
-  Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tooltip,
+  Checkbox,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { useAppliedEvals } from "./useAppliedEvals";
@@ -31,17 +40,37 @@ import { clickable, focusRing } from "../../components/clickable";
 /* Same type config prod uses in SavedEvalsList — code / agent / llm.
    Kept inline so this file has no dependency on prod. */
 const TYPE_CFG = {
-  code:  { label: "Code",  icon: "mdi:code-braces",   color: "#f59e0b", text: "text.secondary", bg: "rgba(245,158,11,0.10)" },
-  agent: { label: "Agent", icon: "mdi:robot-outline", color: "#16A34A", bg: "rgba(22,163,74,0.10)" },
-  llm:   { label: "LLM",   icon: "mdi:brain",         color: "#7857FC", bg: "rgba(120,87,252,0.10)" },
+  code: {
+    label: "Code",
+    icon: "solar:code-linear",
+    color: "status.warning.fg",
+  },
+  agent: {
+    label: "Agent",
+    icon: "solar:bot-linear",
+    color: "status.success.fg",
+  },
+  llm: { label: "LLM", icon: "solar:brain-linear", color: "primary.main" },
 };
-const evalType = (e) => (
-  e.evalType || e.eval_type || (String(e.category || "").toLowerCase().includes("code") ? "code" : "agent")
-);
+const evalType = (e) =>
+  e.evalType ||
+  e.eval_type ||
+  (String(e.category || "")
+    .toLowerCase()
+    .includes("code")
+    ? "code"
+    : "agent");
 const typeCfg = (e) => TYPE_CFG[evalType(e)] || TYPE_CFG.agent;
 
-export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch }) {
-  const { appliedEvals, appliedIds, add, remove, update, slotsLeft } = useAppliedEvals(envState, patch);
+export default function AppliedEvalsDrawer({
+  open,
+  onClose,
+  env,
+  envState,
+  patch,
+}) {
+  const { appliedEvals, appliedIds, add, remove, update, slotsLeft } =
+    useAppliedEvals(envState, patch);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const editing = appliedEvals.find((e) => e.id === editingId) || null;
@@ -52,15 +81,21 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
     () => appliedEvals.filter((e) => selected.has(e.id)),
     [appliedEvals, selected],
   );
-  const allChecked = appliedEvals.length > 0 && selected.size === appliedEvals.length;
+  const allChecked =
+    appliedEvals.length > 0 && selected.size === appliedEvals.length;
   const someChecked = selected.size > 0 && !allChecked;
 
-  const toggleOne = (id) => setSelected((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-  const toggleAll = () => setSelected(allChecked ? new Set() : new Set(appliedEvals.map((e) => e.id)));
+  const toggleOne = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAll = () =>
+    setSelected(
+      allChecked ? new Set() : new Set(appliedEvals.map((e) => e.id)),
+    );
   const clearSelection = () => setSelected(new Set());
 
   const doBulkDelete = () => {
@@ -71,24 +106,31 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
 
   return (
     <>
-      <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", md: 560 }}>
+      <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", md: 640 }}>
         <Stack sx={{ height: "100%", minHeight: 0 }}>
           {/* Header */}
           <Stack
-            direction="row" alignItems="center"
+            direction="row"
+            alignItems="center"
             sx={{ px: 2.5, pt: 2, pb: 1, flexShrink: 0 }}
           >
-            <Typography sx={{ fontSize: 16, fontWeight: 700, flex: 1 }}>
+            <Typography sx={{ typography: "m2", fontWeight: 600, flex: 1 }}>
               All Evaluations
             </Typography>
-            <IconButton size="small" onClick={onClose} sx={{ p: 0.25, color: "text.primary" }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+            <IconButton
+              size="small"
+              onClick={onClose}
+              sx={{ color: "text.primary" }}
+            >
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Stack>
 
           {/* Sub-header: select-all + count / bulk state + Add */}
           <Stack
-            direction="row" alignItems="center" spacing={0.75}
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
             sx={{ px: 2.5, pb: 1.25, flexShrink: 0 }}
           >
             {appliedEvals.length > 0 && (
@@ -111,9 +153,12 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
                   size="small"
                   onClick={clearSelection}
                   sx={{
-                    textTransform: "none", fontSize: 12, fontWeight: 500,
-                    color: "text.secondary", minWidth: 0, px: 1,
-                    "&:hover": { color: "text.primary", bgcolor: "transparent" },
+                    color: "text.secondary",
+                    minWidth: 0,
+                    "&:hover": {
+                      color: "text.primary",
+                      bgcolor: "transparent",
+                    },
                   }}
                 >
                   Clear
@@ -121,11 +166,12 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
                 <Button
                   size="small"
                   onClick={() => setConfirmBulk(true)}
-                  startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
+                  startIcon={
+                    <Iconify icon="solar:trash-bin-trash-linear" width={14} />
+                  }
                   sx={{
-                    textTransform: "none", fontSize: 12, fontWeight: 500,
-                    color: "#DC2626",
-                    "&:hover": { bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.12 : 0.06) },
+                    color: "status.danger.fg",
+                    "&:hover": { bgcolor: "status.danger.bg" },
                   }}
                 >
                   Delete
@@ -135,11 +181,10 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
               <Button
                 variant="outlined"
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() => setPickerOpen(true)}
                 sx={{
-                  textTransform: "none", fontSize: 12, fontWeight: 500,
-                  borderRadius: "6px", flexShrink: 0,
+                  flexShrink: 0,
                 }}
               >
                 Add Evaluations
@@ -150,18 +195,25 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
           {/* Rows */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2.5, pb: 2 }}>
             {appliedEvals.length === 0 ? (
-              <Stack alignItems="center" justifyContent="center" sx={{ height: "100%", textAlign: "center" }}>
-                <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Stack
+                alignItems="center"
+                justifyContent="center"
+                sx={{ height: "100%", textAlign: "center" }}
+              >
+                <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                   No evaluations added
                 </Typography>
-                <Typography sx={{ fontSize: 12, color: "text.disabled", mb: 2 }}>
+                <Typography
+                  sx={{ fontSize: 12, color: "text.disabled", mb: 2 }}
+                >
                   Select and configure the evals to run in your environment
                 </Typography>
                 <Button
-                  variant="contained" color="primary" size="small"
+                  variant="contained"
+                  color="primary"
+                  size="small"
                   onClick={() => setPickerOpen(true)}
-                  startIcon={<Iconify icon="mdi:plus" width={14} />}
-                  sx={{ px: 3, textTransform: "none", fontWeight: 500 }}
+                  startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 >
                   Add Evaluations
                 </Button>
@@ -176,7 +228,11 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
                     onToggle={() => toggleOne(e.id)}
                     onEdit={() => setEditingId(e.id)}
                     onDelete={() => remove(e.id)}
-                    onRemoveMapping={(variable) => update(e.id, { mapping: mappingWithout(e.mapping, variable) })}
+                    onRemoveMapping={(variable) =>
+                      update(e.id, {
+                        mapping: mappingWithout(e.mapping, variable),
+                      })
+                    }
                   />
                 ))}
               </Stack>
@@ -185,8 +241,16 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
 
           {/* Footer — when they apply. There's no re-scoring of past runs. */}
           {appliedEvals.length > 0 && (
-            <Box sx={{ px: 2.5, py: 1.5, flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Box
+              sx={{
+                px: 2.5,
+                py: 1.5,
+                flexShrink: 0,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 {`${appliedEvals.length} evaluation${appliedEvals.length === 1 ? "" : "s"} score every run from the next one on.`}
               </Typography>
             </Box>
@@ -201,7 +265,10 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
         env={env}
         envState={envState}
         existingIds={appliedIds}
-        onAdd={(items) => { add(items); setPickerOpen(false); }}
+        onAdd={(items) => {
+          add(items);
+          setPickerOpen(false);
+        }}
         slotsLeft={slotsLeft}
       />
 
@@ -219,30 +286,39 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
       <Dialog
         open={confirmBulk}
         onClose={() => setConfirmBulk(false)}
-        maxWidth="xs" fullWidth
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
+        fullWidth
       >
-        <DialogTitle sx={{ typography: "m2", fontWeight: 700 }}>
+        <DialogTitle sx={{ typography: "m2", fontWeight: 600 }}>
           Remove {selected.size} eval{selected.size === 1 ? "" : "s"}?
         </DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ typography: "s2" }}>
-            The selected evaluations will be removed from this environment. Runs already scored against them will keep their scores; new runs won&apos;t be graded on them.
+            The selected evaluations will be removed from this environment. Runs
+            already scored against them will keep their scores; new runs
+            won&apos;t be graded on them.
           </DialogContentText>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
+            size="small"
             onClick={() => setConfirmBulk(false)}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           >
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
             onClick={doBulkDelete}
             sx={{
-              typography: "s2", fontWeight: 700,
-              bgcolor: "#DC2626", color: "#fff",
-              "&:hover": { bgcolor: "#B91C1C", color: "#fff" },
+              bgcolor: "status.danger.solid",
+              color: "common.white",
+              "&:hover": {
+                bgcolor: "status.danger.solid",
+                color: "common.white",
+              },
             }}
           >
             Remove {selected.size}
@@ -263,7 +339,14 @@ AppliedEvalsDrawer.propTypes = {
 
 /* ── Row — visual clone of SavedEvalsList's EvalRow (prod). ───────────── */
 
-function EvalRow({ item, selected, onToggle, onEdit, onDelete, onRemoveMapping }) {
+function EvalRow({
+  item,
+  selected,
+  onToggle,
+  onEdit,
+  onDelete,
+  onRemoveMapping,
+}) {
   const [open, setOpen] = useState(false);
   const t = typeCfg(item);
   /* Every pair, not the first three — each carries its own Remove now. */
@@ -281,9 +364,14 @@ function EvalRow({ item, selected, onToggle, onEdit, onDelete, onRemoveMapping }
       {/* Main clickable row */}
       <Box
         {...clickable(() => setOpen((p) => !p), { expanded: open })}
-        sx={{ ...focusRing,
-          display: "flex", alignItems: "center", gap: 0.75,
-          px: 1.25, py: 0.85, cursor: "pointer",
+        sx={{
+          ...focusRing,
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          px: 1.25,
+          py: 0.85,
+          cursor: "pointer",
         }}
       >
         <Checkbox
@@ -295,20 +383,28 @@ function EvalRow({ item, selected, onToggle, onEdit, onDelete, onRemoveMapping }
         />
 
         {/* Type icon */}
-        <Iconify icon={t.icon} width={16} sx={{ color: t.color, flexShrink: 0 }} />
+        <Iconify
+          icon={t.icon}
+          width={16}
+          sx={{ color: t.color, flexShrink: 0 }}
+        />
 
         {/* Name */}
-        <Typography noWrap sx={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}
+        >
           {item.name}
         </Typography>
 
-        {/* Type badge */}
+        {/* Type — a plain qualifier, not a tag */}
         <Box
+          component="span"
           sx={{
-            display: "flex", alignItems: "center", gap: 0.3,
-            px: 0.6, py: 0.15, borderRadius: "4px",
-            fontSize: 10, fontWeight: 700,
-            color: t.text || t.color, bgcolor: t.bg, flexShrink: 0,
+            typography: "s3",
+            fontWeight: 500,
+            color: "text.tertiary",
+            flexShrink: 0,
           }}
         >
           {t.label}
@@ -322,24 +418,37 @@ function EvalRow({ item, selected, onToggle, onEdit, onDelete, onRemoveMapping }
           {/* View, not edit — the mapping is read-only in v0 (PRD v6). */}
           <Tooltip title="View mapping" arrow>
             <span>
-              <IconButton size="small" sx={{ p: 0.4 }} onClick={onEdit} disabled={!canEditEval(item)}>
-                <Iconify icon="mdi:eye-outline" width={17} sx={{ color: "text.secondary" }} />
+              <IconButton
+                size="small"
+                onClick={onEdit}
+                disabled={!canEditEval(item)}
+              >
+                <Iconify
+                  icon="solar:eye-linear"
+                  width={16}
+                  sx={{ color: "text.secondary" }}
+                />
               </IconButton>
             </span>
           </Tooltip>
           <Tooltip title="Delete" arrow>
-            <IconButton size="small" sx={{ p: 0.4 }} onClick={onDelete}>
-              <Iconify icon="mdi:trash-can-outline" width={17} sx={{ color: "text.secondary" }} />
+            <IconButton size="small" onClick={onDelete}>
+              <Iconify
+                icon="solar:trash-bin-trash-linear"
+                width={16}
+                sx={{ color: "text.secondary" }}
+              />
             </IconButton>
           </Tooltip>
         </Box>
 
         {/* Expand indicator */}
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={16}
           sx={{
-            color: "text.disabled", flexShrink: 0,
+            color: "text.disabled",
+            flexShrink: 0,
             transform: open ? "rotate(180deg)" : "none",
             transition: "transform 160ms ease",
           }}
@@ -350,41 +459,91 @@ function EvalRow({ item, selected, onToggle, onEdit, onDelete, onRemoveMapping }
       {open && (
         <Box
           sx={{
-            px: 1.5, py: 1.25,
-            borderTop: "1px solid", borderColor: "divider",
-            bgcolor: (t2) => alpha(t2.palette.text.primary, t2.palette.mode === "dark" ? 0.03 : 0.02),
+            px: 1.5,
+            py: 1.25,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.neutral",
           }}
         >
           {item.blurb && (
-            <Typography sx={{ fontSize: 12, color: "text.secondary", mb: mappingEntries.length ? 1 : 0 }}>
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.secondary",
+                mb: mappingEntries.length ? 1 : 0,
+              }}
+            >
               {item.blurb}
             </Typography>
           )}
           {mappingEntries.length > 0 && (
             <Stack spacing={0.25}>
               {mappingEntries.map(([variable, column]) => (
-                <Stack key={variable} direction="row" alignItems="center" spacing={0.75}>
-                  <Typography sx={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, color: "text.secondary" }}>
+                <Stack
+                  key={variable}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                >
+                  <Typography
+                    sx={{
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      fontSize: 12,
+                      color: "text.secondary",
+                    }}
+                  >
                     {variable}
                   </Typography>
-                  <Iconify icon="solar:arrow-right-linear" width={11} sx={{ color: "text.disabled" }} />
-                  <Typography noWrap sx={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11, color: "text.primary", flex: 1, minWidth: 0 }}>
+                  <Iconify
+                    icon="solar:arrow-right-linear"
+                    width={12}
+                    sx={{ color: "text.disabled" }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      fontSize: 12,
+                      color: "text.primary",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
                     {column}
                   </Typography>
                   {onRemoveMapping && (
                     <Tooltip title="Remove mapping" arrow>
-                      <IconButton size="small" sx={{ p: 0.25 }} onClick={() => onRemoveMapping(variable)} aria-label={`Remove ${variable} mapping`}>
-                        <Iconify icon="mingcute:close-line" width={13} sx={{ color: "text.subtitle" }} />
+                      <IconButton
+                        size="small"
+                        onClick={() => onRemoveMapping(variable)}
+                        aria-label={`Remove ${variable} mapping`}
+                      >
+                        <Iconify
+                          icon="solar:close-linear"
+                          width={14}
+                          sx={{ color: "text.tertiary" }}
+                        />
                       </IconButton>
                     </Tooltip>
                   )}
                 </Stack>
               ))}
-              <Typography sx={{ fontSize: 11, color: "text.subtitle", pt: 0.5 }}>{MAPPING_NOTE}</Typography>
+              <Typography
+                sx={{ fontSize: 12, color: "text.tertiary", pt: 0.5 }}
+              >
+                {MAPPING_NOTE}
+              </Typography>
             </Stack>
           )}
           {item.threshold != null && (
-            <Typography sx={{ fontSize: 11, color: "text.subtitle", mt: mappingEntries.length ? 1 : 0 }}>
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.tertiary",
+                mt: mappingEntries.length ? 1 : 0,
+              }}
+            >
               pass ≥ {(item.threshold * 100).toFixed(0)}%
             </Typography>
           )}

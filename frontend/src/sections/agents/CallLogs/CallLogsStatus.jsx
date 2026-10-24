@@ -1,11 +1,18 @@
-import { Box, Stack, Typography, useTheme } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import SvgColor from "src/components/svg-color";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { callStatusCellStyle } from "../constants";
 import _ from "lodash";
+
+// Call statuses the product shows, with the role each one takes. Anything
+// the run-status map already knows resolves from the status itself.
+const CALL_STATUS_ROLE = {
+  dropped: "warning",
+  "not-connected": "danger",
+};
+
 export const CallLogsStatus = ({ value }) => {
-  const theme = useTheme();
   if (!value) return "-";
 
   const statusKey = _.toLower(value);
@@ -21,24 +28,11 @@ export const CallLogsStatus = ({ value }) => {
         alignItems: "center",
       }}
     >
-      <Stack
-        sx={{
-          ...statusConfig.sx,
-          padding: theme.spacing(0.5, 1.5),
-          display: "flex",
-          flexDirection: "row",
-          justifyContent: "flex-start",
-          alignItems: "center",
-          height: "max-content",
-          borderRadius: theme.spacing(0.5),
-        }}
-        gap={1}
-      >
-        <SvgColor src={statusConfig.icon} sx={{ height: 16, width: 16 }} />
-        <Typography typography="s3" fontWeight="fontWeightMedium">
-          {_.capitalize(value.replace(/-/g, " "))}
-        </Typography>
-      </Stack>
+      <StatusBadge
+        status={statusKey}
+        role={CALL_STATUS_ROLE[statusKey]}
+        label={_.capitalize(value.replace(/-/g, " "))}
+      />
     </Box>
   );
 };

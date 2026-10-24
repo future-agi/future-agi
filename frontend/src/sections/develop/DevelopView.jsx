@@ -3,6 +3,7 @@ import { Box, Button, Divider, Tooltip, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
+import SelectionBar from "src/components/selection-bar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -38,33 +39,25 @@ const DerivedDatasetsCell = ({ datasetId, datasetName, count }) => {
     );
   return (
     <>
-      <Box
+      <Button
+        size="small"
+        variant="text"
+        color="inherit"
         onClick={(e) => {
           e.stopPropagation();
           setOpen(true);
         }}
-        sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 0.5,
-          px: 1,
-          py: 0.25,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "6px",
-          cursor: "pointer",
-          "&:hover": { borderColor: "primary.main" },
-        }}
+        endIcon={
+          <Iconify
+            icon="solar:eye-linear"
+            width={16}
+            sx={{ color: "text.disabled" }}
+          />
+        }
+        sx={{ fontVariantNumeric: "tabular-nums" }}
       >
-        <Typography variant="body2" sx={{ fontSize: "13px" }}>
-          {count}
-        </Typography>
-        <Iconify
-          icon="eva:eye-outline"
-          width={16}
-          sx={{ color: "text.disabled" }}
-        />
-      </Box>
+        {count}
+      </Button>
       {open && (
         <DerivedDatasetsDrawer
           datasetName={datasetName}
@@ -78,7 +71,7 @@ const DerivedDatasetsCell = ({ datasetId, datasetName, count }) => {
   );
 };
 
-// ── Bulk actions bar ──
+// ── Bulk actions bar: the shared design-system selection bar ──
 const BulkActionsBar = ({
   selectedCount,
   onDuplicate,
@@ -88,80 +81,31 @@ const BulkActionsBar = ({
   canCreate,
   canDelete,
 }) => (
-  <Box
-    sx={{
-      display: "flex",
-      alignItems: "center",
-      gap: 2,
-      px: 2,
-      py: 0.5,
-      borderRadius: "8px",
-      border: "1px solid",
-      borderColor: "divider",
-    }}
-  >
-    <Typography
-      variant="body2"
-      fontWeight={600}
-      color="primary.main"
-      sx={{ pr: 1 }}
-    >
-      {selectedCount} Selected
-    </Typography>
-    <Divider orientation="vertical" flexItem />
-
-    {selectedCount === 1 && (
-      <Button
-        size="small"
-        startIcon={<Iconify icon="gg:duplicate" width={16} />}
-        onClick={onDuplicate}
-        disabled={!canCreate}
-        sx={{
-          fontSize: "13px",
-          textTransform: "none",
-          color: "text.secondary",
-        }}
-      >
-        Duplicate
-      </Button>
-    )}
-
-    {selectedCount > 1 && (
-      <Button
-        size="small"
-        startIcon={<Iconify icon="mdi:compare-horizontal" width={16} />}
-        onClick={onCompare}
-        sx={{
-          fontSize: "13px",
-          textTransform: "none",
-          color: "text.secondary",
-        }}
-      >
-        Compare
-      </Button>
-    )}
-
-    <Button
-      size="small"
-      color="error"
-      startIcon={<Iconify icon="solar:trash-bin-trash-bold" width={16} />}
-      onClick={onDelete}
-      disabled={!canDelete}
-      sx={{ fontSize: "13px", textTransform: "none" }}
-    >
-      Delete
-    </Button>
-
-    <Typography
-      variant="body2"
-      color="text.secondary"
-      fontWeight={600}
-      sx={{ cursor: "pointer" }}
-      onClick={onCancel}
-    >
-      Cancel
-    </Typography>
-  </Box>
+  <SelectionBar
+    count={selectedCount}
+    onCancel={onCancel}
+    actions={[
+      {
+        label: "Duplicate",
+        icon: "solar:copy-linear",
+        onClick: onDuplicate,
+        disabled: !canCreate,
+        hidden: selectedCount !== 1,
+      },
+      {
+        label: "Compare",
+        icon: "solar:transfer-horizontal-linear",
+        onClick: onCompare,
+        hidden: selectedCount < 2,
+      },
+      {
+        label: "Delete",
+        icon: "solar:trash-bin-trash-linear",
+        onClick: onDelete,
+        disabled: !canDelete,
+      },
+    ]}
+  />
 );
 
 // ── Sort field map ──
@@ -337,13 +281,12 @@ const DevelopView = () => {
             <Button
               variant="contained"
               color="primary"
-              sx={{ px: "24px", borderRadius: "8px", height: "38px" }}
               disabled={!RolePermission.DATASETS[PERMISSIONS.CREATE][role]}
               startIcon={
                 <Iconify
-                  icon="octicon:plus-24"
+                  width={20}
+                  icon="solar:add-linear"
                   color="primary.contrastText"
-                  sx={{ width: 20, height: 20 }}
                 />
               }
               onClick={() => {
@@ -419,12 +362,12 @@ const DevelopView = () => {
               variant="contained"
               color="primary"
               disabled={!RolePermission.DATASETS[PERMISSIONS.CREATE][role]}
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
               onClick={() => {
                 trackEvent(Events.addDatasetCLicked);
                 setAddDatasetDrawerOpen(true);
               }}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              sx={{ typography: "body2" }}
             >
               Add Dataset
             </Button>

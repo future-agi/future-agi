@@ -13,10 +13,15 @@ import CustomPopover from "src/components/custom-popover";
 import SvgColor from "../../../../components/svg-color";
 
 const LabelBgColorMapper = {
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   numeric: "#007AFF26",
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   text: "#7857FC26",
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   categorical: "#4CAF5033",
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   thumbs_up_down: "#FF98004D",
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   star: "#CF6BE84D",
 };
 
@@ -46,7 +51,7 @@ const AnnotationFieldWrapper = ({
       label: "Delete",
       icon: "/assets/icons/ic_delete.svg",
       action: onDeleteLabelClick,
-      color: "red.500",
+      color: "status.danger.fg",
     },
   ];
   const [open, setOpen] = useState(defaultOpen);
@@ -148,7 +153,7 @@ const AnnotationFieldWrapper = ({
         >
           <Typography
             variant="body2"
-            sx={{ color: "text.primary", fontWeight: "bold" }}
+            sx={{ color: "text.primary", fontWeight: "600" }}
           >
             {index + 1}
           </Typography>
@@ -202,6 +207,7 @@ const AnnotationFieldWrapper = ({
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 0.5,
+                    // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
                     color: action.color,
                   }}
                 >
@@ -222,14 +228,15 @@ const AnnotationFieldWrapper = ({
               sx={{
                 display: "flex", // Use flex to align items horizontally
                 alignItems: "center", // Vertically center align the icon and text
-                boxShadow: 2,
+                border: "1px solid",
+                borderColor: "divider",
                 padding: "1px 5px",
-                borderRadius: "5px",
+                borderRadius: "6px",
                 marginRight: 1,
               }}
             >
               <Iconify
-                icon="mingcute:command-line"
+                icon="solar:code-linear"
                 color="text.primary"
                 width={16}
                 style={{ marginRight: "5px" }}
@@ -241,7 +248,7 @@ const AnnotationFieldWrapper = ({
             <Box>
               <IconButton onClick={() => setOpen(!open)}>
                 <Iconify
-                  icon="eva:arrow-ios-downward-fill"
+                  icon="solar:alt-arrow-down-linear"
                   color="text.primary"
                   width={20}
                   style={{

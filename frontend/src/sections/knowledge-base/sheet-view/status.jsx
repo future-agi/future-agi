@@ -20,8 +20,8 @@ export default function Status({ sx, status }) {
     <Box
       sx={{
         border: "1px solid",
-        borderColor: "blue.200",
-        backgroundColor: "blue.o5",
+        borderColor: "status.info.border",
+        backgroundColor: "status.info.bg",
         padding: "12px",
         borderRadius: "4px",
         ...sx,
@@ -31,7 +31,7 @@ export default function Status({ sx, status }) {
         <Stack direction={"row"} alignItems={"center"} gap={"8px"}>
           <Iconify
             sx={{
-              color: "blue.500",
+              color: "status.info.fg",
               height: "16px",
               width: "16px",
             }}
@@ -39,7 +39,7 @@ export default function Status({ sx, status }) {
           />
           <Typography
             variant="s1"
-            color={"blue.500"}
+            color={"status.info.fg"}
             fontWeight={"fontWeightSemiBold"}
           >
             {statusMessage[status?.status]?.label}
@@ -48,7 +48,7 @@ export default function Status({ sx, status }) {
         <Typography
           variant="s2"
           fontWeight={"fontWeightRegular"}
-          color={"blue.500"}
+          color={"status.info.fg"}
         >
           {statusMessage[status?.status]?.message(status?.status_count)}
         </Typography>

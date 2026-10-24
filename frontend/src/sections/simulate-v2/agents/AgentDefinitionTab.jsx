@@ -5,7 +5,12 @@ import AgentFilesTab from "./AgentFilesTab";
 import AgentMembersCard from "./AgentMembersCard";
 import { memberAreasOf } from "./agentDefinitionSummary";
 import {
-  configRowsOf, identityRowsOf, isCodeAgent, reachRowsOf, snapshotLineOf, sourceRowsOf,
+  configRowsOf,
+  identityRowsOf,
+  isCodeAgent,
+  reachRowsOf,
+  snapshotLineOf,
+  sourceRowsOf,
 } from "./agentRecord";
 import { MONO } from "./agentViewUtils";
 import { mcpServersOfAgent } from "../_mock/mcpServers";
@@ -21,7 +26,22 @@ import { ActionText, KvRow, PanelCard } from "./AgentBits";
  * it was read from, with what changed since the version before.
  */
 export default function AgentDefinitionTab({
-  agent, definition, source, files, prevFiles, label, prevLabel, latest, focusPath, diffOn, observeProject, observePending = false, onOpenEnv, onTab, protectedMembers, onVersion,
+  agent,
+  definition,
+  source,
+  files,
+  prevFiles,
+  label,
+  prevLabel,
+  latest,
+  focusPath,
+  diffOn,
+  observeProject,
+  observePending = false,
+  onOpenEnv,
+  onTab,
+  protectedMembers,
+  onVersion,
 }) {
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
@@ -33,7 +53,14 @@ export default function AgentDefinitionTab({
   /* "v12 · in production", "v13 · latest draft" — what each version is, in the picker. */
   const versionTagOf = (l) => {
     const v = agent.versions.find((x) => x.label === l);
-    const tag = l === agent.production ? "in production" : l === latest && !isGitAgent(agent) ? (v?.pendingDraft ? "latest · draft" : "latest") : null;
+    const tag =
+      l === agent.production
+        ? "in production"
+        : l === latest && !isGitAgent(agent)
+          ? v?.pendingDraft
+            ? "latest · draft"
+            : "latest"
+          : null;
     return `${nameOf(l)}${tag ? ` · ${tag}` : ""}`;
   };
   const memberAreas = memberAreasOf({ agent, definition, source });
@@ -41,27 +68,62 @@ export default function AgentDefinitionTab({
   return (
     <Stack spacing={2}>
       {/* The definition belongs to a version — picked here, the same pick as the header's. */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>Definition of</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ flexWrap: "wrap", rowGap: 0.5 }}
+      >
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          Definition of
+        </Typography>
         {onVersion ? (
           <Select
-            size="small" value={label} onChange={(e) => onVersion(e.target.value)}
-            renderValue={(v) => <Box component="span" sx={{ fontFamily: MONO }}>{versionTagOf(v)}</Box>}
-            sx={{ height: 28, minWidth: 150, "& .MuiSelect-select": { typography: "s2", py: 0.25 } }}
+            size="small"
+            value={label}
+            onChange={(e) => onVersion(e.target.value)}
+            renderValue={(v) => (
+              <Box component="span" sx={{ fontFamily: MONO }}>
+                {versionTagOf(v)}
+              </Box>
+            )}
+            sx={{
+              height: 28,
+              minWidth: 150,
+              "& .MuiSelect-select": { typography: "s2", py: 0.25 },
+            }}
           >
             {[...agent.versions].reverse().map((v) => (
-              <MenuItem key={v.label} value={v.label} sx={{ typography: "s2", fontFamily: MONO }}>{versionTagOf(v.label)}</MenuItem>
+              <MenuItem
+                key={v.label}
+                value={v.label}
+                sx={{ typography: "s2", fontFamily: MONO }}
+              >
+                {versionTagOf(v.label)}
+              </MenuItem>
             ))}
           </Select>
         ) : (
-          <Box component="span" sx={{ typography: "s2", fontFamily: MONO, color: "text.primary" }}>{versionTagOf(label)}</Box>
+          <Box
+            component="span"
+            sx={{ typography: "s2", fontFamily: MONO, color: "text.primary" }}
+          >
+            {versionTagOf(label)}
+          </Box>
         )}
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {`Read-only${source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}`}
         </Typography>
       </Stack>
 
-      <Section title="Identity" action={<ActionText onClick={() => onTab("connections")}>Edit on Connections</ActionText>}>
+      <Section
+        title="Identity"
+        action={
+          <ActionText onClick={() => onTab("connections")}>
+            Edit on Connections
+          </ActionText>
+        }
+      >
         <Rows rows={identityRowsOf(agent)} />
       </Section>
 
@@ -69,19 +131,38 @@ export default function AgentDefinitionTab({
         <Rows
           rows={[
             ...sourceRowsOf({ agent, source, definition, version }),
-            ...(code ? [{ label: "Snapshot", value: snapshotLineOf({ definition, files }), hint: `The prompts, tools and models we found ${source.kind === "upload" ? "in that upload" : "at that commit"}, kept with the version.` }] : []),
+            ...(code
+              ? [
+                  {
+                    label: "Snapshot",
+                    value: snapshotLineOf({ definition, files }),
+                    hint: `The prompts, tools and models we found ${source.kind === "upload" ? "in that upload" : "at that commit"}, kept with the version.`,
+                  },
+                ]
+              : []),
           ]}
         />
       </Section>
 
-      <Section title="Reach" action={<ActionText onClick={() => onTab("connections")}>Edit on Connections</ActionText>}>
+      <Section
+        title="Reach"
+        action={
+          <ActionText onClick={() => onTab("connections")}>
+            Edit on Connections
+          </ActionText>
+        }
+      >
         <Rows rows={reachRowsOf(agent)} />
       </Section>
 
       <Section
         title="Configuration"
         note={definition?.members?.length ? "Shared by every member" : null}
-        action={<ActionText onClick={() => onTab("constraints")}>What may change</ActionText>}
+        action={
+          <ActionText onClick={() => onTab("constraints")}>
+            What may change
+          </ActionText>
+        }
       >
         <Rows rows={config} />
       </Section>
@@ -90,10 +171,20 @@ export default function AgentDefinitionTab({
       {mcpServers.length > 0 && (
         <Section title="MCP servers" note={`${mcpServers.length} attached`}>
           {mcpServers.map(({ server, tools }, i) => (
-            <KvRow key={server.id} label={server.label} first={i === 0} hint={`${server.host} · ${server.transport.toUpperCase()}. Its tools are listed by the server when the agent runs, not written in its config.`}>
+            <KvRow
+              key={server.id}
+              label={server.label}
+              first={i === 0}
+              hint={`${server.host} · ${server.transport.toUpperCase()}. Its tools are listed by the server when the agent runs, not written in its config.`}
+            >
               <Typography sx={{ typography: "s2" }}>
                 {`${tools.length} tools · `}
-                <Box component="span" sx={{ fontFamily: MONO, color: "text.secondary" }}>{tools.map((t) => t.name).join(", ")}</Box>
+                <Box
+                  component="span"
+                  sx={{ fontFamily: MONO, color: "text.secondary" }}
+                >
+                  {tools.map((t) => t.name).join(", ")}
+                </Box>
               </Typography>
             </KvRow>
           ))}
@@ -101,7 +192,12 @@ export default function AgentDefinitionTab({
       )}
 
       {definition?.members?.length > 0 && (
-        <AgentMembersCard members={definition.members} areas={memberAreas} protectedIds={protectedMembers || []} onConstraints={() => onTab("constraints")} />
+        <AgentMembersCard
+          members={definition.members}
+          areas={memberAreas}
+          protectedIds={protectedMembers || []}
+          onConstraints={() => onTab("constraints")}
+        />
       )}
 
       <Section title="Links">
@@ -109,24 +205,42 @@ export default function AgentDefinitionTab({
           {observeProject ? (
             <Typography sx={{ typography: "s2" }}>
               {observeProject.name}
-              <Box component="span" sx={{ color: "text.subtitle" }}>{observePending ? " · waiting for its first trace" : " · linked"}</Box>
+              <Box component="span" sx={{ color: "text.subtitle" }}>
+                {observePending
+                  ? " · waiting for its first trace"
+                  : " · linked"}
+              </Box>
             </Typography>
           ) : (
             <Stack direction="row" alignItems="center" spacing={1.5}>
-              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>Not linked</Typography>
-              <ActionText onClick={() => onTab("connections")}>Link a project</ActionText>
+              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                Not linked
+              </Typography>
+              <ActionText onClick={() => onTab("connections")}>
+                Link a project
+              </ActionText>
             </Stack>
           )}
         </KvRow>
         <KvRow label="Environments">
           {agent.usedIn.length ? (
-            <Stack direction="row" flexWrap="wrap" useFlexGap columnGap={1.5} rowGap={0.5}>
+            <Stack
+              direction="row"
+              flexWrap="wrap"
+              useFlexGap
+              columnGap={1.5}
+              rowGap={0.5}
+            >
               {agent.usedIn.map((u) => (
-                <ActionText key={u.envId} onClick={() => onOpenEnv(u.envId)}>{u.envName}</ActionText>
+                <ActionText key={u.envId} onClick={() => onOpenEnv(u.envId)}>
+                  {u.envName}
+                </ActionText>
               ))}
             </Stack>
           ) : (
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>None yet</Typography>
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+              None yet
+            </Typography>
           )}
         </KvRow>
       </Section>
@@ -171,22 +285,41 @@ function Section({ title, note, action, children }) {
   return (
     <PanelCard
       title={title}
-      action={(note || action) ? (
-        <Stack direction="row" alignItems="center" spacing={1.5}>
-          {note && <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{note}</Typography>}
-          {action}
-        </Stack>
-      ) : null}
+      action={
+        note || action ? (
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            {note && (
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.subtitle" }}
+              >
+                {note}
+              </Typography>
+            )}
+            {action}
+          </Stack>
+        ) : null
+      }
     >
       {children}
     </PanelCard>
   );
 }
-Section.propTypes = { title: PropTypes.node, note: PropTypes.node, action: PropTypes.node, children: PropTypes.node };
+Section.propTypes = {
+  title: PropTypes.node,
+  note: PropTypes.node,
+  action: PropTypes.node,
+  children: PropTypes.node,
+};
 
 function Rows({ rows }) {
   return rows.map((r, i) => (
-    <KvRow key={r.id || r.label} label={r.label} first={i === 0} hint={r.hint || r.note || null}>
+    <KvRow
+      key={r.id || r.label}
+      label={r.label}
+      first={i === 0}
+      hint={r.hint || r.note || null}
+    >
       <Typography
         sx={{
           typography: "s2",

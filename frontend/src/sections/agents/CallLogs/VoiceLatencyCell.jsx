@@ -139,7 +139,7 @@ const VoiceLatencyCell = (params) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={14}
               color="text.secondary"
             />

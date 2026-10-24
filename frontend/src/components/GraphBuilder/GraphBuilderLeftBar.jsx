@@ -34,10 +34,7 @@ const GraphBuilderLeftBar = ({ onSave, saveLoading, agentType }) => {
           variant="contained"
           onClick={onSave}
           startIcon={
-            <SvgColor
-              src="/assets/prompt/saveDefault.svg"
-              sx={{ width: "16px", height: "16px" }}
-            />
+            <SvgColor src="/assets/prompt/saveDefault.svg" width="16px" />
           }
           loading={saveLoading}
         >
@@ -74,7 +71,7 @@ const GraphBuilderLeftBar = ({ onSave, saveLoading, agentType }) => {
               onDragStart={(event) => onDragStart(event, type)}
               sx={{
                 padding: 1,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 border: "1px solid",
                 borderColor: "divider",
                 display: "flex",
@@ -93,7 +90,7 @@ const GraphBuilderLeftBar = ({ onSave, saveLoading, agentType }) => {
                 sx={{
                   backgroundColor,
                   padding: 1,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   width: "24px",
                   height: "24px",
                   display: "flex",

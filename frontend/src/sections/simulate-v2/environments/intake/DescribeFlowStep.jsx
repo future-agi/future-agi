@@ -1,9 +1,15 @@
 import PropTypes from "prop-types";
 import { useCallback, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Button, TextField, Tooltip,
-  InputBase, CircularProgress,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Button,
+  TextField,
+  Tooltip,
+  InputBase,
+  CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -31,10 +37,22 @@ import { clickable, focusRing } from "../../components/clickable";
   fakeFalconWriter() for the real endpoint when it's ready.
 */
 export default function DescribeFlowStep({
-  step, total, prompt, description, placeholder, chips,
-  value, onChange,
-  files, onAdd, onRemove,
-  onBack, onSkip, onNext, canSubmit, submitLabel,
+  step,
+  total,
+  prompt,
+  description,
+  placeholder,
+  chips,
+  value,
+  onChange,
+  files,
+  onAdd,
+  onRemove,
+  onBack,
+  onSkip,
+  onNext,
+  canSubmit,
+  submitLabel,
   accept,
 }) {
   const inputRef = useRef(null);
@@ -48,23 +66,26 @@ export default function DescribeFlowStep({
   const [hasResult, setHasResult] = useState(false);
   const [originalValue, setOriginalValue] = useState(null);
 
-  const submitAI = useCallback(async (instruction) => {
-    const trimmed = (instruction || "").trim();
-    if (!trimmed) return;
-    setAiLoading(true);
-    if (originalValue === null) setOriginalValue(value || "");
-    try {
-      const draft = await fakeFalconWriter(trimmed, value);
-      if (draft) {
-        onChange(draft);
-        setHasResult(true);
-        setAiPrompt(trimmed);
-        setTimeout(() => followUpRef.current?.focus(), 60);
+  const submitAI = useCallback(
+    async (instruction) => {
+      const trimmed = (instruction || "").trim();
+      if (!trimmed) return;
+      setAiLoading(true);
+      if (originalValue === null) setOriginalValue(value || "");
+      try {
+        const draft = await fakeFalconWriter(trimmed, value);
+        if (draft) {
+          onChange(draft);
+          setHasResult(true);
+          setAiPrompt(trimmed);
+          setTimeout(() => followUpRef.current?.focus(), 60);
+        }
+      } finally {
+        setAiLoading(false);
       }
-    } finally {
-      setAiLoading(false);
-    }
-  }, [originalValue, value, onChange]);
+    },
+    [originalValue, value, onChange],
+  );
 
   const handleAccept = () => {
     setAiOpen(false);
@@ -93,7 +114,9 @@ export default function DescribeFlowStep({
     if (!list || !list.length) return;
     const next = Array.from(list).map((f) => ({
       id: `${f.name}-${f.size}-${f.lastModified}`,
-      name: f.name, size: f.size, type: f.type,
+      name: f.name,
+      size: f.size,
+      type: f.type,
     }));
     onAdd(next);
   };
@@ -101,45 +124,62 @@ export default function DescribeFlowStep({
   return (
     <Box
       sx={{
-        borderRadius: 2, border: "1px solid",
-        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.08),
+        borderRadius: 2,
+        border: "1px solid",
+        borderColor: "border.default",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 1.75, py: 1.25 }}
+      >
         <Box
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 999, flexShrink: 0,
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
+            px: 0.75,
+            py: 0.125,
+            borderRadius: 999,
+            flexShrink: 0,
+            bgcolor: "action.selected",
             color: "text.secondary",
-            typography: "s3", fontWeight: 700,
+            typography: "s3",
+            fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           }}
         >
           {step + 1}/{total}
         </Box>
-        <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}>
+        <Typography
+          sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0 }}
+        >
           {prompt}
         </Typography>
         <IconButton size="small" sx={{ color: "text.subtitle", p: 0.5 }}>
           <Iconify icon="solar:alt-arrow-down-linear" width={14} />
         </IconButton>
         <IconButton size="small" sx={{ color: "text.subtitle", p: 0.5 }}>
-          <Iconify icon="mingcute:close-line" width={14} />
+          <Iconify icon="solar:close-linear" width={14} />
         </IconButton>
       </Stack>
 
       <Box sx={{ px: 1.75, pb: 1.25 }}>
         {description && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}
+          >
             {description}
           </Typography>
         )}
 
         {/* composer — textarea + inline action row + optional AI bar on top */}
         <Box
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
             e.preventDefault();
@@ -147,14 +187,13 @@ export default function DescribeFlowStep({
             onFiles(e.dataTransfer.files);
           }}
           sx={{
-            borderRadius: 1.5, border: "1.5px solid",
-            borderColor: (t) => (dragging
-              ? "#7857FC"
-              : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.14)),
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.02),
+            borderRadius: "8px",
+            border: "1.5px solid",
+            borderColor: dragging ? "status.discovery.solid" : "border.default",
+            bgcolor: "action.hover",
             transition: "border-color .15s ease, background-color .15s ease",
             "&:focus-within": {
-              borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.32 : 0.28),
+              borderColor: "border.hover",
             },
             overflow: "hidden",
           }}
@@ -163,21 +202,34 @@ export default function DescribeFlowStep({
           {aiOpen && (
             <Box
               sx={{
-                borderBottom: "1px solid", borderColor: "divider",
-                bgcolor: (t) => (t.palette.mode === "dark" ? "#1a1a2e" : "#fafafe"),
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.aiSurface",
               }}
             >
-              <Stack direction="row" alignItems="center" sx={{ px: 1.5, pt: 1 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                sx={{ px: 1.5, pt: 1 }}
+              >
                 {aiLoading ? (
-                  <Stack direction="row" alignItems="center" spacing={1} sx={{ flex: 1 }}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{ flex: 1 }}
+                  >
                     <CircularProgress size={14} />
-                    <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       Falcon is drafting…
                     </Typography>
                   </Stack>
                 ) : !hasResult ? (
                   <InputBase
-                    autoFocus fullWidth
+                    autoFocus
+                    fullWidth
                     placeholder={
                       value?.trim()
                         ? "Describe changes — e.g. 'make it escalate faster'"
@@ -197,26 +249,36 @@ export default function DescribeFlowStep({
                 ) : (
                   <Typography
                     sx={{
-                      flex: 1, typography: "s3",
-                      color: "text.secondary", fontStyle: "italic",
+                      flex: 1,
+                      typography: "s3",
+                      color: "text.secondary",
+                      fontStyle: "italic",
                     }}
                   >
                     {aiPrompt}
                   </Typography>
                 )}
 
-                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ ml: 1, flexShrink: 0 }}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{ ml: 1, flexShrink: 0 }}
+                >
                   {hasResult && (
                     <>
                       <Button
-                        size="small" onClick={handleReject}
-                        sx={{ textTransform: "none", fontSize: 12, color: "text.secondary", minWidth: 0, px: 1 }}
+                        size="small"
+                        onClick={handleReject}
+                        sx={{ color: "text.secondary", minWidth: 0 }}
                       >
                         Reject
                       </Button>
                       <Button
-                        size="small" variant="outlined" onClick={handleAccept}
-                        sx={{ textTransform: "none", fontSize: 12, minWidth: 0, px: 1.5, fontWeight: 600 }}
+                        size="small"
+                        variant="outlined"
+                        onClick={handleAccept}
+                        sx={{ minWidth: 0 }}
                       >
                         Accept
                       </Button>
@@ -224,17 +286,32 @@ export default function DescribeFlowStep({
                   )}
                   {!hasResult && !aiLoading && (
                     <IconButton
-                      size="small" onClick={() => submitAI(aiPrompt)}
-                      disabled={!aiPrompt.trim()} sx={{ p: 0.5 }}
+                      size="small"
+                      onClick={() => submitAI(aiPrompt)}
+                      disabled={!aiPrompt.trim()}
+                      sx={{ p: 0.5 }}
                     >
                       <Iconify
-                        icon="mdi:arrow-up-circle" width={20}
-                        sx={{ color: aiPrompt.trim() ? "primary.main" : "text.disabled" }}
+                        icon="solar:round-arrow-up-linear"
+                        width={20}
+                        sx={{
+                          color: aiPrompt.trim()
+                            ? "primary.main"
+                            : "text.disabled",
+                        }}
                       />
                     </IconButton>
                   )}
-                  <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
-                    <Iconify icon="mdi:close" width={16} sx={{ color: "text.disabled" }} />
+                  <IconButton
+                    size="small"
+                    onClick={handleClose}
+                    sx={{ p: 0.25 }}
+                  >
+                    <Iconify
+                      icon="solar:close-linear"
+                      width={16}
+                      sx={{ color: "text.disabled" }}
+                    />
                   </IconButton>
                 </Stack>
               </Stack>
@@ -242,17 +319,27 @@ export default function DescribeFlowStep({
               {hasResult && (
                 <Box sx={{ px: 1.5, pb: 1, pt: 0.5 }}>
                   <InputBase
-                    inputRef={followUpRef} fullWidth
+                    inputRef={followUpRef}
+                    fullWidth
                     placeholder="Add a follow-up…"
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey && e.target.value.trim()) {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        e.target.value.trim()
+                      ) {
                         e.preventDefault();
                         submitAI(e.target.value);
                         e.target.value = "";
                       }
                       if (e.key === "Escape") handleClose();
                     }}
-                    sx={{ fontSize: 13, borderTop: "1px solid", borderColor: "divider", pt: 0.75 }}
+                    sx={{
+                      fontSize: 13,
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                      pt: 0.75,
+                    }}
                   />
                 </Box>
               )}
@@ -261,7 +348,11 @@ export default function DescribeFlowStep({
 
           <Box sx={{ p: 1.5 }}>
             <TextField
-              fullWidth multiline minRows={5} maxRows={12} variant="standard"
+              fullWidth
+              multiline
+              minRows={5}
+              maxRows={12}
+              variant="standard"
               placeholder={placeholder}
               value={value}
               onChange={(e) => onChange(e.target.value)}
@@ -270,8 +361,15 @@ export default function DescribeFlowStep({
                 sx: { typography: "s2", lineHeight: 1.6, px: 0.5, py: 0.25 },
               }}
             />
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.5 }}>
-              <Typography sx={{ typography: "s3", color: "text.disabled", flex: 1 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ mt: 0.5 }}
+            >
+              <Typography
+                sx={{ typography: "s3", color: "text.disabled", flex: 1 }}
+              >
                 {value.trim()
                   ? `${value.trim().split(/\s+/).length} words`
                   : "Type, drop a file, or use the tools →"}
@@ -284,9 +382,7 @@ export default function DescribeFlowStep({
                     p: 0.5,
                     color: aiOpen ? "primary.main" : "text.subtitle",
                     "&:hover": {
-                      bgcolor: (t) => (t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.12)"
-                        : "rgba(124,77,255,0.06)"),
+                      bgcolor: "background.aiHover",
                       color: "primary.main",
                     },
                   }}
@@ -299,31 +395,52 @@ export default function DescribeFlowStep({
               </Tooltip>
               <Tooltip arrow title="Attach reference material">
                 <IconButton
-                  size="small" onClick={() => inputRef.current?.click()}
+                  size="small"
+                  onClick={() => inputRef.current?.click()}
                   sx={{ color: "text.subtitle" }}
                 >
                   <Iconify icon="solar:paperclip-linear" width={16} />
                 </IconButton>
               </Tooltip>
-              <VoiceInput onTranscript={(text) => onChange(value ? `${value} ${text}` : text)} />
+              <VoiceInput
+                onTranscript={(text) =>
+                  onChange(value ? `${value} ${text}` : text)
+                }
+              />
             </Stack>
           </Box>
         </Box>
 
         {/* suggested chips */}
         {Array.isArray(chips) && chips.length > 0 && (
-          <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75} sx={{ mt: 1.25 }}>
+          <Stack
+            direction="row"
+            spacing={0.75}
+            flexWrap="wrap"
+            rowGap={0.75}
+            sx={{ mt: 1.25 }}
+          >
             {chips.map((c) => (
               <Box
                 key={c}
-                {...clickable(() => onChange(value ? `${value.trim()} ${c}` : c))}
-                sx={{ ...focusRing,
-                  px: 1, py: 0.375, borderRadius: 0.875,
-                  border: "1px solid", borderColor: "divider",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.02),
+                {...clickable(() =>
+                  onChange(value ? `${value.trim()} ${c}` : c),
+                )}
+                sx={{
+                  ...focusRing,
+                  px: 1,
+                  py: 0.375,
+                  borderRadius: "6px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "action.hover",
                   cursor: "pointer",
-                  typography: "s3", color: "text.secondary",
-                  "&:hover": { borderColor: "text.disabled", color: "text.primary" },
+                  typography: "s3",
+                  color: "text.secondary",
+                  "&:hover": {
+                    borderColor: "text.disabled",
+                    color: "text.primary",
+                  },
                 }}
               >
                 {c}
@@ -334,25 +451,54 @@ export default function DescribeFlowStep({
 
         {/* attached files list */}
         {files.length > 0 && (
-          <Stack spacing={0.5} sx={{ mt: 1.25, maxHeight: 180, overflowY: "auto" }}>
+          <Stack
+            spacing={0.5}
+            sx={{ mt: 1.25, maxHeight: 180, overflowY: "auto" }}
+          >
             {files.map((f) => (
               <Stack
                 key={f.id}
-                direction="row" alignItems="center" spacing={1}
+                direction="row"
+                alignItems="center"
+                spacing={1}
                 sx={{
-                  px: 1.25, py: 0.75, borderRadius: 1,
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.03),
+                  px: 1.25,
+                  py: 0.75,
+                  borderRadius: 1,
+                  bgcolor: "action.hover",
                 }}
               >
-                <Iconify icon={iconForFile(f.name)} width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                <Typography noWrap sx={{ typography: "s2", color: "text.primary", flex: 1, minWidth: 0 }}>
+                <Iconify
+                  icon={iconForFile(f.name)}
+                  width={16}
+                  sx={{ color: "text.subtitle", flexShrink: 0 }}
+                />
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s2",
+                    color: "text.primary",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
                   {f.name}
                 </Typography>
-                <Typography sx={{ typography: "s3", color: "text.disabled", flexShrink: 0 }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.disabled",
+                    flexShrink: 0,
+                  }}
+                >
                   {formatFileSize(f.size)}
                 </Typography>
-                <IconButton size="small" onClick={() => onRemove(f.id)} sx={{ p: 0.25, color: "text.subtitle" }}>
-                  <Iconify icon="mingcute:close-line" width={12} />
+                <IconButton
+                  size="small"
+                  onClick={() => onRemove(f.id)}
+                  sx={{ p: 0.25, color: "text.subtitle" }}
+                >
+                  <Iconify icon="solar:close-linear" width={12} />
                 </IconButton>
               </Stack>
             ))}
@@ -361,39 +507,46 @@ export default function DescribeFlowStep({
 
         <input
           ref={inputRef}
-          type="file" multiple hidden
+          type="file"
+          multiple
+          hidden
           accept={accept}
-          onChange={(e) => { onFiles(e.target.files); e.target.value = ""; }}
+          onChange={(e) => {
+            onFiles(e.target.files);
+            e.target.value = "";
+          }}
         />
       </Box>
 
       <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
         {onBack ? (
           <Button
-            size="small" onClick={onBack}
+            size="small"
+            onClick={onBack}
             sx={{
-              typography: "s2", fontWeight: 600, color: "text.primary",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-              px: 1.5, borderRadius: 1,
+              color: "text.primary",
+              bgcolor: "action.selected",
               "&:hover": {
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
+                bgcolor: "action.focus",
               },
             }}
           >
             Back
           </Button>
-        ) : <Box />}
+        ) : (
+          <Box />
+        )}
         <Box flex={1} />
         <Stack direction="row" spacing={1}>
           {onSkip && (
             <Button
-              size="small" onClick={onSkip}
+              size="small"
+              onClick={onSkip}
               sx={{
-                typography: "s2", fontWeight: 600, color: "text.primary",
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-                px: 1.5, borderRadius: 1,
+                color: "text.primary",
+                bgcolor: "action.selected",
                 "&:hover": {
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
+                  bgcolor: "action.focus",
                 },
               }}
             >
@@ -402,17 +555,19 @@ export default function DescribeFlowStep({
           )}
           <Tooltip
             arrow
-            title={hasResult ? "Accept or reject the Falcon AI draft first — the current text isn't committed yet." : ""}
+            title={
+              hasResult
+                ? "Accept or reject the Falcon AI draft first — the current text isn't committed yet."
+                : ""
+            }
           >
             <Box component="span">
               <Button
-                size="small" onClick={onNext}
+                size="small"
+                onClick={onNext}
                 disabled={!canSubmit || hasResult}
-                variant="contained" color="primary"
-                sx={{
-                  typography: "s2", fontWeight: 700,
-                  px: 1.75, borderRadius: 1,
-                }}
+                variant="contained"
+                color="primary"
               >
                 {submitLabel || "Next"}
               </Button>
@@ -425,13 +580,23 @@ export default function DescribeFlowStep({
 }
 
 DescribeFlowStep.propTypes = {
-  step: PropTypes.number, total: PropTypes.number,
-  prompt: PropTypes.string, description: PropTypes.string, placeholder: PropTypes.string,
+  step: PropTypes.number,
+  total: PropTypes.number,
+  prompt: PropTypes.string,
+  description: PropTypes.string,
+  placeholder: PropTypes.string,
   chips: PropTypes.arrayOf(PropTypes.string),
-  value: PropTypes.string, onChange: PropTypes.func,
-  files: PropTypes.array, onAdd: PropTypes.func, onRemove: PropTypes.func,
-  onBack: PropTypes.func, onSkip: PropTypes.func, onNext: PropTypes.func,
-  canSubmit: PropTypes.bool, submitLabel: PropTypes.string, accept: PropTypes.string,
+  value: PropTypes.string,
+  onChange: PropTypes.func,
+  files: PropTypes.array,
+  onAdd: PropTypes.func,
+  onRemove: PropTypes.func,
+  onBack: PropTypes.func,
+  onSkip: PropTypes.func,
+  onNext: PropTypes.func,
+  canSubmit: PropTypes.bool,
+  submitLabel: PropTypes.string,
+  accept: PropTypes.string,
 };
 
 function iconForFile(name) {

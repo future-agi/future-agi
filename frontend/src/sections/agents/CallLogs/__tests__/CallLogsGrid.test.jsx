@@ -124,10 +124,7 @@ describe("CallLogsGrid bounded-read state", () => {
     );
     expect(screen.queryByText("No calls found")).not.toBeInTheDocument();
     expect(agGridState.props.rowData).toEqual([]);
-    expect(
-      screen.queryByRole("button", { name: /go to page 2/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
   });
 
@@ -146,12 +143,12 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(agGridState.props.rowData).toEqual(completeData.results);
     expect(agGridState.props.loading).toBe(false);
     expect(
-      screen.getByRole("button", { name: /go to page 2/i }),
+      screen.getByRole("button", { name: "Next page" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /go to page 3/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
     expect(useCallLogsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         paginationParams: {
@@ -207,7 +204,7 @@ describe("CallLogsGrid bounded-read state", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /go to page 2/i }),
+      await screen.findByRole("button", { name: "Next page" }),
     );
     await waitFor(() =>
       expect(useCallLogsMock).toHaveBeenLastCalledWith(
@@ -218,10 +215,7 @@ describe("CallLogsGrid bounded-read state", () => {
     agentDetailsState.selectedVersion = "version-2";
     view.rerender(<CallLogsGrid id="project-1" module="project" hideDrawer />);
 
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(screen.getByText(/^Page 2 of/)).toBeInTheDocument();
     expect(useCallLogsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, pageLimit: 25 }),
     );
@@ -293,9 +287,11 @@ describe("CallLogsGrid bounded-read state", () => {
     render(<CallLogsGrid id="project-1" module="project" hideDrawer />);
 
     expect(
-      await screen.findByRole("button", { name: /go to page 2/i }),
+      await screen.findByRole("button", { name: "Next page" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
   });
 
@@ -409,7 +405,9 @@ describe("CallLogsGrid bounded-read state", () => {
     await waitFor(() => expect(prefetchCallLogsMock).not.toHaveBeenCalled());
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(agGridState.props.rowData).toEqual(completeData.results);
-    expect(screen.getByText("Next").closest("button")).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
   });
 
   it("refreshes project data from a new page-one cursor generation", async () => {
@@ -442,7 +440,7 @@ describe("CallLogsGrid bounded-read state", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /go to page 2/i }),
+      await screen.findByRole("button", { name: "Next page" }),
     );
     await waitFor(() =>
       expect(useCallLogsMock).toHaveBeenLastCalledWith(
@@ -457,10 +455,7 @@ describe("CallLogsGrid bounded-read state", () => {
         expect.objectContaining({ page: 1, paginationRevision: 1 }),
       ),
     );
-    expect(screen.getByRole("button", { name: "page 1" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(screen.getByText(/^Page 1 of/)).toBeInTheDocument();
     expect(prefetchCallLogsMock).not.toHaveBeenCalled();
   });
 
@@ -537,7 +532,7 @@ describe("CallLogsGrid bounded-read state", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /go to page 2/i }),
+      await screen.findByRole("button", { name: "Next page" }),
     );
     await waitFor(() =>
       expect(useCallLogsMock).toHaveBeenLastCalledWith(
@@ -557,10 +552,7 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(useCallLogsMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, paginationRevision: 0 }),
     );
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(screen.getByText(/^Page 2 of/)).toBeInTheDocument();
     window.removeEventListener(OBSERVE_PAGE_CHANGED_EVENT, pageChanged);
   });
 

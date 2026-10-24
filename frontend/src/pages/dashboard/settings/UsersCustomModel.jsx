@@ -1,7 +1,7 @@
+import SelectionBar from "src/components/selection-bar";
 import React, { useMemo, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { Box, Button, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
 import AddCustomModal from "./AddCustomModal";
 import { useMutation } from "@tanstack/react-query";
@@ -206,7 +206,7 @@ const UsersCustomModel = () => {
         variant="subtitle1"
         sx={{
           fontWeight: "600",
-          fontSize: "14px",
+          fontSize: "13px",
           textAlign: "left",
           marginBottom: "15px",
           color: "text.primary",
@@ -242,64 +242,23 @@ const UsersCustomModel = () => {
             placeholder="Search"
           />
           {selected?.length > 0 ? (
-            <Box
-              sx={{
-                padding: "6px 16px",
-                gap: "16px",
-                borderRadius: "8px",
-                border: "1px solid rgba(225, 223, 236, 1)",
-                display: "flex",
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 500,
-                  lineHeight: "22px",
-                  color: "rgba(120, 87, 252, 1)",
-                  paddingRight: "16px",
-                  borderRight: "2px solid rgba(225, 223, 236, 1)",
-                }}
-              >
-                {selected?.length || 0} Selected
-              </Typography>
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  cursor: "pointer",
-                }}
-                onClick={() => setOpenDelete(true)}
-              >
-                <Iconify icon="solar:trash-bin-trash-bold" />
-                Delete
-              </Typography>
-
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  cursor: "pointer",
-                }}
-                onClick={() => onSelectionChanged(null)}
-              >
-                Cancel
-              </Typography>
-            </Box>
+            <SelectionBar
+              count={selected.length}
+              onCancel={() => onSelectionChanged(null)}
+              actions={[
+                {
+                  label: "Delete",
+                  icon: "solar:trash-bin-trash-linear",
+                  onClick: () => setOpenDelete(true),
+                },
+              ]}
+            />
           ) : (
             <Button
               id="add-Custom-Model"
               variant="contained"
               color="primary"
-              sx={{ marginLeft: 2, padding: "0 20px" }} // Add margin to the left of the button
+              sx={{ marginLeft: 2 }} // Add margin to the left of the button
               onClick={handleCreate}
             >
               Add Custom Model

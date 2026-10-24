@@ -4,9 +4,10 @@ import {
   IconButton,
   Modal,
   Typography,
-  useTheme,
   CircularProgress,
+  Tab,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -15,7 +16,6 @@ import HelperText from "src/sections/develop-detail/Common/HelperText";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
-import { CustomTab, CustomTabs, TabWrapper } from "./AddDatasetStyle";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -48,7 +48,6 @@ const tabOptions = [
 ];
 
 const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
-  const theme = useTheme();
   const { control, reset, setValue } = useForm({
     defaultValues,
   });
@@ -136,13 +135,13 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
         flexWrap: "wrap",
         // p: "15px",
         overflow: "auto",
-        "& .MuiBackdrop-root": { backgroundColor: "#00000040" },
+        "& .MuiBackdrop-root": { backgroundColor: "rgba(0,0,0,0.25)" },
       }}
     >
       <Box
         bgcolor="background.paper"
         mx="auto"
-        maxWidth="919px"
+        maxWidth="960px"
         width="100%"
         borderRadius="16px"
         padding={2}
@@ -168,7 +167,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                 onClose();
               }}
             >
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <Box sx={{}}>
@@ -223,7 +222,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   }
                   sx={{ color: "text.secondary" }}
                 >
-                  <Iconify icon="eva:copy-outline" width={16} height={16} />
+                  <Iconify icon="solar:copy-linear" width={16} height={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -259,7 +258,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   }
                   sx={{ color: "text.secondary" }}
                 >
-                  <Iconify icon="eva:copy-outline" width={16} height={16} />
+                  <Iconify icon="solar:copy-linear" width={16} height={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -291,7 +290,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   }
                   sx={{ color: "text.secondary" }}
                 >
-                  <Iconify icon="eva:copy-outline" width={16} height={16} />
+                  <Iconify icon="solar:copy-linear" width={16} height={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -326,7 +325,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
                   }
                   sx={{ color: "text.secondary" }}
                 >
-                  <Iconify icon="eva:copy-outline" width={16} height={16} />
+                  <Iconify icon="solar:copy-linear" width={16} height={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -334,30 +333,21 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
         )}
         {!isFetching && (
           <Box>
-            <TabWrapper>
-              <CustomTabs
-                textColor="primary"
+            <Box sx={{ mb: 1.5 }}>
+              <SegmentedTabs
                 value={currentTab}
                 onChange={(e, value) => setCurrentTab(value)}
-                TabIndicatorProps={{
-                  style: {
-                    backgroundColor: theme.palette.primary.main,
-                    opacity: 0.08,
-                    height: "100%",
-                    borderRadius: "8px",
-                  },
-                }}
               >
                 {tabOptions.map((tab) => (
-                  <CustomTab
+                  <Tab
                     key={tab.value}
                     label={tab.label}
                     value={tab.value}
                     disabled={tab.disabled}
                   />
                 ))}
-              </CustomTabs>
-            </TabWrapper>
+              </SegmentedTabs>
+            </Box>
             <Box
               bgcolor="background.neutral"
               borderRadius="8px"

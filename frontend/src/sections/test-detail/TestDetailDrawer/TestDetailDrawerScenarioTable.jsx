@@ -8,6 +8,7 @@ import {
   useTheme,
   Collapse,
   Stack,
+  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SvgColor from "../../../components/svg-color/svg-color";
@@ -70,11 +71,7 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
           justifyContent={"space-between"}
           alignItems={"center"}
         >
-          <Typography
-            typography="m3"
-            fontWeight="fontWeightMedium"
-            color="text.primary"
-          >
+          <Typography typography="title_xs" color="text.primary">
             Scenario Details
           </Typography>
           <IconButton
@@ -90,7 +87,7 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                 height: "24px",
                 width: "24px",
                 transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-                transition: "transform 0.3s ease",
+                transition: "transform 0.2s ease",
                 transformOrigin: "center",
               }}
               src="/assets/icons/custom/lucide--chevron-down.svg"
@@ -165,7 +162,7 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                     sx={{
                       color: "text.disabled",
                       mb: 0.5,
-                      textTransform: "uppercase",
+                      textTransform: "none",
                     }}
                   >
                     Persona
@@ -219,7 +216,7 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                         sx={{
                           color: "text.disabled",
                           mb: 0.5,
-                          textTransform: "uppercase",
+                          textTransform: "none",
                         }}
                       >
                         {col.headerName}
@@ -242,7 +239,8 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                 })}
             </Box>
 
-            <Box
+            <ButtonBase
+              component="div"
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -250,9 +248,8 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                 gap: 0.5,
                 height: "18px",
                 mt: 1,
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "primary.main",
-                cursor: "pointer",
               }}
               onClick={() => setShowFullDetails((prev) => !prev)}
             >
@@ -260,8 +257,8 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
                 <Iconify
                   icon={
                     showFullDetails
-                      ? "tabler:chevron-up"
-                      : "tabler:chevron-down"
+                      ? "solar:alt-arrow-up-linear"
+                      : "solar:alt-arrow-down-linear"
                   }
                   width={16}
                   height={16}
@@ -271,7 +268,7 @@ const TestDetailDrawerScenarioTable = ({ data }) => {
               <Typography fontSize={12} fontWeight={600}>
                 {showFullDetails ? "Minimize details" : "View full details"}
               </Typography>
-            </Box>
+            </ButtonBase>
           </Box>
         </Collapse>
       </Box>

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import {
   Box,
   Button,
@@ -17,6 +18,7 @@ import ApexCharts from "apexcharts";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { isAlertMuted } from "../../common";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
 export const IssueCell = ({ data }) => {
   if (!data) return null;
@@ -59,7 +61,7 @@ export const IssueCell = ({ data }) => {
               sx={{
                 height: 16,
                 width: 16,
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
               }}
             />
           </Typography>
@@ -88,46 +90,15 @@ IssueCell.propTypes = {
   }),
 };
 
-const statusCellStyle = {
-  triggered: {
-    sx: {
-      color: "red.500",
-      backgroundColor: "red.o10",
-    },
-    icon: "/assets/icons/ic_critical.svg",
-  },
-  healthy: {
-    sx: {
-      color: "green.500",
-      backgroundColor: "green.o10",
-    },
-    icon: "/assets/icons/status/success.svg",
-  },
-  critical: {
-    sx: {
-      color: "red.500",
-      backgroundColor: "red.o10",
-    },
-    icon: "/assets/icons/ic_critical.svg",
-  },
-  warning: {
-    sx: {
-      color: "orange.400",
-      backgroundColor: "orange.o5",
-    },
-    icon: "/assets/icons/ic_warning.svg",
-  },
-  resolved: {
-    sx: {
-      color: "green.500",
-      backgroundColor: "green.o10",
-    },
-    icon: "/assets/icons/status/success.svg",
-  },
+const STATUS_CELL_ROLE = {
+  triggered: "danger",
+  critical: "danger",
+  warning: "warning",
+  healthy: "success",
+  resolved: "success",
 };
 
 export const StatusCell = ({ value }) => {
-  const theme = useTheme();
   if (!value) return "-";
   return (
     <Box
@@ -137,30 +108,11 @@ export const StatusCell = ({ value }) => {
         alignItems: "center",
       }}
     >
-      <Stack
-        sx={{
-          ...statusCellStyle?.[_.toLower(value)]?.sx,
-          padding: theme.spacing(0.5, 1.5),
-          display: "flex",
-          flexDirection: "row",
-          justifyContent: "flex-start",
-          alignItems: "center",
-          height: "max-content",
-          borderRadius: theme.spacing(0.5),
-        }}
-        gap={1}
-      >
-        <SvgColor
-          src={statusCellStyle?.[_.toLower(value)]?.icon}
-          sx={{
-            height: 16,
-            width: 16,
-          }}
-        />
-        <Typography variant="s3" fontWeight={"fontWeightMedium"}>
-          {_.capitalize(value)}
-        </Typography>
-      </Stack>
+      <StatusBadge
+        status={_.toLower(value)}
+        role={STATUS_CELL_ROLE[_.toLower(value)] || "neutral"}
+        label={_.capitalize(value)}
+      />
     </Box>
   );
 };
@@ -314,11 +266,8 @@ export const ActionCell = ({ options = [], onClick }) => {
         sx={{
           display: "flex",
           gap: 1,
-          borderRadius: theme.spacing(1),
           borderColor: `${theme.palette.divider} !important`,
           minWidth: 71,
-          px: 1,
-          py: 0.25,
         }}
       >
         <SvgColor

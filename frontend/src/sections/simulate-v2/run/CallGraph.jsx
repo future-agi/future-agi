@@ -35,6 +35,7 @@ const R = 9;
 
 /* What a node is, when nothing is being compared. */
 const KIND = {
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
   start: { color: "#7857FC", dot: "#7857FC" },
   tool: { color: "#2563EB", dot: "#2563EB" },
   check: { color: "#CA8A04", dot: "#CA8A04" },
@@ -42,17 +43,28 @@ const KIND = {
   skipped: { color: "#C2603F", dot: "#C2603F", dash: "5 4" },
   alternate: { color: "#9AA0A6", dot: "#9AA0A6", dash: "5 4" },
   baseline: { color: "#C2603F", dot: "#C2603F", dash: "5 4" },
+  /* eslint-enable no-restricted-syntax */
 };
 
 /* What a node is, once there is a baseline to read it against. */
 const DIFF = {
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   shared: { color: "#9AA0A6" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   added: { color: "#16A34A" },
 };
 
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const STATUS_RING = { fail: "#DC2626", warn: "#CA8A04" };
 
-export default function CallGraph({ spine = [], branches = [], diff, focus, onNodeClick, sx }) {
+export default function CallGraph({
+  spine = [],
+  branches = [],
+  diff,
+  focus,
+  onNodeClick,
+  sx,
+}) {
   const theme = useTheme();
   const dark = theme.palette.mode === "dark";
   /*
@@ -88,7 +100,11 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
   const xOfSpine = (row) => (twoCols && row <= forkRow ? centredX : colX(0));
   const yOf = (row) => PAD + row * ROW_H;
 
-  const lastRow = Math.max(spine.length - 1, ...placed.flatMap((b) => b.nodes.map((n) => n.row)), 0);
+  const lastRow = Math.max(
+    spine.length - 1,
+    ...placed.flatMap((b) => b.nodes.map((n) => n.row)),
+    0,
+  );
   const width = PAD * 2 + NODE_W * (1 + branchCols) + COL_GAP * branchCols;
   const height = PAD * 2 + NODE_H + lastRow * ROW_H;
   const scale = zoom ?? fit;
@@ -105,25 +121,41 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
     const dir = x2 > x1 ? 1 : -1;
     const d = straight
       ? `M ${x1} ${y1} V ${y2 - 7}`
-      : `M ${x1} ${y1} V ${midY - R} Q ${x1} ${midY} ${x1 + R * dir} ${midY} `
-        + `H ${x2 - R * dir} Q ${x2} ${midY} ${x2} ${midY + R} V ${y2 - 7}`;
+      : `M ${x1} ${y1} V ${midY - R} Q ${x1} ${midY} ${x1 + R * dir} ${midY} ` +
+        `H ${x2 - R * dir} Q ${x2} ${midY} ${x2} ${midY + R} V ${y2 - 7}`;
     return (
       <g key={key}>
-        <path d={d} fill="none" stroke={color} strokeWidth={1.4} strokeDasharray={dash || undefined} />
+        <path
+          d={d}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.4}
+          strokeDasharray={dash || undefined}
+        />
         <path
           d={`M ${x2 - 4} ${y2 - 6} L ${x2} ${y2 - 1} L ${x2 + 4} ${y2 - 6}`}
-          fill="none" stroke={color} strokeWidth={1.4}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.4}
         />
         {label && (
           <>
             {/* The line would otherwise run straight through the text. */}
             <rect
-              x={(straight ? x1 : x1) + 5} y={midY - 17} width={label.length * 6 + 8} height={14} rx={4}
+              x={(straight ? x1 : x1) + 5}
+              y={midY - 17}
+              width={label.length * 6 + 8}
+              height={14}
+              rx={4}
               fill={theme.palette.background.paper}
             />
             <text
-              x={(straight ? x1 : x1) + 9} y={midY - 6}
-              style={{ font: "500 10px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
+              x={(straight ? x1 : x1) + 9}
+              y={midY - 6}
+              style={{
+                font: "500 10px ui-monospace, Menlo, monospace",
+                fill: theme.palette.text.disabled,
+              }}
             >
               {label}
             </text>
@@ -145,36 +177,67 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
     return (
       <g
         key={`${n.id}-${row}`}
-        {...clickable(onNodeClick ? () => onNodeClick(n) : null, { label: n.label })}
+        {...clickable(onNodeClick ? () => onNodeClick(n) : null, {
+          label: n.label,
+        })}
         style={{ cursor: onNodeClick ? "pointer" : "default" }}
       >
         {lit && (
           <rect
-            x={x - 5} y={y - 5} width={NODE_W + 10} height={NODE_H + 10} rx={16}
-            fill="none" stroke="#7857FC" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.9}
+            x={x - 5}
+            y={y - 5}
+            width={NODE_W + 10}
+            height={NODE_H + 10}
+            rx={16}
+            fill="none"
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+            stroke="#7857FC"
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            opacity={0.9}
           />
         )}
         <title>{n.hint || `${n.label} — ${n.sub || ""}`}</title>
         <rect
-          x={x} y={y} width={NODE_W} height={NODE_H} rx={12}
-          fill={dash ? alpha(tone.color, dark ? 0.1 : 0.05) : theme.palette.background.paper}
+          x={x}
+          y={y}
+          width={NODE_W}
+          height={NODE_H}
+          rx={12}
+          fill={
+            dash
+              ? alpha(tone.color, dark ? 0.1 : 0.05)
+              : theme.palette.background.paper
+          }
           stroke={ring || tone.color}
           strokeWidth={n.kind === "end" ? 1.75 : 1.25}
           strokeDasharray={dash || undefined}
-          style={dark ? undefined : { filter: "drop-shadow(0 1px 1.5px rgba(16,24,40,.06))" }}
+          style={
+            dark
+              ? undefined
+              : { filter: "drop-shadow(0 1px 1.5px rgba(16,24,40,.06))" }
+          }
         />
         {/* What kind of step this is, without spending a whole row on a word. */}
         <circle cx={x + 14} cy={y + NODE_H / 2} r={3.5} fill={tone.color} />
         <text
-          x={x + 26} y={y + 20}
-          style={{ font: "600 12px ui-monospace, Menlo, monospace", fill: textTone(tone.color, theme.palette.text.primary) }}
+          x={x + 26}
+          y={y + 20}
+          style={{
+            font: "600 12px ui-monospace, Menlo, monospace",
+            fill: textTone(tone.color, theme.palette.text.primary),
+          }}
         >
           {n.label.length > 20 ? `${n.label.slice(0, 19)}…` : n.label}
         </text>
         {n.sub && (
           <text
-            x={x + 26} y={y + 34}
-            style={{ font: "400 10.5px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
+            x={x + 26}
+            y={y + 34}
+            style={{
+              font: "400 10.5px ui-monospace, Menlo, monospace",
+              fill: theme.palette.text.disabled,
+            }}
           >
             {n.sub.length > 26 ? `${n.sub.slice(0, 25)}…` : n.sub}
           </text>
@@ -211,7 +274,7 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
   if (!spine.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center", ...sx }}>
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
           No path — this scenario did not run here.
         </Typography>
       </Box>
@@ -221,7 +284,13 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
   return (
     <Box sx={{ position: "relative", ...sx }}>
       <Box ref={wrapRef} sx={{ overflow: "auto", py: 1 }}>
-        <Box sx={{ width: width * scale, height: height * scale, transition: "width .15s, height .15s" }}>
+        <Box
+          sx={{
+            width: width * scale,
+            height: height * scale,
+            transition: "width .15s, height .15s",
+          }}
+        >
           <svg
             viewBox={`0 0 ${width} ${height}`}
             width={width * scale}
@@ -229,26 +298,38 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
             style={{ display: "block", margin: "0 auto" }}
           >
             {/* what happened */}
-            {spine.slice(0, -1).map((n, i) => edge({
-              x1: xOfSpine(i) + NODE_W / 2,
-              y1: yOf(i) + NODE_H,
-              x2: xOfSpine(i + 1) + NODE_W / 2,
-              y2: yOf(i + 1),
-              color: toneOf(spine[i + 1]).color,
-              label: gap(n, spine[i + 1]),
-              key: `spine-${i}`,
-            }))}
+            {spine.slice(0, -1).map((n, i) =>
+              edge({
+                x1: xOfSpine(i) + NODE_W / 2,
+                y1: yOf(i) + NODE_H,
+                x2: xOfSpine(i + 1) + NODE_W / 2,
+                y2: yOf(i + 1),
+                color: toneOf(spine[i + 1]).color,
+                label: gap(n, spine[i + 1]),
+                key: `spine-${i}`,
+              }),
+            )}
 
             {/* what didn't */}
-            {placed.map((b) => b.nodes.map((m, i) => edge({
-              x1: i === 0 ? xOfSpine(b.after ?? 0) + NODE_W / 2 : colX(b.col) + NODE_W / 2,
-              y1: i === 0 ? yOf(b.after ?? 0) + NODE_H : yOf(b.nodes[i - 1].row) + NODE_H,
-              x2: colX(b.col) + NODE_W / 2,
-              y2: yOf(m.row),
-              color: (KIND[m.kind] || KIND.alternate).color,
-              dash: "5 4",
-              key: `branch-${m.id}-${i}`,
-            })))}
+            {placed.map((b) =>
+              b.nodes.map((m, i) =>
+                edge({
+                  x1:
+                    i === 0
+                      ? xOfSpine(b.after ?? 0) + NODE_W / 2
+                      : colX(b.col) + NODE_W / 2,
+                  y1:
+                    i === 0
+                      ? yOf(b.after ?? 0) + NODE_H
+                      : yOf(b.nodes[i - 1].row) + NODE_H,
+                  x2: colX(b.col) + NODE_W / 2,
+                  y2: yOf(m.row),
+                  color: (KIND[m.kind] || KIND.alternate).color,
+                  dash: "5 4",
+                  key: `branch-${m.id}-${i}`,
+                }),
+              ),
+            )}
 
             {spine.map((n, i) => node(n, xOfSpine(i), i))}
             {placed.map((b) => b.nodes.map((m) => node(m, colX(b.col), m.row)))}
@@ -258,19 +339,40 @@ export default function CallGraph({ spine = [], branches = [], diff, focus, onNo
 
       <Stack
         sx={{
-          position: "absolute", right: 8, bottom: 8,
-          borderRadius: 1, overflow: "hidden",
-          border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
+          position: "absolute",
+          right: 8,
+          bottom: 8,
+          borderRadius: 1,
+          overflow: "hidden",
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
         }}
       >
         {[
-          { icon: "mingcute:add-line", title: "Zoom in", onClick: () => setZoom((z) => Math.min(2, (z ?? fit) + 0.2)) },
-          { icon: "mingcute:minimize-line", title: "Zoom out", onClick: () => setZoom((z) => Math.max(0.4, (z ?? fit) - 0.2)) },
-          { icon: "solar:maximize-square-minimalistic-linear", title: "Fit to width", onClick: () => setZoom(null) },
+          {
+            icon: "solar:add-linear",
+            title: "Zoom in",
+            onClick: () => setZoom((z) => Math.min(2, (z ?? fit) + 0.2)),
+          },
+          {
+            icon: "solar:quit-full-screen-linear",
+            title: "Zoom out",
+            onClick: () => setZoom((z) => Math.max(0.4, (z ?? fit) - 0.2)),
+          },
+          {
+            icon: "solar:maximize-square-minimalistic-linear",
+            title: "Fit to width",
+            onClick: () => setZoom(null),
+          },
         ].map((b) => (
           <Tooltip key={b.icon} arrow placement="left" title={b.title}>
-            <IconButton size="small" onClick={b.onClick} sx={{ borderRadius: 0 }}>
-              <Iconify icon={b.icon} width={14} sx={{ color: "text.subtitle" }} />
+            <IconButton size="small" onClick={b.onClick}>
+              <Iconify
+                icon={b.icon}
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Tooltip>
         ))}
@@ -295,34 +397,54 @@ CallGraph.propTypes = {
 export function GraphLegend({ diff }) {
   const solid = diff
     ? [
-      { label: "Shared with baseline", color: DIFF.shared.color },
-      { label: "Only this run", color: DIFF.added.color },
-    ]
+        { label: "Shared with baseline", color: DIFF.shared.color },
+        { label: "Only this run", color: DIFF.added.color },
+      ]
     : [
-      { label: "Start", color: KIND.start.color },
-      { label: "Tool call", color: KIND.tool.color },
-      { label: "Rule applied", color: KIND.check.color },
-      { label: "Ended", color: KIND.end.color },
-    ];
+        { label: "Start", color: KIND.start.color },
+        { label: "Tool call", color: KIND.tool.color },
+        { label: "Rule applied", color: KIND.check.color },
+        { label: "Ended", color: KIND.end.color },
+      ];
 
   const dashed = [
     { label: "Expected, never called", color: KIND.skipped.color },
     { label: "Branch not taken", color: KIND.alternate.color },
-    ...(diff ? [{ label: "Baseline went here", color: KIND.baseline.color }] : []),
+    ...(diff
+      ? [{ label: "Baseline went here", color: KIND.baseline.color }]
+      : []),
   ];
 
   return (
-    <Stack direction="row" spacing={1.75} sx={{ px: 2, pb: 1.5, flexWrap: "wrap", rowGap: 0.5 }}>
-      {[...solid.map((l) => ({ ...l, dash: false })), ...dashed.map((l) => ({ ...l, dash: true }))].map((l) => (
-        <Stack key={l.label} direction="row" alignItems="center" spacing={0.625}>
+    <Stack
+      direction="row"
+      spacing={1.75}
+      sx={{ px: 2, pb: 1.5, flexWrap: "wrap", rowGap: 0.5 }}
+    >
+      {[
+        ...solid.map((l) => ({ ...l, dash: false })),
+        ...dashed.map((l) => ({ ...l, dash: true })),
+      ].map((l) => (
+        <Stack
+          key={l.label}
+          direction="row"
+          alignItems="center"
+          spacing={0.625}
+        >
           <Box
             sx={{
-              width: 14, height: 9, borderRadius: 1, flexShrink: 0,
-              border: "1px solid", borderColor: l.color,
+              width: 14,
+              height: 9,
+              borderRadius: 1,
+              flexShrink: 0,
+              border: "1px solid",
+              borderColor: l.color,
               borderStyle: l.dash ? "dashed" : "solid",
             }}
           />
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{l.label}</Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {l.label}
+          </Typography>
         </Stack>
       ))}
     </Stack>

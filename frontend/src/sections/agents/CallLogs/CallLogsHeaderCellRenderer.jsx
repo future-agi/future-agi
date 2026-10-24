@@ -14,8 +14,8 @@ const CallLogsHeaderCellRenderer = ({ displayName }) => {
       }}
     >
       <Iconify
-        icon="material-symbols:check-circle-outline"
-        color="green.500"
+        icon="solar:check-circle-linear"
+        color="status.success.fg"
         width={16}
         height={16}
         style={{ flexShrink: 0 }}

@@ -305,7 +305,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -363,7 +364,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -379,7 +381,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -394,7 +397,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[1].closest("button"));
 
@@ -409,7 +413,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Edit"));
@@ -430,7 +435,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Activate"));

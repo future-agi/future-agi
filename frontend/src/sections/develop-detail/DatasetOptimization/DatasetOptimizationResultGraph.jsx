@@ -99,7 +99,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
           backgroundColor: "background.neutral",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       >
         <Typography color="text.secondary">Loading graph...</Typography>
@@ -114,7 +114,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
         backgroundColor: "background.neutral",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         display: "flex",
         flexDirection: "column",
         gap: "12px",
@@ -179,7 +179,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
                   flexShrink: 0,
                   cursor: "pointer",
                   paddingX: 0.5,
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     activeSeries === index
                       ? getUniqueColorPalette(index).tagBackground
@@ -224,6 +224,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               id: "dataset-optimization-result-graph",
               type: "line",
               background: "transparent",
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
               foreColor: isDark ? "#a1a1aa" : undefined,
               toolbar: {
                 show: false,

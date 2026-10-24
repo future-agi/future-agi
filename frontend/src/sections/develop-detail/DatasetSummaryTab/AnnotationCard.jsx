@@ -51,8 +51,8 @@ const headerData = [
     title: "Dataset coverage",
     valueKey: "datasetCoverage",
     unit: "%",
-    backgroundColor: "orange.o5",
-    color: "orange.500",
+    backgroundColor: "status.warning.bg",
+    color: "status.warning.fg",
   },
   {
     id: "2",
@@ -60,8 +60,8 @@ const headerData = [
     title: "Overall agreement",
     valueKey: "overallAgreement",
     unit: "",
-    backgroundColor: "pink.o5",
-    color: "pink.500",
+    backgroundColor: "status.discovery.bg",
+    color: "status.discovery.fg",
   },
   {
     id: "3",
@@ -69,8 +69,8 @@ const headerData = [
     title: "Completion ETA",
     valueKey: "completionEta",
     unit: "",
-    backgroundColor: "blue.o5",
-    color: "blue.500",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
 ];
 

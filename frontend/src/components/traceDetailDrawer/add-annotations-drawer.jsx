@@ -8,6 +8,7 @@ import {
   Typography,
   IconButton,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
 import CreateEditLabel from "src/sections/develop-detail/Annotations/CreateEditLabel/CreateEditLabel";
@@ -89,7 +90,7 @@ const AddAnnotationsDrawerChild = ({
         </Typography>
         <Box>
           <IconButton onClick={onClose}>
-            <Iconify icon="mingcute:close-line" width={20} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
       </Box>
@@ -106,7 +107,7 @@ const AddAnnotationsDrawerChild = ({
             border: "1px solid",
             borderColor: "divider",
             padding: 2,
-            borderRadius: "10px",
+            borderRadius: "8px",
             flex: 1,
             overflowY: "hidden",
             display: "flex",
@@ -235,11 +236,13 @@ const AddAnnotationsDrawer = ({
   projectId,
   onAnnotationChanges,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       BackdropProps={{ invisible: true }}
       PaperProps={{
         sx: {

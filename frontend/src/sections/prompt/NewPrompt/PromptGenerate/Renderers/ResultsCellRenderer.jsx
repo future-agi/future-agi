@@ -1,4 +1,4 @@
-import { Box, Chip, IconButton, Tooltip, Typography } from "@mui/material";
+import { Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
@@ -43,33 +43,23 @@ const ResultsCellRenderer = (props) => {
   const renderEvaluationData = () => {
     if (valueObject?.output === "Pass/Fail") {
       return (
-        <Typography fontSize="14px" color="text.secondary">
+        <Typography fontSize="13px" color="text.secondary">
           {valueObject.value}
         </Typography>
       );
     }
     if (valueObject?.output === "score") {
       return (
-        <Typography fontSize="14px" color="text.secondary">
+        <Typography fontSize="13px" color="text.secondary">
           {valueObject?.value * 100}%
         </Typography>
       );
     }
     if (valueObject?.output === "choices") {
       return (
-        <Box sx={{ height: "100%", display: "flex", gap: 1, flexWrap: "wrap" }}>
-          {valueObject.value.map((item) => {
-            return (
-              <Chip
-                label={item}
-                variant="outlined"
-                color="primary"
-                key={item}
-                size="small"
-              />
-            );
-          })}
-        </Box>
+        <Typography fontSize="13px" color="text.primary">
+          {valueObject.value.join(" · ")}
+        </Typography>
       );
     }
   };
@@ -91,7 +81,7 @@ const ResultsCellRenderer = (props) => {
   if (column.field === "evaluation") {
     return (
       <Typography
-        fontSize="14px"
+        fontSize="13px"
         color="text.secondary"
         sx={{
           padding: 1,
@@ -134,7 +124,7 @@ const ResultsCellRenderer = (props) => {
               onClick={() => handleCopyClick(valueObject)}
             >
               <Iconify
-                icon="basil:copy-outline"
+                icon="solar:copy-linear"
                 sx={{ color: "text.disabled" }}
               />
             </IconButton>
@@ -169,7 +159,7 @@ const ResultsCellRenderer = (props) => {
             alignItems: "center",
           }}
         >
-          <Typography fontSize="14px" color="error.main">
+          <Typography fontSize="13px" color="error.main">
             Error
           </Typography>
         </Box>

@@ -1,8 +1,8 @@
 import { LoadingButton } from "@mui/lab";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Button, Chip, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import { DatasetInfo, FaceBadge } from "./huggingFaceStyle";
+import { DatasetInfo } from "./huggingFaceStyle";
 import Iconify from "src/components/iconify";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import LinkifiedTypography from "src/components/LinkifiedTypography/LinkifiedTypography";
@@ -47,7 +47,7 @@ const HuggingDetailForm = ({
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: "5px" }}>
             <Iconify
-              icon="material-symbols:download"
+              icon="solar:download-minimalistic-linear"
               sx={{ color: "text.disabled" }}
             />
             <Typography
@@ -55,22 +55,19 @@ const HuggingDetailForm = ({
               sx={{
                 color: "text.disabled",
                 textAlign: "center",
-                fontSize: "10px",
+                fontSize: "12px",
               }}
             >
               {huggingFaceDetail?.downloads}
             </Typography>
-            <Iconify
-              icon="weui:like-outlined"
-              sx={{ color: "text.disabled" }}
-            />
+            <Iconify icon="solar:like-linear" sx={{ color: "text.disabled" }} />
             <Typography
               variant="span"
               component="span"
               sx={{
                 color: "text.disabled",
                 textAlign: "center",
-                fontSize: "10px",
+                fontSize: "12px",
               }}
             >
               {huggingFaceDetail?.likes}
@@ -125,9 +122,12 @@ const HuggingDetailForm = ({
           >
             Author
           </Typography>
-          <FaceBadge color={"#2F7CF7"} bgcolor={"#2F7CF729"}>
-            {huggingFaceDetail?.author}
-          </FaceBadge>
+          <Chip
+            size="small"
+            variant="soft"
+            color="info"
+            label={huggingFaceDetail?.author}
+          />
         </Stack>
         <Stack
           paddingTop={"10px"}
@@ -146,7 +146,7 @@ const HuggingDetailForm = ({
             sx={{
               color: "text.disabled",
               fontWeight: "400",
-              fontSize: "14px",
+              fontSize: "13px",
               pt: "6px",
             }}
           >
@@ -243,7 +243,7 @@ const HuggingDetailForm = ({
         {huggingFaceDatasetConfigError && (
           <LinkifiedTypography
             text={huggingFaceDatasetConfigError}
-            color={"red.500"}
+            color={"status.danger.fg"}
             variant="s2"
             fontWeight={"fontWeightRegular"}
           />

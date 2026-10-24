@@ -64,8 +64,8 @@ export default function AccountBillingHistory({ invoices }) {
             <Iconify
               icon={
                 showMore.value
-                  ? "eva:arrow-ios-upward-fill"
-                  : "eva:arrow-ios-downward-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
             />
           }

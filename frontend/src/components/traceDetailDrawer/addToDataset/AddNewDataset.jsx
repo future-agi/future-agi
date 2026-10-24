@@ -214,7 +214,7 @@ const AddNewDataset = ({
                     sx={{ marginRight: "5px" }}
                     icon={
                       <Iconify
-                        icon="system-uicons:checkbox-empty"
+                        icon="solar:square-linear"
                         color="text.disabled"
                         width="20px"
                         height="20px"
@@ -317,8 +317,6 @@ const AddNewDataset = ({
           variant="outlined"
           fullWidth
           sx={{
-            fontSize: "14px",
-            fontWeight: 500,
             color: theme.palette.text.secondary,
             borderColor: theme.palette.divider,
           }}
@@ -334,8 +332,6 @@ const AddNewDataset = ({
           disabled={isSubmitDisabled}
           onClick={handleSubmit}
           sx={{
-            fontSize: "14px",
-            fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
               color: theme.palette.background.paper,

@@ -25,14 +25,17 @@ import VoiceLeftPanel from "./VoiceLeftPanel";
 import VoiceRightPanel from "./VoiceRightPanel";
 
 const VOICE_IMAGINE_PROMPTS = [
-  { label: "Summarize this call", icon: "mdi:text-box-outline" },
-  { label: "Show the conversation flow", icon: "mdi:message-text-outline" },
-  { label: "Analyze speaker turn distribution", icon: "mdi:chart-bar" },
-  { label: "What's the latency breakdown?", icon: "mdi:timer-outline" },
-  { label: "Show the cost breakdown", icon: "mdi:currency-usd" },
+  { label: "Summarize this call", icon: "solar:notes-linear" },
+  { label: "Show the conversation flow", icon: "solar:chat-round-line-linear" },
+  { label: "Analyze speaker turn distribution", icon: "solar:chart-2-linear" },
+  { label: "What's the latency breakdown?", icon: "solar:clock-circle-linear" },
+  {
+    label: "Show the cost breakdown",
+    icon: "solar:dollar-minimalistic-linear",
+  },
   {
     label: "Evaluate call quality",
-    icon: "mdi:checkbox-marked-circle-outline",
+    icon: "solar:check-circle-linear",
   },
 ];
 
@@ -106,7 +109,7 @@ const VoiceDetailDrawerV2 = ({
       {
         id: "voice",
         label: "Voice",
-        icon: "mdi:phone-outline",
+        icon: "solar:phone-linear",
         isDefault: true,
       },
     ];
@@ -116,7 +119,7 @@ const VoiceDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -128,7 +131,7 @@ const VoiceDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });

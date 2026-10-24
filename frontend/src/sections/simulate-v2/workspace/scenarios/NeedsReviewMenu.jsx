@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, Popover } from "@mui/material";
 import Iconify from "src/components/iconify";
 
@@ -23,12 +22,20 @@ export default function NeedsReviewMenu({ notices }) {
   return (
     <>
       <Button
-        size="small" variant="outlined"
+        size="small"
+        variant="outlined"
         onClick={(e) => setAnchor(e.currentTarget)}
-        startIcon={<Iconify icon={count ? "solar:eye-linear" : "solar:shield-check-linear"} width={14} />}
+        startIcon={
+          <Iconify
+            icon={count ? "solar:eye-linear" : "solar:shield-check-linear"}
+            width={14}
+          />
+        }
         sx={{
-          typography: "s2", fontWeight: 700, textTransform: "none", height: 30, flexShrink: 0, whiteSpace: "nowrap",
-          color: "text.primary", borderColor: anchor ? "text.primary" : "divider",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+          color: "text.primary",
+          borderColor: anchor ? "text.primary" : "divider",
           bgcolor: anchor ? "action.selected" : "transparent",
         }}
       >
@@ -37,10 +44,19 @@ export default function NeedsReviewMenu({ notices }) {
           <Box
             component="span"
             sx={{
-              ml: 0.75, px: 0.625, minWidth: 18, height: 18, borderRadius: 0.75,
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
-              color: "text.secondary", bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
+              ml: 0.75,
+              px: 0.625,
+              minWidth: 18,
+              height: 18,
+              borderRadius: "4px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              typography: "s3",
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              color: "text.secondary",
+              bgcolor: "action.selected",
             }}
           >
             {count}
@@ -53,16 +69,58 @@ export default function NeedsReviewMenu({ notices }) {
         onClose={() => setAnchor(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { width: 460, maxWidth: "calc(100vw - 32px)", mt: 0.5, py: 0.5 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              width: 460,
+              maxWidth: "calc(100vw - 32px)",
+              mt: 0.5,
+              py: 0.5,
+            },
+          },
+        }}
       >
-        <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        <Stack
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
+        >
           {notices.map((n) => (
-            <Stack key={n.id} direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.75, py: 1.25 }}>
-              <Iconify icon={n.icon} width={16} sx={{ color: "text.subtitle", flexShrink: 0, alignSelf: "flex-start", mt: "2px" }} />
+            <Stack
+              key={n.id}
+              direction="row"
+              alignItems="center"
+              spacing={1.25}
+              sx={{ px: 1.75, py: 1 }}
+            >
+              <Iconify
+                icon={n.icon}
+                width={16}
+                sx={{
+                  color: "text.tertiary",
+                  flexShrink: 0,
+                  alignSelf: "flex-start",
+                  mt: "2px",
+                }}
+              />
               <Box flex={1} minWidth={0}>
-                <Typography component="div" sx={{ typography: "s2", fontWeight: 700 }}>{n.title}</Typography>
+                <Typography
+                  component="div"
+                  sx={{ typography: "s2", fontWeight: 600 }}
+                >
+                  {n.title}
+                </Typography>
                 {n.sub && (
-                  <Typography component="div" sx={{ typography: "s3", color: "text.secondary", mt: 0.125 }}>{n.sub}</Typography>
+                  <Typography
+                    component="div"
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      mt: 0.125,
+                    }}
+                  >
+                    {n.sub}
+                  </Typography>
                 )}
               </Box>
               <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
@@ -73,10 +131,16 @@ export default function NeedsReviewMenu({ notices }) {
                     variant={a.primary ? "contained" : "outlined"}
                     color={a.primary ? "primary" : "inherit"}
                     disabled={a.disabled}
-                    onClick={() => { setAnchor(null); a.onClick(); }}
+                    onClick={() => {
+                      setAnchor(null);
+                      a.onClick();
+                    }}
                     sx={{
-                      typography: "s2", fontWeight: 700, whiteSpace: "nowrap",
-                      ...(!a.primary && { color: "text.primary", borderColor: "divider" }),
+                      whiteSpace: "nowrap",
+                      ...(!a.primary && {
+                        color: "text.primary",
+                        borderColor: "divider",
+                      }),
                     }}
                   >
                     {a.label}

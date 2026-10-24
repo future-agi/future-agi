@@ -52,7 +52,7 @@ const PersonasColumnsPopover = ({
       transformOrigin={{ vertical: -8, horizontal: "right" }}
       slotProps={{
         paper: {
-          sx: { p: 0, minWidth: 260, maxHeight: 400, borderRadius: "8px" },
+          sx: { p: 0, minWidth: 320, maxHeight: 400, borderRadius: "8px" },
         },
       }}
     >
@@ -86,7 +86,7 @@ const PersonasColumnsPopover = ({
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               {visibleCount} of {ALL_COLUMNS.length} visible
             </Typography>
@@ -115,11 +115,11 @@ const PersonasColumnsPopover = ({
                     disabled={col.locked}
                     onChange={() => onToggleColumn(col.field)}
                     checkedIcon={
-                      <Iconify icon="mdi:checkbox-marked" width={20} />
+                      <Iconify icon="solar:check-square-bold" width={20} />
                     }
                     icon={
                       <Iconify
-                        icon="mdi:checkbox-blank-outline"
+                        icon="solar:square-linear"
                         width={20}
                         sx={{ color: "text.disabled" }}
                       />
@@ -135,7 +135,7 @@ const PersonasColumnsPopover = ({
                     {col.label}
                     {col.locked && (
                       <Iconify
-                        icon="mdi:lock-outline"
+                        icon="solar:lock-linear"
                         width={12}
                         sx={{
                           ml: 0.5,

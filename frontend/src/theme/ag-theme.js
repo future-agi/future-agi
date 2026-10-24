@@ -1,166 +1,91 @@
 import { themeQuartz, iconSetMaterial } from "ag-grid-enterprise";
-import { darkSpace, darkText, darkBorder } from "./palette";
+import { dsPalette } from "./ds-tokens";
 
 // ----------------------------------------------------------------------
-// Light mode params
+// AG Grid params, derived from the Future AGI Design System palette so grids
+// match MUI tables: no outer box, 13px cells, 12px/500 headers in fg.tertiary
+// with no fill, border.default row lines, bg.hover / bg.selected rows,
+// control.checked boxes.
 // ----------------------------------------------------------------------
 
-const agThemeLight = {
-  accentColor: "#7857FC",
-  advancedFilterBuilderColumnPillColor: "#E1DFEC",
-  backgroundColor: "#FFFFFF",
-  borderColor: "#E6E6E6",
-  borderRadius: "4px",
-  rowBorder: { width: "1px" },
-  headerRowBorder: { width: "1px" },
-  headerColumnBorder: { width: "1px" },
-  wrapperBorder: { width: "1px" },
-  browserColorScheme: "light",
-  cellTextColor: "#1F1F1F",
-  checkboxUncheckedBorderColor: "#D1D1D1",
-  checkboxBorderWidth: 1.5,
-  checkboxCheckedBackgroundColor: "#9575CD",
-  checkboxCheckedBorderColor: "#9575CD",
-  chromeBackgroundColor: {
-    ref: "foregroundColor",
-    mix: 0.07,
-    onto: "backgroundColor",
-  },
-  fontFamily: "Inter, sans-serif",
-  fontSize: "12px",
-  foregroundColor: "#000000",
-  headerBackgroundColor: "#FBFBFB",
-  headerFontSize: "14px",
-  headerFontWeight: 500,
-  headerTextColor: "#343434",
-  columnBorder: false,
-  selectedRowBackgroundColor: "#F2F2F2",
-  rowHoverColor: "#F8F8F8",
-  scrollBarColor: "#d1d5db",
-};
+const FONT = "Inter, ui-sans-serif, system-ui, sans-serif";
 
-const agThemeDark = {
-  accentColor: darkText.starBright,
-  advancedFilterBuilderColumnPillColor: darkBorder.hover,
-  backgroundColor: darkSpace.void,
-  borderColor: darkBorder.default,
-  borderRadius: "4px",
-  rowBorder: { width: "1px" },
-  headerRowBorder: { width: "1px" },
-  headerColumnBorder: { width: "1px" },
-  wrapperBorder: { width: "1px" },
-  browserColorScheme: "dark",
-  cellTextColor: darkText.starBright,
-  checkboxUncheckedBorderColor: "#555555",
-  checkboxBorderWidth: 1,
-  checkboxCheckedBackgroundColor: "#9575CD",
-  checkboxCheckedBorderColor: "#9575CD",
-  chromeBackgroundColor: {
-    ref: "foregroundColor",
-    mix: 0.07,
-    onto: "backgroundColor",
-  },
-  fontFamily: "Inter, sans-serif",
-  fontSize: "12px",
-  foregroundColor: darkText.starBright,
-  headerBackgroundColor: darkSpace.nebulaDark,
-  headerFontSize: "14px",
-  headerFontWeight: 500,
-  headerTextColor: darkText.moonlight,
-  columnBorder: false,
-  selectedRowBackgroundColor: darkSpace.asteroid,
-  rowHoverColor: darkSpace.dust,
-  scrollBarColor: "rgba(255, 255, 255, 0.3)",
-};
+function core(mode) {
+  const p = dsPalette(mode);
+  const dark = mode === "dark";
+  return {
+    p,
+    base: {
+      accentColor: p.border.focus,
+      browserColorScheme: dark ? "dark" : "light",
+      fontFamily: FONT,
+      fontSize: "13px",
+      foregroundColor: p.text.primary,
+      backgroundColor: p.background.paper,
+      cellTextColor: p.text.secondary,
+      borderColor: p.border.subtle,
+      headerBackgroundColor: p.background.paper,
+      headerTextColor: p.text.subtitle,
+      headerFontSize: "12px",
+      headerFontWeight: 500,
+      selectedRowBackgroundColor: p.action.selected,
+      rowHoverColor: p.action.hover,
+      checkboxUncheckedBorderColor: p.border.strong,
+      checkboxBorderWidth: 1,
+      checkboxCheckedBackgroundColor: p.control.checked,
+      checkboxCheckedBorderColor: p.control.checked,
+      checkboxCheckedShapeColor: p.control.onChecked,
+      scrollBarColor: dark ? "rgba(255, 255, 255, 0.24)" : "#D4D4D8",
+      columnBorder: false,
+    },
+  };
+}
 
-// ----------------------------------------------------------------------
-// Without-grid light / dark params
-// ----------------------------------------------------------------------
+function gridParams(mode) {
+  const { p, base } = core(mode);
+  return {
+    ...base,
+    advancedFilterBuilderColumnPillColor: p.background.muted,
+    borderRadius: "6px",
+    wrapperBorderRadius: 0,
+    rowBorder: { width: "1px", color: p.border.default },
+    headerRowBorder: { width: "1px", color: p.border.default },
+    headerColumnBorder: false,
+    wrapperBorder: false,
+    chromeBackgroundColor: p.background.paper,
+    headerHeight: 32,
+    rowHeight: 36,
+  };
+}
 
-const agThemeWithoutGridLight = {
-  accentColor: "#7857FC",
-  borderColor: "transparent",
-  cellTextColor: "#1F1F1F",
-  checkboxUncheckedBorderColor: "#D1D1D1",
-  checkboxBorderWidth: 1.5,
-  checkboxCheckedBackgroundColor: "#9575CD",
-  checkboxCheckedBorderColor: "#9575CD",
-  fontFamily: "Inter, sans-serif",
-  fontSize: "14px",
-  headerBackgroundColor: "#F8F8F8",
-  headerTextColor: "#343434",
-  columnBorder: false,
-  rowBorder: false,
-  headerRowBorder: false,
-  headerColumnBorder: false,
-  wrapperBorder: false,
-  selectCellBorder: false,
-  selectedRowBackgroundColor: "#F2F2F2",
-  scrollBarColor: "#d1d5db",
-};
+function withoutGridParams(mode) {
+  const { p, base } = core(mode);
+  return {
+    ...base,
+    borderColor: "transparent",
+    rowBorder: false,
+    headerRowBorder: false,
+    headerColumnBorder: false,
+    wrapperBorder: false,
+    selectCellBorder: false,
+  };
+}
 
-const agThemeWithoutGridDark = {
-  accentColor: darkText.starBright,
-  backgroundColor: darkSpace.void,
-  borderColor: "transparent",
-  cellTextColor: darkText.starBright,
-  checkboxUncheckedBorderColor: "#555555",
-  checkboxCheckedBackgroundColor: "#9575CD",
-  checkboxCheckedBorderColor: "#9575CD",
-  fontFamily: "Inter, sans-serif",
-  fontSize: "14px",
-  headerBackgroundColor: darkSpace.nebulaDark,
-  headerTextColor: darkText.moonlight,
-  columnBorder: false,
-  rowBorder: false,
-  headerRowBorder: false,
-  headerColumnBorder: false,
-  wrapperBorder: false,
-  selectCellBorder: false,
-  selectedRowBackgroundColor: darkSpace.asteroid,
-  scrollBarColor: "rgba(255, 255, 255, 0.3)",
-};
-
-// ----------------------------------------------------------------------
-// Prompt theme light / dark params
-// ----------------------------------------------------------------------
-
-const agThemePromptLight = {
-  accentColor: "#666666",
-  borderColor: "#E6E6E6",
-  browserColorScheme: "light",
-  cellTextColor: "#1A1A1A",
-  columnBorder: true,
-  fontFamily: "Inter, sans-serif",
-  headerBackgroundColor: "#F8F8F8",
-  headerColumnBorder: true,
-  headerFontSize: 14,
-  headerFontWeight: 400,
-  wrapperBorderRadius: 0,
-  rowHoverColor: "transparent",
-  fontSize: 14,
-  scrollBarColor: "#d1d5db",
-};
-
-const agThemePromptDark = {
-  accentColor: darkText.faintStar,
-  backgroundColor: darkSpace.nebulaDark,
-  borderColor: darkBorder.default,
-  browserColorScheme: "dark",
-  cellTextColor: darkText.starBright,
-  columnBorder: true,
-  fontFamily: "Inter, sans-serif",
-  foregroundColor: darkText.starBright,
-  headerBackgroundColor: darkSpace.nebulaDark,
-  headerColumnBorder: true,
-  headerFontSize: 14,
-  headerFontWeight: 400,
-  headerTextColor: darkText.moonlight,
-  wrapperBorderRadius: 0,
-  rowHoverColor: "transparent",
-  fontSize: 14,
-  scrollBarColor: "rgba(255, 255, 255, 0.3)",
-};
+function promptParams(mode) {
+  const { p, base } = core(mode);
+  return {
+    ...base,
+    accentColor: p.text.subtitle,
+    borderColor: p.divider,
+    columnBorder: true,
+    headerColumnBorder: true,
+    headerFontSize: 12,
+    headerFontWeight: 500,
+    wrapperBorderRadius: 0,
+    rowHoverColor: "transparent",
+    fontSize: 13,
+  };
+}
 
 // ----------------------------------------------------------------------
 // Reusable theme override presets (stable references for useMemo deps)
@@ -174,9 +99,13 @@ export const AG_THEME_OVERRIDES = {
     wrapperBorder: { width: 0 },
     wrapperBorderRadius: 0,
   },
-  withColumnBorder: { columnBorder: true },
-  dataGrid: { columnBorder: true, headerHeight: "39px" },
-  dataGridPadded: { columnBorder: true, rowVerticalPaddingScale: 2.6 },
+  withColumnBorder: { columnBorder: true, headerColumnBorder: true },
+  dataGrid: { columnBorder: true, headerColumnBorder: true, headerHeight: 32 },
+  dataGridPadded: {
+    columnBorder: true,
+    headerColumnBorder: true,
+    rowVerticalPaddingScale: 2.6,
+  },
 };
 
 // ----------------------------------------------------------------------
@@ -184,17 +113,15 @@ export const AG_THEME_OVERRIDES = {
 // ----------------------------------------------------------------------
 
 export function getAgTheme(mode) {
-  const params = mode === "dark" ? agThemeDark : agThemeLight;
-  return themeQuartz.withPart(iconSetMaterial).withParams(params);
+  return themeQuartz.withPart(iconSetMaterial).withParams(gridParams(mode));
 }
 
 export function getAgThemeWithoutGrid(mode) {
-  const params =
-    mode === "dark" ? agThemeWithoutGridDark : agThemeWithoutGridLight;
-  return themeQuartz.withPart(iconSetMaterial).withParams(params);
+  return themeQuartz
+    .withPart(iconSetMaterial)
+    .withParams(withoutGridParams(mode));
 }
 
 export function getAgThemePrompt(mode) {
-  const params = mode === "dark" ? agThemePromptDark : agThemePromptLight;
-  return themeQuartz.withParams(params);
+  return themeQuartz.withParams(promptParams(mode));
 }

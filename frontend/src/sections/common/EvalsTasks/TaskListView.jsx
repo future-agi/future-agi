@@ -1,18 +1,11 @@
-import {
-  alpha,
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  Popover,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Popover, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -38,44 +31,21 @@ const shouldPollRow = (row) => {
 // ── Status Config ──
 
 const STATUS_CONFIG = {
-  pending: {
-    paletteColor: "warning",
-    icon: "solar:clock-circle-linear",
-  },
-  running: {
-    paletteColor: "info",
-    icon: "svg-spinners:ring-resize",
-  },
-  completed: {
-    paletteColor: "success",
-    icon: "solar:check-circle-linear",
-  },
-  failed: {
-    paletteColor: "error",
-    icon: "solar:close-circle-linear",
-  },
-  paused: {
-    paletteColor: "default",
-    icon: "solar:pause-circle-linear",
-  },
+  pending: { role: "neutral", icon: "solar:clock-circle-linear" },
+  running: { role: "info", icon: "svg-spinners:ring-resize" },
+  completed: { role: "success", icon: "solar:check-circle-linear" },
+  failed: { role: "danger", icon: "solar:close-circle-linear" },
+  paused: { role: "warning", icon: "solar:pause-circle-linear" },
 };
 
 const StatusBadge = ({ status }) => {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
-  const palColor = config.paletteColor;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
       label={_.capitalize(status)}
-      size="small"
-      color={palColor}
-      variant="outlined"
+      role={config.role}
       icon={<Iconify icon={config.icon} width={14} />}
-      sx={{
-        fontWeight: 500,
-        fontSize: "12px",
-        height: 24,
-        "& .MuiChip-icon": { ml: 0.5 },
-      }}
     />
   );
 };
@@ -119,24 +89,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
       : items[0].name || items[0].eval_template_name;
   const remaining = items.length - 1;
 
-  const chipStyles = {
-    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
-    color: "primary.main",
-    borderRadius: "4px",
-    fontWeight: 500,
-    fontSize: "12px",
-    height: 22,
-    "& .MuiChip-label": { px: 0.75 },
-    "&:hover, &.MuiChip-clickable:hover": {
-      backgroundColor: (theme) =>
-        alpha(
-          theme.palette.primary.main,
-          0.1 + theme.palette.action.hoverOpacity,
-        ),
-      color: "primary.main",
-    },
-  };
-
   return (
     <>
       <Box
@@ -144,11 +96,17 @@ const HoverChipList = ({ items, label, emptyText }) => {
         onMouseLeave={scheduleClose}
         sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
       >
-        <Chip label={firstItem} size="small" sx={chipStyles} />
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{ color: "text.primary", fontSize: "12px", fontWeight: 500 }}
+        >
+          {firstItem}
+        </Typography>
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{ color: "text.tertiary", fontSize: "12px", pl: 0.5 }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -171,7 +129,6 @@ const HoverChipList = ({ items, label, emptyText }) => {
             maxWidth: 320,
             maxHeight: 280,
             overflowY: "auto",
-            boxShadow: "-5px 5px 10px rgba(0,0,0,0.1)",
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "8px",
@@ -192,16 +149,14 @@ const HoverChipList = ({ items, label, emptyText }) => {
                 ? item
                 : item.name || item.eval_template_name || "—";
             return (
-              <Chip
+              <Typography
                 key={idx}
-                label={text}
-                size="small"
-                sx={{
-                  ...chipStyles,
-                  alignSelf: "flex-start",
-                  maxWidth: "100%",
-                }}
-              />
+                variant="caption"
+                noWrap
+                sx={{ color: "text.primary", fontSize: "12px" }}
+              >
+                {text}
+              </Typography>
             );
           })}
         </Box>
@@ -693,7 +648,6 @@ const TaskListView = ({
                     role
                   ]
                 }
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
               </Button>
@@ -701,7 +655,6 @@ const TaskListView = ({
                 size="small"
                 variant="outlined"
                 onClick={() => setRowSelection({})}
-                sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Cancel
               </Button>
@@ -711,14 +664,14 @@ const TaskListView = ({
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
               onClick={onCreateTask}
               disabled={
                 !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
                   role
                 ]
               }
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              sx={{ typography: "body2", }}
             >
               Create Task
             </Button>

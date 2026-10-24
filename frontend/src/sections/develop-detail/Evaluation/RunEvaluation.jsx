@@ -7,6 +7,7 @@ import ConfiguredEvaluationType from "../Common/ConfiguredEvaluationType/Configu
 import EvaluationConfigureForm from "../Common/EvaluationConfigure/EvaluationConfigureForm";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { useGetJsonColumnSchema } from "src/api/develop/develop-detail";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 const RunEvaluationChild = ({
   onClose,
   allColumns,
@@ -209,10 +210,12 @@ const RunEvaluation = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       variant="persistent"
       PaperProps={{
@@ -220,8 +223,7 @@ const RunEvaluation = ({
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

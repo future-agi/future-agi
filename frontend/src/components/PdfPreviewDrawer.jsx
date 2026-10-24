@@ -1,11 +1,5 @@
-import {
-  Box,
-  Drawer,
-  Typography,
-  IconButton,
-  Paper,
-  Stack,
-} from "@mui/material";
+import { Box, Drawer, Typography, IconButton, Stack } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useState, useEffect, useRef } from "react";
 import { Viewer, Worker } from "@react-pdf-viewer/core";
@@ -17,6 +11,10 @@ import SvgColor from "./svg-color";
 import "@react-pdf-viewer/core/lib/styles/index.css";
 import "@react-pdf-viewer/default-layout/lib/styles/index.css";
 import logger from "src/utils/logger";
+import {
+  COVERED_DRAWER_SX,
+  useDrawerCovered,
+} from "src/hooks/use-drawer-stack";
 import { getFileIcon } from "src/sections/knowledge-base/sheet-view/icons";
 import { errorMessages } from "./common";
 
@@ -31,6 +29,7 @@ const PdfPreviewDrawer = () => {
     }),
   );
 
+  const covered = useDrawerCovered(Boolean(openPdfPreviewDrawer));
   const fileUrl = openPdfPreviewDrawer?.url;
   const name = openPdfPreviewDrawer?.name;
   const type = openPdfPreviewDrawer?.type;
@@ -139,16 +138,15 @@ const PdfPreviewDrawer = () => {
               p: 3,
             }}
           >
-            <Paper
-              elevation={2}
+            <Section
+              variant="panel"
               sx={{
                 width: "100%",
                 maxWidth: 900,
                 margin: "0 auto",
                 p: 4,
-                backgroundColor: "background.paper",
                 fontFamily: "monospace",
-                fontSize: "14px",
+                fontSize: "13px",
                 lineHeight: 1.8,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
@@ -156,7 +154,7 @@ const PdfPreviewDrawer = () => {
               }}
             >
               {textContent || "No content to display"}
-            </Paper>
+            </Section>
           </Box>
         );
 
@@ -201,9 +199,10 @@ const PdfPreviewDrawer = () => {
       anchor="right"
       sx={{
         "& .MuiDrawer-paper": {
-          width: { xs: "100%", sm: 900, md: 1000 },
+          width: { xs: "100%", sm: 960, md: 960 },
           backgroundColor: "background.paper",
         },
+        ...(covered && COVERED_DRAWER_SX),
       }}
       ModalProps={{
         BackdropProps: {
@@ -243,7 +242,12 @@ const PdfPreviewDrawer = () => {
               alt="document icon"
               src={getFileIcon(type, "pdf")}
             />
-            <Typography fontWeight={600} noWrap sx={{ flex: 1, mr: 2 }}>
+            <Typography
+              variant="m3"
+              fontWeight={600}
+              noWrap
+              sx={{ flex: 1, mr: 2 }}
+            >
               {`${name || "File Preview"}${
                 name && !name.endsWith(type) ? `.${type}` : ""
               }`}
@@ -267,7 +271,7 @@ const PdfPreviewDrawer = () => {
             </IconButton>
 
             <IconButton size="small" onClick={closePreview} title="Close">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </Box>

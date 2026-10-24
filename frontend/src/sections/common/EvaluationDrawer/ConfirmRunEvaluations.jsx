@@ -50,7 +50,7 @@ const ConfirmRunEvaluations = ({
       fullWidth
       PaperProps={{
         sx: {
-          maxWidth: 533,
+          maxWidth: 560,
           maxHeight: 400,
           display: "flex",
           flexDirection: "column",
@@ -66,12 +66,12 @@ const ConfirmRunEvaluations = ({
         }}
       >
         <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography fontSize={16} fontWeight={700} color="text.primary">
+          <Typography fontSize={16} fontWeight={600} color="text.primary">
             Are you sure you want to run the following evaluation
             {evalsToRun.length !== 1 && "s"}?
           </Typography>
           <IconButton onClick={onClose} sx={{ p: 0 }}>
-            <Iconify icon="line-md:close" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
         <Typography variant="body2" color="text.secondary">
@@ -115,17 +115,17 @@ const ConfirmRunEvaluations = ({
               p={theme.spacing(1.5)}
               borderRadius="8px"
             >
-              <Typography fontSize={14} fontWeight={500}>
+              <Typography fontSize={13} fontWeight={500}>
                 {evalItem.name}
               </Typography>
               {evalsToRun.length > 1 && (
                 <IconButton
                   aria-label="remove-eval"
                   onClick={() => handleRemoveEval(evalItem.id)}
-                  sx={{ width: 16, height: 16, p: 0 }}
+                  sx={{ width: 16, p: 0 }}
                 >
                   <Iconify
-                    icon="line-md:close"
+                    icon="solar:close-linear"
                     color="text.primary"
                     width={16}
                     height={16}
@@ -150,11 +150,7 @@ const ConfirmRunEvaluations = ({
           onClick={onClose}
           size="small"
           sx={{
-            fontSize: "12px",
-            fontWeight: 500,
             lineHeight: "18px",
-            paddingX: "24px",
-            paddingY: "6px",
           }}
         >
           Cancel
@@ -167,11 +163,7 @@ const ConfirmRunEvaluations = ({
           onClick={handleConfirm}
           disabled={evalsToRun.length === 0}
           sx={{
-            fontSize: "12px",
-            fontWeight: 500,
             lineHeight: "18px",
-            paddingX: "24px",
-            paddingY: "6px",
           }}
         >
           Run Evaluations

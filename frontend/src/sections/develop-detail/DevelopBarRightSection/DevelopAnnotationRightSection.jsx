@@ -1,8 +1,7 @@
-import { useTheme } from "@emotion/react";
 import { Box, Button, Divider, Modal, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import Iconify from "src/components/iconify";
+import SelectionBar from "src/components/selection-bar";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 import { useRunAnnotationsStore } from "../states";
 import { useAuthContext } from "src/auth/hooks";
@@ -13,7 +12,6 @@ const DevelopAnnotationRightSection = ({
   onDeleteSelected,
   onCancelSelection,
 }) => {
-  const theme = useTheme();
   const [openModal, setOpenModal] = useState(false); // State to manage modal
   const { setOpenRunAnnotations } = useRunAnnotationsStore();
   const handleOpenModal = () => {
@@ -26,65 +24,29 @@ const DevelopAnnotationRightSection = ({
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
       {selectedRowsCount > 0 ? (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            border: `1px solid ${theme.palette.divider}`,
-            paddingX: "10px",
-            borderRadius: "5px",
-          }}
-        >
-          <Typography
-            sx={{ color: "primary.main", fontWeight: "bold", fontSize: "16px" }}
-          >
-            {selectedRowsCount} Selected
-          </Typography>
-          <Divider
-            orientation="vertical"
-            flexItem
-            sx={{ borderColor: "divider", paddingY: "5px" }}
-          />
-          <Button
-            onClick={handleOpenModal} // Open modal on click
-            startIcon={
-              <Iconify
-                icon="solar:trash-bin-trash-bold"
-                sx={{ fontSize: "20px", color: "text.secondary" }}
-              />
-            }
-            sx={{
-              color: "text.secondary",
-              fontWeight: "bold",
-              textTransform: "none",
-            }}
-            disabled={!RolePermission.DATASETS[PERMISSIONS.DELETE][role]}
-          >
-            Delete
-          </Button>
-          <Button
-            onClick={onCancelSelection}
-            sx={{
-              color: "text.secondary",
-              fontWeight: "bold",
-              textTransform: "none",
-            }}
-          >
-            Cancel
-          </Button>
-        </Box>
+        <SelectionBar
+          count={selectedRowsCount}
+          onCancel={onCancelSelection}
+          actions={[
+            {
+              label: "Delete",
+              icon: "solar:trash-bin-trash-linear",
+              onClick: handleOpenModal,
+              disabled: !RolePermission.DATASETS[PERMISSIONS.DELETE][role],
+            },
+          ]}
+        />
       ) : (
         <>
           {/* <IconButton size="small" sx={{ color: "text.secondary" }}>
-            <Iconify icon="eva:search-fill" />
+            <Iconify icon="solar:magnifier-linear" />
           </IconButton>
           <IconButton
             size="small"
             sx={{ color: "text.secondary" }}
             onClick={() => {}}
           >
-            <Iconify icon="mingcute:filter-2-fill" />
+            <Iconify icon="solar:filter-linear" />
           </IconButton> */}
 
           <Divider orientation="vertical" flexItem />
@@ -139,6 +101,7 @@ const DeleteModal = ({
           transform: "translate(-50%, -50%)",
           width: 400,
           bgcolor: "background.paper",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
           borderRadius: "8px",
           p: 3,
@@ -146,7 +109,7 @@ const DeleteModal = ({
       >
         <Typography
           variant="h6"
-          sx={{ fontWeight: "bold", marginBottom: "16px" }}
+          sx={{ fontWeight: "600", marginBottom: "16px" }}
         >
           Delete View
         </Typography>
@@ -158,8 +121,6 @@ const DeleteModal = ({
             onClick={onCancelSelection}
             sx={{
               color: "text.secondary",
-              fontWeight: "bold",
-              textTransform: "none",
             }}
           >
             Cancel
@@ -168,10 +129,6 @@ const DeleteModal = ({
             onClick={onDeleteSelected}
             variant="contained"
             color="error"
-            sx={{
-              textTransform: "none",
-              fontWeight: "bold",
-            }}
           >
             Delete
           </Button>

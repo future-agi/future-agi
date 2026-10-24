@@ -70,23 +70,22 @@ const CreateDatasetLinks = ({
         >
           {links.map((item, index) => {
             return (
-              <Typography
-                variant="s2"
-                fontWeight={"fontWeightMedium"}
-                color="primary.main"
+              <Button
+                variant="text"
+                size="small"
                 key={index}
                 onClick={() => setShowDemoModal(item)}
-                sx={{ textDecoration: "underline", cursor: "pointer" }}
+                sx={{ alignSelf: "flex-start" }}
               >
                 {item.title}
-              </Typography>
+              </Button>
             );
           })}
         </Box>
         <Button
           color="primary"
           variant="contained"
-          sx={{ maxWidth: "max-content", height: "38px", padding: "8px 24px" }}
+          sx={{ maxWidth: "max-content" }}
           onClick={buttonAction}
         >
           {buttonTitle}

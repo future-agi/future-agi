@@ -1,4 +1,4 @@
-import { Box, Collapse, Drawer } from "@mui/material";
+import { Box, Collapse, Drawer, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useRef } from "react";
 import { ShowComponent } from "../../../components/show";
@@ -11,6 +11,7 @@ import CreateEditOptimizationModal from "../CreateEditOptimization/CreateEditOpt
 import EachOptimizationComponent from "./EachOptimizationComponent";
 import OptimizationDetailComponent from "./OptimizationDetail/OptimizationDetailComponent";
 import logger from "../../../utils/logger";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const FixMyAgentDrawerChild = ({ onClose }) => {
   const previousOpenSection = useRef(null);
@@ -29,7 +30,8 @@ const FixMyAgentDrawerChild = ({ onClose }) => {
 
   return (
     <Box sx={{ position: "relative", height: "100%", width: "100%" }}>
-      <Box
+      <ButtonBase
+        component="div"
         sx={{
           position: "absolute",
           top: 20,
@@ -45,7 +47,6 @@ const FixMyAgentDrawerChild = ({ onClose }) => {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          cursor: "pointer",
           zIndex: 1301,
         }}
         onClick={() => {
@@ -71,10 +72,10 @@ const FixMyAgentDrawerChild = ({ onClose }) => {
             transform: isFixMyAgentCollapsed
               ? "rotate(180deg)"
               : "rotate(0deg)",
-            transition: "transform 0.3s ease-in-out",
+            transition: "transform 0.2s ease-in-out",
           }}
         />
-      </Box>
+      </ButtonBase>
 
       <Collapse
         in={openSection?.section === FixMyAgentDrawerSections.SUGGESTIONS}
@@ -149,10 +150,12 @@ const FixMyAgentDrawer = () => {
     setOpenSection({ section: FixMyAgentDrawerSections.SUGGESTIONS });
   };
 
+  const covered = useDrawerCovered(fixMyAgentDrawerOpen);
   return (
     <Drawer
       anchor="right"
       open={fixMyAgentDrawerOpen}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       variant="persistent"
       PaperProps={{

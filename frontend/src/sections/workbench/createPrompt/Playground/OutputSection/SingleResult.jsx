@@ -297,8 +297,6 @@ const SingleResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}
@@ -331,8 +329,6 @@ const SingleResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}

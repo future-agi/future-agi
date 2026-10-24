@@ -6,7 +6,6 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import { useFalconSocket } from "src/sections/falcon-ai/hooks/useFalconSocket";
@@ -23,9 +22,6 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
   { traceId, projectId, entityType = "trace" },
   ref,
 ) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const setCurrentConversation = useFalconStore(
     (s) => s.setCurrentConversation,
@@ -183,7 +179,7 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         height: "100%",
         borderTop: "1px solid",
         borderColor: "divider",
-        bgcolor: isDark ? "background.default" : alpha("#f8f9fa", 0.5),
+        bgcolor: "background.default",
       }}
     >
       {/* Header */}
@@ -200,7 +196,7 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         }}
       >
         <Iconify
-          icon="mdi:creation"
+          icon="solar:stars-minimalistic-linear"
           width={16}
           sx={{ color: "primary.main" }}
         />
@@ -209,7 +205,7 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         >
           Falcon AI
         </Typography>
-        <Typography sx={{ fontSize: 11, color: "text.disabled", ml: "auto" }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled", ml: "auto" }}>
           Trace context attached
         </Typography>
       </Box>

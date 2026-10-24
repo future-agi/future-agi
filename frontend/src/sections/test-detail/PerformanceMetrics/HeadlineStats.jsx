@@ -93,7 +93,7 @@ export default function HeadlineStats({ callDetails, systemMetrics, agentType, o
                 fontWeight: "fontWeightBold",
                 color: "text.subtitle",
                 letterSpacing: 0.3,
-                textTransform: "uppercase",
+                textTransform: "none",
               }}
             >
               {s.label}

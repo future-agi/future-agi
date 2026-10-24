@@ -24,10 +24,12 @@ export const GOAL_OUTCOME_LABELS = {
 };
 
 export const GOAL_OUTCOME_COLORS = {
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
   achieved:  "#16A34A",
   abandoned: "#F59E0B",
   declined:  "#DC2626",
   "n/a":     "#94A3B8",
+  /* eslint-enable no-restricted-syntax */
 };
 
 /**

@@ -120,16 +120,7 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
           sx={{ flexWrap: "wrap", rowGap: 0.25 }}
         >
           {shown.map((s, i) => (
-            <Chip
-              key={i}
-              label={String(s)}
-              size="small"
-              sx={{
-                height: 18,
-                fontSize: 11,
-                "& .MuiChip-label": { px: 0.75 },
-              }}
-            />
+            <Chip key={i} label={String(s)} size="small" />
           ))}
           {extra > 0 && (
             <Typography variant="caption" color="text.secondary">
@@ -141,13 +132,7 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
     }
     const single =
       typeof value === "object" ? value.selected ?? value.value : value;
-    return (
-      <Chip
-        label={String(single)}
-        size="small"
-        sx={{ height: 18, fontSize: 11, "& .MuiChip-label": { px: 0.75 } }}
-      />
-    );
+    return <Chip label={String(single)} size="small" />;
   }
 
   if (labelType === "star") {
@@ -185,14 +170,14 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
     return (
       <Stack direction="row" spacing={0.5} alignItems="center">
         <Iconify
-          icon={positive ? "octicon:thumbsup-24" : "octicon:thumbsdown-24"}
-          width={13}
+          icon={positive ? "solar:like-linear" : "solar:dislike-linear"}
+          width={14}
           sx={{
             color: positive ? "success.main" : "error.main",
             flexShrink: 0,
           }}
         />
-        <Typography variant="body2" fontWeight={650} sx={{ fontSize: 12 }}>
+        <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>
           {positive ? "Yes" : "No"}
         </Typography>
       </Stack>
@@ -207,7 +192,7 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
         variant="body2"
         sx={{
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontWeight: 650,
+          fontWeight: 600,
           fontSize: 12,
         }}
       >
@@ -242,7 +227,7 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
 
   if (typeof value !== "object") {
     return (
-      <Typography variant="body2" fontWeight={650} sx={{ fontSize: 12 }}>
+      <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>
         {String(value)}
       </Typography>
     );
@@ -258,11 +243,8 @@ function ScoreValue({ value, labelType, labelSettings, onShowRaw }) {
         onShowRaw?.(e.currentTarget, value);
       }}
       sx={{
-        height: 18,
-        fontSize: 11,
         fontFamily: "ui-monospace, monospace",
         cursor: "pointer",
-        "& .MuiChip-label": { px: 0.75 },
       }}
     />
   );
@@ -291,7 +273,7 @@ function ValueHistory({ ann, onShowRaw }) {
           <Typography
             variant="caption"
             color="text.disabled"
-            sx={{ minWidth: 90, flexShrink: 0, fontSize: 10.5 }}
+            sx={{ minWidth: 90, flexShrink: 0, fontSize: 12 }}
           >
             Previous {index + 1}
           </Typography>
@@ -308,7 +290,7 @@ function ValueHistory({ ann, onShowRaw }) {
               <Typography
                 variant="caption"
                 color="text.disabled"
-                sx={{ fontSize: 10.5, flexShrink: 0 }}
+                sx={{ fontSize: 12, flexShrink: 0 }}
               >
                 {fToNowStrict(entry.at)}
               </Typography>
@@ -367,7 +349,9 @@ export default function AnnotationHistory({ queueId, itemId }) {
         </Typography>
         <IconButton size="small">
           <Iconify
-            icon={open ? "eva:chevron-up-fill" : "eva:chevron-down-fill"}
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
             width={16}
           />
         </IconButton>
@@ -391,27 +375,19 @@ export default function AnnotationHistory({ queueId, itemId }) {
                     sx={{
                       width: 18,
                       height: 18,
-                      fontSize: 10,
-                      bgcolor:
-                        group.source === "automated"
-                          ? "warning.lighter"
-                          : "primary.lighter",
-                      color:
-                        group.source === "automated"
-                          ? "warning.darker"
-                          : "primary.darker",
-                      fontWeight: 700,
+                      fontSize: 12,
+                      fontWeight: 600,
                     }}
                   >
                     {group.source === "automated" ? (
-                      <Iconify icon="mdi:robot-outline" width={11} />
+                      <Iconify icon="solar:bot-linear" width={12} />
                     ) : (
                       annotatorInitial(group.name)
                     )}
                   </Avatar>
                   <Typography
                     variant="caption"
-                    fontWeight={700}
+                    fontWeight={600}
                     sx={{ fontSize: 12 }}
                   >
                     {group.name}
@@ -447,7 +423,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
-                          fontSize: 11.5,
+                          fontSize: 12,
                         }}
                       >
                         {ann.label_name}
@@ -476,7 +452,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
                             component="span"
                             variant="caption"
                             sx={{
-                              fontSize: 10.5,
+                              fontSize: 12,
                               fontStyle: "italic",
                               color: "text.disabled",
                               lineHeight: 1,
@@ -491,7 +467,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
                         <Tooltip title={ann.notes} placement="top">
                           <Box sx={{ display: "flex", alignItems: "center" }}>
                             <Iconify
-                              icon="eva:message-square-outline"
+                              icon="solar:chat-round-line-linear"
                               width={12}
                               sx={{ color: "text.disabled" }}
                             />
@@ -521,7 +497,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
               maxWidth: 360,
               maxHeight: 280,
               p: 1.25,
-              borderRadius: 0.75,
+              borderRadius: "4px",
             },
           },
         }}
@@ -529,7 +505,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ display: "block", mb: 0.5, fontWeight: 700 }}
+          sx={{ display: "block", mb: 0.5, fontWeight: 600 }}
         >
           Raw value
         </Typography>
@@ -538,7 +514,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
           sx={{
             m: 0,
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: 11,
+            fontSize: 12,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             color: "text.primary",

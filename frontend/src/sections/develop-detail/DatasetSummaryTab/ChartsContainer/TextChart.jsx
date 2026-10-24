@@ -91,11 +91,11 @@ const TextChart = ({ data = [], graphLabels, height = 250 }) => {
   return (
     <Box
       sx={{
-        backgroundColor: "orange.o10",
+        backgroundColor: "status.warning.bg",
         border: "1px solid",
         borderColor: "divider",
         padding: 1.5,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Typography
@@ -119,7 +119,7 @@ const TextChart = ({ data = [], graphLabels, height = 250 }) => {
           <Box
             key={index}
             sx={{
-              backgroundColor: "orange.100",
+              backgroundColor: "status.warning.bg",
               padding: "6px 12px",
               height: "max-content",
             }}

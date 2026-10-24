@@ -36,22 +36,22 @@ export default function SnackbarProvider({ children, ...other }) {
       iconVariant={{
         info: (
           <StyledIcon color="info">
-            <Iconify icon="solar:info-circle-bold" width={18} />
+            <Iconify icon="solar:info-circle-bold" width={20} />
           </StyledIcon>
         ),
         success: (
           <StyledIcon color="success">
-            <Iconify icon="solar:check-circle-bold" width={18} />
+            <Iconify icon="solar:check-circle-bold" width={20} />
           </StyledIcon>
         ),
         warning: (
           <StyledIcon color="warning">
-            <Iconify icon="solar:danger-triangle-bold" width={18} />
+            <Iconify icon="solar:danger-triangle-bold" width={20} />
           </StyledIcon>
         ),
         error: (
           <StyledIcon color="error">
-            <Iconify icon="solar:danger-circle-bold" width={18} />
+            <Iconify icon="solar:danger-circle-bold" width={20} />
           </StyledIcon>
         ),
       }}
@@ -76,7 +76,7 @@ export default function SnackbarProvider({ children, ...other }) {
             },
           }}
         >
-          <Iconify width={18} icon="mingcute:close-line" />
+          <Iconify width={20} icon="solar:close-linear" />
         </IconButton>
       )}
       {...other}

@@ -22,7 +22,7 @@ const SearchField = ({ searchKey, setSearchKey }) => {
               <InputAdornment position="start">
                 <Iconify
                   onClick={() => setShowSearch(false)}
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear" width={16}
                   sx={{ color: "text.disabled", cursor: "pointer" }}
                 />
               </InputAdornment>
@@ -30,7 +30,7 @@ const SearchField = ({ searchKey, setSearchKey }) => {
             endAdornment: (
               <InputAdornment position="end">
                 <Iconify
-                  icon="mingcute:close-line"
+                  icon="solar:close-linear"
                   onClick={() => setSearchKey("")}
                   sx={{ color: "text.secondary", cursor: "pointer" }}
                 />
@@ -44,7 +44,10 @@ const SearchField = ({ searchKey, setSearchKey }) => {
           sx={{ color: "text.secondary" }}
           onClick={() => setShowSearch(true)}
         >
-          <Iconify icon="eva:search-fill" sx={{ color: "text.disabled" }} />
+          <Iconify
+            icon="solar:magnifier-linear" width={16}
+            sx={{ color: "text.disabled" }}
+          />
         </IconButton>
       )}
     </Box>

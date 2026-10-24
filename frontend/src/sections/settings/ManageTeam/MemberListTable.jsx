@@ -62,6 +62,7 @@ const MemberListTable = ({ data }) => {
                 <TableCell width="140px">
                   {user.id !== loggedInUser.id && (
                     <Button
+                      className="row-hover-action"
                       variant="contained"
                       color="error"
                       size="small"

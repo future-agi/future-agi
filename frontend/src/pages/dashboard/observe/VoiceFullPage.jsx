@@ -112,7 +112,7 @@ export default function VoiceFullPage() {
           sx={{ height: "100vh", px: 2, textAlign: "center" }}
           gap={1.5}
         >
-          <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
+          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
             We couldn&apos;t load this voice call.
           </Typography>
           <Typography sx={{ fontSize: 12, color: "text.secondary" }}>

@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, IconButton, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import PropTypes from "prop-types";
 import { ShowModelOptions } from "./ShowModelOptions";
 import CustomTooltip from "../tooltip";
@@ -130,43 +130,24 @@ const CustomModelOptions = ({
           }),
         }}
       >
-        <IconButton
+        <Button
+          size="small"
+          variant={isModalContainer ? "text" : "outlined"}
+          color="inherit"
           disabled={disabledClick}
           disableRipple={viewOnly}
           sx={{
-            height: "24px",
             color: "text.primary",
             ...(viewOnly && { cursor: "default" }),
-            ...(isModalContainer
-              ? {
-                  borderRadius: "4px",
-
-                  height: "24px",
-                  padding: "2px",
-                  marginTop: "-4px",
-                  gap: "4px",
-                }
-              : {
-                  borderRadius: "4px",
-                  backgroundColor: "background.paper",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  height: "32px",
-                  paddingX: 1.5,
-                  paddingY: 0.5,
-                  marginTop: "4px",
-                }),
+            marginTop: isModalContainer ? "-4px" : "4px",
           }}
           onClick={handleOpenDropdown}
+          startIcon={
+            <SvgColor src="/assets/prompt/slider-options.svg" width="16px" />
+          }
         >
-          <SvgColor
-            src="/assets/prompt/slider-options.svg"
-            sx={{ height: "16px", width: "16px" }}
-          />
-          <Typography sx={{ fontSize: "14px", fontWeight: 500 }}>
-            Params
-          </Typography>
-        </IconButton>
+          Params
+        </Button>
       </CustomTooltip>
       <Box aria-describedby={id} ref={btnRef} height={0} />
       <ShowModelOptions

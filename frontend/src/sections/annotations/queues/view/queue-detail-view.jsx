@@ -22,13 +22,8 @@ import {
   Tabs,
   ToggleButton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  getAnnotationTabSx,
-  getAnnotationTabIndicatorProps,
-} from "../../view/annotation-tab-styles";
 import {
   annotateKeys,
   annotationQueueKeys,
@@ -79,7 +74,6 @@ export default function QueueDetailView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const theme = useTheme();
   const { user } = useAuthContext();
   const [filters, setFilters] = useState({
     status: ALL_STATUS_VALUES,
@@ -387,9 +381,9 @@ export default function QueueDetailView() {
           onClick={handleBack}
           size="small"
         >
-          <Iconify icon="eva:arrow-back-fill" />
+          <Iconify icon="solar:arrow-left-linear" />
         </IconButton>
-        <Typography variant="h4" sx={{ minWidth: 0 }} noWrap>
+        <Typography variant="h2" sx={{ minWidth: 0 }} noWrap>
           {queue?.name || "Queue"}
         </Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
@@ -398,7 +392,7 @@ export default function QueueDetailView() {
           <Button
             variant="outlined"
             disabled={isUpdatingStatus}
-            startIcon={<Iconify icon="eva:play-circle-fill" />}
+            startIcon={<Iconify icon="solar:play-circle-linear" />}
             onClick={() => updateStatus({ id: queueId, status: "active" })}
           >
             Activate
@@ -407,8 +401,8 @@ export default function QueueDetailView() {
         <Button
           variant="outlined"
           disabled={totalCount === 0 || isDownloadingExport}
-          startIcon={<Iconify icon="eva:download-fill" />}
-          endIcon={<Iconify icon="eva:arrow-ios-downward-fill" />}
+          startIcon={<Iconify icon="solar:download-minimalistic-linear" />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" />}
           onClick={(event) => setExportMenuAnchor(event.currentTarget)}
         >
           Export
@@ -419,11 +413,11 @@ export default function QueueDetailView() {
           onClose={() => setExportMenuAnchor(null)}
         >
           <MenuItem onClick={handleDownloadExport}>
-            <Iconify icon="eva:download-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:download-minimalistic-linear" sx={{ mr: 1 }} />
             Download
           </MenuItem>
           <MenuItem onClick={handleOpenDatasetExport}>
-            <Iconify icon="eva:archive-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:archive-linear" sx={{ mr: 1 }} />
             Export to Dataset
           </MenuItem>
         </Menu>
@@ -441,7 +435,7 @@ export default function QueueDetailView() {
           <Button
             variant="contained"
             color="primary"
-            startIcon={<Iconify icon="eva:edit-2-fill" />}
+            startIcon={<Iconify icon="solar:pen-linear" />}
             onClick={() => handleOpenAnnotationWorkspace("annotate")}
           >
             {queue?.status === "completed"
@@ -512,21 +506,15 @@ export default function QueueDetailView() {
       )}
 
       {/* Tabs */}
-      <Tabs
-        value={activeTab}
-        onChange={(_, v) => setActiveTab(v)}
-        TabIndicatorProps={getAnnotationTabIndicatorProps(theme)}
-        sx={{
-          ...getAnnotationTabSx(theme),
-          px: 3,
-        }}
-      >
-        <Tab label="Items" />
-        {isManager && <Tab label="Settings" />}
-        <Tab label="Analytics" />
-        <Tab label="Agreement" />
-        {isManager && <Tab label="Rules" />}
-      </Tabs>
+      <Box sx={{ mb: 2, px: 3 }}>
+        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
+          <Tab label="Items" />
+          {isManager && <Tab label="Settings" />}
+          <Tab label="Analytics" />
+          <Tab label="Agreement" />
+          {isManager && <Tab label="Rules" />}
+        </Tabs>
+      </Box>
 
       {currentTab === "settings" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
@@ -645,12 +633,7 @@ export default function QueueDetailView() {
                     )
                   }
                   size="small"
-                  sx={{
-                    textTransform: "none",
-                    px: 2,
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                  }}
+                  sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
                 >
                   My Items
                 </ToggleButton>
@@ -714,7 +697,7 @@ export default function QueueDetailView() {
                   <Button
                     variant="contained"
                     color="primary"
-                    startIcon={<Iconify icon="mingcute:add-line" />}
+                    startIcon={<Iconify icon="solar:add-linear" />}
                     onClick={() => setAddDialogOpen(true)}
                   >
                     Add Items
@@ -816,7 +799,8 @@ export default function QueueDetailView() {
         onClose={() => {
           if (!isAssigningItems) setBulkAssignOpen(false);
         }}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>Assign Selected Items</DialogTitle>

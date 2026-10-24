@@ -39,7 +39,6 @@ export default function ImporvedPromptHeader({
             onClick={onPrevious}
             disabled={!hasPrevious || isImprovingPrompt}
             sx={{
-              padding: theme.spacing(0.5),
               margin: 0,
               "&.Mui-disabled": {
                 color: "divider",
@@ -61,7 +60,6 @@ export default function ImporvedPromptHeader({
             onClick={onNext}
             disabled={!hasNext || isImprovingPrompt}
             sx={{
-              padding: theme.spacing(0.5),
               margin: 0,
               "&.Mui-disabled": {
                 color: "divider",
@@ -84,7 +82,6 @@ export default function ImporvedPromptHeader({
             onClick={copyCurrent}
             disabled={isImprovingPrompt}
             sx={{
-              padding: theme.spacing(0.5),
               margin: 0,
               "&.Mui-disabled": {
                 color: "divider",
@@ -114,7 +111,6 @@ export default function ImporvedPromptHeader({
           onClick={handleClose}
           disabled={isImprovingPrompt}
           sx={{
-            padding: theme.spacing(0.5),
             margin: 0,
             "&.Mui-disabled": {
               color: "divider",

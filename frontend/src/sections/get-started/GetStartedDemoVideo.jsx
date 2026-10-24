@@ -28,6 +28,7 @@ const GetStartedDemoVideo = ({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
           borderRadius: "12px",
           // py: "24px",
@@ -90,10 +91,7 @@ const GetStartedDemoVideo = ({
                 onClick={viewDockAction}
                 sx={{
                   color: "primary.main",
-                  fontWeight: "500",
-                  fontSize: 14,
-                  px: "24px",
-                  py: "6px",
+
                   borderColor: "primary.main",
                 }}
               >
@@ -106,10 +104,6 @@ const GetStartedDemoVideo = ({
                 sx={{
                   bgcolor: "primary.main",
                   color: "primary.contrastText",
-                  fontWeight: "500",
-                  fontSize: 14,
-                  px: "24px",
-                  py: "6px",
                 }}
               >
                 {buttonTitle}

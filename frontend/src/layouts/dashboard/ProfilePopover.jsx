@@ -72,7 +72,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <Typography
                 variant="subtitle2"
                 sx={{
-                  fontSize: "14px",
+                  fontSize: "13px",
                   fontWeight: 500,
                   color: "text.primary",
                   letterSpacing: "-0.2px",
@@ -175,7 +175,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               >
                 <ListItemIcon sx={{ marginRight: 0.5 }}>
                   <APIKeyIcon
-                    width={18}
+                    width={16}
                     height={18}
                     fill="grey"
                     stroke="currentColor"
@@ -203,7 +203,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               >
                 <ListItemIcon sx={{ marginRight: 0.5 }}>
                   <Iconify
-                    icon="proicons:dollar"
+                    icon="solar:dollar-minimalistic-linear"
                     sx={{
                       color: "text.primary",
                       width: 20,
@@ -234,20 +234,20 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
           >
             <ListItemIcon sx={{ marginRight: 0.5, marginLeft: 2 }}>
               <Iconify
-                icon="mynaui:logout"
+                icon="solar:logout-linear"
                 sx={{
                   width: 20,
                   height: 20,
-                  color: "red.500",
+                  color: "status.danger.fg",
                 }}
               />
             </ListItemIcon>
             <ListItemText
               primary="Logout"
               primaryTypographyProps={{
-                fontSize: "14px",
+                fontSize: "13px",
                 fontWeight: 400,
-                color: "red.500",
+                color: "status.danger.fg",
               }}
             />
           </ListItemButton>

@@ -1,17 +1,28 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { alpha, keyframes } from "@mui/material/styles";
 import {
-  Avatar, AvatarGroup,
-  Chip,
-  Box, Button, Stack, Typography, Tooltip, IconButton, Menu, MenuItem, ListItemIcon, ListItemText,
-  TextField, InputAdornment,
+  Avatar,
+  AvatarGroup,
+  Box,
+  Button,
+  Stack,
+  Typography,
+  Tooltip,
+  IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  TextField,
+  InputAdornment,
 } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { DataTable } from "src/components/data-table";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
+import ListToolbar from "src/components/list-toolbar";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { subGoalCatalogOf } from "../_mock/envModel";
 import { runReadiness } from "../_mock/setupGaps";
 import { protoRunId } from "../_mock/executionAdapter";
@@ -22,10 +33,13 @@ import { runSummaries } from "../_mock/comparison";
 import { previousRunOf, runStatsOf, sharedDeltaOf } from "../_mock/runCompare";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { envLabelOf } from "../_mock/envVersionKinds";
-import { agentSourceOf, connectedAgentsFrom, envAgentKey } from "../_mock/agentRegistry";
+import {
+  agentSourceOf,
+  connectedAgentsFrom,
+  envAgentKey,
+} from "../_mock/agentRegistry";
 import { mainEnvOf, proofKindOf } from "../_mock/rsiModel";
 import { identityOf } from "../agents/agentProfile";
-import { QuietTag } from "./LandingBits";
 
 /*
   Every environment is filed under the agent type it tests — the agent
@@ -35,18 +49,24 @@ import { QuietTag } from "./LandingBits";
   (a code agent is a chat or voice agent whose source is code).
 */
 const MODALITY = {
-  voice:       { id: "voice",       label: "Voice",              icon: "solar:microphone-3-linear" },
-  chat:        { id: "chat",        label: "Chat",               icon: "solar:chat-round-line-linear" },
-  computer:    { id: "computer",    label: "Computer use",       icon: "solar:monitor-linear" },
+  voice: { id: "voice", label: "Voice", icon: "solar:microphone-3-linear" },
+  chat: { id: "chat", label: "Chat", icon: "solar:chat-round-line-linear" },
+  computer: {
+    id: "computer",
+    label: "Computer use",
+    icon: "solar:monitor-linear",
+  },
 };
-
 
 const modalityForEnv = (env) => {
   const surface = String(env?.surface || "").toLowerCase();
-  const hay = `${env?.name || ""} ${env?.description || ""} ${env?.tagline || ""}`.toLowerCase();
+  const hay =
+    `${env?.name || ""} ${env?.description || ""} ${env?.tagline || ""}`.toLowerCase();
 
-  if (surface === "voice" || /\bvoice|phone|call\b/.test(hay)) return MODALITY.voice;
-  if (surface === "browser" || /browser|screen|desktop|computer.use/.test(hay)) return MODALITY.computer;
+  if (surface === "voice" || /\bvoice|phone|call\b/.test(hay))
+    return MODALITY.voice;
+  if (surface === "browser" || /browser|screen|desktop|computer.use/.test(hay))
+    return MODALITY.computer;
   return MODALITY.chat;
 };
 
@@ -62,12 +82,21 @@ const modalityForEnv = (env) => {
  * new house style gets introduced.
  */
 const compactInputSx = {
-  "& .MuiInputBase-root": { typography: "s2", height: 34 },
+  "& .MuiInputBase-root": { typography: "s2", height: 32 },
   "& .MuiOutlinedInput-input": { py: 0 },
 };
-const selectSx = { ...compactInputSx, minWidth: 170, "& .MuiSelect-select": { typography: "s2", py: 0 } };
+const selectSx = {
+  ...compactInputSx,
+  minWidth: 170,
+  "& .MuiSelect-select": { typography: "s2", py: 0 },
+};
 
-export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, withToolbar = false }) {
+export default function MyEnvironmentsTable({
+  envs,
+  onOpen,
+  hideStatus = false,
+  withToolbar = false,
+}) {
   const { state, dispatch } = useSimStore();
   const navigate = useNavigate();
 
@@ -91,18 +120,24 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
   const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(
     fitEnv,
     fitEnv ? state.byEnv[fitEnv.id] : null,
-    (p) => fitEnv && dispatch({ type: "patchEnvState", envId: fitEnv.id, patch: p }),
+    (p) =>
+      fitEnv && dispatch({ type: "patchEnvState", envId: fitEnv.id, patch: p }),
   );
   const runSimulation = (env) => {
     const readiness = runReadiness(state.byEnv[env.id], env);
     if (!readiness.ready) {
-      navigate(readiness.href || paths.dashboard.simulate.environmentStep(env.id, readiness.step));
+      navigate(
+        readiness.href ||
+          paths.dashboard.simulate.environmentStep(env.id, readiness.step),
+      );
       return;
     }
     setRunTarget(env);
-    checkRunFit(() => navigate(
-      `${paths.dashboard.simulate.simulationRun(env.id, protoRunId(env.id, Date.now().toString(36)))}?trials=3`,
-    ));
+    checkRunFit(() =>
+      navigate(
+        `${paths.dashboard.simulate.simulationRun(env.id, protoRunId(env.id, Date.now().toString(36)))}?trials=3`,
+      ),
+    );
   };
   const deleteEnv = (env) => {
     dispatch({ type: "removeEnvironment", envId: env.id });
@@ -118,103 +153,139 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
     accessors stay simple and MUI X can sort on them without a valueGetter.
   */
   const rows = useMemo(
-    () => envs.map((env) => {
-      const envState = state.byEnv[env.id];
-      const scenarios = envState?.scenarios || [];
-      const runs = envState?.runs || [];
-      return {
-        id: env.id,
-        env,
-        name: env.name,
-        description: env.description || env.tagline || "",
-        /* Status here reflects *simulation* state, not env build state:
+    () =>
+      envs.map((env) => {
+        const envState = state.byEnv[env.id];
+        const scenarios = envState?.scenarios || [];
+        const runs = envState?.runs || [];
+        return {
+          id: env.id,
+          env,
+          name: env.name,
+          description: env.description || env.tagline || "",
+          /* Status here reflects *simulation* state, not env build state:
            this page is Simulated Runs, so a green "Ready" pill on
            every row is meaningless (all envs are built, that's why
            they're listed). Roll the latest run's verdict up instead —
            "Passed" / "Failed" for the latest run, or "Not run yet"
            when the env has been built but never simulated. Runs still
            in flight surface as "Running…". */
-        status: (() => {
-          const lastRun = runs[runs.length - 1];
-          if (!lastRun) return env.buildStatus === "building" ? "building" : env.buildStatus === "canceled" ? "canceled" : env.buildStatus === "failed" ? "build_failed" : "not_run";
-          if (lastRun.status === "running") return "running";
-          if (lastRun.status === "failed" || lastRun.gate === "failed") return "failed";
-          if (lastRun.status === "passed" || lastRun.gate === "clear") return "passed";
-          return "completed";
-        })(),
-        buildProgress: env.buildProgress,
-        /* Canonical agent type — voice / chat / computer use. Sortable and filterable
+          status: (() => {
+            const lastRun = runs[runs.length - 1];
+            if (!lastRun)
+              return env.buildStatus === "building"
+                ? "building"
+                : env.buildStatus === "canceled"
+                  ? "canceled"
+                  : env.buildStatus === "failed"
+                    ? "build_failed"
+                    : "not_run";
+            if (lastRun.status === "running") return "running";
+            if (lastRun.status === "failed" || lastRun.gate === "failed")
+              return "failed";
+            if (lastRun.status === "passed" || lastRun.gate === "clear")
+              return "passed";
+            return "completed";
+          })(),
+          buildProgress: env.buildProgress,
+          /* Canonical agent type — voice / chat / computer use. Sortable and filterable
            because it's flattened onto the row instead of derived in cell. */
-        agentType: modalityForEnv(env).id,
-        /* Tools count. Templates + user-connected agents ship a
+          agentType: modalityForEnv(env).id,
+          /* Tools count. Templates + user-connected agents ship a
            `tools` array. Twin/clone envs don't populate `tools`; their
            tool surface is the services they wrap (each service is a
            tool boundary), so fall back to that service count when the
            direct tools list is empty. */
-        tools: env.tools?.length
-          || envState?.twinBacking?.services?.length
-          || env.builtFrom?.services?.length
-          || 0,
-        /* Distinct named sub-goals, as the Sub-goals tab and the build log
+          tools:
+            env.tools?.length ||
+            envState?.twinBacking?.services?.length ||
+            env.builtFrom?.services?.length ||
+            0,
+          /* Distinct named sub-goals, as the Sub-goals tab and the build log
            count them — not each scenario's checks added up. Proposals don't
            count until someone adds them. */
-        subgoals: (() => {
-          try {
-            return subGoalCatalogOf(env, { ...envState, scenarios: scenarios.filter((r) => !r.proposed) }).length;
-          } catch { return 0; }
-        })(),
-        scenarios: scenarios.length,
-        /* Building the env counts as its own first run — the reducer
+          subgoals: (() => {
+            try {
+              return subGoalCatalogOf(env, {
+                ...envState,
+                scenarios: scenarios.filter((r) => !r.proposed),
+              }).length;
+            } catch {
+              return 0;
+            }
+          })(),
+          scenarios: scenarios.length,
+          /* Building the env counts as its own first run — the reducer
            seeds a synthetic entry in envState.runs when the env is
            adopted, so both this list and the workspace's Runs step
            read the same data. No display-side flooring here. */
-        runsPassed: runs.filter((r) => r.status === "passed" || r.gate === "clear").length,
-        runsTotal: runs.length,
-        updatedAt: env.adoptedAt,
-        /* The environment's version, beside its name — two rows of the same
+          runsPassed: runs.filter(
+            (r) => r.status === "passed" || r.gate === "clear",
+          ).length,
+          runsTotal: runs.length,
+          updatedAt: env.adoptedAt,
+          /* The environment's version, beside its name — two rows of the same
            name read apart by it. */
-        version: (() => {
-          const v = currentEnvVersion(env, envState)?.label;
-          return v ? envLabelOf(env, envState, v) : null;
-        })(),
-        /* The agent it belongs to — its name in Agents, whether this is its
+          version: (() => {
+            const v = currentEnvVersion(env, envState)?.label;
+            return v ? envLabelOf(env, envState, v) : null;
+          })(),
+          /* The agent it belongs to — its name in Agents, whether this is its
            main environment (where Fix runs), and whether its proofs are
            Sealed or Live. A template's stand-in isn't anyone's agent. */
-        ...(() => {
-          const own = envState?.agent && !envState.agent.seeded ? envState.agent : null;
-          const key = own ? envAgentKey(own, env.id) : null;
-          const agent = key ? agents.find((a) => a.key === key) : null;
-          if (!own) return { agentName: null, agentSource: null, isMain: false, proof: null };
-          const proof = proofKindOf(own);
-          return {
-            agentName: agent?.name || own.name || `${env.name} agent`,
-            agentSource: agentSourceOf(own).label,
-            isMain: !!agent && mainEnvOf(agent, state)?.envId === env.id,
-            proof: proof ? { kind: proof.kind, label: proof.label, note: proof.note } : null,
-          };
-        })(),
-        /* The latest finished run: its scenario pass rate, and how it moved
+          ...(() => {
+            const own =
+              envState?.agent && !envState.agent.seeded ? envState.agent : null;
+            const key = own ? envAgentKey(own, env.id) : null;
+            const agent = key ? agents.find((a) => a.key === key) : null;
+            if (!own)
+              return {
+                agentName: null,
+                agentSource: null,
+                isMain: false,
+                proof: null,
+              };
+            const proof = proofKindOf(own);
+            return {
+              agentName: agent?.name || own.name || `${env.name} agent`,
+              agentSource: agentSourceOf(own).label,
+              isMain: !!agent && mainEnvOf(agent, state)?.envId === env.id,
+              proof: proof
+                ? { kind: proof.kind, label: proof.label, note: proof.note }
+                : null,
+            };
+          })(),
+          /* The latest finished run: its scenario pass rate, and how it moved
            against the run before it on the scenarios both scored. */
-        lastRun: (() => {
-          if (!envState || !runs.some((r) => r.finishedAt)) return null;
-          try {
-            const finished = runSummaries(env, envState).filter((r) => r.finishedAt && !r.synthetic);
-            const latest = finished[finished.length - 1];
-            if (!latest) return null;
-            const st = runStatsOf(latest);
-            const prev = previousRunOf(finished, latest);
-            return { rate: st.scenarioRate, delta: prev ? sharedDeltaOf(latest, prev) : null, ordinal: latest.ordinal, vs: prev?.ordinal };
-          } catch { return null; }
-        })(),
-        /* Who owns the agent it tests — the person to ask about it. */
-        owner: identityOf(envState?.agent).owner,
-        agentVersion: currentAgentVersion(envState)?.label || null,
-        /* Twin backing flag + service count for the inline chip on the
+          lastRun: (() => {
+            if (!envState || !runs.some((r) => r.finishedAt)) return null;
+            try {
+              const finished = runSummaries(env, envState).filter(
+                (r) => r.finishedAt && !r.synthetic,
+              );
+              const latest = finished[finished.length - 1];
+              if (!latest) return null;
+              const st = runStatsOf(latest);
+              const prev = previousRunOf(finished, latest);
+              return {
+                rate: st.scenarioRate,
+                delta: prev ? sharedDeltaOf(latest, prev) : null,
+                ordinal: latest.ordinal,
+                vs: prev?.ordinal,
+              };
+            } catch {
+              return null;
+            }
+          })(),
+          /* Who owns the agent it tests — the person to ask about it. */
+          owner: identityOf(envState?.agent).owner,
+          agentVersion: currentAgentVersion(envState)?.label || null,
+          /* Twin backing flag + service count for the inline chip on the
            name column. Lets scanning the gallery tell you at a glance
            which envs are twin-backed vs mocked-integration. */
-        twinBacking: envState?.twinBacking || null,
-      };
-    }),
+          twinBacking: envState?.twinBacking || null,
+        };
+      }),
     [envs, state, agents],
   );
 
@@ -225,30 +296,48 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         accessorKey: "name",
         header: "Name",
         meta: { flex: 1 },
-        minSize: 200,
+        minSize: 280,
         cell: ({ getValue, row }) => (
           <Box sx={{ minWidth: 0, width: "100%" }}>
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-            <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}>
-              {getValue()}
-            </Typography>
-            {row.original.version && (
-              <Tooltip arrow title="Environment version">
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ minWidth: 0 }}
+            >
+              <Typography
+                noWrap
+                sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+              >
+                {getValue()}
+              </Typography>
+              {row.original.version && (
+                <Tooltip arrow title="Environment version">
+                  <Typography
+                    component="span"
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {row.original.version}
+                  </Typography>
+                </Tooltip>
+              )}
+            </Stack>
+            {/* What it is, under its name — the full line on hover. */}
+            {row.original.description && (
+              <Tooltip arrow title={row.original.description} enterDelay={500}>
                 <Typography
-                  component="span"
-                  sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", px: 0.625, lineHeight: "18px", borderRadius: 0.5, border: "1px solid", borderColor: "divider", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+                  noWrap
+                  sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}
                 >
-                  {row.original.version}
+                  {row.original.description}
                 </Typography>
               </Tooltip>
             )}
-          </Stack>
-          {/* What it is, under its name — the full line on hover. */}
-          {row.original.description && (
-            <Tooltip arrow title={row.original.description} enterDelay={500}>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>{row.original.description}</Typography>
-            </Tooltip>
-          )}
           </Box>
         ),
       },
@@ -256,15 +345,22 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
          universal "Ready" pill on every row on that page just reads
          as noise (every listed env is by definition built). Other
          callers keep the pill. */
-      ...(hideStatus ? [] : [{
-        id: "status",
-        accessorKey: "status",
-        header: "Status",
-        size: 128,
-        cell: ({ getValue, row }) => (
-          <StatusPill status={getValue()} progress={row.original.buildProgress} />
-        ),
-      }]),
+      ...(hideStatus
+        ? []
+        : [
+            {
+              id: "status",
+              accessorKey: "status",
+              header: "Status",
+              size: 128,
+              cell: ({ getValue, row }) => (
+                <StatusPill
+                  status={getValue()}
+                  progress={row.original.buildProgress}
+                />
+              ),
+            },
+          ]),
       {
         id: "agentType",
         accessorKey: "agentType",
@@ -273,17 +369,29 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         cell: ({ getValue }) => {
           const m = MODALITY[getValue()] || MODALITY.chat;
           return (
-            <Stack direction="row" alignItems="center" spacing={0.875} sx={{ minWidth: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.875}
+              sx={{ minWidth: 0 }}
+            >
               <Box
                 sx={{
-                  width: 22, height: 22, borderRadius: 0.75, flexShrink: 0,
-                  display: "grid", placeItems: "center",
-                  bgcolor: "background.neutral", color: "text.secondary",
+                  width: 22,
+                  height: 22,
+                  borderRadius: "4px",
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: "background.neutral",
+                  color: "text.secondary",
                 }}
               >
-                <Iconify icon={m.icon} width={13} />
+                <Iconify icon={m.icon} width={14} />
               </Box>
-              <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>{m.label}</Typography>
+              <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>
+                {m.label}
+              </Typography>
             </Stack>
           );
         },
@@ -292,23 +400,64 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         id: "agent",
         accessorKey: "agentName",
         header: "Agent",
-        size: 240,
+        size: 220,
         cell: ({ row }) => {
           const r = row.original;
-          if (!r.agentName) return <Typography sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
+          if (!r.agentName)
+            return (
+              <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+                —
+              </Typography>
+            );
           return (
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0, width: "100%" }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ minWidth: 0, width: "100%" }}
+            >
               <Tooltip arrow title={r.agentSource || ""} enterDelay={400}>
-                <Typography noWrap sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{r.agentName}</Typography>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    minWidth: 0,
+                  }}
+                >
+                  {r.agentName}
+                </Typography>
               </Tooltip>
+              {/* Plain text, not outlined tags: a table cell carries no boxes. */}
               {r.isMain && (
-                <Tooltip arrow title="The agent's main environment — Fix runs here by default.">
-                  <Box component="span" sx={{ display: "inline-flex" }}><QuietTag>Main</QuietTag></Box>
+                <Tooltip
+                  arrow
+                  title="The agent's main environment — Fix runs here by default."
+                >
+                  <Typography
+                    component="span"
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    · Main
+                  </Typography>
                 </Tooltip>
               )}
               {r.proof && (
                 <Tooltip arrow title={r.proof.note || ""}>
-                  <Box component="span" sx={{ display: "inline-flex" }}><QuietTag>{r.proof.label}</QuietTag></Box>
+                  <Typography
+                    component="span"
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    · {r.proof.label}
+                  </Typography>
                 </Tooltip>
               )}
             </Stack>
@@ -328,7 +477,13 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         header: "Tools",
         size: 90,
         cell: ({ getValue }) => (
-          <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {getValue()}
           </Typography>
         ),
@@ -339,7 +494,13 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         header: "Scenarios",
         size: 84,
         cell: ({ getValue }) => (
-          <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {getValue()}
           </Typography>
         ),
@@ -350,7 +511,13 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         header: "Sub-goals",
         size: 84,
         cell: ({ getValue }) => (
-          <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {getValue()}
           </Typography>
         ),
@@ -361,15 +528,16 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         header: "Runs",
         size: 64,
         cell: ({ row }) => (
-          <RunsPill total={row.original.runsTotal} />
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {row.original.runsTotal}
+          </Typography>
         ),
-      },
-      {
-        id: "owner",
-        accessorKey: "owner",
-        header: "Owner",
-        size: 64,
-        cell: ({ getValue }) => <OwnerCell name={getValue()} />,
       },
       {
         id: "updated",
@@ -396,28 +564,48 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         size: 112,
         enableSorting: false,
         cell: ({ row }) => (
-          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ width: "100%", justifyContent: "flex-end" }}>
-          {/* The one thing you do from the list: run it, on the agent version it tests. */}
-          {row.original.env.buildStatus !== "building" && (
-            <Button
-              size="small" variant="outlined"
-              onClick={(e) => { e.stopPropagation(); runSimulation(row.original.env); }}
-              sx={{ typography: "s3", fontWeight: 700, height: 26, minWidth: 0, px: 1, color: "text.primary", borderColor: "divider", whiteSpace: "nowrap" }}
-            >
-              {row.original.agentVersion ? `Run · ${row.original.agentVersion}` : "Run"}
-            </Button>
-          )}
-          <IconButton
-            size="small"
-            aria-label="Row actions"
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuFor({ env: row.original.env, anchorEl: e.currentTarget });
-            }}
-            sx={{ color: "text.subtitle" }}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ width: "100%", justifyContent: "flex-end" }}
           >
-            <Iconify icon="solar:menu-dots-bold" width={16} />
-          </IconButton>
+            {/* The one thing you do from the list: run it, on the agent version it tests. */}
+            {row.original.env.buildStatus !== "building" && (
+              <Button
+                size="small"
+                variant="outlined"
+                className="row-hover-action"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  runSimulation(row.original.env);
+                }}
+                sx={{
+                  minWidth: 0,
+                  color: "text.primary",
+                  borderColor: "divider",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {row.original.agentVersion
+                  ? `Run · ${row.original.agentVersion}`
+                  : "Run"}
+              </Button>
+            )}
+            <IconButton
+              size="small"
+              aria-label="Row actions"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuFor({
+                  env: row.original.env,
+                  anchorEl: e.currentTarget,
+                });
+              }}
+              sx={{ color: "text.subtitle" }}
+            >
+              <Iconify icon="solar:menu-dots-bold" width={16} />
+            </IconButton>
           </Stack>
         ),
       },
@@ -455,22 +643,51 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
-  const statusCounts = useMemo(() => rows.reduce((m, r) => ({ ...m, [r.status]: (m[r.status] || 0) + 1 }), {}), [rows]);
-  const typeChoices = useMemo(() => [...new Set(rows.map((r) => r.agentType))], [rows]);
-  const agentChoices = useMemo(() => [...new Set(rows.map((r) => r.agentName).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [rows]);
+  const statusCounts = useMemo(
+    () =>
+      rows.reduce((m, r) => ({ ...m, [r.status]: (m[r.status] || 0) + 1 }), {}),
+    [rows],
+  );
+  const typeChoices = useMemo(
+    () => [...new Set(rows.map((r) => r.agentType))],
+    [rows],
+  );
+  const agentChoices = useMemo(
+    () =>
+      [...new Set(rows.map((r) => r.agentName).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [rows],
+  );
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => (!q || `${r.name} ${r.description} ${r.agentName || ""} ${r.agentSource || ""} ${STATUS_META[r.status]?.label || ""}`.toLowerCase().includes(q))
-      && (statusFilter === "all" || r.status === statusFilter)
-      && (typeFilter === "all" || r.agentType === typeFilter)
-      && (agentFilter === "all" || r.agentName === agentFilter));
+    return rows.filter(
+      (r) =>
+        (!q ||
+          `${r.name} ${r.description} ${r.agentName || ""} ${r.agentSource || ""} ${STATUS_META[r.status]?.label || ""}`
+            .toLowerCase()
+            .includes(q)) &&
+        (statusFilter === "all" || r.status === statusFilter) &&
+        (typeFilter === "all" || r.agentType === typeFilter) &&
+        (agentFilter === "all" || r.agentName === agentFilter),
+    );
   }, [rows, query, statusFilter, typeFilter, agentFilter]);
-  const filtering = !!query.trim() || statusFilter !== "all" || typeFilter !== "all" || agentFilter !== "all";
+  const filtering =
+    !!query.trim() ||
+    statusFilter !== "all" ||
+    typeFilter !== "all" ||
+    agentFilter !== "all";
 
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
-  const currentPage = Math.min(page, Math.max(0, Math.ceil(shown.length / pageSize) - 1));
-  const pageRows = shown.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const currentPage = Math.min(
+    page,
+    Math.max(0, Math.ceil(shown.length / pageSize) - 1),
+  );
+  const pageRows = shown.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize,
+  );
   const active = menuFor?.env;
   const buildingActive = active?.buildStatus === "building";
 
@@ -486,15 +703,23 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         floating above the fold.
       */}
       {withToolbar && (
-        <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" rowGap={1} sx={{ flexShrink: 0 }}>
+        <ListToolbar flexWrap="wrap" rowGap={1}>
           <TextField
-            size="small" value={query}
-            onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+            size="small"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(0);
+            }}
             placeholder="Search by name, agent or status"
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="solar:magnifer-linear" width={15} sx={{ color: "text.subtitle" }} />
+                  <Iconify
+                    icon="solar:magnifer-linear"
+                    width={16}
+                    sx={{ color: "text.subtitle" }}
+                  />
                 </InputAdornment>
               ),
             }}
@@ -502,41 +727,106 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
           />
           {/* Status, with how many are in each — a menu like the two beside it. */}
           <TextField
-            select size="small" value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
-            SelectProps={{ renderValue: (v) => (v === "all" ? "All statuses" : STATUS_META[v].label.replace("…", "")) }}
+            select
+            size="small"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(0);
+            }}
+            SelectProps={{
+              renderValue: (v) =>
+                v === "all"
+                  ? "All statuses"
+                  : STATUS_META[v].label.replace("…", ""),
+            }}
             inputProps={{ "aria-label": "Status" }}
             sx={selectSx}
           >
-            {["all", "running", "failed", "not_run", "completed", "passed", "building"]
+            {[
+              "all",
+              "running",
+              "failed",
+              "not_run",
+              "completed",
+              "passed",
+              "building",
+            ]
               .filter((k) => k === "all" || statusCounts[k])
               .map((k) => (
                 <MenuItem key={k} value={k} sx={{ typography: "s2", gap: 1.5 }}>
-                  <Box component="span" sx={{ flex: 1 }}>{k === "all" ? "All statuses" : STATUS_META[k].label.replace("…", "")}</Box>
-                  <Box component="span" sx={{ color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                  <Box component="span" sx={{ flex: 1 }}>
+                    {k === "all"
+                      ? "All statuses"
+                      : STATUS_META[k].label.replace("…", "")}
+                  </Box>
+                  <Box
+                    component="span"
+                    sx={{
+                      color: "text.subtitle",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
                     {k === "all" ? rows.length : statusCounts[k]}
                   </Box>
                 </MenuItem>
               ))}
           </TextField>
-          <TextField select size="small" value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(0); }} sx={selectSx}>
-            <MenuItem value="all" sx={{ typography: "s2" }}>All agent types</MenuItem>
-            {typeChoices.map((t) => <MenuItem key={t} value={t} sx={{ typography: "s2" }}>{(MODALITY[t] || MODALITY.chat).label}</MenuItem>)}
+          <TextField
+            select
+            size="small"
+            value={typeFilter}
+            onChange={(e) => {
+              setTypeFilter(e.target.value);
+              setPage(0);
+            }}
+            sx={selectSx}
+          >
+            <MenuItem value="all" sx={{ typography: "s2" }}>
+              All agent types
+            </MenuItem>
+            {typeChoices.map((t) => (
+              <MenuItem key={t} value={t} sx={{ typography: "s2" }}>
+                {(MODALITY[t] || MODALITY.chat).label}
+              </MenuItem>
+            ))}
           </TextField>
-          <TextField select size="small" value={agentFilter} onChange={(e) => { setAgentFilter(e.target.value); setPage(0); }} inputProps={{ "aria-label": "Agent" }} sx={selectSx}>
-            <MenuItem value="all" sx={{ typography: "s2" }}>All agents</MenuItem>
-            {agentChoices.map((c) => <MenuItem key={c} value={c} sx={{ typography: "s2" }}>{c}</MenuItem>)}
+          <TextField
+            select
+            size="small"
+            value={agentFilter}
+            onChange={(e) => {
+              setAgentFilter(e.target.value);
+              setPage(0);
+            }}
+            inputProps={{ "aria-label": "Agent" }}
+            sx={selectSx}
+          >
+            <MenuItem value="all" sx={{ typography: "s2" }}>
+              All agents
+            </MenuItem>
+            {agentChoices.map((c) => (
+              <MenuItem key={c} value={c} sx={{ typography: "s2" }}>
+                {c}
+              </MenuItem>
+            ))}
           </TextField>
           {filtering && (
             <Button
               size="small"
-              onClick={() => { setQuery(""); setStatusFilter("all"); setTypeFilter("all"); setAgentFilter("all"); setPage(0); }}
-              sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+              onClick={() => {
+                setQuery("");
+                setStatusFilter("all");
+                setTypeFilter("all");
+                setAgentFilter("all");
+                setPage(0);
+              }}
+              sx={{ color: "text.secondary" }}
             >
               {`Clear · ${shown.length} of ${rows.length}`}
             </Button>
           )}
-        </Stack>
+        </ListToolbar>
       )}
       <DataTable
         columns={columns}
@@ -544,8 +834,12 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         rowCount={shown.length}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row.env)}
-        rowHeight={52}
-        emptyMessage={filtering ? "No environments match these filters" : "No environments yet"}
+        rowHeight={44}
+        emptyMessage={
+          filtering
+            ? "No environments match these filters"
+            : "No environments yet"
+        }
       />
       {shown.length > 0 && (
         <DataTablePagination
@@ -553,7 +847,10 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
           pageSize={pageSize}
           total={shown.length}
           onPageChange={setPage}
-          onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
+          onPageSizeChange={(n) => {
+            setPageSize(n);
+            setPage(0);
+          }}
         />
       )}
 
@@ -572,48 +869,72 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         slotProps={{ paper: { sx: { minWidth: 200 } } }}
       >
         <MenuItem
-          onClick={() => { onOpen?.(active); setMenuFor(null); }}
+          onClick={() => {
+            onOpen?.(active);
+            setMenuFor(null);
+          }}
           sx={{ typography: "s2" }}
         >
           <ListItemIcon sx={{ minWidth: 28 }}>
             <Iconify icon="solar:arrow-right-linear" width={16} />
           </ListItemIcon>
-          <ListItemText primary="Open" primaryTypographyProps={{ sx: { typography: "s2" } }} />
+          <ListItemText
+            primary="Open"
+            primaryTypographyProps={{ sx: { typography: "s2" } }}
+          />
         </MenuItem>
         <Tooltip
-          arrow placement="left"
-          title={buildingActive
-            ? "Wait for setup to finish"
-            : active && !runReadiness(state.byEnv[active.id], active).ready
-              ? `${runReadiness(state.byEnv[active.id], active).reason} — opens ${runReadiness(state.byEnv[active.id], active).href ? "the agent" : "the environment"} there`
-              : ""}
+          arrow
+          placement="left"
+          title={
+            buildingActive
+              ? "Wait for setup to finish"
+              : active && !runReadiness(state.byEnv[active.id], active).ready
+                ? `${runReadiness(state.byEnv[active.id], active).reason} — opens ${runReadiness(state.byEnv[active.id], active).href ? "the agent" : "the environment"} there`
+                : ""
+          }
         >
           <Box>
             <MenuItem
               disabled={buildingActive}
-              onClick={() => { runSimulation(active); setMenuFor(null); }}
+              onClick={() => {
+                runSimulation(active);
+                setMenuFor(null);
+              }}
               sx={{ typography: "s2" }}
             >
               <ListItemIcon sx={{ minWidth: 28 }}>
                 <Iconify icon="solar:play-linear" width={16} />
               </ListItemIcon>
               <ListItemText
-                primary={(active?.buildStatus === "ready" && (state.byEnv[active?.id]?.runs?.length || 0) > 0)
-                  ? "Re-run simulation"
-                  : "Run simulation"}
+                primary={
+                  active?.buildStatus === "ready" &&
+                  (state.byEnv[active?.id]?.runs?.length || 0) > 0
+                    ? "Re-run simulation"
+                    : "Run simulation"
+                }
                 primaryTypographyProps={{ sx: { typography: "s2" } }}
               />
             </MenuItem>
           </Box>
         </Tooltip>
         <MenuItem
-          onClick={() => { setConfirmDelete(active); setMenuFor(null); }}
-          sx={{ typography: "s2", color: "#DC2626" }}
+          onClick={() => {
+            setConfirmDelete(active);
+            setMenuFor(null);
+          }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ typography: "s2", color: "status.danger.fg" }}
         >
-          <ListItemIcon sx={{ minWidth: 28, color: "#DC2626" }}>
+          <ListItemIcon sx={{ minWidth: 28, color: "status.danger.fg" }}>
             <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
-          <ListItemText primary="Delete" primaryTypographyProps={{ sx: { typography: "s2", color: "#DC2626" } }} />
+          <ListItemText
+            primary="Delete"
+            primaryTypographyProps={{
+              sx: { typography: "s2", color: "status.danger.fg" },
+            }}
+          />
         </MenuItem>
       </Menu>
 
@@ -637,72 +958,33 @@ MyEnvironmentsTable.propTypes = {
 
 /* ── status pill ─────────────────────────────────────────────────────────── */
 
-const pulse = keyframes`
-  0%,100% { opacity: 0.75; }
-  50%     { opacity: 1; }
-`;
-
-/*
-  Status meta reflects run state on the Simulated Runs page:
-    - building   → the env is still being derived (rare on this page)
-    - not_run    → env is built, no simulation has been run yet
-    - running    → a simulation is in flight
-    - passed     → latest run passed the gate
-    - failed     → latest run failed
-    - completed  → latest run finished without a gate verdict
-*/
-/*
-  Colour choices, semantically distinct:
-    - building  → env still assembling: purple (in-progress work)
-    - running   → simulation in flight: blue (live, active work — kept
-                  visually different from building so "we're still
-                  constructing" and "we're running your agent" don't
-                  read as the same state)
-    - not_run   → env exists, no run started: cool grey (neutral, no info)
-    - passed    → gate cleared: green (positive result)
-    - failed    → gate broke: red (negative result)
-    - completed → run finished without a gate verdict — needs review:
-                  amber (informational, deserves attention but not a
-                  failure). Previously grey, which read identically to
-                  "Not run yet" and made a finished run look inert.
-*/
+/* Run state on the environments list, through the one status map's roles:
+   building and running are in progress (info), passed and failed are the
+   gate's verdict, and not run / completed / canceled carry no verdict. */
 const STATUS_META = {
-  building:  { label: "Building",     color: "#7857FC", animated: true },
+  building: { label: "Building", role: "info" },
   /* A build someone stopped, or one that failed part-way — open it to restart or retry. */
-  canceled:  { label: "Build canceled" },
-  build_failed: { label: "Build failed", color: "#DC2626" },
-  not_run:   { label: "Not run yet" },
-  running:   { label: "Running…",     color: "#2563EB", animated: true },
-  passed:    { label: "Passed",       color: "#16A34A" },
-  failed:    { label: "Failed",       color: "#DC2626" },
+  canceled: { label: "Build canceled", role: "neutral" },
+  build_failed: { label: "Build failed", role: "danger" },
+  not_run: { label: "Not run yet", role: "neutral" },
+  running: { label: "Running…", role: "info" },
+  passed: { label: "Passed", role: "success" },
+  failed: { label: "Failed", role: "danger" },
   /* A finished run with no gate verdict: neutral, like the Improvements
      table's endings that just stopped — nothing to celebrate or flag. */
-  completed: { label: "Completed" },
+  completed: { label: "Completed", role: "neutral" },
 };
 
-/* The Improvements table's chip: outlined, small radius, coloured only when
-   the state means something; neutral states keep the shape in the divider
-   colour. */
+/* The design system's status badge; the build's progress on hover. */
 function StatusPill({ status, progress }) {
   const meta = STATUS_META[status] || STATUS_META.not_run;
-  const detail = status === "building" && progress
-    ? `${progress.done}/${progress.total} steps`
-    : "";
+  const detail =
+    status === "building" && progress
+      ? `${progress.done}/${progress.total} steps`
+      : "";
   return (
     <Tooltip arrow title={detail} disableHoverListener={!detail}>
-      <Chip
-        variant="outlined"
-        size="small"
-        label={meta.label}
-        sx={{
-          typography: "s3",
-          fontWeight: "fontWeightMedium",
-          borderColor: meta.color || "divider",
-          color: meta.color || "text.secondary",
-          backgroundColor: (t) => (meta.color ? alpha(meta.color, t.palette.mode === "dark" ? 0.04 : 0.02) : "transparent"),
-          animation: meta.animated ? `${pulse} 1.6s ease-in-out infinite` : "none",
-        }}
-      />
+      <StatusBadge status={status} role={meta.role} label={meta.label} />
     </Tooltip>
   );
 }
@@ -714,19 +996,42 @@ StatusPill.propTypes = { status: PropTypes.string, progress: PropTypes.object };
 /* "88% ▲9" — the latest run's scenario pass rate and how it moved; grey
    when the move is inside the noise two runs of that size carry. */
 function LastRunCell({ last }) {
-  if (!last || last.rate == null) return <Typography sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
+  if (!last || last.rate == null)
+    return (
+      <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+        —
+      </Typography>
+    );
   const d = last.delta;
   const moved = d && d.pts !== 0;
-  const tone = !moved || d.within ? "text.subtitle" : d.pts > 0 ? "#16A34A" : "#DC2626";
+  const tone =
+    !moved || d.within
+      ? "text.subtitle"
+      : d.pts > 0
+        ? "status.success.fg"
+        : "status.danger.fg";
   return (
     <Tooltip
       arrow
-      title={d ? `Run ${last.ordinal} vs Run ${last.vs}: ${d.pts > 0 ? "+" : ""}${d.pts} pts on the ${d.shared} scenarios both scored (±${d.noise} is noise)` : `Run ${last.ordinal}`}
+      title={
+        d
+          ? `Run ${last.ordinal} vs Run ${last.vs}: ${d.pts > 0 ? "+" : ""}${d.pts} pts on the ${d.shared} scenarios both scored (±${d.noise} is noise)`
+          : `Run ${last.ordinal}`
+      }
     >
-      <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums", cursor: "default" }}>
+      <Typography
+        sx={{
+          typography: "s2",
+          fontVariantNumeric: "tabular-nums",
+          cursor: "default",
+        }}
+      >
         <Box component="span" sx={{ fontWeight: 600 }}>{`${last.rate}%`}</Box>
         {moved && (
-          <Box component="span" sx={{ color: tone, fontWeight: 600, ml: 0.75, fontSize: 12 }}>
+          <Box
+            component="span"
+            sx={{ color: tone, fontWeight: 600, ml: 0.75, fontSize: 12 }}
+          >
             {`${d.pts > 0 ? "▲" : "▼"}${Math.abs(d.pts)}`}
           </Box>
         )}
@@ -741,45 +1046,16 @@ LastRunCell.propTypes = { last: PropTypes.object };
 /* The owner's initials, drawn exactly as the Dashboards list draws its
    people (the same AvatarGroup + Avatar, same size); their name on hover. */
 const initialsOf = (name) => {
-  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
   if (!parts.length) return "?";
-  return (parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2)).toUpperCase();
+  return (
+    parts.length >= 2 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2)
+  ).toUpperCase();
 };
-function OwnerCell({ name }) {
-  return (
-    <Tooltip arrow title={name || ""}>
-      <Box sx={{ display: "inline-flex", cursor: "default" }}>
-        <AvatarGroup
-          max={1}
-          sx={{ "& .MuiAvatar-root": { width: 26, height: 26, fontSize: "11px", fontWeight: 700, borderWidth: 2 } }}
-        >
-          <Avatar>{initialsOf(name)}</Avatar>
-        </AvatarGroup>
-      </Box>
-    </Tooltip>
-  );
-}
-OwnerCell.propTypes = { name: PropTypes.string };
-
 /* ── runs pill ───────────────────────────────────────────────────────────── */
-
-function RunsPill({ total }) {
-  return (
-    <Box
-      sx={{
-        display: "inline-flex", alignItems: "center",
-        px: 0.75, py: 0.25, borderRadius: 0.75,
-        border: "1px solid", borderColor: "divider",
-      }}
-    >
-      <Typography sx={{ typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "text.secondary" }}>
-        {total}
-      </Typography>
-    </Box>
-  );
-}
-
-RunsPill.propTypes = { total: PropTypes.number };
 
 /* ── relative time ───────────────────────────────────────────────────────── */
 
@@ -790,7 +1066,8 @@ function relativeTime(iso) {
   const diffMs = Date.now() - then;
   const minutes = Math.floor(diffMs / 60000);
   if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  if (minutes < 60)
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
   const days = Math.floor(hours / 24);

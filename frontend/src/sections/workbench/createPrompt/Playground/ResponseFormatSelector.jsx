@@ -7,7 +7,7 @@ import {
   Menu,
   MenuItem,
   Typography,
-  useTheme,
+  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
@@ -51,7 +51,7 @@ const getIconForResponseFormat = (value) => {
       );
     default:
       return (
-        <Iconify icon="mdi:file-document-outline" width={20} height={20} />
+        <Iconify icon="solar:document-text-linear" width={20} height={20} />
       );
   }
 };
@@ -64,7 +64,6 @@ const ResponseFormatSelector = ({
   onChange,
   disabled,
 }) => {
-  const theme = useTheme();
   const [anchorEl, setAnchorEl] = useState(null);
   const [showCreateSchema, setShowCreateSchema] = useState(false);
   const menuOpen = Boolean(anchorEl);
@@ -154,10 +153,13 @@ const ResponseFormatSelector = ({
 
   return (
     <>
-      <Box
+      <ButtonBase
+        component="div"
         onClick={handleClick}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
+          textAlign: "left",
           alignItems: "center",
           gap: 0.75,
           padding: "4px 10px",
@@ -191,7 +193,7 @@ const ResponseFormatSelector = ({
           {selectedItem?.label || "Select format"}
         </Typography>
         <Iconify
-          icon="eva:chevron-down-fill"
+          icon="solar:alt-arrow-down-linear"
           width={16}
           height={16}
           sx={{
@@ -200,7 +202,7 @@ const ResponseFormatSelector = ({
             transition: "transform 0.2s",
           }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={menuOpen}
@@ -217,8 +219,7 @@ const ResponseFormatSelector = ({
           paper: {
             sx: {
               mt: 0.5,
-              minWidth: 180,
-              boxShadow: theme.customShadows.dropdown,
+              minWidth: 200,
               borderRadius: "8px",
               border: "1px solid",
               borderColor: "border.default",
@@ -275,7 +276,7 @@ const ResponseFormatSelector = ({
                   color: "primary.main",
                 }}
               >
-                <Iconify icon="eva:plus-fill" width={18} height={18} />
+                <Iconify icon="solar:add-linear" width={16} height={20} />
               </ListItemIcon>
               <ListItemText
                 primary="Create custom schema"

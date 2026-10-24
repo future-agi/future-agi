@@ -1,8 +1,6 @@
 import React, { useState, useMemo } from "react";
 import {
   Box,
-  Card,
-  CardContent,
   Typography,
   Button,
   Stack,
@@ -10,7 +8,6 @@ import {
   Skeleton,
   IconButton,
   Grid,
-  CardActionArea,
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -25,23 +22,18 @@ import { useAnalyticsOverview } from "./analytics/hooks/useAnalyticsOverview";
 import { val } from "./utils/analyticsHelpers";
 import { formatCost } from "./utils/formatters";
 import { GATEWAY_ICONS } from "./constants/gatewayIcons";
-import SectionHeader from "./components/SectionHeader";
+import PageHeader from "src/components/page-header";
+import MetricStrip from "src/components/metric-strip";
+import Section from "src/components/section";
 import PageErrorState from "./components/PageErrorState";
 import GettingStartedCard from "./components/GettingStartedCard";
 import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
-
-const STATUS_COLORS = {
-  healthy: "success",
-  connected: "success", // legacy
-  disconnected: "default",
-  degraded: "warning",
-  unreachable: "error",
-};
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
 const QUICK_LINKS = [
   {
-    label: "API Keys",
+    label: "API keys",
     icon: GATEWAY_ICONS.keys,
     path: "/dashboard/gateway/keys",
   },
@@ -194,321 +186,248 @@ const GatewayOverviewSection = () => {
     );
   }
 
+  const latencyMs = val(overview?.avg_latency_ms);
+  const requestCount = Number(val(overview?.total_requests) ?? 0);
+  let latencyHint;
+  if (latencyMs != null && requestCount > 0) {
+    const ms = Number(latencyMs);
+    latencyHint = ms < 200 ? "Good" : ms < 500 ? "Fair" : "Slow";
+  }
+  const errorRate = Number(val(overview?.error_rate) ?? 0);
+
   return (
     <Box p={3}>
-      {/* Gateway Header */}
-      <SectionHeader
-        icon={GATEWAY_ICONS.overview}
+      <PageHeader
         title={gateway.name}
-        statusChip={
-          <Chip
-            label={gateway.status}
-            color={STATUS_COLORS[gateway.status] || "default"}
+        badge={<StatusBadge status={gateway.status} />}
+        actions={
+          <Button
+            variant="outlined"
             size="small"
-          />
-        }
-      >
-        <Button
-          variant="outlined"
-          size="small"
-          sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
-          }}
-          onClick={() => {
-            window.open(
-              "https://docs.futureagi.com/docs/command-center",
-              "_blank",
-            );
-          }}
-        >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
-      </SectionHeader>
-
-      {/* Gateway Endpoint URL */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
+            startIcon={
+              <SvgColor width={16} src="/assets/icons/agent/docs.svg" />
+            }
+            onClick={() => {
+              window.open(
+                "https://docs.futureagi.com/docs/command-center",
+                "_blank",
+              );
+            }}
           >
-            <Box>
-              <Typography variant="caption" color="text.secondary">
-                Gateway Endpoint
-              </Typography>
-              <Typography variant="h6" sx={{ fontFamily: "monospace" }}>
-                {gateway.baseUrl}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" mt={0.5}>
-                Send OpenAI-compatible requests to this URL. Use your API key
-                for authentication.
-              </Typography>
-            </Box>
-            <Tooltip title={copied ? "Copied!" : "Copy URL"}>
-              <IconButton onClick={handleCopyUrl} size="small">
-                <Iconify
-                  icon={copied ? "mdi:check" : "mdi:content-copy"}
-                  width={20}
-                />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        </CardContent>
-      </Card>
+            View docs
+          </Button>
+        }
+      />
 
-      {/* Getting Started Checklist */}
+      <Section title="Gateway endpoint" variant="panel" sx={{ mb: 3 }}>
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              sx={{
+                fontFamily: "monospace",
+                fontSize: 13,
+                color: "text.primary",
+                wordBreak: "break-all",
+              }}
+            >
+              {gateway.baseUrl}
+            </Typography>
+            <Typography sx={{ fontSize: 13, color: "text.tertiary", mt: 0.5 }}>
+              Send OpenAI-compatible requests to this URL. Use your API key for
+              authentication.
+            </Typography>
+          </Box>
+          <Tooltip title={copied ? "Copied!" : "Copy URL"}>
+            <IconButton onClick={handleCopyUrl} size="small">
+              <Iconify
+                icon={copied ? "solar:check-linear" : "solar:copy-linear"}
+                width={16}
+                sx={{ color: "text.secondary" }}
+              />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Section>
+
       <GettingStartedCard completionState={completionState} />
 
-      {/* KPI Cards */}
-      <Grid container spacing={2} mb={3}>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics")}
-              sx={{ textAlign: "center", py: 2.5, px: 1 }}
-            >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-              >
-                Requests (24h)
-              </Typography>
-              <Typography variant="h4" mt={0.5}>
-                {Number(val(overview?.total_requests) ?? 0).toLocaleString()}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics/cost")}
-              sx={{ textAlign: "center", py: 2.5, px: 1 }}
-            >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-              >
-                Cost (24h)
-              </Typography>
-              <Typography variant="h4" color="primary.main" mt={0.5}>
-                {formatCost(val(overview?.total_cost))}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics/latency")}
-              sx={{ textAlign: "center", py: 2.5, px: 1 }}
-            >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-              >
-                Avg Latency
-              </Typography>
-              <Typography variant="h4" mt={0.5}>
-                {val(overview?.avg_latency_ms) != null
-                  ? `${Number(val(overview.avg_latency_ms)).toFixed(0)}ms`
-                  : "\u2014"}
-              </Typography>
-              {(() => {
-                const raw = val(overview?.avg_latency_ms);
-                const requests = Number(val(overview?.total_requests) ?? 0);
-                if (raw == null || requests === 0) return null;
-                const ms = Number(raw);
-                const label = ms < 200 ? "Good" : ms < 500 ? "Fair" : "Slow";
-                const color =
-                  ms < 200
-                    ? "success.main"
-                    : ms < 500
-                      ? "warning.main"
-                      : "error.main";
-                return (
-                  <Typography variant="caption" color={color} fontWeight={600}>
-                    {label}
-                  </Typography>
-                );
-              })()}
-            </CardActionArea>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics/errors")}
-              sx={{ textAlign: "center", py: 2.5, px: 1 }}
-            >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-              >
-                Error Rate
-              </Typography>
-              <Typography
-                variant="h4"
-                mt={0.5}
-                color={
-                  Number(val(overview?.error_rate) ?? 0) > 5
-                    ? "error.main"
-                    : "success.main"
+      <MetricStrip
+        sx={{ mb: 3 }}
+        items={[
+          {
+            label: "Requests (24h)",
+            value: requestCount.toLocaleString(),
+            onClick: () => navigate("/dashboard/gateway/analytics"),
+          },
+          {
+            label: "Cost (24h)",
+            value: formatCost(val(overview?.total_cost)),
+            onClick: () => navigate("/dashboard/gateway/analytics/cost"),
+          },
+          {
+            label: "Avg latency",
+            value:
+              latencyMs != null
+                ? `${Number(latencyMs).toFixed(0)}ms`
+                : "\u2014",
+            hint: latencyHint,
+            onClick: () => navigate("/dashboard/gateway/analytics/latency"),
+          },
+          {
+            label: "Error rate",
+            value:
+              val(overview?.error_rate) != null
+                ? `${Number(val(overview.error_rate)).toFixed(1)}%`
+                : "0%",
+            hint: errorRate > 5 ? "Above 5%" : undefined,
+            onClick: () => navigate("/dashboard/gateway/analytics/errors"),
+          },
+        ]}
+      />
+
+      <Section
+        title="Provider status"
+        sx={{ mb: 3 }}
+        actions={
+          <>
+            <Chip
+              label={`${gateway.providerCount ?? providerList.length} providers`}
+              size="small"
+              variant="outlined"
+            />
+            <Tooltip title="Check connectivity to all configured providers">
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => healthCheckMutation.mutate(gatewayId)}
+                disabled={healthCheckMutation.isPending}
+                startIcon={
+                  <Iconify
+                    icon={
+                      healthCheckMutation.isPending
+                        ? "mdi:loading"
+                        : "solar:heart-pulse-linear"
+                    }
+                    width={16}
+                    sx={
+                      healthCheckMutation.isPending
+                        ? {
+                            animation: "spin 1s linear infinite",
+                            "@keyframes spin": {
+                              from: { transform: "rotate(0deg)" },
+                              to: { transform: "rotate(360deg)" },
+                            },
+                          }
+                        : undefined
+                    }
+                  />
                 }
               >
-                {val(overview?.error_rate) != null
-                  ? `${Number(val(overview.error_rate)).toFixed(1)}%`
-                  : "0%"}
-              </Typography>
-            </CardActionArea>
-          </Card>
-        </Grid>
-      </Grid>
+                {healthCheckMutation.isPending ? "Checking..." : "Health check"}
+              </Button>
+            </Tooltip>
+          </>
+        }
+      >
+        {providerList.length > 0 ? (
+          <Stack direction="row" flexWrap="wrap" gap={1}>
+            {providerList.map((p, idx) => {
+              const isHealthy = p.healthy !== false && p.status !== "unhealthy";
+              return (
+                <Chip
+                  key={p.name || idx}
+                  label={p.name || `Provider ${idx + 1}`}
+                  variant="outlined"
+                  size="small"
+                  sx={
+                    isHealthy
+                      ? undefined
+                      : {
+                          color: "status.danger.fg",
+                          borderColor: "status.danger.border",
+                          bgcolor: "status.danger.bg",
+                        }
+                  }
+                />
+              );
+            })}
+          </Stack>
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "text.tertiary" }}>
+            No provider data. Run a health check to see provider status.
+          </Typography>
+        )}
+        <Stack direction="row" spacing={4} mt={2}>
+          <Box>
+            <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+              Models
+            </Typography>
+            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+              {gateway.modelCount ?? 0}
+            </Typography>
+          </Box>
+          <Box>
+            <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+              Last check
+            </Typography>
+            <Typography sx={{ fontSize: 13, color: "text.primary" }}>
+              {gateway.lastHealthCheck
+                ? new Date(gateway.lastHealthCheck).toLocaleString()
+                : "Never"}
+            </Typography>
+          </Box>
+        </Stack>
+      </Section>
 
-      {/* Provider Health Summary + Quick Links */}
-      <Grid container spacing={2} mb={3}>
-        <Grid item xs={12} md={6}>
-          <Card sx={{ height: "100%" }}>
-            <CardContent>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                mb={2}
-              >
-                <Typography variant="h6">Provider Status</Typography>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Chip
-                    label={`${gateway.providerCount ?? providerList.length} providers`}
-                    size="small"
-                    variant="outlined"
-                  />
-                  <Tooltip title="Check connectivity to all configured providers">
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => healthCheckMutation.mutate(gatewayId)}
-                      disabled={healthCheckMutation.isPending}
-                      startIcon={
-                        <Iconify
-                          icon={
-                            healthCheckMutation.isPending
-                              ? "mdi:loading"
-                              : "mdi:heart-pulse"
-                          }
-                          width={16}
-                          sx={
-                            healthCheckMutation.isPending
-                              ? {
-                                  animation: "spin 1s linear infinite",
-                                  "@keyframes spin": {
-                                    from: { transform: "rotate(0deg)" },
-                                    to: { transform: "rotate(360deg)" },
-                                  },
-                                }
-                              : undefined
-                          }
-                        />
-                      }
-                    >
-                      {healthCheckMutation.isPending
-                        ? "Checking..."
-                        : "Health Check"}
-                    </Button>
-                  </Tooltip>
-                </Stack>
-              </Stack>
-              {providerList.length > 0 ? (
-                <Stack direction="row" flexWrap="wrap" gap={1}>
-                  {providerList.map((p, idx) => {
-                    const isHealthy =
-                      p.healthy !== false && p.status !== "unhealthy";
-                    return (
-                      <Chip
-                        key={p.name || idx}
-                        label={p.name || `Provider ${idx + 1}`}
-                        color={isHealthy ? "success" : "error"}
-                        variant="outlined"
-                        size="small"
-                        sx={{ fontSize: "0.8125rem" }}
-                      />
-                    );
-                  })}
-                </Stack>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No provider data. Run a health check to see provider status.
-                </Typography>
-              )}
-              <Stack direction="row" spacing={3} mt={2}>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Models
-                  </Typography>
-                  <Typography variant="h6">
-                    {gateway.modelCount ?? 0}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Last Check
-                  </Typography>
-                  <Typography variant="body2">
-                    {gateway.lastHealthCheck
-                      ? new Date(gateway.lastHealthCheck).toLocaleString()
-                      : "Never"}
-                  </Typography>
-                </Box>
-              </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={6}>
-          <Card sx={{ height: "100%" }}>
-            <CardContent>
-              <Typography variant="h6" mb={2}>
-                Quick Links
-              </Typography>
-              <Grid container spacing={1}>
-                {QUICK_LINKS.map((link) => (
-                  <Grid item xs={6} sm={3} key={link.path}>
-                    <Card variant="outlined" sx={{ height: "100%" }}>
-                      <CardActionArea
-                        onClick={() => navigate(link.path)}
-                        sx={{ p: 1.5, textAlign: "center" }}
-                      >
-                        <Iconify
-                          icon={link.icon}
-                          width={24}
-                          sx={{ mb: 0.5, color: "primary.main" }}
-                        />
-                        <Typography variant="caption" display="block">
-                          {link.label}
-                        </Typography>
-                      </CardActionArea>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      <Section title="Quick links">
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "repeat(2, minmax(0, 1fr))",
+              sm: "repeat(4, minmax(0, 1fr))",
+            },
+            gap: 1,
+          }}
+        >
+          {QUICK_LINKS.map((link) => (
+            <Box
+              key={link.path}
+              component="button"
+              type="button"
+              onClick={() => navigate(link.path)}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                px: 1.5,
+                py: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
+                bgcolor: "transparent",
+                color: "text.primary",
+                font: "inherit",
+                fontSize: 13,
+                textAlign: "left",
+                cursor: "pointer",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Iconify
+                icon={link.icon}
+                width={16}
+                sx={{ color: "text.secondary", flexShrink: 0 }}
+              />
+              {link.label}
+            </Box>
+          ))}
+        </Box>
+      </Section>
     </Box>
   );
 };

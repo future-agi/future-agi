@@ -15,8 +15,6 @@ import Iconify from "src/components/iconify";
 
 const actionBtnBaseSx = {
   minWidth: "90px",
-  minHeight: "32px",
-  textTransform: "none",
 };
 
 export default function ModalWrapper({
@@ -34,7 +32,7 @@ export default function ModalWrapper({
   actionBtnSx = {},
   cancelBtnSx = {},
   dialogActionSx = {},
-  modalWidth = "570px",
+  modalWidth = "560px",
   actionBtnProps = {},
   cancelBtnProps = {},
   onCancelBtn,
@@ -52,7 +50,6 @@ export default function ModalWrapper({
       PaperProps={{
         sx: {
           width: modalWidth,
-          borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
           flexDirection: "column",
@@ -80,7 +77,7 @@ export default function ModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (
@@ -99,7 +96,7 @@ export default function ModalWrapper({
           padding: 0,
           display: "flex",
           flexDirection: "row",
-          gap: "16px",
+          gap: "8px",
           mt: 2,
           "& button": {
             margin: 0,
@@ -116,17 +113,11 @@ export default function ModalWrapper({
             type="button"
             sx={{
               ...actionBtnBaseSx,
-              "&:hover": {
-                borderColor: "divider",
-              },
-              color: "text.disabled",
               ...cancelBtnSx,
             }}
             {...cancelBtnProps}
           >
-            <Typography variant="s1" fontWeight="fontWeightMedium">
-              {cancelBtnTitle}
-            </Typography>
+            {cancelBtnTitle}
           </Button>
         )}
         <LoadingButton
@@ -144,9 +135,7 @@ export default function ModalWrapper({
           disabled={!isValid || isLoading}
           {...actionBtnProps}
         >
-          <Typography variant="s1" fontWeight="fontWeightSemiBold">
-            {actionBtnTitle}
-          </Typography>
+          {actionBtnTitle}
         </LoadingButton>
       </DialogActions>
     </Dialog>

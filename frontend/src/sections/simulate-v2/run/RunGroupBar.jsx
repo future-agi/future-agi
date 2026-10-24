@@ -1,7 +1,16 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Stack, Typography, Popover, MenuItem, ListItemText, Tooltip } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Popover,
+  MenuItem,
+  ListItemText,
+  Tooltip,
+  ButtonBase,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { groupMembersOf } from "../_mock/runGroup";
@@ -34,14 +43,21 @@ export default function RunGroupBar({ envId, runId, live = false }) {
     return list.map((m) => {
       const current = m.runId === runId;
       const finished = !!m.run?.finishedAt && !(current && live);
-      const rate = finished && m.env ? runResultOf(m.env, m.envState, m.run)?.rate : null;
+      const rate =
+        finished && m.env ? runResultOf(m.env, m.envState, m.run)?.rate : null;
       return {
         ...m,
         current,
         identity: m.run ? runIdentityOf(m.run, m.envState, m.env).label : null,
         /* What the side-by-side reads: a rate once a run has one, and what
            it's doing until then. */
-        result: !m.run ? "removed" : !finished ? "running" : rate == null ? "—" : `${rate}%`,
+        result: !m.run
+          ? "removed"
+          : !finished
+            ? "running"
+            : rate == null
+              ? "—"
+              : `${rate}%`,
         missing: !m.run || !m.env,
       };
     });
@@ -54,59 +70,124 @@ export default function RunGroupBar({ envId, runId, live = false }) {
     if (m.current || m.missing) return;
     /* Switching runs within the group, not going somewhere new — Back still
        leaves the group the way it came in. */
-    navigate(paths.dashboard.simulate.simulationRun(m.envId, m.runId), { replace: true });
+    navigate(paths.dashboard.simulate.simulationRun(m.envId, m.runId), {
+      replace: true,
+    });
   };
 
   return (
     <Stack
-      direction="row" alignItems="center" spacing={2.5}
-      sx={{ px: 3, py: 0.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, minWidth: 0 }}
+      direction="row"
+      alignItems="center"
+      spacing={2.5}
+      sx={{
+        px: 3,
+        py: 0.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+        minWidth: 0,
+      }}
     >
-      <Box
-        component="button"
+      <ButtonBase
         type="button"
         onClick={(e) => setAnchor(e.currentTarget)}
         sx={{
-          display: "inline-flex", alignItems: "center", gap: 0.625, flexShrink: 0,
-          height: 26, px: 0.875, borderRadius: 0.75, font: "inherit", cursor: "pointer",
-          border: "1px solid", borderColor: anchor ? "text.disabled" : "divider",
-          bgcolor: anchor ? "action.hover" : "transparent", color: "text.primary",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.625,
+          flexShrink: 0,
+          height: 26,
+          px: 0.875,
+          borderRadius: "4px",
+          font: "inherit",
+          cursor: "pointer",
+          border: "1px solid",
+          borderColor: anchor ? "text.disabled" : "divider",
+          bgcolor: anchor ? "action.hover" : "transparent",
+          color: "text.primary",
           "&:hover": { bgcolor: "action.hover", borderColor: "text.disabled" },
         }}
       >
-        <Iconify icon="solar:layers-linear" width={13} sx={{ color: "text.subtitle" }} />
-        <Typography noWrap sx={{ typography: "s3", fontWeight: 700 }}>
+        <Iconify
+          icon="solar:layers-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography noWrap sx={{ typography: "s3", fontWeight: 600 }}>
           Run group · {members.length} environments
         </Typography>
-        <Iconify icon={anchor ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={11} sx={{ color: "text.subtitle" }} />
-      </Box>
+        <Iconify
+          icon={
+            anchor ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+          }
+          width={12}
+          sx={{ color: "text.tertiary" }}
+        />
+      </ButtonBase>
 
       {/* Pass rate per environment, side by side — this run's in full weight. */}
-      <Stack direction="row" alignItems="baseline" spacing={2.25} sx={{ minWidth: 0, overflow: "hidden" }}>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>Pass rate</Typography>
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        spacing={2.25}
+        sx={{ minWidth: 0, overflow: "hidden" }}
+      >
+        <Typography
+          noWrap
+          sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+        >
+          Pass rate
+        </Typography>
         {members.map((m) => (
-          <Tooltip key={m.runId} arrow title={m.identity ? `${m.envName} · ${m.identity}` : `${m.envName} · this run was removed`}>
+          <Tooltip
+            key={m.runId}
+            arrow
+            title={
+              m.identity
+                ? `${m.envName} · ${m.identity}`
+                : `${m.envName} · this run was removed`
+            }
+          >
             <Stack
-              direction="row" alignItems="baseline" spacing={0.625}
-              {...clickable(() => open(m), { role: "link", disabled: m.current || m.missing })}
+              direction="row"
+              alignItems="baseline"
+              spacing={0.625}
+              {...clickable(() => open(m), {
+                role: "link",
+                disabled: m.current || m.missing,
+              })}
               sx={{
                 ...focusRing,
                 minWidth: 0,
                 cursor: m.current || m.missing ? "default" : "pointer",
-                "&:hover .grp-env": !m.current && !m.missing ? { color: "text.primary", textDecoration: "underline" } : {},
+                "&:hover .grp-env":
+                  !m.current && !m.missing
+                    ? { color: "text.primary", textDecoration: "underline" }
+                    : {},
               }}
             >
               <Typography
-                noWrap className="grp-env"
-                sx={{ typography: "s3", maxWidth: 180, color: m.current ? "text.primary" : "text.secondary", fontWeight: m.current ? 700 : 500 }}
+                noWrap
+                className="grp-env"
+                sx={{
+                  typography: "s3",
+                  maxWidth: 180,
+                  color: m.current ? "text.primary" : "text.secondary",
+                  fontWeight: m.current ? 600 : 500,
+                }}
               >
                 {m.envName}
               </Typography>
               <Typography
                 sx={{
-                  typography: "s3", flexShrink: 0, fontVariantNumeric: "tabular-nums",
-                  fontWeight: m.current ? 700 : 600,
-                  color: m.result.endsWith("%") ? "text.primary" : "text.subtitle",
+                  typography: "s3",
+                  flexShrink: 0,
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: m.current ? 600 : 500,
+                  color: m.result.endsWith("%")
+                    ? "text.primary"
+                    : "text.tertiary",
                 }}
               >
                 {m.result}
@@ -122,13 +203,25 @@ export default function RunGroupBar({ envId, runId, live = false }) {
         onClose={() => setAnchor(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { mt: 0.5, py: 0.5, minWidth: 300, borderRadius: 1.25 } } }}
+        slotProps={{
+          paper: {
+            sx: { mt: 0.5, py: 0.5, minWidth: 320, borderRadius: "8px" },
+          },
+        }}
       >
         <Box sx={{ px: 2, pt: 1, pb: 0.75 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+            }}
+          >
             Run group
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             One agent version, one run per environment, started together.
           </Typography>
         </Box>
@@ -143,10 +236,24 @@ export default function RunGroupBar({ envId, runId, live = false }) {
             <ListItemText
               primary={m.envName}
               secondary={[m.identity, m.result].filter(Boolean).join(" · ")}
-              primaryTypographyProps={{ typography: "s2", fontWeight: m.current ? 700 : 600, noWrap: true }}
-              secondaryTypographyProps={{ typography: "s3", color: "text.subtitle", noWrap: true }}
+              primaryTypographyProps={{
+                typography: "s2",
+                fontWeight: m.current ? 600 : 500,
+                noWrap: true,
+              }}
+              secondaryTypographyProps={{
+                typography: "s3",
+                color: "text.tertiary",
+                noWrap: true,
+              }}
             />
-            {m.current && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "text.primary", flexShrink: 0 }} />}
+            {m.current && (
+              <Iconify
+                icon="solar:check-linear"
+                width={14}
+                sx={{ color: "text.primary", flexShrink: 0 }}
+              />
+            )}
           </MenuItem>
         ))}
       </Popover>

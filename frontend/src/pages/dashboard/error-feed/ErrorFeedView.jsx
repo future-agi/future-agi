@@ -1,14 +1,13 @@
 import React, { useState } from "react";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
-import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
 import { useErrorFeedApiParams } from "./store";
 
 export default function ErrorFeedView() {
-  const theme = useTheme();
   const [selected, setSelected] = useState([]);
 
   const apiParams = useErrorFeedApiParams();
@@ -44,80 +43,50 @@ export default function ErrorFeedView() {
           px: 2,
           pt: 2,
           pb: 1.5,
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
           borderBottom: "1px solid",
           borderColor: "divider",
           flexShrink: 0,
         }}
       >
-        <Stack gap={0.25}>
-          <Stack direction="row" alignItems="center" gap={1}>
+        <PageHeader
+          sx={{ mb: 0 }}
+          title="Error Feed"
+          badge={
             <Typography
-              color="text.primary"
-              typography="m2"
-              fontWeight="fontWeightSemiBold"
-            >
-              Error Feed
-            </Typography>
-            <Box
               sx={{
-                px: 0.75,
-                py: 0.25,
-                borderRadius: "4px",
-                bgcolor: "action.hover",
-                border: "1px solid",
-                borderColor: "divider",
+                typography: "s1",
+                fontWeight: 400,
+                color: "text.tertiary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              <Typography
-                sx={{
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  fontFeatureSettings: "'tnum'",
-                }}
-              >
-                {totalCount}
-              </Typography>
-            </Box>
-          </Stack>
-          <Typography
-            typography="s2"
-            color="text.secondary"
-            fontWeight="fontWeightRegular"
-          >
-            Track, triage, and resolve AI errors — hallucinations, eval
-            failures, and pipeline issues
-          </Typography>
-        </Stack>
-
-        <Stack direction="row" alignItems="center" gap={1}>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={
-              <SvgColor
-                src="/assets/icons/ic_docs_single.svg"
-                sx={{ width: 15, height: 15 }}
-              />
-            }
-            component="a"
-            href="https://docs.futureagi.com/docs/error-feed"
-            target="_blank"
-            sx={{
-              height: 32,
-              fontSize: "13px",
-              borderColor: "divider",
-              color: "text.secondary",
-              borderRadius: "6px",
-              "&:hover": { borderColor: "border.hover" },
-            }}
-          >
-            Docs
-          </Button>
-        </Stack>
+              {totalCount}
+            </Typography>
+          }
+          description="Track, triage, and resolve AI errors — hallucinations, eval failures, and pipeline issues"
+          actions={
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={
+                <SvgColor
+                  src="/assets/icons/ic_docs_single.svg"
+                  sx={{ width: 15 }}
+                />
+              }
+              component="a"
+              href="https://docs.futureagi.com/docs/error-feed"
+              target="_blank"
+              sx={{
+                borderColor: "divider",
+                color: "text.secondary",
+                "&:hover": { borderColor: "border.hover" },
+              }}
+            >
+              Docs
+            </Button>
+          }
+        />
       </Box>
 
       {/* ── Content ── */}

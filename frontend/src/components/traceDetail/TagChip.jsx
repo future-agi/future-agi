@@ -22,8 +22,7 @@ const ColorDots = ({ value, onChange }) => (
           cursor: "pointer",
           border: "2px solid",
           borderColor: c === value ? "text.primary" : "transparent",
-          transition: "transform 100ms, border-color 100ms",
-          "&:hover": { transform: "scale(1.2)" },
+          transition: "border-color 120ms",
         }}
       />
     ))}
@@ -126,9 +125,6 @@ const TagChip = ({
             bgcolor: color,
             flexShrink: 0,
             cursor: !readOnly && onColorChange ? "pointer" : "default",
-            transition: "transform 100ms",
-            "&:hover":
-              !readOnly && onColorChange ? { transform: "scale(1.4)" } : {},
           }}
         />
 
@@ -185,11 +181,15 @@ const TagChip = ({
             sx={{
               p: 0,
               opacity: 0.4,
-              transition: "opacity 100ms",
+              transition: "opacity 120ms",
               "&:hover": { bgcolor: "transparent", opacity: 1 },
             }}
           >
-            <Iconify icon="mdi:close" width={fontSize} sx={{ color }} />
+            <Iconify
+              icon="solar:close-linear"
+              width={fontSize}
+              sx={{ color }}
+            />
           </IconButton>
         )}
       </Box>
@@ -203,7 +203,7 @@ const TagChip = ({
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { borderRadius: "6px", boxShadow: (theme) => theme.shadows[8] },
+            sx: { borderRadius: "8px" },
           },
         }}
       >

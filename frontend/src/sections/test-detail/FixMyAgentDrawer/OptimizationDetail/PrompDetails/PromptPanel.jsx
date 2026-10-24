@@ -3,22 +3,22 @@ import PropTypes from "prop-types";
 import PromptPanelHeader from "./PromptPanelHeader";
 
 const LINE_TYPE_ROW_BG = {
-  removed: "red.o10",
-  added: "green.o10",
-  modified: "yellow.o5",
+  removed: "status.danger.bg",
+  added: "status.success.bg",
+  modified: "status.warning.bg",
   filler: "action.hover",
   unchanged: "transparent",
 };
 
 const DIFF_PART_BG = {
-  removed: "red.o10",
-  added: "green.o10",
+  removed: "status.danger.bg",
+  added: "status.success.bg",
   default: "transparent",
 };
 
 const DIFF_PART_COLOR = {
-  removed: "red.500",
-  added: "green.600",
+  removed: "status.danger.fg",
+  added: "status.success.fg",
 };
 
 const DiffParts = ({ parts, theme }) =>
@@ -150,7 +150,7 @@ const PromptPanel = ({ title, prompt, diffLines, panelRef }) => {
         flexDirection: "column",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         width: "100%",
         flex: 1,
         overflow: "hidden",

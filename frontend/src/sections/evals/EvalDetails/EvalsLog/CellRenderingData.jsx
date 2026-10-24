@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Box, Chip, Skeleton, Typography } from "@mui/material";
+import { Box, Skeleton, Typography } from "@mui/material";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import _ from "lodash";
 import CustomTooltip from "src/components/tooltip";
@@ -38,15 +38,9 @@ export const EvaluateArrayCellRenderer = ({ value }) => {
           overflow: "hidden",
         }}
       >
-        {value?.map((item) => (
-          <Chip
-            key={item}
-            label={item}
-            size="small"
-            variant="outlined"
-            color="primary"
-          />
-        ))}
+        <Typography variant="s2" sx={{ color: "text.primary" }}>
+          {value?.join(" · ")}
+        </Typography>
       </Box>
     </Box>
   );
@@ -326,7 +320,7 @@ export const CustomCellRender = (props) => {
       >
         <Box
           sx={{
-            color: "error.main",
+            color: "status.danger.fg",
             opacity: 1,
             flex: 1,
             display: "flex",
@@ -537,14 +531,14 @@ export const CustomDevelopDetailColumn = (props) => {
 
   const renderIcon = () => {
     if (colDef?.headerName === "image_url") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else if (col.origin_type === "run_prompt") {
       return <Iconify icon="token:rune" sx={{ color: "info.main" }} />;
     } else if (col.origin_type === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "#22B3B7" }}
+          icon="solar:check-circle-linear"
+          sx={{ color: "status.success.fg" }}
         />
       );
     } else if (
@@ -553,12 +547,12 @@ export const CustomDevelopDetailColumn = (props) => {
     ) {
       return (
         <Iconify
-          icon="icon-park-outline:smart-optimization"
+          icon="solar:magic-stick-3-linear"
           sx={{ color: "primary.main" }}
         />
       );
     } else if (col.origin_type === "annotation_label") {
-      return <Iconify icon="jam:write" />;
+      return <Iconify icon="solar:pen-linear" />;
     } else if (col.data_type === "text") {
       return (
         <SvgColor
@@ -567,19 +561,19 @@ export const CustomDevelopDetailColumn = (props) => {
         />
       );
     } else if (col.data_type === "array") {
-      return <Iconify icon="material-symbols:data-array" />;
+      return <Iconify icon="solar:brackets-linear" />;
     } else if (col.data_type === "integer") {
-      return <Iconify icon="material-symbols:tag" />;
+      return <Iconify icon="solar:hashtag-linear" />;
     } else if (col.data_type === "float") {
       return <Iconify icon="tabler:decimal" />;
     } else if (col.data_type === "boolean") {
       return <Iconify icon="material-symbols:toggle-on-outline" />;
     } else if (col.data_type === "datetime") {
-      return <Iconify icon="tabler:calendar" />;
+      return <Iconify icon="solar:calendar-linear" />;
     } else if (col.data_type === "json") {
-      return <Iconify icon="material-symbols:data-object" />;
+      return <Iconify icon="solar:braces-linear" />;
     } else if (col.data_type === "image") {
-      return <Iconify icon="material-symbols:image-outline" />;
+      return <Iconify icon="solar:gallery-linear" />;
     } else {
       return (
         <SvgColor
@@ -621,7 +615,7 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={700} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={600} fontSize="13px" color={"text.secondary"}>
           {displayName}
         </Typography>
         <CustomHeaderAgGridSort

@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import {
   Box,
+  Button,
   CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
+  IconButton,
   Menu,
   MenuItem,
   Skeleton,
@@ -34,8 +36,11 @@ import PropTypes from "prop-types";
 import { useIssueFix } from "src/sections/simulate-v2/errorFeed/issueFix";
 import { triageFixEffect } from "src/sections/simulate-v2/errorFeed/issueFixModel";
 import { useAgentImprovementFlag } from "src/sections/simulate-v2/_mock/featureFlags";
-import { textTone } from "src/sections/simulate-v2/components/textTone";
-import { clickable, focusRing } from "src/sections/simulate-v2/components/clickable";
+import { statusColors } from "src/utils/runStatus";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 import IssueStatusChip from "./IssueStatusChip";
 
 const humanizeTime = (iso) => {
@@ -57,7 +62,7 @@ function FieldRow({ label, children }) {
       gap={1}
     >
       <Typography
-        sx={{ fontSize: "11px", color: "text.secondary", flexShrink: 0 }}
+        sx={{ fontSize: "12px", color: "text.secondary", flexShrink: 0 }}
       >
         {label}
       </Typography>
@@ -86,13 +91,13 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
         {icon && (
           <Iconify
             icon={icon}
-            width={11}
+            width={12}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
         )}
         <Typography
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             color: "text.secondary",
             whiteSpace: "nowrap",
           }}
@@ -107,7 +112,7 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
           target="_blank"
           rel="noopener noreferrer"
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             fontWeight: 500,
             color: "primary.main",
             fontFamily: "inherit",
@@ -125,7 +130,7 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
         <Tooltip title={String(value)} placement="top-start">
           <Typography
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 500,
               color: "text.primary",
               fontFamily: "inherit",
@@ -156,11 +161,11 @@ function Section({ title, children }) {
     <Stack gap={1}>
       <Typography
         sx={{
-          fontSize: "10px",
+          fontSize: "12px",
           fontWeight: 600,
           color: "text.secondary",
-          textTransform: "uppercase",
-          letterSpacing: "0.07em",
+          textTransform: "none",
+          letterSpacing: 0,
         }}
       >
         {title}
@@ -177,30 +182,26 @@ const STATUS_OPTIONS = [
   {
     value: "escalating",
     label: "Escalating",
-    icon: "mdi:trending-up",
-    color: "#DB2F2D",
-    darkColor: "#E87878",
+    icon: "solar:graph-up-linear",
+    role: "danger",
   },
   {
     value: "acknowledged",
     label: "Acknowledged",
-    icon: "mdi:check-circle-outline",
-    color: "#938FA3",
-    darkColor: "#938FA3",
+    icon: "solar:check-circle-linear",
+    role: "neutral",
   },
   {
     value: "for_review",
     label: "For review",
-    icon: "mdi:eye-outline",
-    color: "#F5A623",
-    darkColor: "#F5A623",
+    icon: "solar:eye-linear",
+    role: "warning",
   },
   {
     value: "resolved",
     label: "Resolved",
-    icon: "mdi:check-circle",
-    color: "#5ACE6D",
-    darkColor: "#5ACE6D",
+    icon: "solar:check-circle-bold",
+    role: "success",
   },
 ];
 
@@ -208,16 +209,15 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
   const [anchorEl, setAnchorEl] = useState(null);
   /* The issue's own triage status — a fix shows beside it, never instead.
      Escalating a watched or resolved fix reopens it (triageFixEffect). */
-  const ruleOf = (value) => ({ disabled: false, note: triageFixEffect(fix, value)?.note || "" });
+  const ruleOf = (value) => ({
+    disabled: false,
+    note: triageFixEffect(fix, value)?.note || "",
+  });
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const statusBase =
+  const cur =
     STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
-  const cur = {
-    ...statusBase,
-    color: isDark ? statusBase.darkColor : statusBase.color,
-  };
+  const curColors = statusColors(theme, cur.role);
 
   return (
     <>
@@ -237,23 +237,22 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
           gap: 0.5,
           px: 0.9,
           py: 0.35,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
-          border: "1px solid",
-          borderColor: isDark ? alpha(cur.color, 0.3) : alpha(cur.color, 0.25),
-          bgcolor: isDark ? alpha(cur.color, 0.1) : alpha(cur.color, 0.07),
-          "&:hover": { borderColor: alpha(cur.color, 0.5) },
+          bgcolor: curColors.bg,
+          color: curColors.fg,
+          "&:hover": { opacity: 0.85 },
           transition: "all 0.15s",
         }}
       >
-        <Iconify icon={cur.icon} width={11} sx={{ color: cur.color }} />
-        <Typography fontSize="11px" fontWeight={600} sx={{ color: textTone(cur.color) }}>
+        <Iconify icon={cur.icon} width={12} sx={{ color: "inherit" }} />
+        <Typography fontSize="12px" fontWeight={500} sx={{ color: "inherit" }}>
           {cur.label}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
-          sx={{ color: cur.color, opacity: 0.7 }}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
+          sx={{ color: "inherit", opacity: 0.7 }}
         />
       </Box>
       <Menu
@@ -261,13 +260,12 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            minWidth: 150,
-            maxWidth: 280,
+            minWidth: 200,
+            maxWidth: 320,
             mt: 0.5,
           },
         }}
@@ -275,11 +273,11 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
         <Box sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Change status
@@ -288,7 +286,7 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
         <Divider sx={{ borderColor: "divider" }} />
         {STATUS_OPTIONS.filter((option) => option.value !== current).map(
           (option) => {
-            const statusColor = isDark ? option.darkColor : option.color;
+            const statusColor = statusColors(theme, option.role).fg;
             const rule = ruleOf(option.value);
             return (
               <MenuItem
@@ -300,19 +298,27 @@ function StatusDropdown({ clusterId, current, fix, onReopen }) {
                   if (effect) onReopen?.(effect.reopen);
                   setAnchorEl(null);
                 }}
-                sx={{ gap: 1, fontSize: "13px", py: 0.75, ...(rule.note && { alignItems: "flex-start" }) }}
+                sx={{
+                  gap: 1,
+                  py: 0.75,
+                  ...(rule.note && { alignItems: "flex-start" }),
+                }}
               >
                 <Iconify
                   icon={option.icon}
-                  width={15}
+                  width={16}
                   sx={{ color: statusColor, ...(rule.note && { mt: "1px" }) }}
                 />
                 <Box minWidth={0}>
-                  <Typography fontSize="12px" sx={{ color: textTone(statusColor) }}>
-                    {option.label}
-                  </Typography>
+                  <Typography fontSize="12px">{option.label}</Typography>
                   {rule.note && (
-                    <Typography sx={{ fontSize: "11px", color: "text.secondary", whiteSpace: "normal" }}>
+                    <Typography
+                      sx={{
+                        fontSize: "12px",
+                        color: "text.secondary",
+                        whiteSpace: "normal",
+                      }}
+                    >
                       {rule.note}
                     </Typography>
                   )}
@@ -330,47 +336,40 @@ StatusDropdown.propTypes = {
   current: PropTypes.string,
   fix: PropTypes.object,
   onReopen: PropTypes.func,
-  };
+};
 
 // ── Severity dropdown ─────────────────────────────────────────────────────────
 const SEVERITY_OPTIONS = [
   {
     value: "critical",
     label: "Critical",
-    color: "#DB2F2D",
-    darkColor: "#E87876",
-    icon: "mdi:alert-octagon-outline",
+    role: "danger",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "high",
     label: "High",
-    color: "#E9690C",
-    darkColor: "#F49A54",
-    icon: "mdi:alert-circle-outline",
+    role: "warning",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "medium",
     label: "Medium",
-    color: "#8C7A00",
-    darkColor: "#F5E65F",
-    icon: "mdi:alert-outline",
+    role: "info",
+    icon: "solar:danger-triangle-linear",
   },
   {
     value: "low",
     label: "Low",
-    color: "#605C70",
-    darkColor: "#71717a",
-    icon: "mdi:information-outline",
+    role: "neutral",
+    icon: "solar:info-circle-linear",
   },
 ];
 
 function SeverityDropdown({ current, onChange }) {
   const [anchorEl, setAnchorEl] = useState(null);
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const base =
+  const cur =
     SEVERITY_OPTIONS.find((s) => s.value === current) || SEVERITY_OPTIONS[1];
-  const cur = { ...base, color: isDark ? base.darkColor : base.color };
 
   return (
     <>
@@ -390,12 +389,12 @@ function SeverityDropdown({ current, onChange }) {
           gap: 0.5,
           px: 0.9,
           py: 0.35,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
-          borderColor: isDark ? alpha(cur.color, 0.3) : alpha(cur.color, 0.25),
-          bgcolor: isDark ? alpha(cur.color, 0.1) : alpha(cur.color, 0.07),
-          "&:hover": { borderColor: alpha(cur.color, 0.5) },
+          borderColor: `status.${cur.role}.border`,
+          bgcolor: `status.${cur.role}.bg`,
+          "&:hover": { borderColor: `status.${cur.role}.solid` },
           transition: "all 0.15s",
         }}
       >
@@ -404,17 +403,21 @@ function SeverityDropdown({ current, onChange }) {
             width: 6,
             height: 6,
             borderRadius: "50%",
-            bgcolor: cur.color,
+            bgcolor: `status.${cur.role}.solid`,
             flexShrink: 0,
           }}
         />
-        <Typography fontSize="11px" fontWeight={600} sx={{ color: textTone(cur.color) }}>
+        <Typography
+          fontSize="12px"
+          fontWeight={600}
+          sx={{ color: `status.${cur.role}.fg` }}
+        >
           {cur.label}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
-          sx={{ color: cur.color, opacity: 0.7 }}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
+          sx={{ color: `status.${cur.role}.fg`, opacity: 0.7 }}
         />
       </Box>
       <Menu
@@ -422,12 +425,11 @@ function SeverityDropdown({ current, onChange }) {
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            minWidth: 150,
+            minWidth: 200,
             mt: 0.5,
           },
         }}
@@ -435,11 +437,11 @@ function SeverityDropdown({ current, onChange }) {
         <Box sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Change severity
@@ -447,7 +449,6 @@ function SeverityDropdown({ current, onChange }) {
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
         {SEVERITY_OPTIONS.filter((s) => s.value !== current).map((s) => {
-          const c = isDark ? s.darkColor : s.color;
           return (
             <MenuItem
               key={s.value}
@@ -455,18 +456,18 @@ function SeverityDropdown({ current, onChange }) {
                 onChange?.(s.value);
                 setAnchorEl(null);
               }}
-              sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+              sx={{ gap: 1, py: 0.75 }}
             >
               <Box
                 sx={{
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  bgcolor: c,
+                  bgcolor: `status.${s.role}.solid`,
                   flexShrink: 0,
                 }}
               />
-              <Typography fontSize="12px" sx={{ color: textTone(c) }}>
+              <Typography fontSize="12px" sx={{ color: `status.${s.role}.fg` }}>
                 {s.label}
               </Typography>
             </MenuItem>
@@ -494,8 +495,6 @@ function getInitials(name, email) {
 
 function AssigneeDropdown({ current, onChange, members = [] }) {
   const [anchorEl, setAnchorEl] = useState(null);
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const member = members.find((m) => m.email === current);
 
   return (
@@ -506,7 +505,10 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
             e.stopPropagation();
             setAnchorEl(e.currentTarget);
           },
-          { label: `Assignee: ${member ? member.name || member.email : "unassigned"}`, expanded: Boolean(anchorEl) },
+          {
+            label: `Assignee: ${member ? member.name || member.email : "unassigned"}`,
+            expanded: Boolean(anchorEl),
+          },
         )}
         aria-haspopup="menu"
         sx={{
@@ -516,14 +518,14 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           gap: 0.6,
           px: 0.75,
           py: 0.3,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+          bgcolor: "action.hover",
           "&:hover": {
-            borderColor: alpha("#7857FC", 0.4),
-            bgcolor: isDark ? alpha("#7857FC", 0.07) : alpha("#7857FC", 0.04),
+            borderColor: "status.discovery.solid",
+            bgcolor: "status.discovery.bg",
           },
           transition: "all 0.15s",
         }}
@@ -535,7 +537,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                 width: 16,
                 height: 16,
                 borderRadius: "50%",
-                bgcolor: alpha("#7857FC", 0.2),
+                bgcolor: "status.discovery.bg",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -543,15 +545,15 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               }}
             >
               <Typography
-                fontSize="8px"
-                fontWeight={700}
-                sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
+                fontSize="12px"
+                fontWeight={600}
+                sx={{ color: "status.discovery.fg" }}
               >
                 {getInitials(member.name, member.email)}
               </Typography>
             </Box>
             <Typography
-              fontSize="11px"
+              fontSize="12px"
               color="text.primary"
               noWrap
               sx={{ maxWidth: 90 }}
@@ -562,18 +564,18 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         ) : (
           <>
             <Iconify
-              icon="mdi:account-plus-outline"
+              icon="solar:user-plus-linear"
               width={12}
               sx={{ color: "text.disabled" }}
             />
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="12px" color="text.disabled">
               Assign
             </Typography>
           </>
         )}
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
           sx={{ color: "text.disabled", opacity: 0.7 }}
         />
       </Box>
@@ -582,12 +584,11 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            minWidth: 180,
+            minWidth: 200,
             mt: 0.5,
           },
         }}
@@ -595,11 +596,11 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         <Box sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Assign to
@@ -615,8 +616,8 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
             sx={{ gap: 1, py: 0.75 }}
           >
             <Iconify
-              icon="mdi:account-remove-outline"
-              width={15}
+              icon="solar:user-minus-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
             <Typography fontSize="12px" color="text.secondary">
@@ -640,7 +641,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                   width: 20,
                   height: 20,
                   borderRadius: "50%",
-                  bgcolor: alpha("#7857FC", 0.18),
+                  bgcolor: "status.discovery.bg",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -648,9 +649,9 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                 }}
               >
                 <Typography
-                  fontSize="9px"
-                  fontWeight={700}
-                  sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
+                  fontSize="12px"
+                  fontWeight={600}
+                  sx={{ color: "status.discovery.fg" }}
                 >
                   {getInitials(m.name, m.email)}
                 </Typography>
@@ -673,13 +674,13 @@ AssigneeDropdown.propTypes = {
 // ── Eval row ──────────────────────────────────────────────────────────────────
 function EvalRow({ label, type, result, score, value }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   const passed = result === "passed";
-  const resultColor = passed ? "#5ACE6D" : "#DB2F2D";
+  const resultColors = statusColors(theme, passed ? "success" : "danger");
+  const resultColor = resultColors.solid;
   const resultIcon = passed
-    ? "mdi:check-circle-outline"
-    : "mdi:close-circle-outline";
+    ? "solar:check-circle-linear"
+    : "solar:close-circle-linear";
 
   // Deterministic: use the returned value as the display label (coloured by pass/fail)
   // Pass/Fail: "Passed" / "Failed"
@@ -695,12 +696,12 @@ function EvalRow({ label, type, result, score, value }) {
         borderRadius: "6px",
         border: "1px solid",
         borderColor: "divider",
-        bgcolor: isDark ? alpha("#fff", 0.018) : alpha("#000", 0.015),
+        bgcolor: "action.hover",
       }}
     >
       {/* Header: name only */}
       <Typography
-        fontSize="11px"
+        fontSize="12px"
         fontWeight={500}
         color="text.primary"
         noWrap
@@ -718,7 +719,7 @@ function EvalRow({ label, type, result, score, value }) {
               height: 3,
               borderRadius: 2,
               overflow: "hidden",
-              bgcolor: isDark ? alpha("#fff", 0.08) : alpha("#000", 0.07),
+              bgcolor: "action.selected",
             }}
           >
             <Box
@@ -731,7 +732,7 @@ function EvalRow({ label, type, result, score, value }) {
             />
           </Box>
           <Typography
-            fontSize="10px"
+            fontSize="12px"
             fontWeight={600}
             sx={{
               color: "text.secondary",
@@ -747,11 +748,15 @@ function EvalRow({ label, type, result, score, value }) {
       {/* Pass/Fail + Deterministic — verdict label with result colour */}
       {(type === "pass" || type === "deterministic") && (
         <Stack direction="row" alignItems="center" gap={0.35}>
-          <Iconify icon={resultIcon} width={11} sx={{ color: resultColor }} />
+          <Iconify
+            icon={resultIcon}
+            width={12}
+            sx={{ color: resultColors.fg }}
+          />
           <Typography
-            fontSize="10px"
-            fontWeight={600}
-            sx={{ color: resultColor }}
+            fontSize="12px"
+            fontWeight={500}
+            sx={{ color: resultColors.fg }}
           >
             {verdictLabel}
           </Typography>
@@ -770,8 +775,6 @@ EvalRow.propTypes = {
 
 // ── Activity timeline item ────────────────────────────────────────────────────
 function ActivityItem({ text, meta, isLast }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack direction="row" gap={1} alignItems="flex-start">
       {/* Timeline spine */}
@@ -783,8 +786,8 @@ function ActivityItem({ text, meta, isLast }) {
             borderRadius: "50%",
             flexShrink: 0,
             border: "1.5px solid",
-            borderColor: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.35)",
-            bgcolor: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.06)",
+            borderColor: "text.disabled",
+            bgcolor: "action.selected",
             mt: "3px",
           }}
         />
@@ -794,7 +797,7 @@ function ActivityItem({ text, meta, isLast }) {
               width: 1.5,
               flex: 1,
               minHeight: 14,
-              bgcolor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+              bgcolor: "divider",
               mt: "2px",
             }}
           />
@@ -802,13 +805,13 @@ function ActivityItem({ text, meta, isLast }) {
       </Stack>
       <Stack gap={0} pb={isLast ? 0 : 1}>
         <Typography
-          fontSize="11px"
+          fontSize="12px"
           color="text.primary"
           sx={{ lineHeight: 1.5 }}
         >
           {text}
         </Typography>
-        <Typography fontSize="10px" color="text.secondary">
+        <Typography fontSize="12px" color="text.secondary">
           {meta}
         </Typography>
       </Stack>
@@ -824,8 +827,6 @@ ActivityItem.propTypes = {
 // ── Co-occurring issues ───────────────────────────────────────────────────────
 
 function CoOccurringList({ issues }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   return (
     <Stack gap={0.5}>
@@ -836,7 +837,10 @@ function CoOccurringList({ issues }) {
             direction="row"
             alignItems="center"
             gap={0.75}
-            {...clickable(() => navigate(paths.dashboard.errorFeed.detail(issue.id)), { role: "link" })}
+            {...clickable(
+              () => navigate(paths.dashboard.errorFeed.detail(issue.id)),
+              { role: "link" },
+            )}
             sx={{
               ...focusRing,
               px: 1,
@@ -844,22 +848,20 @@ function CoOccurringList({ issues }) {
               border: "1px solid",
               borderColor: "divider",
               borderRadius: "6px",
-              bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+              bgcolor: "transparent",
               cursor: "pointer",
               "&:hover": {
-                borderColor: alpha("#7857FC", 0.3),
-                bgcolor: isDark
-                  ? alpha("#7857FC", 0.05)
-                  : alpha("#7857FC", 0.02),
+                borderColor: "status.discovery.border",
+                bgcolor: "status.discovery.bg",
               },
               transition: "all 0.15s",
             }}
           >
             <Stack gap={0.1} flex={1} minWidth={0}>
-              <Typography fontSize="11px" color="text.primary" noWrap>
+              <Typography fontSize="12px" color="text.primary" noWrap>
                 {issue.title}
               </Typography>
-              <Typography fontSize="10px" color="text.secondary">
+              <Typography fontSize="12px" color="text.secondary">
                 {issue.count?.toLocaleString()} shared
                 {issue.co_occurrence != null &&
                   ` · ${Math.round(issue.co_occurrence * 100)}%`}
@@ -876,8 +878,6 @@ CoOccurringList.propTypes = { issues: PropTypes.array.isRequired };
 // ── Integrations ──────────────────────────────────────────────────────────────
 
 export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const { enqueueSnackbar } = useSnackbar();
   // Use the live active org (matches the X-Organization-Id header) instead of
   // the cached user.organization.id, which can drift and 404 the request
@@ -927,12 +927,13 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
+          maxWidth: 560,
           borderRadius: "12px",
-          bgcolor: isDark ? "#111111" : "background.paper",
+          bgcolor: "background.paper",
           backgroundImage: "none",
           border: "1px solid",
           borderColor: "divider",
@@ -946,24 +947,16 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           justifyContent="space-between"
         >
           <Stack gap={0.2}>
-            <Typography fontSize="14px" fontWeight={700} color="text.primary">
+            <Typography fontSize="13px" fontWeight={600} color="text.primary">
               Create Linear Issue
             </Typography>
-            <Typography fontSize="11px" color="text.secondary">
+            <Typography fontSize="12px" color="text.secondary">
               Select a team to create the issue in.
             </Typography>
           </Stack>
-          <Box
-            {...clickable(onClose, { label: "Close" })}
-            sx={{
-              ...focusRing,
-              cursor: "pointer",
-              color: "text.disabled",
-              "&:hover": { color: "text.primary" },
-            }}
-          >
-            <Iconify icon="mdi:close" width={18} />
-          </Box>
+          <IconButton size="small" onClick={onClose} aria-label="Close">
+            <Iconify icon="solar:close-linear" width={20} />
+          </IconButton>
         </Stack>
       </DialogTitle>
       <DialogContent sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
@@ -985,7 +978,9 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                 direction="row"
                 alignItems="center"
                 gap={1.25}
-                {...clickable(() => !createIssue.isPending && handleCreate(t.id))}
+                {...clickable(
+                  () => !createIssue.isPending && handleCreate(t.id),
+                )}
                 sx={{
                   ...focusRing,
                   px: 1.25,
@@ -995,10 +990,10 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   borderRadius: "8px",
                   cursor: createIssue.isPending ? "wait" : "pointer",
                   "&:hover": {
+                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
                     borderColor: "#5E6AD2",
-                    bgcolor: isDark
-                      ? alpha("#5E6AD2", 0.06)
-                      : alpha("#5E6AD2", 0.03),
+                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    bgcolor: alpha("#5E6AD2", 0.04),
                   },
                   transition: "all 0.15s",
                 }}
@@ -1008,16 +1003,16 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                     width: 28,
                     height: 28,
                     borderRadius: "6px",
-                    bgcolor: isDark
-                      ? alpha("#5E6AD2", 0.12)
-                      : alpha("#5E6AD2", 0.08),
+                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    bgcolor: alpha("#5E6AD2", 0.1),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
                   }}
                 >
-                  <Typography fontSize="12px" fontWeight={700} color="#5E6AD2">
+                  {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
+                  <Typography fontSize="12px" fontWeight={600} color="#5E6AD2">
                     {t.key}
                   </Typography>
                 </Box>
@@ -1030,6 +1025,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   {t.name}
                 </Typography>
                 {createIssue.isPending && (
+                  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
                   <CircularProgress size={14} sx={{ color: "#5E6AD2" }} />
                 )}
               </Stack>
@@ -1049,7 +1045,6 @@ LinearTeamPicker.propTypes = {
 
 function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   return (
     <Stack
@@ -1062,63 +1057,50 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "6px",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+        bgcolor: "transparent",
       }}
     >
       <Box
         sx={{
           width: 22,
           height: 22,
-          borderRadius: "5px",
-          bgcolor: isDark ? alpha(color, 0.12) : alpha(color, 0.08),
+          borderRadius: "4px",
+          bgcolor: alpha(color, 0.1),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        <Iconify icon={icon} width={13} sx={{ color }} />
+        <Iconify icon={icon} width={14} sx={{ color }} />
       </Box>
 
       <Stack gap={0} flex={1} minWidth={0}>
-        <Typography fontSize="11px" fontWeight={600} color="text.primary">
+        <Typography fontSize="12px" fontWeight={600} color="text.primary">
           {name}
         </Typography>
         <Typography
-          fontSize="10px"
+          fontSize="12px"
           color={subtitle === "Connected" ? undefined : "text.secondary"}
-          sx={subtitle === "Connected" ? { color: "#5ACE6D" } : undefined}
+          sx={
+            subtitle === "Connected"
+              ? { color: statusColors(theme, "success").fg }
+              : undefined
+          }
         >
           {subtitle}
         </Typography>
       </Stack>
 
       {action && (
-        <Box
-          {...clickable(onAction)}
-          sx={{
-            ...focusRing,
-            px: 0.75,
-            py: 0.25,
-            borderRadius: "4px",
-            cursor: "pointer",
-            border: "1px solid",
-            borderColor: alpha(color, 0.3),
-            bgcolor: isDark ? alpha(color, 0.1) : alpha(color, 0.07),
-            "&:hover": {
-              bgcolor: isDark ? alpha(color, 0.18) : alpha(color, 0.12),
-            },
-            transition: "all 0.15s",
-          }}
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onAction}
+          sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
         >
-          <Typography
-            fontSize="10px"
-            fontWeight={600}
-            sx={{ color, whiteSpace: "nowrap" }}
-          >
-            {action}
-          </Typography>
-        </Box>
+          {action}
+        </Button>
       )}
     </Stack>
   );
@@ -1186,6 +1168,7 @@ function Integrations({
       <Stack gap={0.75}>
         <ConnectorRow
           icon="simple-icons:linear"
+          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
           color="#5E6AD2"
           name="Linear"
           subtitle={linearSubtitle}
@@ -1219,10 +1202,7 @@ const EVAL_TYPE_MAP = {
   deterministic: "deterministic",
 };
 
-
 export default function ErrorMetadataPanel({ error }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const improving = useAgentImprovementFlag();
   const { status: fix, setReopened } = useIssueFix(error);
   const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
@@ -1278,7 +1258,7 @@ export default function ErrorMetadataPanel({ error }) {
   const activityLog = error.first_seen
     ? [
         {
-          color: "#F5A623",
+          color: "status.warning.solid",
           text: "First detected",
           meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
             ageDays != null ? ` — ${ageDays} days open` : ""
@@ -1290,11 +1270,10 @@ export default function ErrorMetadataPanel({ error }) {
   return (
     <Box
       sx={{
-        width: 260,
+        width: 280,
         flexShrink: 0,
         borderLeft: "1px solid",
         borderColor: "divider",
-        bgcolor: isDark ? "background.neutral" : "background.default",
         overflowY: "auto",
         display: "flex",
         flexDirection: "column",
@@ -1345,17 +1324,17 @@ export default function ErrorMetadataPanel({ error }) {
               {
                 label: "Users affected",
                 value: error.users_affected?.toLocaleString(),
-                icon: "mdi:account-group-outline",
+                icon: "solar:users-group-rounded-linear",
               },
               {
                 label: "Sessions",
                 value: error.sessions?.toLocaleString(),
-                icon: "mdi:monitor-eye",
+                icon: "solar:monitor-linear",
               },
               {
                 label: "Issue ID",
                 value: error.cluster_id,
-                icon: "mdi:identifier",
+                icon: "solar:hashtag-linear",
               },
             ].map((item) => (
               <Box
@@ -1363,7 +1342,7 @@ export default function ErrorMetadataPanel({ error }) {
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "5px",
+                  borderRadius: "4px",
                   px: 1,
                   py: 0.6,
                 }}
@@ -1371,15 +1350,15 @@ export default function ErrorMetadataPanel({ error }) {
                 <Stack direction="row" alignItems="center" gap={0.4} mb={0.2}>
                   <Iconify
                     icon={item.icon}
-                    width={10}
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography fontSize="9px" color="text.secondary">
+                  <Typography fontSize="12px" color="text.secondary">
                     {item.label}
                   </Typography>
                 </Stack>
                 <Typography
-                  fontSize="11px"
+                  fontSize="12px"
                   fontWeight={600}
                   color="text.primary"
                   noWrap
@@ -1397,18 +1376,18 @@ export default function ErrorMetadataPanel({ error }) {
             <MetaRow
               label="First seen"
               value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}
-              icon="mdi:clock-start"
+              icon="solar:stopwatch-linear"
             />
             <MetaRow
               label="Last seen"
               value={error.lastSeenHuman ?? humanizeTime(error.last_seen)}
-              icon="mdi:clock-outline"
+              icon="solar:clock-circle-linear"
             />
             {ageDays != null && (
               <MetaRow
                 label="Age"
                 value={`${ageDays} days`}
-                icon="mdi:calendar-clock"
+                icon="solar:calendar-mark-linear"
               />
             )}
           </Stack>
@@ -1420,19 +1399,19 @@ export default function ErrorMetadataPanel({ error }) {
             <MetaRow
               label="Model"
               value={sidebar?.ai_metadata?.model ?? error.model}
-              icon="mdi:brain"
+              icon="solar:brain-linear"
               monospace
             />
             <MetaRow
               label="Version"
               value={sidebar?.ai_metadata?.model_version ?? error.model_version}
-              icon="mdi:tag-outline"
+              icon="solar:tag-linear"
               monospace
             />
             <MetaRow
               label="Agent"
               value={error.agent}
-              icon="mdi:robot-outline"
+              icon="solar:bot-linear"
               monospace
             />
             <MetaRow label="Pipeline" value={error.pipeline} icon="mdi:pipe" />
@@ -1440,13 +1419,13 @@ export default function ErrorMetadataPanel({ error }) {
               <MetaRow
                 label="Connector"
                 value={error.connector}
-                icon="mdi:connection"
+                icon="solar:plug-circle-linear"
               />
             )}
             <MetaRow
               label="Project"
               value={sidebar?.ai_metadata?.project ?? error.project}
-              icon="mdi:folder-outline"
+              icon="solar:folder-linear"
             />
             {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
               <MetaRow
@@ -1454,13 +1433,13 @@ export default function ErrorMetadataPanel({ error }) {
                 value={`${(
                   sidebar?.ai_metadata?.eval_score ?? error.eval_score
                 ).toFixed(2)} / 1.00`}
-                icon="mdi:chart-line"
+                icon="solar:graph-up-linear"
               />
             )}
             <MetaRow
               label="Trace ID"
               value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
-              icon="mdi:sitemap-outline"
+              icon="solar:graph-linear"
               monospace
             />
           </Stack>
@@ -1475,13 +1454,13 @@ export default function ErrorMetadataPanel({ error }) {
                   <Skeleton
                     width={90}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Box sx={{ flex: 1 }} />
                   <Skeleton
                     width={36}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 </Stack>
               ))}
@@ -1515,13 +1494,13 @@ export default function ErrorMetadataPanel({ error }) {
                   <Skeleton
                     width="65%"
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Box sx={{ flex: 1 }} />
                   <Skeleton
                     width={28}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 </Stack>
               ))}
@@ -1555,11 +1534,11 @@ export default function ErrorMetadataPanel({ error }) {
         <Stack gap={1}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Integrations

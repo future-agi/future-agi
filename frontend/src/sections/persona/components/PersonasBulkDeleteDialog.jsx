@@ -17,7 +17,13 @@ const PersonasBulkDeleteDialog = ({
   onCancel,
   isLoading,
 }) => (
-  <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth>
+  <Dialog
+    open={open}
+    onClose={onCancel}
+    maxWidth={false}
+    PaperProps={{ sx: { maxWidth: 400 } }}
+    fullWidth
+  >
     <DialogTitle>
       Delete {count} persona{count !== 1 ? "s" : ""}?
     </DialogTitle>

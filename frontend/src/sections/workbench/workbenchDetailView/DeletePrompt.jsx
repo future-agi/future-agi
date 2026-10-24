@@ -35,7 +35,13 @@ const DeletePrompt = ({ open, onClose, refreshGrid, selected }) => {
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -54,7 +60,7 @@ const DeletePrompt = ({ open, onClose, refreshGrid, selected }) => {
               {selected?.length > 1 && "s"}
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText
@@ -104,15 +110,13 @@ const DeletePrompt = ({ open, onClose, refreshGrid, selected }) => {
               variant="outlined"
               sx={{
                 color: "text.disabled",
-                px: "24ppx",
-                py: "6px",
                 minWidth: "90px",
               }}
             >
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightSemiBold"}
-                fontSize={"14px"}
+                fontSize={"13px"}
               >
                 Cancel
               </Typography>
@@ -124,17 +128,15 @@ const DeletePrompt = ({ open, onClose, refreshGrid, selected }) => {
               onClick={handleDelete}
               color="error"
               sx={{
-                backgroundColor: "red.500",
+                backgroundColor: "status.danger.solid",
                 color: "error.contrastText",
-                px: "24px",
-                py: "6px",
                 minWidth: "90px",
               }}
             >
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightSemiBold"}
-                fontSize={"14px"}
+                fontSize={"13px"}
               >
                 Delete
               </Typography>

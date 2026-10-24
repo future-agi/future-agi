@@ -22,6 +22,7 @@ import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
 import {
+  alertThresholdBand,
   getCompareChartConfig,
   getDefaultDateRange,
   getSimpleLineChartConfig,
@@ -151,40 +152,34 @@ export default function AlertsSheetView() {
               {
                 value: max,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: min,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
             ]
           : [
               {
                 value: max,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: min,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
             ];
 
@@ -194,13 +189,13 @@ export default function AlertsSheetView() {
             seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
             thresholds,
           },
-          { isDark },
+          { isDark, theme },
         );
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           data,
           { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
-          { isDark },
+          { isDark, theme },
         );
       }
 
@@ -236,7 +231,7 @@ export default function AlertsSheetView() {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
             labels: {
-              style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+              style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
         }}

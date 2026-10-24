@@ -57,7 +57,7 @@ const MoreAction = ({ data, promptName, handleEdit }) => {
   return (
     <Box sx={{ display: "flex", alignItems: "center" }}>
       <Iconify
-        icon="charm:menu-kebab"
+        icon="solar:menu-dots-vertical-linear"
         width="24px"
         height="24px"
         sx={{

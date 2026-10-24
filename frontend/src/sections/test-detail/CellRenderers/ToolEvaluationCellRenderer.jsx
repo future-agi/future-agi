@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Chip, Skeleton, Typography } from "@mui/material";
+import { Box, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import _ from "lodash";
@@ -74,17 +74,9 @@ const ToolEvaluationCellRenderer = ({ value: evalData }) => {
       return _.capitalize(evalData?.value);
     } else if (evalData?.type === "choices") {
       return (
-        <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-          {evalData?.value?.map((item) => (
-            <Chip
-              color="primary"
-              variant="outlined"
-              size="small"
-              key={item}
-              label={_.capitalize(item)}
-            />
-          ))}
-        </Box>
+        <Typography variant="body2" color="text.primary">
+          {evalData?.value?.map((item) => _.capitalize(item)).join(" · ")}
+        </Typography>
       );
     }
   };

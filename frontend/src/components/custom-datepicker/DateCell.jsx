@@ -33,7 +33,7 @@ export default function DateCell({ day, monthStart, range, onClick }) {
         borderColor: today ? "text.primary" : undefined,
         bgcolor:
           isStart || isEnd
-            ? "purple.300"
+            ? "action.hover"
             : inRange
               ? "action.hover"
               : "transparent",
@@ -41,15 +41,15 @@ export default function DateCell({ day, monthStart, range, onClick }) {
         "&:hover": {
           bgcolor:
             isStart || isEnd
-              ? "purple.400"
+              ? "action.hover"
               : inRange
-                ? "purple.200"
+                ? "action.hover"
                 : "action.hover",
         },
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: "11px", // reduced from 14px
+        fontSize: "12px", // reduced from 14px
         fontWeight: isStart || isEnd ? "bold" : "normal",
       }}
     >

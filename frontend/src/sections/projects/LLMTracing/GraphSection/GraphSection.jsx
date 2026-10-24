@@ -696,13 +696,13 @@ const GraphSection = ({
             getYAxisUnit("default"),
           style: isCollapsed
             ? { fontSize: "6px", fontWeight: 400 }
-            : { fontSize: "11px", fontWeight: 400 },
+            : { fontSize: "12px", fontWeight: 400 },
         },
         labels: {
           formatter: (val) => formatYAxisValue(val, selectedGraphProperty),
           style: isCollapsed
             ? { fontSize: "6px", fontWeight: 400 }
-            : { fontSize: "11px", fontWeight: 400 },
+            : { fontSize: "12px", fontWeight: 400 },
         },
         opposite: false,
         forceNiceScale: true,
@@ -723,13 +723,13 @@ const GraphSection = ({
           text: "Traffic",
           style: isCollapsed
             ? { fontSize: "6px", fontWeight: 400 }
-            : { fontSize: "11px", fontWeight: 400 },
+            : { fontSize: "12px", fontWeight: 400 },
         },
         labels: {
           formatter: (val) => formatYAxisValue(val),
           style: isCollapsed
             ? { fontSize: "6px", fontWeight: 400 }
-            : { fontSize: "11px", fontWeight: 400 },
+            : { fontSize: "12px", fontWeight: 400 },
         },
         opposite: true,
       });
@@ -740,7 +740,7 @@ const GraphSection = ({
       convertedCatToNumeric: false, // include this explicitly
       labels: {
         datetimeUTC: false,
-        style: isCollapsed ? { fontSize: "6px" } : { fontSize: "11px" },
+        style: isCollapsed ? { fontSize: "6px" } : { fontSize: "12px" },
         offsetY: -4,
       },
     };
@@ -754,7 +754,7 @@ const GraphSection = ({
           type: "line",
           stacked: false,
           background: "transparent",
-          foreColor: isDark ? "#a1a1aa" : undefined,
+          foreColor: theme.palette.text.tertiary,
           toolbar: {
             show: false,
           },
@@ -779,7 +779,7 @@ const GraphSection = ({
           mode: isDark ? "dark" : "light",
         },
         grid: {
-          borderColor: isDark ? "#27272a" : theme.palette.divider,
+          borderColor: theme.palette.divider,
           strokeDashArray: 6,
         },
         stroke: {
@@ -908,7 +908,7 @@ const GraphSection = ({
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             gap: theme.spacing(1),
             flexDirection: isCollapsed ? "row" : "column",
             display: "flex",
@@ -1050,8 +1050,8 @@ const GraphSection = ({
               >
                 <EmptyGraph />
                 <Typography
-                  fontSize="14px"
-                  fontWeight={700}
+                  fontSize="13px"
+                  fontWeight={600}
                   color="text.secondary"
                 >
                   View Graph
@@ -1076,7 +1076,7 @@ const GraphSection = ({
               <ShowComponent condition={Boolean(apiGraphReadMessage)}>
                 <Typography
                   role="status"
-                  fontSize="11px"
+                  fontSize="12px"
                   color="text.secondary"
                   sx={{ px: 1 }}
                 >
@@ -1165,7 +1165,7 @@ const GraphSection = ({
           onClick={toggleHeight}
         >
           <Iconify
-            icon="bi:arrows-collapse"
+            icon="solar:chevrons-down-up-linear"
             width={16}
             sx={{ color: "text.disabled" }}
           />
@@ -1189,7 +1189,7 @@ const GraphSection = ({
           onMouseDown={handleMouseDown}
         >
           <Iconify
-            icon="charm:grab-horizontal"
+            icon="solar:grip-horizontal-linear"
             width={16}
             sx={{ color: "text.disabled", padding: theme.spacing(0.25) }}
           />

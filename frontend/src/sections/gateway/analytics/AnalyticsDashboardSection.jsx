@@ -86,6 +86,7 @@ const AnalyticsDashboardSection = ({ gatewayId: gatewayIdProp } = {}) => {
     <Box p={3}>
       {/* ---- Header: Title + Time Range Selector ---- */}
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.analytics}
         title="Analytics"
         subtitle="Explore usage, cost, latency, and error trends"
@@ -103,7 +104,7 @@ const AnalyticsDashboardSection = ({ gatewayId: gatewayIdProp } = {}) => {
         value={activeTab}
         onChange={handleTabChange}
         variant="standard"
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         {TAB_LABELS.map((label, index) => (
           <Tab key={label} label={label} value={index} />

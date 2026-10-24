@@ -1,12 +1,4 @@
-import {
-  Box,
-  Drawer,
-  IconButton,
-  Tab,
-  Tabs,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Drawer, IconButton, Tab, Tabs, Typography } from "@mui/material";
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -17,10 +9,14 @@ import { useScrollEnd } from "src/hooks/use-scroll-end";
 import JobQueryItem from "./JobQueryItem";
 import NoJobQuery from "./NoJobQuery";
 import LoadingJobQueries from "./LoadingJobQueries";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const JobDetailDrawer = ({ show, onClose, selectedRow }) => {
+  const covered = useDrawerCovered(show);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={show}
       onClose={onClose}
@@ -28,12 +24,12 @@ const JobDetailDrawer = ({ show, onClose, selectedRow }) => {
       PaperProps={{
         sx: {
           height: "85vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
           top: "95px",
           right: 30,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -54,8 +50,6 @@ JobDetailDrawer.propTypes = {
 };
 
 const JobDetailContent = ({ show, selectedRow, onClose }) => {
-  const theme = useTheme();
-
   const [selectedTab, setSelectedTab] = useState("all");
 
   const [tableRuns, setTableRuns] = useState(null);
@@ -125,7 +119,7 @@ const JobDetailContent = ({ show, selectedRow, onClose }) => {
         }}
       >
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box sx={{ gap: "14px", display: "flex", flexDirection: "column" }}>
@@ -153,11 +147,6 @@ const JobDetailContent = ({ show, selectedRow, onClose }) => {
         onChange={handleChange}
         aria-label="basic tabs example"
         textColor="primary"
-        TabIndicatorProps={{
-          style: {
-            backgroundColor: theme.palette.primary.main,
-          },
-        }}
       >
         <Tab label="All queries" value="all" />
         <Tab label="Failed" value="failed" />
@@ -193,14 +182,14 @@ const DetailInfo = ({ label, value }) => {
     <Box sx={{ display: "flex" }}>
       <Typography
         component="span"
-        fontSize="14px"
-        fontWeight={700}
+        fontSize="13px"
+        fontWeight={600}
         color="text.disabled"
         sx={{ minWidth: "130px" }}
       >
         {label}
       </Typography>
-      <Typography color="text.primary" fontSize={14}>
+      <Typography color="text.primary" fontSize={13}>
         {value}
       </Typography>
     </Box>

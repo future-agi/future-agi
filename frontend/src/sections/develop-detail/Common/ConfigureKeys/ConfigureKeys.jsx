@@ -47,7 +47,13 @@ const ConfigureKeys = ({ open, onClose }) => {
 
   return (
     <>
-      <Dialog open={open} onClose={closeModal} maxWidth="md" fullWidth>
+      <Dialog
+        open={open}
+        onClose={closeModal}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
+        fullWidth
+      >
         <Box sx={{ display: "flex", flexDirection: "column", height: "90vh" }}>
           {/* Sticky Header with Search Bar */}
           <Box
@@ -72,7 +78,7 @@ const ConfigureKeys = ({ open, onClose }) => {
                 alignItems: "center",
               }}
             >
-              <Typography fontWeight={700} fontSize="18px">
+              <Typography fontWeight={600} fontSize="16px">
                 API Key Configuration
               </Typography>
               <IconButton
@@ -80,7 +86,7 @@ const ConfigureKeys = ({ open, onClose }) => {
                 size="small"
                 sx={{ marginRight: "-15px" }}
               >
-                <Iconify icon="mdi:close" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
 
@@ -96,7 +102,7 @@ const ConfigureKeys = ({ open, onClose }) => {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear" width={16}
                       sx={{ color: "text.disabled" }}
                     />
                   </InputAdornment>
@@ -165,8 +171,9 @@ const ConfigureKeys = ({ open, onClose }) => {
             sx={{ color: "common.white" }}
             startIcon={
               <SvgColor
+                width={2}
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }

@@ -1,8 +1,8 @@
-import { Box, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useCallback } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
-import HeadingAndSubheading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
+import PageHeader from "src/components/page-header";
 
 import TaskListView from "./TaskListView";
 
@@ -38,25 +38,10 @@ const EvalsTasksViewV2 = ({ observeId = null }) => {
     >
       {/* Header */}
       {!observeId && (
-        <HeadingAndSubheading
-          heading={
-            <Typography
-              color="text.primary"
-              typography="m2"
-              fontWeight="fontWeightBold"
-            >
-              Tasks
-            </Typography>
-          }
-          subHeading={
-            <Typography
-              typography="s1"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Create and run automated actions on your data
-            </Typography>
-          }
+        <PageHeader
+          title="Tasks"
+          description="Create and run automated actions on your data"
+          sx={{ mb: 0 }}
         />
       )}
 

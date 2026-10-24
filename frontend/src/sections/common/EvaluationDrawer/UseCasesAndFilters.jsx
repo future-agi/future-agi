@@ -32,9 +32,6 @@ const UseCasesAndFilters = ({
             setCurrentTab(value);
             setSelectedGroup(null);
           }}
-          TabIndicatorProps={{
-            style: { backgroundColor: theme.palette.primary.main },
-          }}
           sx={{ borderBottom: "1px solid", borderColor: "divider" }}
         >
           {evalDrawerTabs
@@ -61,19 +58,6 @@ const UseCasesAndFilters = ({
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
-                sx={{
-                  paddingLeft: "24px",
-                  paddingRight: "24px",
-                  ...theme.typography["s1"],
-                  fontWeight: theme.typography["fontWeightSemiBold"],
-                  "&:not(.Mui-selected)": {
-                    color: "text.disabled", // Color for unselected tabs
-                    fontWeight: theme.typography["fontWeightMedium"],
-                  },
-                  ["&:not(:last-of-type)"]: {
-                    marginRight: "4px",
-                  },
-                }}
               />
             ))}
         </Tabs>

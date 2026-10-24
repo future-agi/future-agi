@@ -99,7 +99,7 @@ const ListConfigRenderer = ({
                 flexShrink={0}
                 py={0}
                 px={0.5}
-                borderRadius={0.5}
+                borderRadius="4px"
               >
                 <Typography
                   typography={"s2"}
@@ -117,7 +117,6 @@ const ListConfigRenderer = ({
                   onClick={() => handleRemoveKeyword(index)}
                   disabled={viewMode}
                   sx={{
-                    padding: 0.25,
                     bgcolor: "action.hover",
                     ":hover": {
                       bgcolor: "action.hover",
@@ -152,10 +151,9 @@ const ListConfigRenderer = ({
         }}
         startIcon={
           <SvgColor
+            width={20}
             src="/assets/icons/action_buttons/ic_add.svg"
             sx={{
-              height: 20,
-              width: 20,
               color: "primary.main",
             }}
           />

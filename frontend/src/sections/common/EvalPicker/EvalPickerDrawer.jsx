@@ -28,7 +28,11 @@ const STEP_TITLES = {
 };
 
 const EvalPickerContent = ({
-  onStepChange, headerAction, progress, primaryLabel, showClose,
+  onStepChange,
+  headerAction,
+  progress,
+  primaryLabel,
+  showClose,
 }) => {
   const theme = useTheme();
   const {
@@ -189,14 +193,13 @@ const EvalPickerContent = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setStep("create")}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               Create New Eval
             </Button>
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
         </Box>
@@ -218,7 +221,7 @@ const EvalPickerContent = ({
               }}
             >
               <Iconify
-                icon="mdi:alert-circle-outline"
+                icon="solar:danger-circle-linear"
                 width={40}
                 sx={{ color: "error.main" }}
               />
@@ -236,7 +239,6 @@ const EvalPickerContent = ({
                   handleBackToList();
                   resetErrorBoundary();
                 }}
-                sx={{ textTransform: "none" }}
               >
                 Back to list
               </Button>
@@ -304,7 +306,7 @@ const EvalPickerDrawer = ({
   onEvalAdded,
   existingEvals = [],
   drawerType = "temporary",
-  width = 900,
+  width = 960,
   // When editing an existing eval, pass its template info here to skip the
   // list step and open directly at the config step.
   initialEval = null,
@@ -383,7 +385,10 @@ const EvalPickerDrawer = ({
           },
         },
       }}
-      sx={{ ...(paperSx && { "&& .MuiDrawer-paper": paperSx }), ...coveredDrawerSx(covered) }}
+      sx={{
+        ...(paperSx && { "&& .MuiDrawer-paper": paperSx }),
+        ...coveredDrawerSx(covered),
+      }}
     >
       <EvalPickerProvider
         key={initialEval?.userEvalId || initialEval?.id || "new"}

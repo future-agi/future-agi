@@ -4,7 +4,11 @@ import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { sourceLinkOf } from "../../_mock/scenarioProvenance";
 import { openBuilderChat } from "../../_mock/builderPromptBus";
-import { personalDataLine, personalDataDetail, REPRO_LABEL } from "../../_mock/scenarioSources";
+import {
+  personalDataLine,
+  personalDataDetail,
+  REPRO_LABEL,
+} from "../../_mock/scenarioSources";
 
 /**
  * Where a scenario came from — on every scenario row, and as a labelled chip
@@ -19,19 +23,36 @@ import { personalDataLine, personalDataDetail, REPRO_LABEL } from "../../_mock/s
  * it in full.
  */
 const SHORT = {
-  "Added manually": "By hand", "Auto-derived": "Derived", "From template": "Template", Generated: "Generated",
-  "Imported from dataset": "Dataset", "Added by a rebuild": "Rebuild", "From persona library": "Personas",
-  "From production trace": "Production", "From chat": "Chat",
+  "Added manually": "By hand",
+  "Auto-derived": "Derived",
+  "From template": "Template",
+  Generated: "Generated",
+  "Imported from dataset": "Dataset",
+  "Added by a rebuild": "Rebuild",
+  "From persona library": "Personas",
+  "From production trace": "Production",
+  "From chat": "Chat",
 };
-export default function SourceBadge({ scenario, env, envState, labelled = false }) {
+export default function SourceBadge({
+  scenario,
+  env,
+  envState,
+  labelled = false,
+}) {
   /* The environment lets an improvement-made scenario link to its improvement. */
   const link = sourceLinkOf(scenario, { env, envState });
   const linked = !!(link.to || link.chat);
 
   const title = (
     <Stack spacing={0.375} sx={{ py: 0.25, maxWidth: 320 }}>
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: "inherit" }}>{link.title}</Typography>
-      {link.detail && <Typography sx={{ typography: "s3", color: "inherit" }}>{link.detail}</Typography>}
+      <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+        {link.title}
+      </Typography>
+      {link.detail && (
+        <Typography sx={{ typography: "s3", color: "inherit" }}>
+          {link.detail}
+        </Typography>
+      )}
       {/* Built from production: the problem, not the person. */}
       {personalDataLine(scenario) && (
         <Typography sx={{ typography: "s3", color: "inherit" }}>
@@ -48,8 +69,14 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
         <Typography sx={{ typography: "s3", color: "inherit" }}>
           {`${link.observe.line} `}
           <Box
-            component={RouterLink} to={link.observe.to} onClick={(e) => e.stopPropagation()}
-            sx={{ color: "inherit", fontWeight: 700, textDecoration: "underline" }}
+            component={RouterLink}
+            to={link.observe.to}
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              color: "inherit",
+              fontWeight: 600,
+              textDecoration: "underline",
+            }}
           >
             Open the trace
           </Box>
@@ -59,16 +86,24 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
         <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.7 }}>
           {link.chat
             ? "Click to open the chat."
-            : link.source.id === "error-feed" ? "Click to open the issue."
-              : link.source.id === "improvement" ? "Click to open the improvement." : "Click to open the run."}
+            : link.source.id === "error-feed"
+              ? "Click to open the issue."
+              : link.source.id === "improvement"
+                ? "Click to open the improvement."
+                : "Click to open the run."}
         </Typography>
       )}
     </Stack>
   );
 
   /* In the drawer: the source named in words, with its id when it has one. */
-  const refShown = link.ref && !link.label.toLowerCase().includes(link.ref.toLowerCase()) ? link.ref : null;
-  const chipText = labelled ? `${link.label}${refShown ? ` · ${refShown}` : ""}` : link.ref || SHORT[link.label] || link.label;
+  const refShown =
+    link.ref && !link.label.toLowerCase().includes(link.ref.toLowerCase())
+      ? link.ref
+      : null;
+  const chipText = labelled
+    ? `${link.label}${refShown ? ` · ${refShown}` : ""}`
+    : link.ref || SHORT[link.label] || link.label;
 
   if (!linked) {
     /* Nowhere to go back to (a replayed production conversation, a
@@ -80,14 +115,27 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
           component="span"
           aria-label={link.title}
           sx={{
-            display: "inline-flex", alignItems: "center", gap: 0.375, flexShrink: 0,
-            height: labelled ? 20 : 16, px: labelled ? 0.75 : 0.5, borderRadius: 0.5,
-            border: "1px solid", borderColor: "divider", color: "text.secondary",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.375,
+            flexShrink: 0,
+            height: labelled ? 20 : 16,
+            /* Plain text in a row: a table cell carries no boxes. */
+            color: "text.tertiary",
           }}
         >
           {labelled && <Iconify icon={link.source.icon} width={12} />}
           {chipText && (
-            <Typography component="span" noWrap sx={{ typography: "s3", fontWeight: labelled ? 600 : 500, color: "inherit", lineHeight: 1 }}>
+            <Typography
+              component="span"
+              noWrap
+              sx={{
+                typography: "s3",
+                fontWeight: 400,
+                color: "inherit",
+                lineHeight: 1,
+              }}
+            >
               {chipText}
             </Typography>
           )}
@@ -100,7 +148,14 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
   const stop = (e) => e.stopPropagation();
   const routeProps = link.to
     ? { component: RouterLink, to: link.to, onClick: stop }
-    : { component: "button", type: "button", onClick: (e) => { stop(e); openBuilderChat(); } };
+    : {
+        component: "button",
+        type: "button",
+        onClick: (e) => {
+          stop(e);
+          openBuilderChat();
+        },
+      };
 
   return (
     <Tooltip arrow title={title}>
@@ -108,17 +163,40 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
         {...routeProps}
         aria-label={link.title}
         sx={{
-          display: "inline-flex", alignItems: "center", gap: 0.375, flexShrink: 0,
-          height: labelled ? 20 : 16, px: labelled ? 0.75 : 0.5, m: 0, borderRadius: 0.5,
-          border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-          color: "text.secondary", textDecoration: "none", cursor: "pointer", font: "inherit",
-          transition: "border-color .12s ease, color .12s ease",
-          "&:hover": { borderColor: "text.disabled", color: "text.primary" },
-          "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 1 },
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.375,
+          flexShrink: 0,
+          height: labelled ? 20 : 16,
+          p: 0,
+          m: 0,
+          borderRadius: "4px",
+          border: 0,
+          bgcolor: "transparent",
+          color: "text.tertiary",
+          textDecoration: "none",
+          cursor: "pointer",
+          font: "inherit",
+          transition: "color .12s ease",
+          "&:hover": { color: "text.primary", textDecoration: "underline" },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 1,
+          },
         }}
       >
         <Iconify icon={link.source.icon} width={labelled ? 12 : 10} />
-        <Typography component="span" noWrap sx={{ typography: "s3", fontWeight: labelled ? 600 : 700, color: "inherit", lineHeight: 1 }}>
+        <Typography
+          component="span"
+          noWrap
+          sx={{
+            typography: "s3",
+            fontWeight: 400,
+            color: "inherit",
+            lineHeight: 1,
+          }}
+        >
           {chipText}
         </Typography>
       </Box>
@@ -126,4 +204,8 @@ export default function SourceBadge({ scenario, env, envState, labelled = false 
   );
 }
 SourceBadge.propTypes = {
-  labelled: PropTypes.bool, scenario: PropTypes.object.isRequired, env: PropTypes.object, envState: PropTypes.object };
+  labelled: PropTypes.bool,
+  scenario: PropTypes.object.isRequired,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};

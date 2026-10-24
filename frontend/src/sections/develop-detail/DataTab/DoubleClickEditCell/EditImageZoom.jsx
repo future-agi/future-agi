@@ -120,7 +120,7 @@ const EditImageZoom = ({
 
   const imageStyles = {
     transform: `scale(${zoom}) rotate(${rotation}deg)`,
-    transition: "transform 0.3s ease",
+    transition: "transform 0.2s ease",
     maxWidth: "100%",
     maxHeight: "100%",
     objectFit: "contain",
@@ -155,7 +155,7 @@ const EditImageZoom = ({
 
   const buttonStyles = {
     color: "text.primary",
-    fontSize: "14px",
+    fontSize: "13px",
     fontWeight: 400,
     lineHeight: "22px",
   };
@@ -304,7 +304,7 @@ const EditImageZoom = ({
                     }}
                   >
                     <IconButton onClick={handleButtonClick}>
-                      <Iconify icon="fa6-solid:rotate" color="#fff" />
+                      <Iconify icon="solar:refresh-linear" color="common.white" />
                     </IconButton>
                   </Box>
                 </Box>
@@ -331,7 +331,7 @@ const EditImageZoom = ({
                     fontWeight={500}
                     sx={{
                       maxWidth: "200px",
-                      fontSize: "14px",
+                      fontSize: "13px",
                       lineHeight: "22px",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -387,9 +387,6 @@ const EditImageZoom = ({
             sx={{
               backgroundColor: "primary.main",
               "&:hover": { backgroundColor: "primary.main" },
-              borderRadius: "10px",
-              fontSize: "14px",
-              fontWeight: 600,
               width: "205px",
             }}
           >

@@ -1,6 +1,4 @@
-import { alpha } from "@mui/material/styles";
 import { tableRowClasses } from "@mui/material/TableRow";
-import { tableCellClasses } from "@mui/material/TableCell";
 
 // ----------------------------------------------------------------------
 
@@ -17,33 +15,49 @@ export function table(theme) {
       styleOverrides: {
         root: {
           [`&.${tableRowClasses.selected}`]: {
-            backgroundColor: alpha(theme.palette.primary.dark, 0.04),
+            backgroundColor: theme.palette.action.selected,
             "&:hover": {
-              backgroundColor: alpha(theme.palette.primary.dark, 0.08),
+              backgroundColor: theme.palette.action.selected,
             },
           },
-          "&:last-of-type": {
-            [`& .${tableCellClasses.root}`]: {
-              borderColor: "transparent",
-            },
+          [`&.${tableRowClasses.hover}:hover`]: {
+            backgroundColor: theme.palette.action.hover,
           },
         },
       },
     },
     MuiTableCell: {
       styleOverrides: {
+        // Design system table: no outer box, 13px cells in fg.secondary, a
+        // border.default line under every row; 32px header in 12px/500
+        // fg.tertiary with no fill.
         root: {
-          borderBottomStyle: "dashed",
+          fontSize: 13,
+          lineHeight: "20px",
+          color: theme.palette.text.secondary,
+          borderBottom: `1px solid ${theme.palette.border.default}`,
+          paddingTop: 8,
+          paddingBottom: 8,
+          paddingLeft: 12,
+          paddingRight: 12,
+        },
+        sizeSmall: {
+          paddingTop: 6,
+          paddingBottom: 6,
         },
         head: {
-          fontSize: 14,
-          color: theme.palette.text.secondary,
-          fontWeight: theme.typography.fontWeightSemiBold,
-          backgroundColor: theme.palette.background.neutral,
+          fontSize: 12,
+          lineHeight: "16px",
+          height: 32,
+          paddingTop: 0,
+          paddingBottom: 0,
+          color: theme.palette.text.subtitle,
+          fontWeight: 500,
+          backgroundColor: "transparent",
+          borderBottom: `1px solid ${theme.palette.border.default}`,
         },
         stickyHeader: {
           backgroundColor: theme.palette.background.paper,
-          backgroundImage: `linear-gradient(to bottom, ${theme.palette.background.neutral} 0%, ${theme.palette.background.neutral} 100%)`,
         },
         paddingCheckbox: {
           paddingLeft: theme.spacing(1),
@@ -56,7 +70,10 @@ export function table(theme) {
           width: "100%",
         },
         toolbar: {
-          height: 64,
+          minHeight: 44,
+          height: 44,
+          fontSize: 12,
+          color: theme.palette.text.subtitle,
         },
         actions: {
           marginRight: 8,

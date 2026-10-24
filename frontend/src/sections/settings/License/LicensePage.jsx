@@ -1,13 +1,15 @@
+import ErrorState from "src/components/error-state";
+import PageHeader from "src/components/page-header";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Typography,
   Chip,
   Stack,
   CircularProgress,
   Divider,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { useCapabilities } from "src/hooks/useCapabilities";
 
@@ -65,16 +67,10 @@ export default function LicensePage() {
 
   if (isError) {
     return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight={360}
-      >
-        <Typography color="text.secondary">
-          Failed to load license information.
-        </Typography>
-      </Box>
+      <ErrorState
+        title="Failed to load license information"
+        sx={{ minHeight: 360 }}
+      />
     );
   }
 
@@ -89,7 +85,7 @@ export default function LicensePage() {
         minHeight={360}
       >
         <Iconify
-          icon="mdi:license-outline"
+          icon="solar:document-text-linear"
           width={48}
           sx={{ color: "text.disabled" }}
         />
@@ -109,18 +105,15 @@ export default function LicensePage() {
 
   return (
     <Box>
-      <Box mb={1}>
-        <Typography variant="h5" fontWeight={700}>
-          License
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Enterprise license details for this deployment.
-        </Typography>
-      </Box>
+      <PageHeader
+        title="License"
+        description="Enterprise license details for this deployment."
+        sx={{ mb: 1 }}
+      />
 
       <Divider sx={{ my: 2 }} />
 
-      <Card variant="outlined" sx={{ p: 3, borderRadius: 2, maxWidth: 720 }}>
+      <Section variant="panel" sx={{ p: 3, maxWidth: 720 }}>
         <Stack
           direction="row"
           justifyContent="space-between"
@@ -128,7 +121,7 @@ export default function LicensePage() {
           mb={3}
         >
           <Box>
-            <Typography variant="h6" fontWeight={700}>
+            <Typography variant="h6" fontWeight={600}>
               {BAND_LABELS[license.band] || license.band}
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -199,7 +192,7 @@ export default function LicensePage() {
             </Stack>
           </Box>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 }

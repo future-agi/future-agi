@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Box,
   Typography,
-  useTheme,
   CircularProgress,
   IconButton,
+  Tab,
 } from "@mui/material";
 import HelperText from "../Common/HelperText";
-import { CustomTab, CustomTabs, TabWrapper } from "./AddRowDataStyle";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { useForm } from "react-hook-form";
@@ -51,7 +51,6 @@ const fetchRowSDK = async (dataset) => {
 };
 
 const AddRowData = ({ dataset }) => {
-  const theme = useTheme();
   const { control, setValue } = useForm({
     defaultValues,
   });
@@ -183,7 +182,7 @@ const AddRowData = ({ dataset }) => {
                 }
                 sx={{ color: "text.secondary" }}
               >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
+                <Iconify icon="solar:copy-linear" width={16} height={16} />
               </IconButton>
             </Box>
           </Box>
@@ -219,7 +218,7 @@ const AddRowData = ({ dataset }) => {
                 }
                 sx={{ color: "text.secondary" }}
               >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
+                <Iconify icon="solar:copy-linear" width={16} height={16} />
               </IconButton>
             </Box>
           </Box>
@@ -251,7 +250,7 @@ const AddRowData = ({ dataset }) => {
                 }
                 sx={{ color: "text.secondary" }}
               >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
+                <Iconify icon="solar:copy-linear" width={16} height={16} />
               </IconButton>
             </Box>
           </Box>
@@ -286,35 +285,26 @@ const AddRowData = ({ dataset }) => {
                 }
                 sx={{ color: "text.secondary" }}
               >
-                <Iconify icon="eva:copy-outline" width={16} height={16} />
+                <Iconify icon="solar:copy-linear" width={16} height={16} />
               </IconButton>
             </Box>
           </Box>
         </Box>
-        <TabWrapper>
-          <CustomTabs
-            textColor="primary"
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs
             value={currentTab}
             onChange={(e, value) => setCurrentTab(value)}
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
           >
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
         <Box
           bgcolor="background.neutral"
           borderRadius="8px"

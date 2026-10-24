@@ -1,4 +1,6 @@
+import EmptyContent from "src/components/empty-content";
 import PropTypes from "prop-types";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
@@ -20,6 +22,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
 import SvgColor from "src/components/svg-color";
 import StatusBadge from "./components/status-badge";
 import { fToNow } from "src/utils/format-time";
@@ -232,23 +235,15 @@ function queueMembersByPerson(members) {
 
 function memberRoleChipSx(role) {
   return (theme) => {
-    const paletteKey = rolePaletteKey(role);
-    const paletteColor =
-      paletteKey === "neutral" ? null : theme.palette[paletteKey];
-    const roleColor =
-      theme.palette.mode === "dark"
-        ? paletteColor?.light || theme.palette.text.secondary
-        : paletteColor?.dark ||
-          paletteColor?.main ||
-          theme.palette.text.secondary;
+    const tone = statusColors(theme, rolePaletteKey(role));
     return {
       height: 20,
-      fontSize: 11,
-      fontWeight: 700,
-      borderRadius: 0.75,
-      color: roleColor,
-      borderColor: alpha(roleColor, theme.palette.mode === "dark" ? 0.28 : 0.2),
-      bgcolor: alpha(roleColor, theme.palette.mode === "dark" ? 0.12 : 0.06),
+      fontSize: 12,
+      fontWeight: 600,
+      borderRadius: "4px",
+      color: tone.fg,
+      borderColor: tone.border,
+      bgcolor: tone.bg,
       "& .MuiChip-label": { px: 0.75 },
     };
   };
@@ -258,11 +253,7 @@ function membersTooltipPaperSx(theme) {
   return {
     bgcolor: "background.paper",
     color: "text.primary",
-    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
-    boxShadow:
-      theme.palette.mode === "dark"
-        ? `0 18px 42px ${alpha(theme.palette.common.black, 0.48)}`
-        : `0 18px 42px ${alpha(theme.palette.grey[700], 0.16)}`,
+    border: `1px solid ${theme.palette.divider}`,
     borderRadius: 1,
     p: 0,
     maxWidth: 380,
@@ -273,7 +264,7 @@ function membersTooltipArrowSx(theme) {
   return {
     color: theme.palette.background.paper,
     "&::before": {
-      border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+      border: `1px solid ${theme.palette.divider}`,
     },
   };
 }
@@ -283,11 +274,11 @@ function memberAvatarSx(size = 28) {
     width: size,
     height: size,
     fontSize: size <= 26 ? 11 : 12,
-    fontWeight: 700,
+    fontWeight: 600,
     flexShrink: 0,
     color: theme.palette.text.primary,
-    bgcolor: alpha(theme.palette.text.primary, 0.08),
-    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+    bgcolor: theme.palette.action.selected,
+    border: `1px solid ${theme.palette.divider}`,
   });
 }
 
@@ -362,7 +353,7 @@ function MembersCellRenderer({ data }) {
                     <Typography
                       variant="body2"
                       color="text.primary"
-                      fontWeight={700}
+                      fontWeight={600}
                       noWrap
                       sx={{ display: "block" }}
                     >
@@ -419,15 +410,7 @@ function MembersCellRenderer({ data }) {
               width: 28,
               height: 28,
               fontSize: 12,
-              fontWeight: 700,
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
-              color: "text.primary",
-              border: "2px solid",
-              borderColor: "background.paper",
-            },
-            "& .MuiAvatar-root:first-of-type": {
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
-              color: "text.primary",
+              fontWeight: 600,
             },
           }}
         >
@@ -498,7 +481,7 @@ function ActionsCellRenderer({ data, context }) {
           context?.onOpenMenu(e, data);
         }}
       >
-        <Iconify icon="eva:more-vertical-fill" />
+        <Iconify icon="solar:menu-dots-vertical-linear" />
       </IconButton>
     </Box>
   );
@@ -579,20 +562,24 @@ export default function AnnotationQueueTable({
   const getStatusActions = (queue) => {
     const transitions = {
       draft: [
-        { value: "active", label: "Activate", icon: "eva:play-circle-fill" },
+        {
+          value: "active",
+          label: "Activate",
+          icon: "solar:play-circle-linear",
+        },
       ],
       active: [
-        { value: "paused", label: "Pause", icon: "eva:pause-circle-fill" },
+        { value: "paused", label: "Pause", icon: "solar:pause-circle-linear" },
       ],
       paused: [
-        { value: "active", label: "Resume", icon: "eva:play-circle-fill" },
+        { value: "active", label: "Resume", icon: "solar:play-circle-linear" },
       ],
       completed: [
-        { value: "active", label: "Re-open", icon: "eva:refresh-fill" },
+        { value: "active", label: "Re-open", icon: "solar:refresh-linear" },
         {
           value: "paused",
           label: "Pause to Edit",
-          icon: "eva:pause-circle-fill",
+          icon: "solar:pause-circle-linear",
         },
       ],
     };
@@ -694,20 +681,7 @@ export default function AnnotationQueueTable({
   // Compute paginated slice — the parent manages pagination state, and
   // the API returns already-paginated data in `data`, so just pass it through.
   const CustomNoRowsOverlay = useCallback(
-    () => (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          No queues match your filters
-        </Typography>
-      </Box>
-    ),
+    () => <EmptyContent title="No queues match your filters" />,
     [],
   );
 
@@ -721,26 +695,9 @@ export default function AnnotationQueueTable({
           overflow: "hidden",
         }}
       >
-        <Box
-          sx={{
-            flex: 1,
-            "& .ag-row": {
-              borderBottom: "1px solid",
-              borderBottomColor: "divider",
-            },
-            "& .ag-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
-            "& .ag-cell:last-of-type": {
-              borderRight: 0,
-            },
-            "& .ag-header-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
-          }}
-        >
+        {/* Rows, header and hairlines come from the theme's grid: no column
+            borders, 44px two-line rows, 32px header. */}
+        <Box sx={{ flex: 1 }}>
           <AgGridReact
             ref={gridRef}
             theme={agTheme}
@@ -748,8 +705,7 @@ export default function AnnotationQueueTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={64}
-            headerHeight={42}
+            rowHeight={44}
             pagination={false}
             animateRows={false}
             suppressRowClickSelection
@@ -762,67 +718,13 @@ export default function AnnotationQueueTable({
           />
         </Box>
 
-        {/* Pagination — sticky at the bottom */}
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: 2,
-            py: 1,
-            px: 2,
-            fontSize: 14,
-            color: "text.secondary",
-            flexShrink: 0,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Box component="span">
-            Rows per page:
-            <Box
-              component="select"
-              value={rowsPerPage}
-              onChange={(e) =>
-                onRowsPerPageChange?.(parseInt(e.target.value, 10))
-              }
-              sx={{
-                ml: 1,
-                border: "none",
-                background: "transparent",
-                color: "text.primary",
-                fontSize: 14,
-                cursor: "pointer",
-                outline: "none",
-              }}
-            >
-              {[10, 25, 50].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </Box>
-          </Box>
-          <Typography variant="body2" color="text.secondary">
-            {totalCount > 0
-              ? `${page * rowsPerPage + 1}–${Math.min((page + 1) * rowsPerPage, totalCount)} of ${totalCount}`
-              : "0 of 0"}
-          </Typography>
-          <IconButton
-            size="small"
-            disabled={page === 0}
-            onClick={() => onPageChange?.(page - 1)}
-          >
-            <Iconify icon="eva:chevron-left-fill" width={20} />
-          </IconButton>
-          <IconButton
-            size="small"
-            disabled={(page + 1) * rowsPerPage >= totalCount}
-            onClick={() => onPageChange?.(page + 1)}
-          >
-            <Iconify icon="eva:chevron-right-fill" width={20} />
-          </IconButton>
-        </Box>
+        <DataTablePagination
+          page={page}
+          pageSize={rowsPerPage}
+          total={totalCount}
+          onPageChange={onPageChange}
+          onPageSizeChange={onRowsPerPageChange}
+        />
       </Box>
 
       {/* Actions popover menu */}
@@ -836,7 +738,7 @@ export default function AnnotationQueueTable({
         <Box sx={{ py: 0.5 }}>
           {archivedView ? (
             <MenuItem onClick={() => handleAction("restore")}>
-              <Iconify icon="solar:archive-up-bold" width={18} sx={{ mr: 1 }} />
+              <Iconify icon="solar:archive-up-bold" width={16} sx={{ mr: 1 }} />
               Restore
             </MenuItem>
           ) : (
@@ -865,18 +767,19 @@ export default function AnnotationQueueTable({
                     onStatusChange?.(queue, sa.value);
                   }}
                 >
-                  <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
+                  <Iconify icon={sa.icon} width={16} sx={{ mr: 1 }} />
                   {sa.label}
                 </MenuItem>
               ))}
 
               <MenuItem
                 onClick={() => handleAction("archive")}
-                sx={{ color: "error.main" }}
+                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+                sx={{ color: "status.danger.fg" }}
               >
                 <Iconify
                   icon="solar:archive-down-bold"
-                  width={18}
+                  width={16}
                   sx={{ mr: 1, color: "error.main" }}
                 />
                 Archive

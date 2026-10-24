@@ -1,7 +1,18 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Button, Checkbox, CircularProgress, InputBase, MenuItem, Select, Stack, Switch, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Checkbox,
+  CircularProgress,
+  InputBase,
+  MenuItem,
+  Select,
+  Stack,
+  Switch,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { agentDefinitionOf } from "../_mock/agentRegistry";
@@ -11,15 +22,32 @@ import { DEFAULT_LIMITS, limitRows } from "../_mock/optimizationRuns";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
-import { budgetsWithin, envMustPassOf, stopEarlyNote } from "../_mock/improvementStart";
+import {
+  budgetsWithin,
+  envMustPassOf,
+  stopEarlyNote,
+} from "../_mock/improvementStart";
 import { limitsOf } from "../agents/agentLimits";
 import { projectLinkOf } from "../_mock/projectLinks";
-import { targetableMembers, membersOf, isProtectedMember, textSearchDefault } from "../_mock/improvementPolicy";
+import {
+  targetableMembers,
+  membersOf,
+  isProtectedMember,
+  textSearchDefault,
+} from "../_mock/improvementPolicy";
 import ConnectAgentDialog from "./ConnectAgentDialog";
 import { codeDiagnosisOf } from "./codeDiagnosis";
 import { clickable, focusRing } from "../components/clickable";
 import {
-  FIX_IN_FLIGHT, envsForAgent, fixEstimate, fixPreview, issueFixNav, issueProjectLinkOf, issueScenarioDrafts, productionVersionOf, useIssueFix,
+  FIX_IN_FLIGHT,
+  envsForAgent,
+  fixEstimate,
+  fixPreview,
+  issueFixNav,
+  issueProjectLinkOf,
+  issueScenarioDrafts,
+  productionVersionOf,
+  useIssueFix,
 } from "./issueFix";
 import { creditsLabel } from "../_mock/metering";
 import { useSimStore, useConnectedAgents } from "../store";
@@ -32,7 +60,13 @@ const minutesWithin = (ceiling) => {
   return list.length ? list : [ceiling];
 };
 
-const label = { typography: "s3", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, mb: 0.75 };
+const label = {
+  typography: "s3",
+  fontWeight: 600,
+  textTransform: "none",
+  letterSpacing: 0.6,
+  mb: 0.75,
+};
 
 /**
  * Fix — the page that starts an improvement run from an Error Feed issue
@@ -65,9 +99,17 @@ const label = { typography: "s3", fontWeight: 700, textTransform: "uppercase", l
 const PREPARED = new Set();
 const PREP_STEPS = [
   { id: "issue", label: "Reading the issue", ms: 700 },
-  { id: "agent", label: "Finding the agent and its version in production", ms: 600 },
+  {
+    id: "agent",
+    label: "Finding the agent and its version in production",
+    ms: 600,
+  },
   { id: "env", label: "Finding the agent's environment", ms: 600 },
-  { id: "diagnosis", label: "Diagnosing it in the agent's prompt and tools", ms: 900 },
+  {
+    id: "diagnosis",
+    label: "Diagnosing it in the agent's prompt and tools",
+    ms: 900,
+  },
   { id: "scenarios", label: "Writing scenarios from the traces", ms: 1100 },
   { id: "limits", label: "Applying the agent's limits", ms: 500 },
 ];
@@ -77,7 +119,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const open = true;
   const navigate = useNavigate();
   const improving = useAgentImprovementFlag();
-  const { state, agent, agents, project, gate, start, evidence, status } = useIssueFix(issue);
+  const { state, agent, agents, project, gate, start, evidence, status } =
+    useIssueFix(issue);
   /* A fix runs in the agent's main environment — never one picked per fix.
      Its other environments can add their must-pass sets (RSI PRD: "Targets
      come from one environment; the others add their must-pass sets"). */
@@ -102,7 +145,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const consentNeeded = gate?.key === "consent";
   const hardGate = gate && !consentNeeded ? gate : null;
   const [askedConsent, setAskedConsent] = useState(false);
-  useEffect(() => { if (consentNeeded) setAskedConsent(true); }, [consentNeeded]);
+  useEffect(() => {
+    if (consentNeeded) setAskedConsent(true);
+  }, [consentNeeded]);
 
   /* ── nowhere to start from yet ──
      A fix runs in the agent's main environment, and its first step measures
@@ -121,33 +166,51 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const ready = !!main && !building;
   /* The plan's scenarios, being written: index of the step in progress. */
   const prepSteps = PREP_STEPS;
-  const [prep, setPrep] = useState(() => (PREPARED.has(issue?.cluster_id) ? prepSteps.length : 0));
+  const [prep, setPrep] = useState(() =>
+    PREPARED.has(issue?.cluster_id) ? prepSteps.length : 0,
+  );
   const prepared = prep >= prepSteps.length;
   useEffect(() => {
     if (!open || !issue?.cluster_id) return undefined;
-    if (PREPARED.has(issue.cluster_id)) { setPrep(prepSteps.length); return undefined; }
+    if (PREPARED.has(issue.cluster_id)) {
+      setPrep(prepSteps.length);
+      return undefined;
+    }
     setPrep(0);
     const timers = [];
     let at = 0;
     prepSteps.forEach((step, i) => {
       at += step.ms;
-      timers.push(setTimeout(() => {
-        if (i === prepSteps.length - 1) PREPARED.add(issue.cluster_id);
-        setPrep(i + 1);
-      }, at));
+      timers.push(
+        setTimeout(() => {
+          if (i === prepSteps.length - 1) PREPARED.add(issue.cluster_id);
+          setPrep(i + 1);
+        }, at),
+      );
     });
     return () => timers.forEach(clearTimeout);
   }, [open, issue?.cluster_id]); // eslint-disable-line react-hooks/exhaustive-deps
   const openBuilding = () => {
     /* Watched from its page; the banner there brings the person back. */
     if (main.returnToIssue !== issue?.cluster_id) {
-      commit({ type: "patchEnvironment", envId: main.id, patch: { returnToIssue: issue?.cluster_id || null, returnFrom: "opened", returnSince: new Date().toISOString() } });
+      commit({
+        type: "patchEnvironment",
+        envId: main.id,
+        patch: {
+          returnToIssue: issue?.cluster_id || null,
+          returnFrom: "opened",
+          returnSince: new Date().toISOString(),
+        },
+      });
     }
     navigate(paths.dashboard.simulate.environmentDetail(main.id));
   };
 
   /* Built from the issue's traces — shown even before there's an environment. */
-  const drafts = useMemo(() => (issue ? issueScenarioDrafts(issue, main, mainState) : []), [issue, main, mainState]);
+  const drafts = useMemo(
+    () => (issue ? issueScenarioDrafts(issue, main, mainState) : []),
+    [issue, main, mainState],
+  );
   const [picked, setPicked] = useState({});
   const [titles, setTitles] = useState({});
   const [budget, setBudget] = useState(null);
@@ -171,29 +234,47 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     setAskedConsent(consentNeeded);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   /* A voice agent searches in text by default; finalists run as real calls. */
-  const inText = main?.surface === "voice" && (textSearch ?? textSearchDefault(main?.surface));
+  const inText =
+    main?.surface === "voice" &&
+    (textSearch ?? textSearchDefault(main?.surface));
 
-  const chosen = drafts.filter((d) => picked[d.id]).map((d) => ({ ...d, title: titles[d.id]?.trim() || d.title }));
+  const chosen = drafts
+    .filter((d) => picked[d.id])
+    .map((d) => ({ ...d, title: titles[d.id]?.trim() || d.title }));
   /* The search this fix will run, worked out now — so the range is real. */
   /* The agent's constraints decide what the search may try and what it may spend. */
   const limits = useMemo(() => limitsOf(state, agent?.key), [state, agent]);
   /* Planned with the other environments ticked, so the estimate prices them the way the run will. */
   const preview = useMemo(
-    () => fixPreview(main, mainState, issue, drafts, limits, { textSearch: inText, state, regressionEnvIds: main ? [main.id, ...alsoIn] : [] }),
+    () =>
+      fixPreview(main, mainState, issue, drafts, limits, {
+        textSearch: inText,
+        state,
+        regressionEnvIds: main ? [main.id, ...alsoIn] : [],
+      }),
     [main, mainState, issue, drafts, limits, inText, state, alsoIn],
   );
   /* Members: one can be targeted; protected ones are never changed. */
   const members = membersOf(agent);
   const targetable = targetableMembers(agent, limits);
   /* Each extra environment runs its must-pass set for the finalists. */
-  const regressionCount = others.filter((e) => alsoIn.includes(e.id)).reduce((n, e) => n + mustPassIn(e), 0);
-  const estimate = fixEstimate({ preview, scenarioCount: chosen.length, regressionCount, surface: main?.surface });
+  const regressionCount = others
+    .filter((e) => alsoIn.includes(e.id))
+    .reduce((n, e) => n + mustPassIn(e), 0);
+  const estimate = fixEstimate({
+    preview,
+    scenarioCount: chosen.length,
+    regressionCount,
+    surface: main?.surface,
+  });
   /* Up to the agent's run budget — never more. */
   const budgets = budgetsWithin(limits.budget.dollars);
   const spend = budget ?? budgets[budgets.length - 1];
   const overBudget = estimate.likely > spend;
   /* Minutes cap it the same way — the agent's time budget is the ceiling. */
-  const minuteChoices = minutesWithin(limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes);
+  const minuteChoices = minutesWithin(
+    limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
+  );
   const spendMinutes = minutes ?? minuteChoices[minuteChoices.length - 1];
   const overTime = estimate.minutes > spendMinutes;
 
@@ -204,32 +285,69 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const lineageVersions = useMemo(() => {
     const list = agentVersions(mainState);
     const at = list.findIndex((v) => v.label === production.label);
-    return (at > 0 ? list.slice(0, at) : []).filter((v) => (v.changes || []).length);
+    return (at > 0 ? list.slice(0, at) : []).filter(
+      (v) => (v.changes || []).length,
+    );
   }, [mainState, production.label]);
-  const def = useMemo(() => (agent && main ? agentDefinitionOf({ agent, env: main, envState: mainState }) : null), [agent, main, mainState]);
+  const def = useMemo(
+    () =>
+      agent && main
+        ? agentDefinitionOf({ agent, env: main, envState: mainState })
+        : null,
+    [agent, main, mainState],
+  );
   const model = def?.model?.visible ? def.model.name : null;
   /* The diagnosis the search starts from — drafted, then whatever the person edits. */
   const drafted = useMemo(
-    () => codeDiagnosisOf({ issue, env: main, promptText: def?.instructions?.visible ? def.instructions.text : null, rootCause }),
+    () =>
+      codeDiagnosisOf({
+        issue,
+        env: main,
+        promptText: def?.instructions?.visible ? def.instructions.text : null,
+        rootCause,
+      }),
     [issue, main, def, rootCause],
   );
   const [diagEdits, setDiagEdits] = useState({});
-  const edited = Object.keys(diagEdits).some((k) => diagEdits[k] !== drafted?.[k]);
+  const edited = Object.keys(diagEdits).some(
+    (k) => diagEdits[k] !== drafted?.[k],
+  );
   const diagnosis = drafted ? { ...drafted, ...diagEdits, edited } : null;
   const lead = diagnosis ? 1 : 0;
   const constraints = limitRows(limits, model);
 
   const go = () => {
     const at = start({
-      env: main, drafts: chosen, regressionEnvIds: [main.id, ...alsoIn], budget: spend, minutes: spendMinutes,
+      env: main,
+      drafts: chosen,
+      regressionEnvIds: [main.id, ...alsoIn],
+      budget: spend,
+      minutes: spendMinutes,
       lineage: acrossLineage ? lineageVersions : undefined,
-      textSearch: inText, targetMember: target || undefined, rootCause,
-      diagnosis: diagnosis ? { where: diagnosis.where, cause: diagnosis.cause.trim(), change: diagnosis.change.trim(), mechanism: diagnosis.mechanism, edited, symptom: diagnosis.symptom } : null,
+      textSearch: inText,
+      targetMember: target || undefined,
+      rootCause,
+      diagnosis: diagnosis
+        ? {
+            where: diagnosis.where,
+            cause: diagnosis.cause.trim(),
+            change: diagnosis.change.trim(),
+            mechanism: diagnosis.mechanism,
+            edited,
+            symptom: diagnosis.symptom,
+          }
+        : null,
     });
     navigate(...issueFixNav(at, issue?.cluster_id));
   };
 
-  const meta = [issue?.cluster_id, issue?.trace_count && `${issue.trace_count} traces`, issue?.severity].filter(Boolean).join(" · ");
+  const meta = [
+    issue?.cluster_id,
+    issue?.trace_count && `${issue.trace_count} traces`,
+    issue?.severity,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   /* "agent v2 × environment v7" — what a regression environment would run:
      the version in production, the same one the Agent row names and the
      fix improves. */
@@ -240,19 +358,50 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   };
 
   const gateNote = hardGate && (
-    <Stack direction="row" spacing={1.25} sx={{ px: 1.5, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-      <Iconify icon="solar:lock-keyhole-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }} />
+    <Stack
+      direction="row"
+      spacing={1.25}
+      sx={{
+        px: 1.5,
+        py: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      <Iconify
+        icon="solar:lock-keyhole-linear"
+        width={16}
+        sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{hardGate.title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{hardGate.body}</Typography>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {hardGate.title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+          {hardGate.body}
+        </Typography>
       </Box>
-      {(hardGate.action === "connections" || hardGate.action === "overview") && (
+      {(hardGate.action === "connections" ||
+        hardGate.action === "overview") && (
         <Button
-          size="small" variant="outlined"
-          onClick={() => navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=${hardGate.action}`)}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0, alignSelf: "center" }}
+          size="small"
+          variant="outlined"
+          onClick={() =>
+            navigate(
+              `${paths.dashboard.agents}/connected/${agent.id}?tab=${hardGate.action}`,
+            )
+          }
+          sx={{
+            color: "text.primary",
+            borderColor: "divider",
+            flexShrink: 0,
+            alignSelf: "center",
+          }}
         >
-          {hardGate.action === "overview" ? "Check what we found" : "Open Connections"}
+          {hardGate.action === "overview"
+            ? "Check what we found"
+            : "Open Connections"}
         </Button>
       )}
     </Stack>
@@ -260,8 +409,21 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const consentBlock = agent && (consentNeeded || askedConsent) && (
     <Box>
       <Typography sx={label}>Consent for live tests</Typography>
-      <Box sx={{ px: 1.5, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-        <LiveConsentCard agent={agent} env={main} onSave={(values) => setAgentValues(agent.key, values)} bare />
+      <Box
+        sx={{
+          px: 1.5,
+          py: 1.25,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+        }}
+      >
+        <LiveConsentCard
+          agent={agent}
+          env={main}
+          onSave={(values) => setAgentValues(agent.key, values)}
+          bare
+        />
       </Box>
     </Box>
   );
@@ -271,57 +433,118 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   /* What the summary and the button say, by where things stand. */
   const startNote = needsEnv
     ? "Build its environment first — then start the fix from here."
-    : building ? "Its environment is still building — start the fix when it's done."
+    : building
+      ? "Its environment is still building — start the fix when it's done."
       : "Nothing ships on its own — the fix ends as a draft for you to review.";
   const startButton = needsEnv ? (
-    <Button fullWidth variant="contained" color="primary" disabled={!!hardGate} onClick={() => setBuildOpen(true)} sx={{ typography: "s2", fontWeight: 700, height: 38 }}>
+    <Button
+      fullWidth
+      variant="contained"
+      color="primary"
+      disabled={!!hardGate}
+      onClick={() => setBuildOpen(true)}
+    >
       Build environment
     </Button>
   ) : building ? (
-    <Button fullWidth variant="contained" color="primary" disabled={!!hardGate} onClick={openBuilding} sx={{ typography: "s2", fontWeight: 700, height: 38 }}>
+    <Button
+      fullWidth
+      variant="contained"
+      color="primary"
+      disabled={!!hardGate}
+      onClick={openBuilding}
+    >
       Open environment
     </Button>
   ) : (
     <Button
-      fullWidth variant="contained" color="primary"
+      fullWidth
+      variant="contained"
+      color="primary"
       disabled={!chosen.length || !!hardGate || consentNeeded}
       onClick={go}
       startIcon={<Iconify icon="solar:magic-stick-3-linear" width={16} />}
-      sx={{ typography: "s2", fontWeight: 700, height: 38 }}
     >
       Start fix
     </Button>
   );
-  const alsoNames = others.filter((e) => alsoIn.includes(e.id)).map((e) => e.name);
+  const alsoNames = others
+    .filter((e) => alsoIn.includes(e.id))
+    .map((e) => e.name);
 
   return (
-    <Box sx={{ flex: 1, height: "100%", overflow: "auto", bgcolor: "background.paper" }}>
+    <Box
+      sx={{
+        flex: 1,
+        height: "100%",
+        overflow: "auto",
+        bgcolor: "background.paper",
+      }}
+    >
       {/* Full width, the improvement page's gutters — no centred column. */}
       <Box sx={{ px: { xs: 2, md: 2.5 }, pt: 2, pb: 6 }}>
         {/* ── where this is: Error Feed › the issue › Fix ── */}
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 1.5 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ mb: 1.5 }}
+        >
           <Button
-            size="small" onClick={() => navigate(paths.dashboard.errorFeed.root)}
+            size="small"
+            onClick={() => navigate(paths.dashboard.errorFeed.root)}
             startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-            sx={{ typography: "s2", fontWeight: 500, color: "text.secondary", minWidth: 0, px: 0.75 }}
+            sx={{ color: "text.secondary", minWidth: 0 }}
           >
             Error Feed
           </Button>
-          <Iconify icon="mdi:chevron-right" width={13} sx={{ color: "text.disabled" }} />
+          <Iconify
+            icon="solar:alt-arrow-right-linear"
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
           <Typography
-            {...clickable(onClose, { role: "link", label: "Back to the issue" })}
-            sx={{ typography: "s2", color: "text.secondary", fontFamily: MONO, cursor: "pointer", "&:hover": { color: "text.primary" }, ...focusRing }}
+            {...clickable(onClose, {
+              role: "link",
+              label: "Back to the issue",
+            })}
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontFamily: MONO,
+              cursor: "pointer",
+              "&:hover": { color: "text.primary" },
+              ...focusRing,
+            }}
           >
             {issue?.cluster_id}
           </Typography>
-          <Iconify icon="mdi:chevron-right" width={13} sx={{ color: "text.disabled" }} />
-          <Typography sx={{ typography: "s2", color: "text.primary", fontWeight: 600 }}>Fix</Typography>
+          <Iconify
+            icon="solar:alt-arrow-right-linear"
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
+          <Typography
+            sx={{ typography: "s2", color: "text.primary", fontWeight: 600 }}
+          >
+            Fix
+          </Typography>
         </Stack>
 
         <Box sx={{ mb: 2.5 }}>
-          <Typography sx={{ typography: "m3", fontWeight: 600 }}>Fix this issue</Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}>{issue?.error?.name}</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{meta}</Typography>
+          <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+            Fix this issue
+          </Typography>
+          <Typography
+            sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
+          >
+            {issue?.error?.name}
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+          >
+            {meta}
+          </Typography>
         </Box>
 
         {/* ── no agent records this issue's project ── */}
@@ -330,14 +553,24 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
             icon="solar:link-broken-linear"
             title={`No agent is linked to ${projectName || "this issue's project"}`}
             body="Fix proves a change on the agent that produced these traces. Connect it once — this project comes with it, and Fix works for every issue from it."
-            action={(
-              <Button variant="contained" color="primary" size="small" onClick={() => setConnecting(true)} sx={{ typography: "s2", fontWeight: 700 }}>
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setConnecting(true)}
+              >
                 Connect agent to fix
               </Button>
-            )}
+            }
             onCancel={onClose}
           >
-            <ConnectAgentDialog open={connecting} onClose={() => setConnecting(false)} issue={issue} project={issueProjectLinkOf(issue, state, agents).project} />
+            <ConnectAgentDialog
+              open={connecting}
+              onClose={() => setConnecting(false)}
+              issue={issue}
+              project={issueProjectLinkOf(issue, state, agents).project}
+            />
           </Notice>
         )}
 
@@ -347,11 +580,18 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
             icon="solar:magic-stick-3-linear"
             title={`This issue already has a fix · ${status.label}`}
             body="An issue has one fix at a time. Open it to follow or review it; if it ends without fixing the issue, or the issue comes back after release, Fix again starts a new one."
-            action={(
-              <Button variant="contained" color="primary" size="small" onClick={() => navigate(...issueFixNav(status, issue?.cluster_id))} sx={{ typography: "s2", fontWeight: 700 }}>
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() =>
+                  navigate(...issueFixNav(status, issue?.cluster_id))
+                }
+              >
                 View fix
               </Button>
-            )}
+            }
             onCancel={onClose}
           />
         )}
@@ -359,11 +599,23 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
         {/* ── preparing the plan ── */}
         {agent && !inFlight && !prepared && (
           <Box sx={{ maxWidth: 640 }}>
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>Preparing the fix plan</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>
-              What the fix needs — usually a few seconds. The changes are drafted after you start.
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              Preparing the fix plan
             </Typography>
-            <Box sx={{ mt: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}
+            >
+              What the fix needs — usually a few seconds. The changes are
+              drafted after you start.
+            </Typography>
+            <Box
+              sx={{
+                mt: 2,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
               {prepSteps.map((step, i) => {
                 const detail = {
                   issue: `${issue?.trace_count || 0} traces · ${issue?.users_affected || 0} users`,
@@ -371,24 +623,81 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   env: main
                     ? `${main.name} · ${ready ? "already built — the fix measures it on today's version first" : "still building"}`
                     : "None yet — you'll build one before the fix starts",
-                  diagnosis: drafted ? `${drafted.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}` : "No prompt or tools to read — the search starts from the issue",
+                  diagnosis: drafted
+                    ? `${drafted.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}`
+                    : "No prompt or tools to read — the search starts from the issue",
                   scenarios: `${drafts.length} situations · callers inferred · failing step marked`,
-                  limits: [constraints.find((c) => c.id === "model")?.value, constraints.find((c) => c.id === "cost")?.value && `cost ${constraints.find((c) => c.id === "cost").value.toLowerCase()}`, `up to ${creditsLabel(spend)}`].filter(Boolean).join(" · "),
+                  limits: [
+                    constraints.find((c) => c.id === "model")?.value,
+                    constraints.find((c) => c.id === "cost")?.value &&
+                      `cost ${constraints.find((c) => c.id === "cost").value.toLowerCase()}`,
+                    `up to ${creditsLabel(spend)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
                 }[step.id];
                 return (
-                  <Stack key={step.id} direction="row" alignItems="flex-start" spacing={1.25} sx={{ px: 2, py: 1.25, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-                    <Box sx={{ width: 16, display: "grid", placeItems: "center", flexShrink: 0, mt: "2px" }}>
+                  <Stack
+                    key={step.id}
+                    direction="row"
+                    alignItems="flex-start"
+                    spacing={1.25}
+                    sx={{
+                      px: 2,
+                      py: 1.25,
+                      borderTop: i ? "1px solid" : "none",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 16,
+                        display: "grid",
+                        placeItems: "center",
+                        flexShrink: 0,
+                        mt: "2px",
+                      }}
+                    >
                       {i < prep ? (
-                        <Iconify icon="solar:check-circle-linear" width={15} sx={{ color: "text.secondary" }} />
+                        <Iconify
+                          icon="solar:check-circle-linear"
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
                       ) : i === prep ? (
-                        <CircularProgress size={12} thickness={5} sx={{ color: "text.disabled" }} />
+                        <CircularProgress
+                          size={12}
+                          thickness={5}
+                          sx={{ color: "text.disabled" }}
+                        />
                       ) : (
-                        <Box sx={{ width: 10, height: 10, borderRadius: "50%", border: "1px solid", borderColor: "divider" }} />
+                        <Box
+                          sx={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: "50%",
+                            border: "1px solid",
+                            borderColor: "divider",
+                          }}
+                        />
                       )}
                     </Box>
                     <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", color: i <= prep ? "text.primary" : "text.disabled" }}>{step.label}</Typography>
-                      {i < prep && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{detail}</Typography>}
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          color: i <= prep ? "text.primary" : "text.disabled",
+                        }}
+                      >
+                        {step.label}
+                      </Typography>
+                      {i < prep && (
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          {detail}
+                        </Typography>
+                      )}
                     </Box>
                   </Stack>
                 );
@@ -401,36 +710,80 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
         {agent && !inFlight && prepared && (
           <>
             {/* What needs saying before anything else. */}
-            {(ready && main.returnToIssue === issue?.cluster_id) || evidence || gateNote || consentBlock ? (
+            {(ready && main.returnToIssue === issue?.cluster_id) ||
+            evidence ||
+            gateNote ||
+            consentBlock ? (
               <Stack spacing={1.25} sx={{ mb: 2.5 }}>
-                {ready && main.returnToIssue && main.returnToIssue === issue?.cluster_id && (
-                  <Callout icon="solar:check-circle-linear" title={`${main.name} is built`}>
-                    The fix runs its scenarios on today&apos;s version first. Those that pass every repeat, with any you mark must-pass, must keep passing.
+                {ready &&
+                  main.returnToIssue &&
+                  main.returnToIssue === issue?.cluster_id && (
+                    <Callout
+                      icon="solar:check-circle-linear"
+                      title={`${main.name} is built`}
+                    >
+                      The fix runs its scenarios on today&apos;s version first.
+                      Those that pass every repeat, with any you mark must-pass,
+                      must keep passing.
+                    </Callout>
+                  )}
+                {evidence && (
+                  <Callout
+                    icon="solar:info-circle-linear"
+                    title={evidence.title}
+                  >
+                    {evidence.body}
                   </Callout>
                 )}
-                {evidence && <Callout icon="solar:info-circle-linear" title={evidence.title}>{evidence.body}</Callout>}
                 {gateNote}
                 {consentBlock}
               </Stack>
             ) : null}
 
-            <Box sx={{ display: "grid", gap: 3, alignItems: "start", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 360px" } }}>
+            <Box
+              sx={{
+                display: "grid",
+                gap: 3,
+                alignItems: "start",
+                gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 360px" },
+              }}
+            >
               {/* ── main column: the plan, in the order it happens ── */}
               <Stack spacing={2.5} sx={{ minWidth: 0 }}>
                 {diagnosis && (
                   <Section
-                    n={1} title="Diagnosis"
-                    meta={edited ? "Edited by you — the search starts from this" : "Drafted from the agent's prompt, its tools and the failing calls — edit it if it's wrong"}
-                    action={edited ? (
-                      <Button size="small" onClick={() => setDiagEdits({})} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0, flexShrink: 0 }}>
-                        Reset
-                      </Button>
-                    ) : null}
+                    n={1}
+                    title="Diagnosis"
+                    meta={
+                      edited
+                        ? "Edited by you — the search starts from this"
+                        : "Drafted from the agent's prompt, its tools and the failing calls — edit it if it's wrong"
+                    }
+                    action={
+                      edited ? (
+                        <Button
+                          size="small"
+                          onClick={() => setDiagEdits({})}
+                          sx={{
+                            color: "text.secondary",
+                            minWidth: 0,
+                            flexShrink: 0,
+                          }}
+                        >
+                          Reset
+                        </Button>
+                      ) : null
+                    }
                   >
                     <Diagnosis
-                      diagnosis={diagnosis} readOnly={!ready}
+                      diagnosis={diagnosis}
+                      readOnly={!ready}
                       onEdit={(k, v) => setDiagEdits((d) => ({ ...d, [k]: v }))}
-                      symptomFrom={rootCause?.source === "analysis" ? "Root cause tab" : "Error Feed"}
+                      symptomFrom={
+                        rootCause?.source === "analysis"
+                          ? "Root cause tab"
+                          : "Error Feed"
+                      }
                     />
                   </Section>
                 )}
@@ -441,94 +794,263 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   meta={`${chosen.length} of ${drafts.length} · used by this fix only`}
                 >
                   {drafts.map((d, i) => (
-                    <Stack key={d.id} direction="row" alignItems="flex-start" spacing={1} sx={{ px: 2, py: 1.125, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
+                    <Stack
+                      key={d.id}
+                      direction="row"
+                      alignItems="flex-start"
+                      spacing={1}
+                      sx={{
+                        px: 2,
+                        py: 1,
+                        borderTop: i ? "1px solid" : "none",
+                        borderColor: "divider",
+                      }}
+                    >
                       <Checkbox
-                        size="small" checked={!!picked[d.id]} disabled={!ready}
-                        onChange={(e) => setPicked((p) => ({ ...p, [d.id]: e.target.checked }))}
+                        size="small"
+                        checked={!!picked[d.id]}
+                        disabled={!ready}
+                        onChange={(e) =>
+                          setPicked((p) => ({ ...p, [d.id]: e.target.checked }))
+                        }
                         inputProps={{ "aria-label": `Use ${d.title}` }}
-                        sx={{ p: 0.25, mt: 0.125, ...(!ready && { "&.Mui-disabled": { color: "text.disabled" } }) }}
+                        sx={{
+                          p: 0.25,
+                          mt: 0.125,
+                          ...(!ready && {
+                            "&.Mui-disabled": { color: "text.disabled" },
+                          }),
+                        }}
                       />
                       <Box flex={1} minWidth={0}>
                         {/* The title is the scenario — edit it in place. */}
                         <InputBase
-                          fullWidth multiline value={titles[d.id] ?? d.title} readOnly={!ready}
-                          onChange={(e) => setTitles((t) => ({ ...t, [d.id]: e.target.value }))}
-                          sx={{ py: 0, color: picked[d.id] ? "text.primary" : "text.disabled", "& .MuiInputBase-input": { typography: "s2", fontWeight: 500, p: 0 } }}
+                          fullWidth
+                          multiline
+                          value={titles[d.id] ?? d.title}
+                          readOnly={!ready}
+                          onChange={(e) =>
+                            setTitles((t) => ({ ...t, [d.id]: e.target.value }))
+                          }
+                          sx={{
+                            py: 0,
+                            color: picked[d.id]
+                              ? "text.primary"
+                              : "text.disabled",
+                            "& .MuiInputBase-input": {
+                              typography: "s2",
+                              fontWeight: 500,
+                              p: 0,
+                            },
+                          }}
                         />
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
                           {`From ${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}, inferred from the calls` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
                         </Typography>
                       </Box>
                     </Stack>
                   ))}
-                  <Typography sx={{ px: 2, py: 1, typography: "s3", color: "text.subtitle", borderTop: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
+                  <Typography
+                    sx={{
+                      px: 2,
+                      py: 1,
+                      typography: "s3",
+                      color: "text.subtitle",
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: "background.neutral",
+                    }}
+                  >
                     {[
-                      drafts[0]?.subGoals?.[1] && `Each checks the step that failed: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
-                      ready ? "Failing ones become targets; some are held back to prove the fix." : "You can edit them once its environment is ready.",
-                    ].filter(Boolean).join(" ")}
+                      drafts[0]?.subGoals?.[1] &&
+                        `Each checks the step that failed: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
+                      ready
+                        ? "Failing ones become targets; some are held back to prove the fix."
+                        : "You can edit them once its environment is ready.",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                   </Typography>
                 </Section>
 
-                <Section n={lead + 2} title="Where it's tested" meta="A change that breaks what passes today is rejected">
+                <Section
+                  n={lead + 2}
+                  title="Where it's tested"
+                  meta="A change that breaks what passes today is rejected"
+                >
                   {!main ? (
-                    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.5 }}>
-                      <Iconify icon="solar:box-minimalistic-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1.25}
+                      sx={{ px: 2, py: 1 }}
+                    >
+                      <Iconify
+                        icon="solar:box-minimalistic-linear"
+                        width={16}
+                        sx={{ color: "text.secondary", flexShrink: 0 }}
+                      />
                       <Box flex={1} minWidth={0}>
-                        <Typography sx={{ typography: "s2", fontWeight: 600 }}>No environment yet</Typography>
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`Built from ${agent.name} — a few minutes. Then you come back here and start.`}</Typography>
+                        <Typography
+                          sx={{ typography: "s2_1", fontWeight: 500 }}
+                        >
+                          No environment yet
+                        </Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >{`Built from ${agent.name} — a few minutes. Then you come back here and start.`}</Typography>
                       </Box>
                     </Stack>
                   ) : (
-                    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.25 }}>
-                      <Iconify icon="solar:box-minimalistic-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1.25}
+                      sx={{ px: 2, py: 1 }}
+                    >
+                      <Iconify
+                        icon="solar:box-minimalistic-linear"
+                        width={16}
+                        sx={{ color: "text.secondary", flexShrink: 0 }}
+                      />
                       <Box flex={1} minWidth={0}>
-                        <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{main.name}</Typography>
-                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                          {ready ? `Main environment · ${pairOf(main)} · measured on today's version first` : "Main environment · still building — the fix starts once it's built"}
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s2_1", fontWeight: 500 }}
+                        >
+                          {main.name}
+                        </Typography>
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          {ready
+                            ? `Main environment · ${pairOf(main)} · measured on today's version first`
+                            : "Main environment · still building — the fix starts once it's built"}
                         </Typography>
                       </Box>
-                      <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", flexShrink: 0 }}>Main · always checked</Typography>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          fontWeight: 600,
+                          color: "text.subtitle",
+                          flexShrink: 0,
+                        }}
+                      >
+                        Main · always checked
+                      </Typography>
                     </Stack>
                   )}
                   {/* The agent's other environments: their must-pass sets can join the check. */}
-                  {ready && others.map((e) => {
-                    const on = alsoIn.includes(e.id);
-                    const n = mustPassIn(e);
-                    return (
-                      <Stack
-                        key={e.id} direction="row" alignItems="center" spacing={1.25}
-                        {...clickable(() => setAlsoIn((ids) => (on ? ids.filter((x) => x !== e.id) : [...ids, e.id])), { role: "checkbox", checked: on })}
-                        sx={{ px: 2, py: 1.125, borderTop: "1px solid", borderColor: "divider", cursor: "pointer", "&:hover": { bgcolor: "action.hover" }, ...focusRing }}
-                      >
-                        <Iconify icon={on ? "solar:check-square-bold" : "solar:stop-linear"} width={16} sx={{ color: on ? "text.primary" : "text.subtitle", flexShrink: 0 }} />
-                        <Box flex={1} minWidth={0}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{e.name}</Typography>
-                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{pairOf(e)}</Typography>
-                        </Box>
-                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                          {n ? `Also check ${n} must-pass` : "No must-pass yet"}
-                        </Typography>
-                      </Stack>
-                    );
-                  })}
+                  {ready &&
+                    others.map((e) => {
+                      const on = alsoIn.includes(e.id);
+                      const n = mustPassIn(e);
+                      return (
+                        <Stack
+                          key={e.id}
+                          direction="row"
+                          alignItems="center"
+                          spacing={1.25}
+                          {...clickable(
+                            () =>
+                              setAlsoIn((ids) =>
+                                on
+                                  ? ids.filter((x) => x !== e.id)
+                                  : [...ids, e.id],
+                              ),
+                            { role: "checkbox", checked: on },
+                          )}
+                          sx={{
+                            px: 2,
+                            py: 1,
+                            borderTop: "1px solid",
+                            borderColor: "divider",
+                            cursor: "pointer",
+                            "&:hover": { bgcolor: "action.hover" },
+                            ...focusRing,
+                          }}
+                        >
+                          <Iconify
+                            icon={
+                              on
+                                ? "solar:check-square-bold"
+                                : "solar:stop-linear"
+                            }
+                            width={16}
+                            sx={{
+                              color: on ? "text.primary" : "text.subtitle",
+                              flexShrink: 0,
+                            }}
+                          />
+                          <Box flex={1} minWidth={0}>
+                            <Typography
+                              noWrap
+                              sx={{ typography: "s2_1", fontWeight: 500 }}
+                            >
+                              {e.name}
+                            </Typography>
+                            <Typography
+                              noWrap
+                              sx={{ typography: "s3", color: "text.subtitle" }}
+                            >
+                              {pairOf(e)}
+                            </Typography>
+                          </Box>
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              color: "text.subtitle",
+                              flexShrink: 0,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {n
+                              ? `Also check ${n} must-pass`
+                              : "No must-pass yet"}
+                          </Typography>
+                        </Stack>
+                      );
+                    })}
                 </Section>
 
                 <Section n={lead + 3} title="How it searches">
                   {members.length > 0 && (
                     <SettingRow
                       title="Target member"
-                      body={target
-                        ? `Changes stay inside ${target}; parts every member shares are changed only when the fix needs them, and the proposal says so.`
-                        : `Every proposal names the members it changes.${targetable.length < members.length ? " Protected members are never changed." : ""}`}
+                      body={
+                        target
+                          ? `Changes stay inside ${target}; parts every member shares are changed only when the fix needs them, and the proposal says so.`
+                          : `Every proposal names the members it changes.${targetable.length < members.length ? " Protected members are never changed." : ""}`
+                      }
                     >
                       <Select
-                        size="small" displayEmpty value={target} onChange={(e) => setTarget(e.target.value)}
-                        sx={{ minWidth: 240, typography: "s2", "& .MuiSelect-select": { typography: "s2", py: 0.75 } }}
+                        size="small"
+                        displayEmpty
+                        value={target}
+                        onChange={(e) => setTarget(e.target.value)}
+                        sx={{
+                          minWidth: 240,
+                          typography: "s2",
+                          "& .MuiSelect-select": { typography: "s2", py: 0.75 },
+                        }}
                       >
-                        <MenuItem value="" sx={{ typography: "s2" }}>Any member the evidence points to</MenuItem>
+                        <MenuItem value="" sx={{ typography: "s2" }}>
+                          Any member the evidence points to
+                        </MenuItem>
                         {members.map((m) => (
-                          <MenuItem key={m.id} value={m.name} disabled={isProtectedMember(m, limits)} sx={{ typography: "s2" }}>
-                            {isProtectedMember(m, limits) ? `${m.name} · protected, never changed` : m.name}
+                          <MenuItem
+                            key={m.id}
+                            value={m.name}
+                            disabled={isProtectedMember(m, limits)}
+                            sx={{ typography: "s2" }}
+                          >
+                            {isProtectedMember(m, limits)
+                              ? `${m.name} · protected, never changed`
+                              : m.name}
                           </MenuItem>
                         ))}
                       </Select>
@@ -537,11 +1059,17 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   {ready && main.surface === "voice" && (
                     <SettingRow
                       title="Search in text, confirm finalists as real calls"
-                      body={estimate.allCalls
-                        ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls. Only the finalists are called.`
-                        : "Every run is a real call — slower and dearer, and closest to production."}
+                      body={
+                        estimate.allCalls
+                          ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls. Only the finalists are called.`
+                          : "Every run is a real call — slower and dearer, and closest to production."
+                      }
                     >
-                      <Switch size="small" checked={inText} onChange={(e) => setTextSearch(e.target.checked)} />
+                      <Switch
+                        size="small"
+                        checked={inText}
+                        onChange={(e) => setTextSearch(e.target.checked)}
+                      />
                     </SettingRow>
                   )}
                   {lineageVersions.length > 0 && (
@@ -549,37 +1077,87 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       title="Search across earlier versions"
                       body={`Also tries the changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label} made, on ${production.label}. Checked the same way as every other proposed change.`}
                     >
-                      <Switch size="small" checked={acrossLineage} onChange={(e) => setAcrossLineage(e.target.checked)} />
+                      <Switch
+                        size="small"
+                        checked={acrossLineage}
+                        onChange={(e) => setAcrossLineage(e.target.checked)}
+                      />
                     </SettingRow>
                   )}
-                  {!members.length && !(ready && main.surface === "voice") && !lineageVersions.length && (
-                    <Typography sx={{ px: 2, py: 1.25, typography: "s2", color: "text.secondary" }}>
-                      Searches the parts the agent allows, guided by the evidence. Nothing to choose for this agent.
-                    </Typography>
-                  )}
+                  {!members.length &&
+                    !(ready && main.surface === "voice") &&
+                    !lineageVersions.length && (
+                      <Typography
+                        sx={{
+                          px: 2,
+                          py: 1.25,
+                          typography: "s2",
+                          color: "text.secondary",
+                        }}
+                      >
+                        Searches the parts the agent allows, guided by the
+                        evidence. Nothing to choose for this agent.
+                      </Typography>
+                    )}
                 </Section>
 
                 <Section
                   n={lead + 4}
                   title="What it may change"
                   meta="From the agent — a change that breaks any of these is rejected"
-                  action={(
-                    <Button size="small" onClick={() => navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=constraints`)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                  action={
+                    <Button
+                      size="small"
+                      onClick={() =>
+                        navigate(
+                          `${paths.dashboard.agents}/connected/${agent.id}?tab=constraints`,
+                        )
+                      }
+                      sx={{ color: "text.secondary", minWidth: 0 }}
+                    >
                       Change
                     </Button>
-                  )}
+                  }
                 >
-                  <Box sx={{
-                    display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-                    "& > *": { borderColor: "divider", borderStyle: "solid", borderWidth: 0, borderTopWidth: 1 },
-                    "& > *:nth-of-type(-n+2)": { borderTopWidth: { xs: 0, md: 0 } },
-                    "& > *:nth-of-type(2)": { borderTopWidth: { xs: 1, md: 0 } },
-                    "& > *:nth-of-type(even)": { borderLeftWidth: { md: 1 } },
-                  }}>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                      "& > *": {
+                        borderColor: "divider",
+                        borderStyle: "solid",
+                        borderWidth: 0,
+                        borderTopWidth: 1,
+                      },
+                      "& > *:nth-of-type(-n+2)": {
+                        borderTopWidth: { xs: 0, md: 0 },
+                      },
+                      "& > *:nth-of-type(2)": {
+                        borderTopWidth: { xs: 1, md: 0 },
+                      },
+                      "& > *:nth-of-type(even)": { borderLeftWidth: { md: 1 } },
+                    }}
+                  >
                     {constraints.map((c) => (
-                      <Stack key={c.id} direction="row" spacing={1.5} sx={{ px: 2, py: 1, minWidth: 0 }}>
-                        <Typography sx={{ typography: "s2", color: "text.subtitle", width: 150, flexShrink: 0 }}>{c.label}</Typography>
-                        <Typography sx={{ typography: "s2", minWidth: 0 }}>{c.value}</Typography>
+                      <Stack
+                        key={c.id}
+                        direction="row"
+                        spacing={1.5}
+                        sx={{ px: 2, py: 1, minWidth: 0 }}
+                      >
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            color: "text.subtitle",
+                            width: 150,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {c.label}
+                        </Typography>
+                        <Typography sx={{ typography: "s2", minWidth: 0 }}>
+                          {c.value}
+                        </Typography>
                       </Stack>
                     ))}
                   </Box>
@@ -588,43 +1166,145 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
               {/* ── beside it: the summary, and Start always in view ── */}
               <Box sx={{ position: { lg: "sticky" }, top: { lg: 16 } }}>
-                <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-                  <Typography sx={{ px: 2, py: 1.25, typography: "s1", fontWeight: 700, borderBottom: "1px solid", borderColor: "divider" }}>This fix</Typography>
+                <Box
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      px: 2,
+                      py: 1.25,
+                      typography: "s1",
+                      fontWeight: 600,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    This fix
+                  </Typography>
                   <SumRow k="Agent">
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{agent.name}</Typography>
-                    <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{production.line}</Typography>
                     <Typography
-                      {...clickable(() => navigate(`${paths.dashboard.agents}/connected/${agent.id}`), { role: "link" })}
-                      sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", cursor: "pointer", width: "fit-content", "&:hover": { color: "text.primary" }, ...focusRing }}
+                      noWrap
+                      sx={{ typography: "s2", fontWeight: 600 }}
+                    >
+                      {agent.name}
+                    </Typography>
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      {production.line}
+                    </Typography>
+                    <Typography
+                      {...clickable(
+                        () =>
+                          navigate(
+                            `${paths.dashboard.agents}/connected/${agent.id}`,
+                          ),
+                        { role: "link" },
+                      )}
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "text.secondary",
+                        cursor: "pointer",
+                        width: "fit-content",
+                        "&:hover": { color: "text.primary" },
+                        ...focusRing,
+                      }}
                     >
                       View agent
                     </Typography>
                   </SumRow>
                   <SumRow k="Tested in">
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{main ? main.name : "Not set up yet"}</Typography>
-                    <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {main ? (alsoNames.length ? `+ must-pass from ${alsoNames.join(", ")}` : "its must-pass set is the regression check") : "built before the fix starts"}
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s2", fontWeight: 600 }}
+                    >
+                      {main ? main.name : "Not set up yet"}
+                    </Typography>
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      {main
+                        ? alsoNames.length
+                          ? `+ must-pass from ${alsoNames.join(", ")}`
+                          : "its must-pass set is the regression check"
+                        : "built before the fix starts"}
                     </Typography>
                   </SumRow>
                   <SumRow k="Scenarios">
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>{`${chosen.length} from this issue`}</Typography>
-                    {regressionCount > 0 && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`+ ${regressionCount} must-pass from other environments`}</Typography>}
+                    <Typography
+                      sx={{ typography: "s2", fontWeight: 600 }}
+                    >{`${chosen.length} from this issue`}</Typography>
+                    {regressionCount > 0 && (
+                      <Typography
+                        sx={{ typography: "s3", color: "text.subtitle" }}
+                      >{`+ ${regressionCount} must-pass from other environments`}</Typography>
+                    )}
                   </SumRow>
                   <SumRow k="Budget">
                     {ready ? (
                       <>
                         <Stack direction="row" spacing={1}>
-                          <Select size="small" value={spend} onChange={(e) => setBudget(e.target.value)} sx={{ flex: 1, minWidth: 0, typography: "s2" }} inputProps={{ "aria-label": "Credit budget" }}>
-                            {budgets.map((b) => <MenuItem key={b} value={b} sx={{ typography: "s2" }}>{creditsLabel(b)}</MenuItem>)}
+                          <Select
+                            size="small"
+                            value={spend}
+                            onChange={(e) => setBudget(e.target.value)}
+                            sx={{ flex: 1, minWidth: 0, typography: "s2" }}
+                            inputProps={{ "aria-label": "Credit budget" }}
+                          >
+                            {budgets.map((b) => (
+                              <MenuItem
+                                key={b}
+                                value={b}
+                                sx={{ typography: "s2" }}
+                              >
+                                {creditsLabel(b)}
+                              </MenuItem>
+                            ))}
                           </Select>
-                          <Select size="small" value={spendMinutes} onChange={(e) => setMinutes(e.target.value)} sx={{ width: 104, typography: "s2" }} inputProps={{ "aria-label": "Time budget" }}>
-                            {minuteChoices.map((m) => <MenuItem key={m} value={m} sx={{ typography: "s2" }}>{`${m} min`}</MenuItem>)}
+                          <Select
+                            size="small"
+                            value={spendMinutes}
+                            onChange={(e) => setMinutes(e.target.value)}
+                            sx={{ width: 104, typography: "s2" }}
+                            inputProps={{ "aria-label": "Time budget" }}
+                          >
+                            {minuteChoices.map((m) => (
+                              <MenuItem
+                                key={m}
+                                value={m}
+                                sx={{ typography: "s2" }}
+                              >{`${m} min`}</MenuItem>
+                            ))}
                           </Select>
                         </Stack>
-                        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.75, fontVariantNumeric: "tabular-nums" }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.secondary",
+                            mt: 0.75,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
                           {`Up to ${estimate.runs} runs · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
                         </Typography>
-                        <Typography sx={{ typography: "s3", color: overBudget || overTime ? "text.primary" : "text.subtitle", mt: 0.25 }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color:
+                              overBudget || overTime
+                                ? "text.primary"
+                                : "text.subtitle",
+                            mt: 0.25,
+                          }}
+                        >
                           {overBudget || overTime
                             ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} runs — you'll get the best it found. ${stopEarlyNote()}`
                             : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote()}`}
@@ -632,15 +1312,41 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       </>
                     ) : (
                       <>
-                        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{`Up to ${creditsLabel(spend)} · ${spendMinutes} min`}</Typography>
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>From the agent — you set it when you start.</Typography>
+                        <Typography
+                          sx={{ typography: "s2", fontWeight: 600 }}
+                        >{`Up to ${creditsLabel(spend)} · ${spendMinutes} min`}</Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          From the agent — you set it when you start.
+                        </Typography>
                       </>
                     )}
                   </SumRow>
-                  <Box sx={{ p: 2, borderTop: "1px solid", borderColor: "divider" }}>
+                  <Box
+                    sx={{
+                      p: 2,
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
                     {startButton}
-                    <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1, textAlign: "center" }}>{startNote}</Typography>
-                    <Button fullWidth size="small" onClick={onClose} sx={{ mt: 0.5, typography: "s2", fontWeight: 600, color: "text.secondary" }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        mt: 1,
+                        textAlign: "center",
+                      }}
+                    >
+                      {startNote}
+                    </Typography>
+                    <Button
+                      fullWidth
+                      size="small"
+                      onClick={onClose}
+                      sx={{ mt: 0.5, color: "text.secondary" }}
+                    >
                       Back to the issue
                     </Button>
                   </Box>
@@ -657,7 +1363,10 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 onBuild={(choice) => {
                   setBuildOpen(false);
                   navigate(paths.dashboard.simulate.environmentBuild, {
-                    state: { presetSource: buildPresetFor(agent, choice), fromIssue: issue?.cluster_id || null },
+                    state: {
+                      presetSource: buildPresetFor(agent, choice),
+                      fromIssue: issue?.cluster_id || null,
+                    },
                   });
                 }}
               />
@@ -687,11 +1396,20 @@ const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
   const field = (k) => (
     <InputBase
-      fullWidth multiline value={diagnosis[k]} readOnly={readOnly}
+      fullWidth
+      multiline
+      value={diagnosis[k]}
+      readOnly={readOnly}
       onChange={(e) => onEdit(k, e.target.value)}
-      inputProps={{ "aria-label": k === "cause" ? "Why it fails" : "What to change" }}
+      inputProps={{
+        "aria-label": k === "cause" ? "Why it fails" : "What to change",
+      }}
       sx={{
-        py: 0.25, px: 0.75, mx: -0.75, borderRadius: 0.75, border: "1px solid transparent",
+        py: 0.25,
+        px: 0.75,
+        mx: -0.75,
+        borderRadius: "4px",
+        border: "1px solid transparent",
         "&:hover": { borderColor: readOnly ? "transparent" : "divider" },
         "&.Mui-focused": { borderColor: "primary.main" },
         "& .MuiInputBase-input": { typography: "s2", p: 0 },
@@ -699,52 +1417,157 @@ function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
     />
   );
   const rows = [
-    ["Where", (
+    [
+      "Where",
       <Stack key="where" spacing={0.75}>
         {diagnosis.where.map((w) => (
           <Box key={`${w.kind}:${w.ref}`} sx={{ minWidth: 0 }}>
             <Typography sx={{ typography: "s2" }}>
-              <Box component="span" sx={{ color: "text.secondary" }}>{`${w.kind} · `}</Box>
-              <Box component="span" sx={{ fontWeight: 600, fontFamily: w.kind === "System prompt" ? "inherit" : "ui-monospace, Menlo, monospace", fontSize: w.kind === "System prompt" ? undefined : 12.5 }}>{w.ref}</Box>
+              <Box
+                component="span"
+                sx={{ color: "text.secondary" }}
+              >{`${w.kind} · `}</Box>
+              <Box
+                component="span"
+                sx={{
+                  fontWeight: 600,
+                  fontFamily:
+                    w.kind === "System prompt"
+                      ? "inherit"
+                      : "ui-monospace, Menlo, monospace",
+                  fontSize: w.kind === "System prompt" ? undefined : 13,
+                }}
+              >
+                {w.ref}
+              </Box>
             </Typography>
             {w.quote && (
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace", mt: 0.25 }}>{`“${w.quote}”`}</Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  mt: 0.25,
+                }}
+              >{`“${w.quote}”`}</Typography>
             )}
           </Box>
         ))}
-      </Stack>
-    )],
+      </Stack>,
+    ],
     ["Why it fails", field("cause")],
     ["What to change", field("change")],
-    diagnosis.symptom && ["Symptom", (
-      <Typography key="symptom" sx={{ typography: "s2", color: "text.secondary" }}>
+    diagnosis.symptom && [
+      "Symptom",
+      <Typography
+        key="symptom"
+        sx={{ typography: "s2", color: "text.secondary" }}
+      >
         {diagnosis.symptom}
-        <Box component="span" sx={{ color: "text.subtitle" }}>{` · what ${symptomFrom} saw — the search doesn't start from it`}</Box>
-      </Typography>
-    )],
+        <Box
+          component="span"
+          sx={{ color: "text.subtitle" }}
+        >{` · what ${symptomFrom} saw — the search doesn't start from it`}</Box>
+      </Typography>,
+    ],
   ].filter(Boolean);
   return (
     <Box>
       {rows.map(([k, v], i) => (
-        <Box key={k} sx={{ display: "grid", gridTemplateColumns: "120px minmax(0, 1fr)", columnGap: 2, px: 2, py: 1.125, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s2", color: "text.subtitle", pt: k === "Why it fails" || k === "What to change" ? 0.25 : 0 }}>{k}</Typography>
+        <Box
+          key={k}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "120px minmax(0, 1fr)",
+            columnGap: 2,
+            px: 2,
+            py: 1.125,
+            borderTop: i ? "1px solid" : "none",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.subtitle",
+              pt: k === "Why it fails" || k === "What to change" ? 0.25 : 0,
+            }}
+          >
+            {k}
+          </Typography>
           <Box sx={{ minWidth: 0 }}>{v}</Box>
         </Box>
       ))}
     </Box>
   );
 }
-Diagnosis.propTypes = { diagnosis: PropTypes.object.isRequired, readOnly: PropTypes.bool, onEdit: PropTypes.func.isRequired, symptomFrom: PropTypes.string };
+Diagnosis.propTypes = {
+  diagnosis: PropTypes.object.isRequired,
+  readOnly: PropTypes.bool,
+  onEdit: PropTypes.func.isRequired,
+  symptomFrom: PropTypes.string,
+};
 
 function Section({ n, title, meta, action, children }) {
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Box sx={{ width: 20, height: 20, borderRadius: "50%", border: "1px solid", borderColor: "divider", display: "grid", placeItems: "center", flexShrink: 0 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>{n}</Typography>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box
+          sx={{
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            border: "1px solid",
+            borderColor: "divider",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {n}
+          </Typography>
         </Box>
-        <Typography sx={{ typography: "s1", fontWeight: 700, flexShrink: 0 }}>{title}</Typography>
-        {meta && <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>{meta}</Typography>}
+        <Typography sx={{ typography: "s1", fontWeight: 600, flexShrink: 0 }}>
+          {title}
+        </Typography>
+        {meta && (
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {meta}
+          </Typography>
+        )}
         {!meta && <Box flex={1} />}
         {action}
       </Stack>
@@ -752,27 +1575,61 @@ function Section({ n, title, meta, action, children }) {
     </Box>
   );
 }
-Section.propTypes = { n: PropTypes.number, title: PropTypes.string, meta: PropTypes.string, action: PropTypes.node, children: PropTypes.node };
+Section.propTypes = {
+  n: PropTypes.number,
+  title: PropTypes.string,
+  meta: PropTypes.string,
+  action: PropTypes.node,
+  children: PropTypes.node,
+};
 
 /* One choice in How it searches: what it is, what it does, its control. */
 function SettingRow({ title, body, children }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 2, py: 1.25, "& + &": { borderTop: "1px solid", borderColor: "divider" } }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={2}
+      sx={{
+        px: 2,
+        py: 1.25,
+        "& + &": { borderTop: "1px solid", borderColor: "divider" },
+      }}
+    >
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{body}</Typography>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {body}
+        </Typography>
       </Box>
       <Box sx={{ flexShrink: 0 }}>{children}</Box>
     </Stack>
   );
 }
-SettingRow.propTypes = { title: PropTypes.string, body: PropTypes.string, children: PropTypes.node };
+SettingRow.propTypes = {
+  title: PropTypes.string,
+  body: PropTypes.string,
+  children: PropTypes.node,
+};
 
 /* One line of the summary: a label above what it is. */
 function SumRow({ k, children }) {
   return (
-    <Box sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider", "&:nth-of-type(2)": { borderTop: "none" }, minWidth: 0 }}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.25 }}>{k}</Typography>
+    <Box
+      sx={{
+        px: 2,
+        py: 1.25,
+        borderTop: "1px solid",
+        borderColor: "divider",
+        "&:nth-of-type(2)": { borderTop: "none" },
+        minWidth: 0,
+      }}
+    >
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.25 }}>
+        {k}
+      </Typography>
       {children}
     </Box>
   );
@@ -782,29 +1639,75 @@ SumRow.propTypes = { k: PropTypes.string, children: PropTypes.node };
 /* Something to know before the plan — said once, at the top. */
 function Callout({ icon, title, children }) {
   return (
-    <Stack direction="row" spacing={1.25} sx={{ px: 2, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
-      <Iconify icon={icon} width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
+    <Stack
+      direction="row"
+      spacing={1.25}
+      sx={{
+        px: 2,
+        py: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+      }}
+    >
+      <Iconify
+        icon={icon}
+        width={16}
+        sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+      />
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{children}</Typography>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+          {children}
+        </Typography>
       </Box>
     </Stack>
   );
 }
-Callout.propTypes = { icon: PropTypes.string, title: PropTypes.node, children: PropTypes.node };
+Callout.propTypes = {
+  icon: PropTypes.string,
+  title: PropTypes.node,
+  children: PropTypes.node,
+};
 
 /* A page with one thing to do: why, and the way forward. */
 function Notice({ icon, title, body, action, onCancel, children }) {
   return (
-    <Box sx={{ maxWidth: 640, border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 2.5 }}>
+    <Box
+      sx={{
+        maxWidth: 640,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        p: 2.5,
+      }}
+    >
       <Stack direction="row" spacing={1.5}>
-        <Iconify icon={icon} width={18} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
+        <Iconify
+          icon={icon}
+          width={20}
+          sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+        />
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>{title}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>{body}</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            {title}
+          </Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}
+          >
+            {body}
+          </Typography>
           <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
             {action}
-            <Button size="small" onClick={onCancel} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Back to the issue</Button>
+            <Button
+              size="small"
+              onClick={onCancel}
+              sx={{ color: "text.secondary" }}
+            >
+              Back to the issue
+            </Button>
           </Stack>
         </Box>
       </Stack>
@@ -812,4 +1715,11 @@ function Notice({ icon, title, body, action, onCancel, children }) {
     </Box>
   );
 }
-Notice.propTypes = { icon: PropTypes.string, title: PropTypes.string, body: PropTypes.string, action: PropTypes.node, onCancel: PropTypes.func, children: PropTypes.node };
+Notice.propTypes = {
+  icon: PropTypes.string,
+  title: PropTypes.string,
+  body: PropTypes.string,
+  action: PropTypes.node,
+  onCancel: PropTypes.func,
+  children: PropTypes.node,
+};

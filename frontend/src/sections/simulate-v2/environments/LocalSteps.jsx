@@ -16,18 +16,42 @@ export default function LocalSteps({ steps }) {
           <Stack alignItems="center" sx={{ flexShrink: 0 }}>
             <Box
               sx={{
-                width: 24, height: 24, borderRadius: "50%", display: "grid", placeItems: "center",
-                border: "1px solid", borderColor: "divider",
-                typography: "s3", fontWeight: 700, color: "text.secondary",
+                width: 24,
+                height: 24,
+                borderRadius: "50%",
+                display: "grid",
+                placeItems: "center",
+                border: "1px solid",
+                borderColor: "divider",
+                typography: "s3",
+                fontWeight: 600,
+                color: "text.secondary",
               }}
             >
               {i + 1}
             </Box>
-            {i < steps.length - 1 && <Box sx={{ flex: 1, width: "1px", bgcolor: "divider", my: 0.75, minHeight: 24 }} />}
+            {i < steps.length - 1 && (
+              <Box
+                sx={{
+                  flex: 1,
+                  width: "1px",
+                  bgcolor: "divider",
+                  my: 0.75,
+                  minHeight: 24,
+                }}
+              />
+            )}
           </Stack>
-          <Box sx={{ flex: 1, minWidth: 0, pb: i < steps.length - 1 ? 2.25 : 0 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>{s.title}</Typography>
-            <Typography component="div" sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
+          <Box
+            sx={{ flex: 1, minWidth: 0, pb: i < steps.length - 1 ? 2.25 : 0 }}
+          >
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {s.title}
+            </Typography>
+            <Typography
+              component="div"
+              sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}
+            >
               {s.hint ? <HintLine hint={s.hint}>{s.body}</HintLine> : s.body}
             </Typography>
             {s.extra}

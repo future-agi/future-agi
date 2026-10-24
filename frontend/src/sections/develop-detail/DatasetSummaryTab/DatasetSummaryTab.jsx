@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Box } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { Box, Tab } from "@mui/material";
 import PropTypes from "prop-types";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import EvalCard from "./EvalsCard/EvalsCard";
 import FilterSummary from "./FilterSummary";
@@ -101,29 +101,18 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
       }}
     >
       <Box display="flex" justifyContent={"space-between"}>
-        <TabWrapper>
-          <CustomTabs
-            textColor="primary"
-            value={currentTab}
-            onChange={changeTab}
-            TabIndicatorProps={{
-              style: {
-                opacity: 0,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs value={currentTab} onChange={changeTab}>
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
 
         <FilterSummary
           columnLists={columnLists}
@@ -140,11 +129,7 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
               key={item.id}
               label={item.name}
               deleteIcon={
-                <Iconify
-                  icon="mingcute:close-line"
-                  width="16px"
-                  height="16px"
-                />
+                <Iconify icon="solar:close-linear" width="16px" height="16px" />
               }
               onDelete={() => onFilterChange(item)}
             />

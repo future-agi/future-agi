@@ -9,6 +9,7 @@ import {
   Tab,
   Skeleton,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -113,6 +114,8 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
   const isNextLoading = isNavigationLoading && navigationDirection === "next";
   const isPrevLoading = isNavigationLoading && navigationDirection === "prev";
 
+  const covered = useDrawerCovered(open);
+
   React.useEffect(() => {
     if (!isFetching && navigationDirection) {
       setNavigationDirection(null);
@@ -126,6 +129,7 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
       onClose={handleClose}
       BackdropProps={{ invisible: true }}
       sx={{
+        ...coveredDrawerSx(covered),
         width: "97.5vw",
         flexShrink: 0,
         "& .MuiDrawer-paper": {
@@ -208,20 +212,14 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                         : "N/A"}
                     </Typography>
                   }
-                  icon={<Iconify icon="radix-icons:clock" width={14} />}
+                  icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
-                      color:
-                        theme.palette.mode === "light"
-                          ? "text.primary"
-                          : "text.secondary",
+                      color: "text.secondary",
                     },
                     "&:hover": {
                       backgroundColor: "background.paper",
@@ -257,9 +255,6 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
                       filter:
                         theme.palette.mode === "light"
@@ -290,9 +285,6 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -320,9 +312,6 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -340,20 +329,14 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                         User ID: {sessionMetadata.user_id}
                       </Typography>
                     }
-                    icon={<Iconify icon="mdi:account-outline" width={14} />}
+                    icon={<Iconify icon="solar:user-linear" width={14} />}
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
                       backgroundColor: "background.default",
                       color: "text.secondary",
-                      height: "25px",
-                      paddingX: 0.5,
-                      borderRadius: "8px",
                       "& .MuiChip-icon": {
-                        color:
-                          theme.palette.mode === "light"
-                            ? "text.primary"
-                            : "text.secondary",
+                        color: "text.secondary",
                       },
                       "&:hover": {
                         backgroundColor: "background.paper",
@@ -373,14 +356,6 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
               textColor="primary"
               indicatorColor="primary"
               sx={{
-                typography: "s2",
-                "& .Mui-selected": {
-                  color: "primary.main",
-                  fontWeight: "fontWeightSemiBold",
-                },
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                },
                 "& .MuiTab-root": {
                   paddingX: 1.75,
                 },
@@ -389,11 +364,7 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
               <Tab
                 icon={
                   <SvgColor
-                    sx={{
-                      bgcolor: "primary.main",
-                      height: "16px",
-                      width: "16px",
-                    }}
+                    sx={{ width: "16px" }}
                     src={"/assets/icons/ic_message.svg"}
                   />
                 }
@@ -402,13 +373,7 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
                 {...a11yProps(0)}
               />
               <Tab
-                icon={
-                  <Iconify
-                    icon="solar:chart-square-bold"
-                    width={16}
-                    sx={{ color: "primary.main" }}
-                  />
-                }
+                icon={<Iconify icon="solar:chart-square-bold" width={16} />}
                 iconPosition="start"
                 label="Evals"
                 {...a11yProps(1)}

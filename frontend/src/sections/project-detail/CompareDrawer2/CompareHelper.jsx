@@ -11,7 +11,7 @@ export const useAnnotationsColumnDefs = () => {
         field: "annotationName",
         flex: 1,
         headerStyle: {
-          fontWeight: "bold",
+          fontWeight: "600",
           fontSize: "16px",
           color: "text.disabled",
         },
@@ -21,7 +21,7 @@ export const useAnnotationsColumnDefs = () => {
         field: "value",
         flex: 1,
         headerStyle: {
-          fontWeight: "bold",
+          fontWeight: "600",
           fontSize: "16px",
           color: "text.disabled",
         },
@@ -32,7 +32,7 @@ export const useAnnotationsColumnDefs = () => {
         field: "updatedBy",
         flex: 1,
         headerStyle: {
-          fontWeight: "bold",
+          fontWeight: "600",
           fontSize: "16px",
           color: "var(--text-secondary)",
         },
@@ -45,7 +45,7 @@ export const useAnnotationsColumnDefs = () => {
               mr={1}
             >
               <Iconify
-                icon="carbon:user-avatar-filled"
+                icon="solar:user-circle-linear"
                 color="text.disabled"
                 width={24}
                 height={24}

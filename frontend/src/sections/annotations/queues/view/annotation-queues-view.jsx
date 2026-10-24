@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   MenuItem,
-  Stack,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -23,7 +22,7 @@ import {
 } from "src/api/annotation-queues/annotation-queues";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-import AnnotationsTabs from "../../view/annotations-tabs";
+import AnnotationsPageLayout from "../../view/annotations-page-layout";
 import AnnotationQueueTable from "../annotation-queue-table";
 import AnnotationQueueEmpty from "../annotation-queue-empty";
 import CreateQueueDrawer from "../create-queue-drawer";
@@ -202,61 +201,15 @@ export default function AnnotationQueuesView() {
     !filters.status;
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        backgroundColor: "background.paper",
-      }}
-    >
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="flex-start"
-        sx={{
-          gap: 2,
-          px: 3,
-          pt: 2,
-        }}
-      >
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "2px",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          <Typography
-            color="text.primary"
-            typography="m2"
-            fontWeight={"fontWeightSemiBold"}
-          >
-            Annotation queues
-          </Typography>
-          <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
-            <Typography
-              typography="s1"
-              color="text.primary"
-              fontWeight={"fontWeightRegular"}
-            >
-              Queue annotation projects for human review to support model
-              evaluation and training
-            </Typography>
-          </Box>
-        </Box>
+    <AnnotationsPageLayout
+      title="Annotation queues"
+      description="Queue annotation projects for human review to support model evaluation and training"
+      headerActions={
         <Button
           variant="outlined"
           size="small"
-          sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
-            flexShrink: 0,
-          }}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+          startIcon={<SvgColor width={16} src="/assets/icons/agent/docs.svg" />}
           onClick={() => {
             window.open(
               "https://docs.futureagi.com/docs/sdk/annotation-queues/",
@@ -264,113 +217,77 @@ export default function AnnotationQueuesView() {
             );
           }}
         >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
+          View Docs
+        </Button>
+      }
+      toolbar={
+        <>
+          <FormSearchField
+            size="small"
+            placeholder="Search"
+            searchQuery={searchInput}
+            onChange={handleSearch}
+            sx={{ width: 280 }}
           />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
-      </Stack>
-
-      <Box sx={{ flexShrink: 0, px: 3 }}>
-        <AnnotationsTabs />
-      </Box>
-      <Stack
-        direction="row"
-        spacing={2}
-        mb={2}
-        alignItems="center"
-        flexShrink={0}
-      >
-        <FormSearchField
-          size="small"
-          placeholder="Search"
-          searchQuery={searchInput}
-          onChange={handleSearch}
-          sx={{
-            minWidth: "250px",
-            "& .MuiOutlinedInput-root": { height: "30px" },
-          }}
-        />
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          value={filters.archived ? "archived" : "active"}
-          onChange={handleArchiveViewChange}
-          sx={{
-            height: 30,
-            "& .MuiToggleButton-root": {
-              px: 1.25,
-              borderRadius: "4px",
-              typography: "s2",
-              fontWeight: "fontWeightMedium",
-            },
-          }}
-        >
-          <ToggleButton value="active">Active</ToggleButton>
-          <ToggleButton value="archived">Archived</ToggleButton>
-        </ToggleButtonGroup>
-        <TextField
-          size="small"
-          select
-          value={filters.status}
-          onChange={handleStatusFilter}
-          sx={{ minWidth: 160 }}
-          SelectProps={{
-            displayEmpty: true,
-            renderValue: (v) =>
-              STATUS_OPTIONS.find((o) => o.value === v)?.label ||
-              "All Statuses",
-          }}
-        >
-          {STATUS_OPTIONS.map((opt) => (
-            <MenuItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </MenuItem>
-          ))}
-        </TextField>
-        <Box sx={{ flex: 1 }} />
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<Iconify icon="mingcute:add-line" />}
-          onClick={handleCreateNew}
-          disabled={!canWrite}
-        >
-          Create Queue
-        </Button>
-      </Stack>
-
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={filters.archived ? "archived" : "active"}
+            onChange={handleArchiveViewChange}
+          >
+            <ToggleButton value="active">Active</ToggleButton>
+            <ToggleButton value="archived">Archived</ToggleButton>
+          </ToggleButtonGroup>
+          <TextField
+            size="small"
+            select
+            value={filters.status}
+            onChange={handleStatusFilter}
+            sx={{ minWidth: 160 }}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (v) =>
+                STATUS_OPTIONS.find((o) => o.value === v)?.label ||
+                "All Statuses",
+            }}
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:add-linear" />}
+            onClick={handleCreateNew}
+            disabled={!canWrite}
+          >
+            Create Queue
+          </Button>
+        </>
+      }
+    >
       {isEmpty ? (
         <AnnotationQueueEmpty onCreateClick={handleCreateNew} />
       ) : (
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            flex: 1,
-            overflow: "hidden",
-            px: 3,
-          }}
-        >
-          <AnnotationQueueTable
-            data={results}
-            loading={isLoading}
-            page={filters.page}
-            rowsPerPage={filters.limit}
-            totalCount={count}
-            onPageChange={handlePageChange}
-            onRowsPerPageChange={handleRowsPerPageChange}
-            onEdit={handleEdit}
-            onDuplicate={handleDuplicate}
-            onArchive={handleArchive}
-            onRestore={handleRestore}
-            onStatusChange={handleStatusChange}
-            archivedView={filters.archived}
-          />
-        </Box>
+        <AnnotationQueueTable
+          data={results}
+          loading={isLoading}
+          page={filters.page}
+          rowsPerPage={filters.limit}
+          totalCount={count}
+          onPageChange={handlePageChange}
+          onRowsPerPageChange={handleRowsPerPageChange}
+          onEdit={handleEdit}
+          onDuplicate={handleDuplicate}
+          onArchive={handleArchive}
+          onRestore={handleRestore}
+          onStatusChange={handleStatusChange}
+          archivedView={filters.archived}
+        />
       )}
 
       <CreateQueueDrawer
@@ -436,6 +353,6 @@ export default function AnnotationQueuesView() {
           </Button>
         }
       />
-    </Box>
+    </AnnotationsPageLayout>
   );
 }

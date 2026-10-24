@@ -25,17 +25,45 @@ export default function BrandMark({ brand, size = 40, tile = true }) {
   const b = BRANDS[brand];
   const dark = theme.palette.mode === "dark";
   const icon = dark && b?.dark ? b.dark : b?.icon;
-  const mark = <Iconify icon={icon} width={Math.round(size * 0.55)} sx={{ color: b?.muted ? "text.secondary" : b?.mono ? "text.primary" : dark && b?.dark ? "#fff" : undefined, flexShrink: 0 }} />;
+  const mark = (
+    <Iconify
+      icon={icon}
+      width={Math.round(size * 0.55)}
+      sx={{
+        color: b?.muted
+          ? "text.secondary"
+          : b?.mono
+            ? "text.primary"
+            : dark && b?.dark
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+              ? "#fff"
+              : undefined,
+        flexShrink: 0,
+      }}
+    />
+  );
   if (!tile) return mark;
   return (
-    <Box sx={{
-      width: size, height: size, borderRadius: 1.25, flexShrink: 0, display: "grid", placeItems: "center",
-      border: "1px solid", borderColor: "divider",
-      bgcolor: alpha(theme.palette.text.primary, dark ? 0.04 : 0.02),
-    }}>
+    <Box
+      sx={{
+        width: size,
+        height: size,
+        borderRadius: "8px",
+        flexShrink: 0,
+        display: "grid",
+        placeItems: "center",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: alpha(theme.palette.text.primary, dark ? 0.04 : 0.02),
+      }}
+    >
       {mark}
     </Box>
   );
 }
 
-BrandMark.propTypes = { brand: PropTypes.oneOf(Object.keys(BRANDS)).isRequired, size: PropTypes.number, tile: PropTypes.bool };
+BrandMark.propTypes = {
+  brand: PropTypes.oneOf(Object.keys(BRANDS)).isRequired,
+  size: PropTypes.number,
+  tile: PropTypes.bool,
+};

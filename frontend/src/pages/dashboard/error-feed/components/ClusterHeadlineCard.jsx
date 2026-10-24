@@ -1,22 +1,16 @@
 import React, { useMemo } from "react";
-import {
-  Box,
-  Button,
-  Collapse,
-  Stack,
-  Typography,
-  alpha,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
-import { purple } from "src/theme/palette";
 import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import { CONFIDENCE, MESSAGE_TYPE, RUN_STATE, STEP_STATUS } from "../constants";
-import { clickable, focusRing } from "src/sections/simulate-v2/components/clickable";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 
 // Short relative label for the cached-analysis timestamp (date-fns, same
 // pattern as ErrorFeedTable / ErrorMetadataPanel).
@@ -50,12 +44,8 @@ const CONFIDENCE_LABEL = {
   [CONFIDENCE.LOW]: "Low confidence",
 };
 
-const ACCENT = purple[500];
-
 // ── State: not_analyzed (empty) ──────────────────────────────────────────────
 function NotAnalyzedState({ onAnalyze }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack direction="row" alignItems="center" gap={2} sx={{ py: 0.5 }}>
       <Box
@@ -66,18 +56,18 @@ function NotAnalyzedState({ onAnalyze }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          bgcolor: alpha(ACCENT, isDark ? 0.16 : 0.1),
+          bgcolor: "status.discovery.bg",
           flexShrink: 0,
         }}
       >
         <Iconify
-          icon="mdi:star-four-points-outline"
-          width={18}
-          sx={{ color: ACCENT }}
+          icon="solar:stars-minimalistic-linear"
+          width={20}
+          sx={{ color: "status.discovery.fg" }}
         />
       </Box>
       <Stack flex={1} gap={0.4} minWidth={0}>
-        <Typography fontSize="14px" fontWeight={600} color="text.primary">
+        <Typography fontSize="13px" fontWeight={600} color="text.primary">
           No root cause yet
         </Typography>
         <Typography
@@ -91,22 +81,11 @@ function NotAnalyzedState({ onAnalyze }) {
       <Button
         size="small"
         variant="contained"
-        startIcon={<Iconify icon="mdi:star-four-points" width={13} />}
+        startIcon={
+          <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+        }
         onClick={onAnalyze}
-        sx={{
-          height: 32,
-          fontSize: "12.5px",
-          fontWeight: 600,
-          borderRadius: "8px",
-          textTransform: "none",
-          // White button in dark theme, purple in light.
-          bgcolor: isDark ? "#fff" : ACCENT,
-          color: isDark ? "#111" : "#fff",
-          px: 1.75,
-          "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
-          boxShadow: "none",
-          flexShrink: 0,
-        }}
+        sx={{ flexShrink: 0 }}
       >
         Find root cause
       </Button>
@@ -122,8 +101,6 @@ const ANALYSIS_STEP_LABELS = [
 ];
 
 function StepChips({ activeStepIdx }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap">
       {ANALYSIS_STEP_LABELS.map((label, i) => {
@@ -144,32 +121,32 @@ function StepChips({ activeStepIdx }) {
             sx={{
               px: 0.85,
               py: 0.3,
-              borderRadius: "5px",
+              borderRadius: "4px",
               border: "1px solid",
-              borderColor: isActive ? alpha(ACCENT, 0.3) : "divider",
-              bgcolor: isActive
-                ? alpha(ACCENT, isDark ? 0.1 : 0.05)
-                : isDark
-                  ? alpha("#fff", 0.02)
-                  : alpha("#000", 0.02),
+              borderColor: isActive ? "status.discovery.border" : "divider",
+              bgcolor: isActive ? "status.discovery.bg" : "action.hover",
               opacity: status === "queued" ? 0.55 : 1,
             }}
           >
             <Iconify
               icon={
                 isDone
-                  ? "mdi:check"
+                  ? "solar:check-linear"
                   : isActive
-                    ? "mdi:dots-horizontal"
-                    : "mdi:circle-outline"
+                    ? "solar:menu-dots-linear"
+                    : "solar:circle-linear"
               }
-              width={11}
+              width={12}
               sx={{
-                color: isDone ? "#5ACE6D" : isActive ? ACCENT : "text.disabled",
+                color: isDone
+                  ? "status.success.fg"
+                  : isActive
+                    ? "status.discovery.fg"
+                    : "text.disabled",
               }}
             />
             <Typography
-              fontSize="10.5px"
+              fontSize="12px"
               fontWeight={500}
               color={isActive ? "text.primary" : "text.secondary"}
             >
@@ -194,13 +171,13 @@ function AnalyzingState({ activeStepIdx }) {
             height: 14,
             borderRadius: "50%",
             border: "2px solid",
-            borderColor: alpha(ACCENT, 0.25),
-            borderTopColor: ACCENT,
+            borderColor: "status.discovery.border",
+            borderTopColor: "status.discovery.solid",
             animation: "spin 0.8s linear infinite",
             "@keyframes spin": { to: { transform: "rotate(360deg)" } },
           }}
         />
-        <Typography fontSize="13.5px" fontWeight={600} color="text.primary">
+        <Typography fontSize="13px" fontWeight={600} color="text.primary">
           Finding root cause…
         </Typography>
       </Stack>
@@ -212,12 +189,10 @@ AnalyzingState.propTypes = { activeStepIdx: PropTypes.number };
 
 // ── State: analyzed (default after run) ──────────────────────────────────────
 function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack gap={1.25}>
       <Typography
-        fontSize="14px"
+        fontSize="13px"
         fontWeight={500}
         color="text.primary"
         sx={{ lineHeight: 1.6 }}
@@ -227,24 +202,24 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
 
       <Stack direction="row" gap={1} alignItems="flex-start">
         <Typography
-          fontSize="10px"
-          fontWeight={700}
+          fontSize="12px"
+          fontWeight={600}
           sx={{
-            color: "#5ACE6D",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
+            color: "status.success.fg",
+            textTransform: "none",
+            letterSpacing: 0,
             mt: "3px",
             flexShrink: 0,
             px: 0.75,
             py: 0.25,
-            borderRadius: "3px",
-            bgcolor: alpha("#5ACE6D", isDark ? 0.14 : 0.12),
+            borderRadius: "4px",
+            bgcolor: "status.success.bg",
           }}
         >
           Suggested fix
         </Typography>
         <Typography
-          fontSize="12.5px"
+          fontSize="13px"
           color="text.secondary"
           sx={{ lineHeight: 1.65, flex: 1 }}
         >
@@ -265,6 +240,7 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
             <Iconify
               icon="simple-icons:linear"
               width={12}
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
               sx={{ color: "#5E6AD2" }}
             />
           }
@@ -274,15 +250,11 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
               : onCreateLinear
           }
           sx={{
-            height: 28,
-            fontSize: "12px",
-            borderRadius: "6px",
-            textTransform: "none",
             borderColor: "divider",
             color: "text.primary",
             "&:hover": {
               borderColor: "text.secondary",
-              bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+              bgcolor: "action.hover",
             },
           }}
         >
@@ -296,19 +268,14 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:text-search" width={13} />}
+          startIcon={<Iconify icon="solar:file-search-linear" width={14} />}
           onClick={onOpenAnalyze}
           sx={{
-            height: 28,
-            fontSize: "12px",
-            fontWeight: 600,
-            borderRadius: "6px",
-            textTransform: "none",
             borderColor: "divider",
             color: "text.primary",
             "&:hover": {
               borderColor: "text.secondary",
-              bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+              bgcolor: "action.hover",
             },
           }}
         >
@@ -335,8 +302,6 @@ export default function ClusterHeadlineCard({
   onStartAnalysis,
   onCreateLinear,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const cachedRca = useMemo(() => cachedRcaFrom(error), [error]);
   const clusterId = error?.cluster_id;
 
@@ -411,19 +376,14 @@ export default function ClusterHeadlineCard({
     <Box
       sx={{
         position: "relative",
-        borderRadius: "12px",
+        borderRadius: "8px",
         border: "1px solid",
-        borderColor: state === "analyzed" ? alpha(ACCENT, 0.25) : "divider",
-        bgcolor: isDark ? alpha("#fff", 0.025) : "background.paper",
-        // Subtle gradient wash for the analyzed state; flat for empty/analyzing.
-        backgroundImage:
-          state === "analyzed"
-            ? `linear-gradient(135deg, ${alpha(ACCENT, isDark ? 0.05 : 0.025)} 0%, transparent 55%)`
-            : "none",
+        borderColor: "divider",
+        bgcolor: "background.paper",
         px: 2.25,
         py: 1.75,
         overflow: "hidden",
-        transition: "border-color 0.2s, background-image 0.2s",
+        transition: "border-color 0.2s",
       }}
     >
       {/* ── Accordion header (always visible) ── */}
@@ -432,7 +392,12 @@ export default function ClusterHeadlineCard({
         alignItems="center"
         gap={1}
         {...clickable(toggleCollapsed, { expanded: !collapsed })}
-        sx={{ cursor: "pointer", userSelect: "none", minWidth: 0, ...focusRing }}
+        sx={{
+          cursor: "pointer",
+          userSelect: "none",
+          minWidth: 0,
+          ...focusRing,
+        }}
       >
         <Stack
           direction="row"
@@ -441,17 +406,17 @@ export default function ClusterHeadlineCard({
           sx={{ flexShrink: 0 }}
         >
           <Iconify
-            icon="mdi:star-four-points"
-            width={11}
-            sx={{ color: ACCENT }}
+            icon="solar:stars-minimalistic-linear"
+            width={12}
+            sx={{ color: "status.discovery.fg" }}
           />
           <Typography
-            fontSize="10.5px"
-            fontWeight={700}
+            fontSize="12px"
+            fontWeight={600}
             sx={{
-              color: ACCENT,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              color: "status.discovery.fg",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Root cause
@@ -477,8 +442,8 @@ export default function ClusterHeadlineCard({
                   height: 11,
                   borderRadius: "50%",
                   border: "2px solid",
-                  borderColor: alpha(ACCENT, 0.25),
-                  borderTopColor: ACCENT,
+                  borderColor: "status.discovery.border",
+                  borderTopColor: "status.discovery.solid",
                   animation: "spin 0.8s linear infinite",
                   "@keyframes spin": { to: { transform: "rotate(360deg)" } },
                   flexShrink: 0,
@@ -486,7 +451,7 @@ export default function ClusterHeadlineCard({
               />
             )}
             <Typography
-              fontSize="11px"
+              fontSize="12px"
               color="text.secondary"
               noWrap
               sx={{ minWidth: 0 }}
@@ -506,9 +471,9 @@ export default function ClusterHeadlineCard({
             sx={{ flexShrink: 0 }}
           >
             <Typography
-              fontSize="10.5px"
+              fontSize="12px"
               color="text.disabled"
-              sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+              sx={{ textTransform: "none", letterSpacing: 0 }}
             >
               Found {data?.analyzedAt ?? "just now"}
             </Typography>
@@ -528,16 +493,16 @@ export default function ClusterHeadlineCard({
                   justifyContent: "center",
                   width: 22,
                   height: 22,
-                  borderRadius: "5px",
+                  borderRadius: "4px",
                   cursor: "pointer",
                   color: "text.disabled",
                   "&:hover": {
                     color: "text.primary",
-                    bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.04),
+                    bgcolor: "action.selected",
                   },
                 }}
               >
-                <Iconify icon="mdi:refresh" width={13} />
+                <Iconify icon="solar:refresh-linear" width={14} />
               </Box>
             </CustomTooltip>
           </Stack>
@@ -551,17 +516,17 @@ export default function ClusterHeadlineCard({
               justifyContent: "center",
               width: 22,
               height: 22,
-              borderRadius: "5px",
+              borderRadius: "4px",
               color: "text.secondary",
               flexShrink: 0,
               "&:hover": {
-                bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.04),
+                bgcolor: "action.selected",
               },
             }}
           >
             <Iconify
-              icon="mdi:chevron-down"
-              width={17}
+              icon="solar:alt-arrow-down-linear"
+              width={16}
               sx={{
                 transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
                 transition: "transform 0.2s",
@@ -572,7 +537,7 @@ export default function ClusterHeadlineCard({
       </Stack>
 
       {/* ── Accordion body ── */}
-      <Collapse in={!collapsed} timeout={220} unmountOnExit>
+      <Collapse in={!collapsed} timeout={200} unmountOnExit>
         <Box sx={{ mt: 1.5 }}>
           {state === "not_analyzed" && (
             <NotAnalyzedState onAnalyze={runAnalysis} />

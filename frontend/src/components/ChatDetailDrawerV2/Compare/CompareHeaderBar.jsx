@@ -33,14 +33,10 @@ const CompareHeaderBar = ({ onBack, scenarioName, sessionId }) => {
             color: "text.primary",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "4px",
-            width: 24,
-            height: 24,
-            p: 0,
             "&:hover": { bgcolor: "action.hover" },
           }}
         >
-          <Iconify icon="mdi:arrow-left" width={14} />
+          <Iconify icon="solar:arrow-left-linear" width={14} />
         </IconButton>
 
         <Stack sx={{ minWidth: 0, flex: 1 }}>
@@ -60,7 +56,7 @@ const CompareHeaderBar = ({ onBack, scenarioName, sessionId }) => {
           {subtitle && (
             <Typography
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.4,
                 whiteSpace: "nowrap",

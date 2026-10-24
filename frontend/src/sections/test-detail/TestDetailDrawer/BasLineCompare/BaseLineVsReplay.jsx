@@ -68,7 +68,7 @@ const RecordingPlayer = ({ label, recordings, id }) => {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2,
         }}
       >
@@ -91,7 +91,7 @@ const RecordingPlayer = ({ label, recordings, id }) => {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         p: 2,
       }}
     >

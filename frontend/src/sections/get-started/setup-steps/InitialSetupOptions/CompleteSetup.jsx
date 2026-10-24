@@ -15,7 +15,7 @@ const CompleteSetup = () => {
       }}
     >
       <Iconify
-        color={"#008F47"}
+        sx={{ color: "status.success.fg" }}
         icon="nrk:media-completed"
         height={40}
         width={40}

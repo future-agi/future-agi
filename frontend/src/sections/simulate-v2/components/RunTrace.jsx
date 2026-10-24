@@ -1,7 +1,14 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Collapse, Fade } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Collapse,
+  Fade,
+  useTheme,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { textTone } from "./textTone";
 import { clickable, focusRing } from "./clickable";
@@ -34,11 +41,13 @@ const DOT = 22;
 export default function RunTrace({
   steps = [],
   stepMs = 850,
-  accent = "#7857FC",
+  accent: accentProp,
   running = false,
   onDone,
   compact = false,
 }) {
+  const theme = useTheme();
+  const accent = accentProp ?? theme.palette.status.discovery.solid;
   /* -1 before anything starts, steps.length once every step has reported. */
   const [at, setAt] = useState(running ? 0 : steps.length);
   const [shown, setShown] = useState(running ? 0 : Infinity);
@@ -56,11 +65,17 @@ export default function RunTrace({
     if (started.current === null) started.current = Date.now();
 
     if (shown < lines.length) {
-      const t = setTimeout(() => setShown((n) => n + 1), Math.max(180, stepMs / (lines.length + 1)));
+      const t = setTimeout(
+        () => setShown((n) => n + 1),
+        Math.max(180, stepMs / (lines.length + 1)),
+      );
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => {
-      setElapsed((e) => [...e, 120 + Math.round(stepMs * (0.6 + lines.length * 0.25))]);
+      setElapsed((e) => [
+        ...e,
+        120 + Math.round(stepMs * (0.6 + lines.length * 0.25)),
+      ]);
       setAt((i) => i + 1);
       setShown(0);
     }, stepMs * 0.55);
@@ -82,45 +97,77 @@ export default function RunTrace({
         const active = i === at && running;
         const last = i === steps.length - 1;
         const visible = done || active || !running;
-        const stepLines = done || !running ? s.lines || [] : (s.lines || []).slice(0, shown);
+        const stepLines =
+          done || !running ? s.lines || [] : (s.lines || []).slice(0, shown);
 
         return (
-          <Stack key={s.id || s.label} direction="row" spacing={1.5} sx={{ opacity: visible ? 1 : 0.35 }}>
+          <Stack
+            key={s.id || s.label}
+            direction="row"
+            spacing={1.5}
+            sx={{ opacity: visible ? 1 : 0.35 }}
+          >
             {/* rail */}
             <Stack alignItems="center" sx={{ width: DOT, flexShrink: 0 }}>
               <Box
                 sx={{
-                  width: DOT, height: DOT, borderRadius: "50%", display: "grid", placeItems: "center",
+                  width: DOT,
+                  height: DOT,
+                  borderRadius: "50%",
+                  display: "grid",
+                  placeItems: "center",
                   flexShrink: 0,
-                  bgcolor: (t) => (done
-                    ? alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1)
-                    : active
-                      ? alpha(accent, t.palette.mode === "dark" ? 0.16 : 0.1)
-                      : "transparent"),
+                  bgcolor: (t) =>
+                    done
+                      ? "status.success.bg"
+                      : active
+                        ? alpha(accent, t.palette.mode === "dark" ? 0.16 : 0.1)
+                        : "transparent",
                   border: done || active ? "none" : "1px solid",
                   borderColor: "divider",
                 }}
               >
-                {done && <Iconify icon="solar:check-circle-bold" width={14} sx={{ color: "#16A34A" }} />}
+                {done && (
+                  <Iconify
+                    icon="solar:check-circle-bold"
+                    width={14}
+                    sx={{ color: "status.success.fg" }}
+                  />
+                )}
                 {active && (
                   <Box
                     sx={{
-                      width: 9, height: 9, borderRadius: "50%",
-                      border: "1.5px solid", borderColor: accent, borderTopColor: "transparent",
+                      width: 9,
+                      height: 9,
+                      borderRadius: "50%",
+                      border: "1.5px solid",
+                      borderColor: accent,
+                      borderTopColor: "transparent",
                       animation: "rt-spin 0.7s linear infinite",
-                      "@keyframes rt-spin": { to: { transform: "rotate(360deg)" } },
+                      "@keyframes rt-spin": {
+                        to: { transform: "rotate(360deg)" },
+                      },
                     }}
                   />
                 )}
                 {!done && !active && (
-                  <Box sx={{ width: 4, height: 4, borderRadius: "50%", bgcolor: "text.disabled" }} />
+                  <Box
+                    sx={{
+                      width: 4,
+                      height: 4,
+                      borderRadius: "50%",
+                      bgcolor: "text.disabled",
+                    }}
+                  />
                 )}
               </Box>
               {!last && (
                 <Box
                   sx={{
-                    width: "1px", flex: 1, minHeight: 14,
-                    bgcolor: done ? alpha("#16A34A", 0.35) : "divider",
+                    width: "1px",
+                    flex: 1,
+                    minHeight: 14,
+                    bgcolor: done ? "status.success.border" : "divider",
                   }}
                 />
               )}
@@ -139,14 +186,17 @@ export default function RunTrace({
               */}
               <Stack direction="row" alignItems="flex-start" spacing={1}>
                 <Stack
-                  direction="row" alignItems="baseline" spacing={1}
-                  flexWrap="wrap" rowGap={0.25}
+                  direction="row"
+                  alignItems="baseline"
+                  spacing={1}
+                  flexWrap="wrap"
+                  rowGap={0.25}
                   sx={{ flex: 1, minWidth: 0 }}
                 >
                   <Typography
                     sx={{
                       typography: "s2",
-                      fontWeight: active || done ? 700 : 600,
+                      fontWeight: active || done ? 600 : 600,
                       color: done || active ? "text.primary" : "text.disabled",
                     }}
                   >
@@ -155,8 +205,17 @@ export default function RunTrace({
                   {/* The finding, as soon as the step has one. This is
                       the part that makes waiting worth doing. */}
                   {done && s.result && (
-                    <Fade in timeout={300}>
-                      <Typography sx={{ typography: "s2", color: textTone(s.tone || "text.secondary", "text.secondary"), fontWeight: 600 }}>
+                    <Fade in timeout={200}>
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          color: textTone(
+                            s.tone || "text.secondary",
+                            "text.secondary",
+                          ),
+                          fontWeight: 600,
+                        }}
+                      >
                         {s.result}
                       </Typography>
                     </Fade>
@@ -165,9 +224,12 @@ export default function RunTrace({
                 {done && elapsed[i] != null && (
                   <Typography
                     sx={{
-                      typography: "s3", color: "text.disabled",
+                      typography: "s3",
+                      color: "text.disabled",
                       fontVariantNumeric: "tabular-nums",
-                      flexShrink: 0, whiteSpace: "nowrap", mt: "2px",
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
+                      mt: "2px",
                     }}
                   >
                     {(elapsed[i] / 1000).toFixed(1)}s
@@ -178,15 +240,27 @@ export default function RunTrace({
               <Collapse in={stepLines.length > 0}>
                 <Stack spacing={0.375} sx={{ mt: 0.625 }}>
                   {stepLines.map((line) => (
-                    <Fade in key={line} timeout={260}>
-                      <Stack direction="row" spacing={0.875} alignItems="flex-start">
+                    <Fade in key={line} timeout={200}>
+                      <Stack
+                        direction="row"
+                        spacing={0.875}
+                        alignItems="flex-start"
+                      >
                         <Box
                           sx={{
-                            width: 3, height: 3, borderRadius: "50%", flexShrink: 0, mt: "7px",
+                            width: 3,
+                            height: 3,
+                            borderRadius: "50%",
+                            flexShrink: 0,
+                            mt: "7px",
                             bgcolor: "text.disabled",
                           }}
                         />
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{line}</Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          {line}
+                        </Typography>
                       </Stack>
                     </Fade>
                   ))}
@@ -216,7 +290,16 @@ RunTrace.propTypes = {
  * previous one put six lines of 12px text in the top-left corner of a panel
  * 700px wide and left the rest empty.
  */
-export function RunTracePanel({ title, subtitle, steps, stepMs, accent = "#7857FC", onDone }) {
+export function RunTracePanel({
+  title,
+  subtitle,
+  steps,
+  stepMs,
+  accent: accentProp,
+  onDone,
+}) {
+  const theme = useTheme();
+  const accent = accentProp ?? theme.palette.status.discovery.solid;
   const [ticks, setTicks] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTicks((n) => n + 1), 100);
@@ -226,25 +309,50 @@ export function RunTracePanel({ title, subtitle, steps, stepMs, accent = "#7857F
   return (
     <Box sx={{ px: { xs: 2.5, md: 4 }, py: { xs: 3, md: 4 } }}>
       <Stack
-        direction="row" alignItems="flex-start" spacing={1.5}
-        sx={{ mb: 3, pb: 2.5, borderBottom: "1px solid", borderColor: "divider" }}
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.5}
+        sx={{
+          mb: 3,
+          pb: 2.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <Box
           sx={{
-            width: 34, height: 34, borderRadius: 1.25, display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(accent, t.palette.mode === "dark" ? 0.16 : 0.1), color: accent,
+            width: 34,
+            height: 34,
+            borderRadius: "8px",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            bgcolor: (t) =>
+              alpha(accent, t.palette.mode === "dark" ? 0.16 : 0.1),
+            color: accent,
           }}
         >
-          <Iconify icon="solar:magic-stick-3-linear" width={18} />
+          <Iconify icon="solar:magic-stick-3-linear" width={20} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>{title}</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            {title}
+          </Typography>
           {subtitle && (
-            <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>{subtitle}</Typography>
+            <Typography
+              sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}
+            >
+              {subtitle}
+            </Typography>
           )}
         </Box>
         <Typography
-          sx={{ typography: "s2", color: "text.subtitle", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+          sx={{
+            typography: "s2",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+            flexShrink: 0,
+          }}
         >
           {(ticks / 10).toFixed(1)}s
         </Typography>
@@ -257,7 +365,13 @@ export function RunTracePanel({ title, subtitle, steps, stepMs, accent = "#7857F
         anchored to the trace's right edge, but the trace was pinned
         narrow. Let it fill the panel's own padding.
       */}
-      <RunTrace steps={steps} stepMs={stepMs} accent={accent} running onDone={onDone} />
+      <RunTrace
+        steps={steps}
+        stepMs={stepMs}
+        accent={accent}
+        running
+        onDone={onDone}
+      />
     </Box>
   );
 }
@@ -278,28 +392,45 @@ RunTracePanel.propTypes = {
  * it when somebody wants to know how a conclusion was reached, which is the
  * whole reason to keep it.
  */
-export function RunTraceLog({ label, steps, accent = "#7857FC" }) {
+export function RunTraceLog({ label, steps, accent }) {
   const [open, setOpen] = useState(false);
 
   return (
     <Box>
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         {...clickable(() => setOpen((o) => !o), { expanded: open })}
-        sx={{ ...focusRing,
-          px: 2.5, py: 1.25, cursor: "pointer", borderRadius: 1,
+        sx={{
+          ...focusRing,
+          px: 2.5,
+          py: 1.25,
+          cursor: "pointer",
+          borderRadius: 1,
           "&:hover": { bgcolor: "action.hover" },
         }}
       >
-        <Iconify icon="solar:checklist-minimalistic-linear" width={15} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s2", color: "text.secondary", fontWeight: 600 }}>{label}</Typography>
+        <Iconify
+          icon="solar:checklist-minimalistic-linear"
+          width={16}
+          sx={{ color: "text.subtitle" }}
+        />
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", fontWeight: 600 }}
+        >
+          {label}
+        </Typography>
         <Box flex={1} />
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {open ? "Hide steps" : "View steps"}
         </Typography>
         <Iconify
-          icon={open ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
-          width={15} sx={{ color: "text.subtitle" }}
+          icon={
+            open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+          }
+          width={16}
+          sx={{ color: "text.subtitle" }}
         />
       </Stack>
       <Collapse in={open}>
@@ -311,4 +442,8 @@ export function RunTraceLog({ label, steps, accent = "#7857FC" }) {
   );
 }
 
-RunTraceLog.propTypes = { label: PropTypes.string, steps: PropTypes.array, accent: PropTypes.string };
+RunTraceLog.propTypes = {
+  label: PropTypes.string,
+  steps: PropTypes.array,
+  accent: PropTypes.string,
+};

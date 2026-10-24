@@ -91,7 +91,13 @@ AddRowUsingAiForm.propTypes = {
 
 const AddRowUsingAi = ({ open, onClose, scenarioId }) => {
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+    >
       <DialogTitle
         sx={{
           padding: 2,
@@ -104,7 +110,7 @@ const AddRowUsingAi = ({ open, onClose, scenarioId }) => {
           Add rows using AI
         </Typography>
         <IconButton onClick={onClose}>
-          <Iconify icon="mdi:close" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ padding: 2 }}>

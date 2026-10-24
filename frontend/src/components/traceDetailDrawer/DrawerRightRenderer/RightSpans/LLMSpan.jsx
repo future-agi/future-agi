@@ -168,18 +168,6 @@ const LLMSpan = ({
               sx={{
                 borderBottom: (theme) => theme.spacing(1),
                 borderColor: "divider",
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                },
-                "& .MuiTab-root": {
-                  color: "text.secondary",
-                  typography: "s2",
-                  fontWeight: "fontWeightRegular",
-                },
-                "& .Mui-selected": {
-                  color: theme.palette.primary.main,
-                  fontWeight: "fontWeightSemiBold",
-                },
                 "& .MuiTab-root:not(:last-of-type)": {
                   marginRight: (theme) => theme.spacing(2),
                   marginTop: (theme) => theme.spacing(0),
@@ -220,7 +208,7 @@ const LLMSpan = ({
                       <Stack
                         key={index}
                         border={"1px solid var(--border-default)"}
-                        borderRadius={0.5}
+                        borderRadius="4px"
                         padding={1}
                       >
                         {" "}
@@ -231,7 +219,7 @@ const LLMSpan = ({
                     <Stack
                       key={index}
                       border={"1px solid var(--border-default)"}
-                      borderRadius={0.5}
+                      borderRadius="4px"
                       padding={1}
                     >
                       <CustomJsonViewer object={tabData[key]} />

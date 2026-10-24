@@ -42,6 +42,7 @@ const Wrapper = ({ type, id, onClick, children, theme }) => {
           alignItems: "center",
           flex: 1,
           gap: theme.spacing(1.5),
+          minWidth: 0,
           textDecoration: "none",
         }}
       >
@@ -105,24 +106,29 @@ export default function PromptItem({
   const loading = (
     <Box
       sx={{
-        height: "100px",
+        height: "48px",
         display: "flex",
         alignItems: "center",
-        px: 2,
+        px: 1.5,
         ...sx,
       }}
     >
       <Stack direction="row" alignItems="center" spacing={2} width="100%">
         {/* File icon skeleton */}
-        <Skeleton variant="rectangular" width={44} height={44} />
-        <Stack spacing={1} flexGrow={1}>
+        <Skeleton
+          variant="rectangular"
+          width={28}
+          height={28}
+          sx={{ borderRadius: "6px" }}
+        />
+        <Stack spacing={0.5} flexGrow={1}>
           {/* Title skeleton */}
-          <Skeleton variant="text" width="40%" height={24} />
+          <Skeleton variant="text" width="40%" height={16} />
           {/* Subtitle / metadata skeleton */}
-          <Skeleton variant="text" width="60%" height={16} />
+          <Skeleton variant="text" width="60%" height={12} />
         </Stack>
         {/* Menu dots skeleton */}
-        <Skeleton variant="circular" width={24} height={24} />
+        <Skeleton variant="circular" width={20} height={20} />
       </Stack>
     </Box>
   );
@@ -147,10 +153,10 @@ export default function PromptItem({
   return (
     <Stack
       sx={{
-        padding: theme.spacing(2),
+        padding: theme.spacing(1, 1.5),
         textDecoration: "none",
         color: "inherit",
-        gap: theme.spacing(1.5),
+        gap: theme.spacing(0.5),
         ...sx,
       }}
     >
@@ -158,20 +164,22 @@ export default function PromptItem({
         <Stack direction={"row"} alignItems={"center"}>
           <Typography
             typography={"s2"}
-            fontWeight={"fontWeightMedium"}
-            color={!extraData?.prompt_folder ? "text.primary" : "text.disabled"}
+            fontWeight={"fontWeightRegular"}
+            color={
+              !extraData?.prompt_folder ? "text.secondary" : "text.disabled"
+            }
           >
             All Prompts
           </Typography>
           <ShowComponent condition={extraData?.prompt_folderName}>
             <SvgColor
-              sx={{ height: 16, width: 16, color: "text.primary" }}
+              sx={{ height: 16, width: 16, color: "text.tertiary" }}
               src="/assets/icons/custom/lucide--chevron-right.svg"
             />
             <Typography
               typography={"s2"}
-              fontWeight={"fontWeightMedium"}
-              color={"text.primary"}
+              fontWeight={"fontWeightRegular"}
+              color={"text.secondary"}
             >
               {extraData?.prompt_folderName}
             </Typography>
@@ -187,45 +195,42 @@ export default function PromptItem({
         >
           <Box
             sx={{
-              boxShadow: (themeLocal) =>
-                themeLocal.palette.mode === "dark"
-                  ? "0 4px 12px rgba(0, 0, 0, 0.4)"
-                  : "2px -2px 12px 0px rgba(0, 0, 0, 0.08)",
-              height: 44,
-              width: 44,
+              height: 28,
+              width: 28,
+              flexShrink: 0,
               bgcolor: "background.paper",
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
-              borderRadius: "4px",
+              borderRadius: "6px",
               border: "1px solid",
-              borderColor: (themeLocal) =>
-                themeLocal.palette.mode === "dark"
-                  ? "rgba(255, 255, 255, 0.12)"
-                  : "divider",
+              borderColor: "border.subtle",
             }}
           >
             <Box
               component="img"
               src={PROMPT_ICON_MAPPER[type] ?? PROMPT_ICON_MAPPER["PROMPT"]}
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
               }}
             />
           </Box>
-          <Stack>
+          <Stack sx={{ minWidth: 0 }}>
             <Typography
-              variant="m3"
+              fontSize={13}
+              lineHeight="20px"
               color="text.primary"
               fontWeight="fontWeightMedium"
+              noWrap
             >
               {name}
             </Typography>
             <Typography
-              color="text.secondary"
+              color="text.tertiary"
               variant="s2"
               fontWeight="fontWeightRegular"
+              noWrap
             >
               {createdBy && (
                 <>
@@ -246,15 +251,11 @@ export default function PromptItem({
         </Wrapper>
         <AvatarGroup
           sx={{
-            mt: "2px",
             "& .MuiAvatar-root": {
               width: 24,
               height: 24,
-              fontSize: 10,
-              border: "1px solid",
-              borderColor: "primary.main",
-              bgcolor: "background.paper",
-              color: "primary.main",
+              fontSize: 11,
+              fontWeight: 600,
             },
           }}
         >
@@ -273,11 +274,8 @@ export default function PromptItem({
                 sx={{
                   width: 24,
                   height: 24,
-                  fontSize: 10,
-                  border: "1px solid",
-                  borderColor: "primary.main",
-                  bgcolor: "background.paper",
-                  color: "primary.main",
+                  fontSize: 11,
+                  fontWeight: 600,
                 }}
               >
                 {_.toUpper(c?.name?.[0])}
@@ -299,8 +297,8 @@ export default function PromptItem({
               src="/assets/icons/ic_ellipsis.svg"
               sx={{
                 color: "text.disabled",
-                height: 24,
-                width: 24,
+                height: 16,
+                width: 16,
                 rotate: "90deg",
               }}
             />
@@ -315,7 +313,7 @@ export default function PromptItem({
           PaperProps={{
             sx: {
               mt: 1,
-              minWidth: 100,
+              minWidth: 200,
               p: 0.5,
             },
           }}
@@ -365,7 +363,7 @@ export default function PromptItem({
             >
               {/* <ListItemIcon sx={{ minWidth: "unset", mr: 0 }}>
                 <Iconify
-                 icon="subway:folder-2"
+                 icon="solar:folder-linear"
                   sx={{
                     width: 16,
                     height: 16,
@@ -384,7 +382,8 @@ export default function PromptItem({
           )}
 
           <MenuItem
-            sx={{ color: "error.main", px: 1.25, py: 0.75 }}
+            // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+            sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
             onClick={() => {
               // TODO: open delete wrapper
               if (type) {

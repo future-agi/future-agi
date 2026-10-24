@@ -46,7 +46,7 @@ const VersionCellRenderer = (params) => {
         }}
       >
         <Typography
-          fontSize="14px"
+          fontSize="13px"
           fontWeight={400}
           sx={{
             overflow: "hidden",

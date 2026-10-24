@@ -10,18 +10,12 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { ORIGIN_KINDS } from "../_mock/provenance";
 import { textTone } from "./textTone";
-import { alpha } from "@mui/material/styles";
-import {
-  Box,
-  Chip,
-  Stack,
-  Typography,
-  Tooltip,
-  IconButton,
-  LinearProgress,
-  keyframes,
-} from "@mui/material";
+import { alpha, useTheme } from "@mui/material/styles";
+import { Box, Chip, Stack, Typography, Tooltip, IconButton, keyframes } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import { getSurface } from "../_mock/surfaces";
 
 /* ── animations ──────────────────────────────────────────────────────────── */
@@ -100,7 +94,11 @@ export function SurfaceIcon({ surface, size = 40, radius = 1.25 }) {
     </Box>
   );
 }
-SurfaceIcon.propTypes = { surface: PropTypes.string, size: PropTypes.number, radius: PropTypes.number };
+SurfaceIcon.propTypes = {
+  surface: PropTypes.string,
+  size: PropTypes.number,
+  radius: PropTypes.number,
+};
 
 export function SurfaceChip({ surface, size = "small" }) {
   const s = getSurface(surface);
@@ -110,12 +108,14 @@ export function SurfaceChip({ surface, size = "small" }) {
       label={s.label}
       icon={<Iconify icon={s.icon} width={14} />}
       sx={{
-        height: 22,
-        borderRadius: 0.75,
         color: s.color,
         bgcolor: (t) => alpha(s.color, t.palette.mode === "dark" ? 0.16 : 0.1),
         border: () => `1px solid ${alpha(s.color, 0.24)}`,
-        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600, color: textTone(s.color) },
+        "& .MuiChip-label": {
+          px: 0.75,
+          typography: "s3",
+          color: textTone(s.color),
+        },
         "& .MuiChip-icon": { ml: 0.75, mr: -0.25, color: "inherit" },
       }}
     />
@@ -126,21 +126,21 @@ SurfaceChip.propTypes = { surface: PropTypes.string, size: PropTypes.string };
 /* ── status vocabulary ───────────────────────────────────────────────────── */
 
 export const STATUS_META = {
-  queued:    { color: "#71717A", label: "Queued" },
-  booting:   { color: "#CA8A04", text: "text.secondary", label: "Provisioning" },
-  running:   { color: "#2563EB", label: "Running" },
-  grading:   { color: "#7857FC", label: "Grading" },
-  passed:    { color: "#16A34A", label: "Passed" },
+  queued: { role: "neutral", label: "Queued" },
+  booting: { role: "info", label: "Provisioning" },
+  running: { role: "info", label: "Running" },
+  grading: { role: "info", label: "Grading" },
+  passed: { role: "success", label: "Passed" },
   /* Samples that disagreed with each other. Neither a pass nor a failure —
      it is the scenario, not the agent, that has been found out. */
-  flaky:     { color: "#D97706", text: "text.secondary", label: "Flaky" },
+  flaky: { role: "warning", label: "Flaky" },
   /* Nothing upstream of the agent worked, so there is no verdict to report.
      Deliberately not red: this is our failure, not the agent's. */
-  unmeasured: { color: "#9AA0A6", label: "Not measured" },
-  completed: { color: "#71717A", label: "Completed" },
-  failed:    { color: "#DC2626", label: "Failed" },
-  error:     { color: "#EA580C", text: "text.secondary", label: "Error" },
-  cancelled: { color: "#71717A", label: "Cancelled" },
+  unmeasured: { role: "neutral", label: "Not measured" },
+  completed: { role: "neutral", label: "Completed" },
+  failed: { role: "danger", label: "Failed" },
+  error: { role: "danger", label: "Error" },
+  cancelled: { role: "neutral", label: "Cancelled" },
 };
 
 /**
@@ -156,11 +156,13 @@ export const STATUS_META = {
  * evidence anyone has about how noisy the measurement is.
  */
 export const VERDICT_TONE = {
-  passed:  { color: "#5AA47B", label: "Passed" },
-  failed:  { color: "#C2603F", label: "Failed" },
-  flaky:   { color: "#B98A3C", text: "text.secondary", label: "Flaky" },
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
+  passed: { color: "#5AA47B", label: "Passed" },
+  failed: { color: "#C2603F", label: "Failed" },
+  flaky: { color: "#B98A3C", text: "text.secondary", label: "Flaky" },
   unmeasured: { color: "#9AA0A6", label: "Not measured" },
   missing: { color: "#9AA0A6", label: "Not run" },
+  /* eslint-enable no-restricted-syntax */
 };
 
 export function Verdict({ status, passes, repeats, showSamples = true }) {
@@ -168,8 +170,22 @@ export function Verdict({ status, passes, repeats, showSamples = true }) {
   const samples = showSamples && repeats > 1 && passes != null;
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
-      <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: tone.color, flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: tone.text || tone.color }}>
+      <Box
+        sx={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          bgcolor: tone.color,
+          flexShrink: 0,
+        }}
+      />
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: tone.text || tone.color,
+        }}
+      >
         {tone.label}
       </Typography>
       {samples && (
@@ -201,15 +217,36 @@ export function DomainChip({ domain, dense }) {
   return (
     <Tooltip arrow title={`${domain.blurb} ${domain.next}`}>
       <Stack
-        direction="row" alignItems="center" spacing={0.5}
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
         sx={{
-          px: dense ? 0.5 : 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
-          bgcolor: (t) => alpha(domain.color, t.palette.mode === "dark" ? 0.18 : 0.1),
+          px: dense ? 0.5 : 0.75,
+          py: 0.125,
+          borderRadius: "4px",
+          flexShrink: 0,
+          bgcolor: (t) =>
+            alpha(domain.color, t.palette.mode === "dark" ? 0.18 : 0.1),
           cursor: "default",
         }}
       >
-        <Box sx={{ width: 5, height: 5, borderRadius: "50%", bgcolor: domain.color, flexShrink: 0 }} />
-        <Typography noWrap sx={{ typography: "s3", fontWeight: 700, color: textTone(domain.color) }}>
+        <Box
+          sx={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            bgcolor: domain.color,
+            flexShrink: 0,
+          }}
+        />
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: textTone(domain.color),
+          }}
+        >
           {domain.short}
         </Typography>
       </Stack>
@@ -220,10 +257,21 @@ export function DomainChip({ domain, dense }) {
 DomainChip.propTypes = { domain: PropTypes.object, dense: PropTypes.bool };
 
 export function StatusDot({ status, size = 8, live }) {
+  const theme = useTheme();
   const meta = STATUS_META[status] || STATUS_META.queued;
+  const color = statusColors(theme, meta.role).solid;
   const animate = live ?? ["running", "booting", "grading"].includes(status);
   return (
-    <Box sx={{ position: "relative", display: "grid", placeItems: "center", width: size * 2, height: size * 2, flexShrink: 0 }}>
+    <Box
+      sx={{
+        position: "relative",
+        display: "grid",
+        placeItems: "center",
+        width: size * 2,
+        height: size * 2,
+        flexShrink: 0,
+      }}
+    >
       {animate && (
         <Box
           sx={{
@@ -231,7 +279,7 @@ export function StatusDot({ status, size = 8, live }) {
             width: size,
             height: size,
             borderRadius: "50%",
-            bgcolor: meta.color,
+            bgcolor: color,
             animation: `${ripple} 1.6s ease-out infinite`,
           }}
         />
@@ -241,73 +289,88 @@ export function StatusDot({ status, size = 8, live }) {
           width: size,
           height: size,
           borderRadius: "50%",
-          bgcolor: meta.color,
+          bgcolor: color,
           animation: animate ? `${pulse} 1.6s ease-in-out infinite` : "none",
         }}
       />
     </Box>
   );
 }
-StatusDot.propTypes = { status: PropTypes.string, size: PropTypes.number, live: PropTypes.bool };
+StatusDot.propTypes = {
+  status: PropTypes.string,
+  size: PropTypes.number,
+  live: PropTypes.bool,
+};
 
+/* The design system's status badge, read through this file's vocabulary. */
 export function StatusChip({ status }) {
   const meta = STATUS_META[status] || STATUS_META.queued;
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={0.25}
-      sx={{
-        pl: 0.25, pr: 1, height: 22, borderRadius: 0.75,
-        color: meta.text || meta.color,
-        bgcolor: (t) => alpha(meta.color, t.palette.mode === "dark" ? 0.16 : 0.1),
-        border: () => `1px solid ${alpha(meta.color, 0.24)}`,
-      }}
-    >
-      <StatusDot status={status} size={6} />
-      <Typography sx={{ typography: "s3", fontWeight: 600 }}>{meta.label}</Typography>
-    </Stack>
-  );
+  return <StatusBadge status={status} role={meta.role} label={meta.label} />;
 }
 StatusChip.propTypes = { status: PropTypes.string };
 
 /* ── score pill ──────────────────────────────────────────────────────────── */
 
+/* Design system score: a plain number in fg.default; the pass/fail mark
+   carries the colour (and its shape says it without colour). */
 export function ScorePill({ score, passed, label }) {
-  const color = passed ? "#16A34A" : "#DC2626";
   return (
     <Tooltip title={label || ""} arrow>
       <Stack
         direction="row"
         alignItems="center"
         spacing={0.5}
-        sx={{
-          px: 0.75, height: 20, borderRadius: 0.5,
-          color,
-          bgcolor: "transparent",
-          border: () => `1px solid ${alpha(color, 0.35)}`,
-        }}
+        sx={{ height: 20 }}
       >
-        <Iconify icon={passed ? "solar:check-circle-bold" : "solar:close-circle-bold"} width={12} />
-        <Typography sx={{ typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+        <Iconify
+          icon={passed ? "solar:check-circle-bold" : "solar:close-circle-bold"}
+          width={12}
+          sx={{
+            color: passed ? "status.success.solid" : "status.danger.solid",
+            flexShrink: 0,
+          }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.primary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {(score * 100).toFixed(0)}
         </Typography>
       </Stack>
     </Tooltip>
   );
 }
-ScorePill.propTypes = { score: PropTypes.number, passed: PropTypes.bool, label: PropTypes.string };
+ScorePill.propTypes = {
+  score: PropTypes.number,
+  passed: PropTypes.bool,
+  label: PropTypes.string,
+};
 
 /* ── section shell ───────────────────────────────────────────────────────── */
 
-export function SectionCard({ title, subtitle, action, children, sx, dense }) {
+/* `bare` drops the card for a section that holds a table: the design
+   system's tables sit on the page with no box, the toolbar above them. */
+export function SectionCard({
+  title,
+  subtitle,
+  action,
+  children,
+  sx,
+  dense,
+  bare,
+}) {
   return (
     <Box
       sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1.5,
-        bgcolor: "background.paper",
+        ...(!bare && {
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          bgcolor: "background.paper",
+        }),
         overflow: "hidden",
         ...sx,
       }}
@@ -318,12 +381,16 @@ export function SectionCard({ title, subtitle, action, children, sx, dense }) {
           alignItems="center"
           justifyContent="space-between"
           spacing={2}
-          sx={{
-            px: dense ? 1.5 : 2.5,
-            py: dense ? 1 : 1.75,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
+          sx={
+            bare
+              ? { pb: 1.5 }
+              : {
+                  px: dense ? 1.5 : 2.5,
+                  py: dense ? 1 : 1.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }
+          }
         >
           <Box minWidth={0}>
             {/*
@@ -332,11 +399,17 @@ export function SectionCard({ title, subtitle, action, children, sx, dense }) {
               producing invalid DOM — a div child inside a <p> triggers
               a browser auto-close and a hydration warning.
             */}
-            <Typography component="div" sx={{ typography: "s1", fontWeight: 600 }}>
+            <Typography
+              component="div"
+              sx={{ typography: "s1", fontWeight: 600 }}
+            >
               {title}
             </Typography>
             {subtitle && (
-              <Typography component="div" sx={{ typography: "s2", color: "text.subtitle" }}>
+              <Typography
+                component="div"
+                sx={{ typography: "s2", color: "text.subtitle" }}
+              >
                 {subtitle}
               </Typography>
             )}
@@ -349,13 +422,24 @@ export function SectionCard({ title, subtitle, action, children, sx, dense }) {
   );
 }
 SectionCard.propTypes = {
-  title: PropTypes.node, subtitle: PropTypes.node, action: PropTypes.node,
-  children: PropTypes.node, sx: PropTypes.object, dense: PropTypes.bool,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  action: PropTypes.node,
+  children: PropTypes.node,
+  sx: PropTypes.object,
+  dense: PropTypes.bool,
+  bare: PropTypes.bool,
 };
 
 /* ── copy-to-clipboard field ─────────────────────────────────────────────── */
 
-export function CopyField({ label, value, mono = true, wrap = false, onCopy = null }) {
+export function CopyField({
+  label,
+  value,
+  mono = true,
+  wrap = false,
+  onCopy = null,
+}) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(value);
@@ -366,25 +450,33 @@ export function CopyField({ label, value, mono = true, wrap = false, onCopy = nu
   return (
     <Box>
       {label && (
-        <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 0.5 }}>{label}</Typography>
+        <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 0.5 }}>
+          {label}
+        </Typography>
       )}
       <Stack
         direction="row"
         alignItems="center"
         spacing={1}
         sx={{
-          px: 1.5, py: 1, borderRadius: 1,
-          border: "1px solid", borderColor: "divider",
+          px: 1.5,
+          py: 1,
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
           bgcolor: "background.neutral",
         }}
       >
         <Typography
           noWrap={!wrap}
           sx={{
-            flex: 1, minWidth: 0,
+            flex: 1,
+            minWidth: 0,
             typography: "s2",
             ...(wrap && { overflowWrap: "anywhere", whiteSpace: "pre-wrap" }),
-            fontFamily: mono ? "ui-monospace, SFMono-Regular, Menlo, monospace" : undefined,
+            fontFamily: mono
+              ? "ui-monospace, SFMono-Regular, Menlo, monospace"
+              : undefined,
             color: "text.primary",
           }}
         >
@@ -394,8 +486,8 @@ export function CopyField({ label, value, mono = true, wrap = false, onCopy = nu
           <IconButton size="small" onClick={copy} sx={{ p: 0.5 }}>
             <Iconify
               icon={copied ? "solar:check-circle-bold" : "solar:copy-linear"}
-              width={15}
-              sx={{ color: copied ? "#16A34A" : "text.subtitle" }}
+              width={16}
+              sx={{ color: copied ? "status.success.fg" : "text.secondary" }}
             />
           </IconButton>
         </Tooltip>
@@ -404,62 +496,36 @@ export function CopyField({ label, value, mono = true, wrap = false, onCopy = nu
   );
 }
 CopyField.propTypes = {
-  label: PropTypes.string, value: PropTypes.string,
-  mono: PropTypes.bool, wrap: PropTypes.bool, onCopy: PropTypes.func,
-};
-
-/* ── metric tile ─────────────────────────────────────────────────────────── */
-
-export function MetricTile({ label, value, sub, color, icon, progress }) {
-  return (
-    <Box
-      sx={{
-        p: 2, flex: 1, minWidth: 0,
-        border: "1px solid", borderColor: "divider",
-        borderRadius: 1.5, bgcolor: "background.paper",
-      }}
-    >
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.75 }}>
-        {icon && <Iconify icon={icon} width={14} sx={{ color: color || "text.subtitle" }} />}
-        <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>{label}</Typography>
-      </Stack>
-      <Typography sx={{ typography: "m1", fontWeight: 700, lineHeight: 1.1, color: textTone(color || "text.primary"), fontVariantNumeric: "tabular-nums" }}>
-        {value}
-      </Typography>
-      {sub && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{sub}</Typography>}
-      {progress != null && (
-        <LinearProgress
-          variant="determinate"
-          value={progress}
-          sx={{
-            mt: 1.25, height: 4, borderRadius: 2,
-            bgcolor: (t) => alpha(color || t.palette.text.disabled, 0.16),
-            "& .MuiLinearProgress-bar": { bgcolor: color, borderRadius: 2 },
-          }}
-        />
-      )}
-    </Box>
-  );
-}
-MetricTile.propTypes = {
-  label: PropTypes.string, value: PropTypes.node, sub: PropTypes.node,
-  color: PropTypes.string, icon: PropTypes.string, progress: PropTypes.number,
+  label: PropTypes.string,
+  value: PropTypes.string,
+  mono: PropTypes.bool,
+  wrap: PropTypes.bool,
+  onCopy: PropTypes.func,
 };
 
 /* ── persona chip row ────────────────────────────────────────────────────── */
 
 export function PersonaBadge({ persona, compact }) {
   if (!persona) return null;
-  const initials = persona.name.split(" ").map((w) => w[0]).slice(0, 2).join("");
+  const initials = persona.name
+    .split(" ")
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("");
   return (
     <Stack direction="row" alignItems="center" spacing={1} minWidth={0}>
       <Box
         sx={{
-          width: compact ? 22 : 28, height: compact ? 22 : 28, borderRadius: "50%",
-          display: "grid", placeItems: "center", flexShrink: 0,
+          width: compact ? 22 : 28,
+          height: compact ? 22 : 28,
+          borderRadius: "50%",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
           bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
           color: "primary.main",
-          typography: "s3", fontWeight: 700,
+          typography: "s3",
+          fontWeight: 600,
         }}
       >
         {initials}
@@ -468,13 +534,22 @@ export function PersonaBadge({ persona, compact }) {
         {/* Customers carry an age and a voice; requesters carry a job title. */}
         <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
           {persona.name}
-          <Box component="span" sx={{ color: "text.subtitle", fontWeight: 400 }}>
-            {persona.age ? ` · ${persona.age}` : persona.role ? ` · ${persona.role}` : ""}
+          <Box
+            component="span"
+            sx={{ color: "text.subtitle", fontWeight: 400 }}
+          >
+            {persona.age
+              ? ` · ${persona.age}`
+              : persona.role
+                ? ` · ${persona.role}`
+                : ""}
           </Box>
         </Typography>
         {!compact && (
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-            {[...(persona.traits || []), persona.voice].filter(Boolean).join(" · ")}
+            {[...(persona.traits || []), persona.voice]
+              .filter(Boolean)
+              .join(" · ")}
           </Typography>
         )}
       </Box>
@@ -487,28 +562,21 @@ PersonaBadge.propTypes = { persona: PropTypes.object, compact: PropTypes.bool };
 
 export function EmptyState({ icon, title, body, action }) {
   return (
-    <Stack alignItems="center" justifyContent="center" spacing={1.5} sx={{ py: 8, px: 3, textAlign: "center" }}>
-      <Box
-        sx={{
-          width: 52, height: 52, borderRadius: 1.5, display: "grid", placeItems: "center",
-          bgcolor: "background.neutral", color: "text.subtitle",
-        }}
-      >
-        <Iconify icon={icon || "solar:box-minimalistic-linear"} width={26} />
-      </Box>
-      <Box>
-        <Typography sx={{ typography: "s1", fontWeight: 600 }}>{title}</Typography>
-        {body && (
-          <Typography sx={{ typography: "s2", color: "text.subtitle", maxWidth: 420, mt: 0.5 }}>
-            {body}
-          </Typography>
-        )}
-      </Box>
-      {action}
-    </Stack>
+    <EmptyContent
+      icon={icon || "solar:inbox-linear"}
+      title={title}
+      description={body}
+      action={action}
+      sx={{ height: "auto", flexGrow: 0 }}
+    />
   );
 }
-EmptyState.propTypes = { icon: PropTypes.string, title: PropTypes.node, body: PropTypes.node, action: PropTypes.node };
+EmptyState.propTypes = {
+  icon: PropTypes.string,
+  title: PropTypes.node,
+  body: PropTypes.node,
+  action: PropTypes.node,
+};
 
 /**
  * Where a derived fact was found.
@@ -518,6 +586,14 @@ EmptyState.propTypes = { icon: PropTypes.string, title: PropTypes.node, body: Pr
  * a README, and those should never look alike. The file and line are the point:
  * a claim you can go and check is a different kind of claim.
  */
+// "CONFIG" → "Config", "POLICY.YAML" → "policy.yaml", "MCP" stays "MCP".
+const tagLabel = (short = "") =>
+  /\./.test(short)
+    ? short.toLowerCase()
+    : short.length <= 3
+      ? short
+      : short.charAt(0) + short.slice(1).toLowerCase();
+
 export function OriginChip({ origin, file, line, showPath = true }) {
   const meta = ORIGIN_KINDS[origin];
   if (!meta) return null;
@@ -528,23 +604,40 @@ export function OriginChip({ origin, file, line, showPath = true }) {
       placement="top"
       title={
         <Box sx={{ maxWidth: 300, py: 0.5 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.25 }}>{meta.label}</Typography>
+          <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.25 }}>
+            {meta.label}
+          </Typography>
           <Typography sx={{ typography: "s3" }}>{meta.note}</Typography>
           {file && (
-            <Typography sx={{ typography: "s3", mt: 0.75, fontFamily: "ui-monospace, Menlo, monospace", opacity: 0.75 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                mt: 0.75,
+                fontFamily: "ui-monospace, Menlo, monospace",
+                opacity: 0.75,
+              }}
+            >
               {file}:{line}
             </Typography>
           )}
         </Box>
       }
     >
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexShrink: 0, cursor: "default" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ flexShrink: 0, cursor: "default" }}
+      >
         {showPath && file && (
           <Typography
             noWrap
             sx={{
-              typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace",
-              display: { xs: "none", lg: "block" }, maxWidth: 300,
+              typography: "s3",
+              color: "text.disabled",
+              fontFamily: "ui-monospace, Menlo, monospace",
+              display: { xs: "none", lg: "block" },
+              maxWidth: 300,
             }}
           >
             {file}:{line}
@@ -552,12 +645,19 @@ export function OriginChip({ origin, file, line, showPath = true }) {
         )}
         <Typography
           sx={{
-            px: 0.75, py: 0.25, borderRadius: 0.5,
-            typography: "s3", fontWeight: 700, color: textTone(meta.color, "text.secondary"),
-            bgcolor: (t) => alpha(meta.color, t.palette.mode === "dark" ? 0.16 : 0.1),
+            px: 0.75,
+            py: 0.25,
+            borderRadius: "4px",
+            // DS tag: neutral, 12px/500, sentence case — origin is told by
+            // the label, not by colour.
+            fontSize: 12,
+            lineHeight: "16px",
+            fontWeight: 500,
+            color: "text.secondary",
+            bgcolor: "action.selected",
           }}
         >
-          {meta.short}
+          {tagLabel(meta.short)}
         </Typography>
       </Stack>
     </Tooltip>

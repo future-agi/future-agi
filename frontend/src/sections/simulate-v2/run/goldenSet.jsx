@@ -1,7 +1,15 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { alpha, useTheme } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Chip, Tooltip, IconButton } from "@mui/material";
+import { alpha } from "@mui/material/styles";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Chip,
+  Tooltip,
+  IconButton,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { deriveGoalOutcome } from "./goalOutcome";
 import { useGoldenSet } from "./goldenSetState";
@@ -39,7 +47,9 @@ function partition(tasks, ids) {
 export function GoldenSetManager({ tasks, env }) {
   const { ids, toggle, markTopN, clear } = useGoldenSet(env, tasks);
   const { golden, losing } = useMemo(() => partition(tasks, ids), [tasks, ids]);
-  const eligible = (tasks || []).filter((t) => deriveGoalOutcome(t) === "achieved");
+  const eligible = (tasks || []).filter(
+    (t) => deriveGoalOutcome(t) === "achieved",
+  );
 
   return (
     <Panel
@@ -53,25 +63,37 @@ export function GoldenSetManager({ tasks, env }) {
     >
       <Box sx={{ px: 3, py: 2 }}>
         {ids.length === 0 ? (
-          <Typography sx={{ fontSize: 12.5, color: "text.subtitle" }}>
+          <Typography sx={{ fontSize: 13, color: "text.tertiary" }}>
             {eligible.length === 0
               ? "No tasks in this run reached the goal outcome yet. Once any do, the top-N will be marked golden automatically."
               : "Golden set cleared. Manually mark tasks via the ★ button in the drill-down drawer, or re-populate below."}
           </Typography>
         ) : (
           <>
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1.5 }}
+            >
               {golden.map((t) => (
-                <Tooltip key={t.id} arrow title={`${t.name || t.id} · ${t.steps?.length || 0} turns`}>
+                <Tooltip
+                  key={t.id}
+                  arrow
+                  title={`${t.name || t.id} · ${t.steps?.length || 0} turns`}
+                >
                   <Chip
                     size="small"
-                    icon={<Iconify icon="solar:star-bold" width={12} style={{ color: "#F59E0B" }} />}
+                    icon={
+                      <Iconify
+                        icon="solar:star-bold"
+                        width={12}
+                        sx={{ color: "status.warning.fg" }}
+                      />
+                    }
                     label={t.name || t.id}
                     onDelete={() => toggle(t.id)}
                     sx={{
-                      fontSize: 11.5, height: 24,
-                      bgcolor: (theme) => alpha("#F59E0B", theme.palette.mode === "dark" ? 0.14 : 0.08),
-                      "& .MuiChip-deleteIcon": { fontSize: 14 },
+                      bgcolor: "status.warning.bg",
                     }}
                   />
                 </Tooltip>
@@ -81,12 +103,20 @@ export function GoldenSetManager({ tasks, env }) {
         )}
         <Stack direction="row" spacing={1} sx={{ mt: ids.length ? 0 : 1.5 }}>
           {eligible.length > 0 && (
-            <Button size="small" variant="outlined" onClick={() => markTopN(tasks, Math.min(15, eligible.length))}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => markTopN(tasks, Math.min(15, eligible.length))}
+            >
               Re-pick top 15
             </Button>
           )}
           {ids.length > 0 && (
-            <Button size="small" onClick={clear} sx={{ color: "text.subtitle" }}>
+            <Button
+              size="small"
+              onClick={clear}
+              sx={{ color: "text.tertiary" }}
+            >
               Clear all
             </Button>
           )}
@@ -101,7 +131,6 @@ GoldenSetManager.propTypes = { tasks: PropTypes.array, env: PropTypes.object };
 
 export function DropoffFunnel({ tasks, env }) {
   const { ids } = useGoldenSet(env, tasks);
-  const theme = useTheme();
   const { golden, losing } = useMemo(() => partition(tasks, ids), [tasks, ids]);
 
   const funnel = useMemo(() => {
@@ -116,8 +145,12 @@ export function DropoffFunnel({ tasks, env }) {
       const losingAt = losing.filter((t) => (t.steps?.length || 0) >= n).length;
       bins.push({
         turn: n,
-        goldenPct: golden.length ? Math.round((goldenAt / golden.length) * 100) : 0,
-        losingPct: losing.length ? Math.round((losingAt / losing.length) * 100) : 0,
+        goldenPct: golden.length
+          ? Math.round((goldenAt / golden.length) * 100)
+          : 0,
+        losingPct: losing.length
+          ? Math.round((losingAt / losing.length) * 100)
+          : 0,
       });
     }
     return bins;
@@ -126,7 +159,10 @@ export function DropoffFunnel({ tasks, env }) {
   if (!ids.length) return <NeedsGoldenSet />;
   if (!losing.length) {
     return (
-      <Panel title="Drop-off funnel" subtitle="Where losing calls drop off vs the golden pattern">
+      <Panel
+        title="Drop-off funnel"
+        subtitle="Where losing calls drop off vs the golden pattern"
+      >
         <EmptyMsg text="Every non-golden call also hit the goal — no losing calls to compare." />
       </Panel>
     );
@@ -139,34 +175,82 @@ export function DropoffFunnel({ tasks, env }) {
       info="Each column is a conversation turn. The gap between the golden line (top) and the losing line (bottom) at any turn is where the pitch is losing people. The steepest cliff on the red line is the turn to look at first."
     >
       <Box sx={{ px: 2, py: 2 }}>
-        <Box sx={{ display: "grid", gridTemplateColumns: `repeat(${funnel.length}, 1fr)`, gap: 0.5, alignItems: "end", height: 200 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${funnel.length}, 1fr)`,
+            gap: 0.5,
+            alignItems: "end",
+            height: 200,
+          }}
+        >
           {funnel.map((b) => (
-            <Box key={b.turn} sx={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <Box sx={{ position: "relative", width: "100%", height: 160, display: "flex", alignItems: "end", justifyContent: "center" }}>
+            <Box
+              key={b.turn}
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
+              <Box
+                sx={{
+                  position: "relative",
+                  width: "100%",
+                  height: 160,
+                  display: "flex",
+                  alignItems: "end",
+                  justifyContent: "center",
+                }}
+              >
                 {/* Golden bar (ghost fill) */}
-                <Box sx={{
-                  position: "absolute", bottom: 0, width: "80%",
-                  height: `${b.goldenPct}%`,
-                  bgcolor: (t) => alpha("#F59E0B", t.palette.mode === "dark" ? 0.24 : 0.16),
-                  borderRadius: 0.5,
-                }} />
+                <Box
+                  sx={{
+                    position: "absolute",
+                    bottom: 0,
+                    width: "80%",
+                    height: `${b.goldenPct}%`,
+                    bgcolor: "status.warning.bg",
+                    borderRadius: "4px",
+                  }}
+                />
                 {/* Losing bar (solid fill on top) */}
-                <Box sx={{
-                  position: "absolute", bottom: 0, width: "60%",
-                  height: `${b.losingPct}%`,
-                  bgcolor: b.losingPct < b.goldenPct - 15 ? "#DC2626" : b.losingPct < b.goldenPct ? "#F59E0B" : "#16A34A",
-                  borderRadius: 0.5,
-                }} />
+                <Box
+                  sx={{
+                    position: "absolute",
+                    bottom: 0,
+                    width: "60%",
+                    height: `${b.losingPct}%`,
+                    bgcolor:
+                      b.losingPct < b.goldenPct - 15
+                        ? "status.danger.solid"
+                        : b.losingPct < b.goldenPct
+                          ? "status.warning.solid"
+                          : "status.success.solid",
+                    borderRadius: "4px",
+                  }}
+                />
               </Box>
-              <Typography sx={{ fontSize: 10, color: "text.subtitle", mt: 0.5, fontVariantNumeric: "tabular-nums" }}>
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.tertiary",
+                  mt: 0.5,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
                 T{b.turn}
               </Typography>
             </Box>
           ))}
         </Box>
         <Stack direction="row" spacing={2} sx={{ mt: 1.5, ml: 0.5 }}>
-          <LegendChip color="#F59E0B" label={`Golden (${golden.length})`} ghost />
-          <LegendChip color="#DC2626" label={`Losing (${losing.length})`} />
+          <LegendChip
+            role="warning"
+            label={`Golden (${golden.length})`}
+            ghost
+          />
+          <LegendChip role="danger" label={`Losing (${losing.length})`} />
         </Stack>
       </Box>
     </Panel>
@@ -178,13 +262,17 @@ DropoffFunnel.propTypes = { tasks: PropTypes.array, env: PropTypes.object };
 
 export function DivergenceTimeline({ tasks, env }) {
   const { ids } = useGoldenSet(env, tasks);
-  const theme = useTheme();
   const { golden, losing } = useMemo(() => partition(tasks, ids), [tasks, ids]);
 
   const rows = useMemo(() => {
     if (!golden.length || !losing.length) return [];
-    const goldenAvgTurns = Math.round(golden.reduce((a, t) => a + (t.steps?.length || 0), 0) / golden.length);
-    const maxTurns = Math.max(...golden.concat(losing).map((t) => t.steps?.length || 0), 10);
+    const goldenAvgTurns = Math.round(
+      golden.reduce((a, t) => a + (t.steps?.length || 0), 0) / golden.length,
+    );
+    const maxTurns = Math.max(
+      ...golden.concat(losing).map((t) => t.steps?.length || 0),
+      10,
+    );
     /* For each losing call, "divergence turn" = the turn at which
        we suspect it diverged from the golden pattern. Heuristic:
        the earlier a losing call ended vs the golden mean, the
@@ -192,8 +280,18 @@ export function DivergenceTimeline({ tasks, env }) {
     return losing
       .map((t) => {
         const turns = t.steps?.length || 0;
-        const breakTurn = turns >= goldenAvgTurns ? Math.max(1, goldenAvgTurns - 2) : Math.max(1, turns - 1);
-        return { id: t.id, name: t.name || t.id, turns, breakTurn, persona: t.persona?.name || "—", maxTurns };
+        const breakTurn =
+          turns >= goldenAvgTurns
+            ? Math.max(1, goldenAvgTurns - 2)
+            : Math.max(1, turns - 1);
+        return {
+          id: t.id,
+          name: t.name || t.id,
+          turns,
+          breakTurn,
+          persona: t.persona?.name || "—",
+          maxTurns,
+        };
       })
       .sort((a, b) => a.breakTurn - b.breakTurn)
       .slice(0, 12);
@@ -202,7 +300,10 @@ export function DivergenceTimeline({ tasks, env }) {
   if (!ids.length) return <NeedsGoldenSet />;
   if (!rows.length) {
     return (
-      <Panel title="Divergence timeline" subtitle="Where each losing call breaks away from the golden pattern">
+      <Panel
+        title="Divergence timeline"
+        subtitle="Where each losing call breaks away from the golden pattern"
+      >
         <EmptyMsg text="No losing calls to compare." />
       </Panel>
     );
@@ -217,19 +318,34 @@ export function DivergenceTimeline({ tasks, env }) {
       info="One row per losing call. The red cells mark the turns where the call diverged from the golden pattern. Calls at the top of the list broke earliest — often the fastest fixes."
     >
       <Box sx={{ px: 2, py: 1.5 }}>
-        <Box sx={{
-          display: "grid",
-          gridTemplateColumns: `minmax(180px, 1.4fr) repeat(${maxTurns}, minmax(14px, 1fr))`,
-          columnGap: "2px", rowGap: "4px", alignItems: "center",
-        }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: `minmax(180px, 1.4fr) repeat(${maxTurns}, minmax(14px, 1fr))`,
+            columnGap: "2px",
+            rowGap: "4px",
+            alignItems: "center",
+          }}
+        >
           <Box />
           {Array.from({ length: maxTurns }, (_, i) => (
-            <Typography key={i} sx={{ fontSize: 9, color: "text.subtitle", textAlign: "center" }}>{i + 1}</Typography>
+            <Typography
+              key={i}
+              sx={{ fontSize: 12, color: "text.tertiary", textAlign: "center" }}
+            >
+              {i + 1}
+            </Typography>
           ))}
           {rows.map((r) => (
             <Box key={r.id} sx={{ display: "contents" }}>
-              <Tooltip arrow title={`${r.name} · ${r.persona} · broke at turn ${r.breakTurn} / ${r.turns} total`}>
-                <Typography noWrap sx={{ fontSize: 11.5, color: "text.primary", pr: 1 }}>
+              <Tooltip
+                arrow
+                title={`${r.name} · ${r.persona} · broke at turn ${r.breakTurn} / ${r.turns} total`}
+              >
+                <Typography
+                  noWrap
+                  sx={{ fontSize: 12, color: "text.primary", pr: 1 }}
+                >
                   {r.name}
                 </Typography>
               </Tooltip>
@@ -239,30 +355,37 @@ export function DivergenceTimeline({ tasks, env }) {
                 const isBreak = turn === r.breakTurn;
                 const past = turn > r.breakTurn && inCall;
                 return (
-                  <Box key={i} sx={{
-                    height: 12, borderRadius: 0.5,
-                    bgcolor: !inCall
-                      ? (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.03)
-                      : isBreak
-                        ? "#DC2626"
-                        : past
-                          ? (t) => alpha("#DC2626", 0.35)
-                          : (t) => alpha("#16A34A", 0.5),
-                  }} />
+                  <Box
+                    key={i}
+                    sx={{
+                      height: 12,
+                      borderRadius: "4px",
+                      bgcolor: !inCall
+                        ? "action.hover"
+                        : isBreak
+                          ? "status.danger.solid"
+                          : past
+                            ? (t) => alpha(t.palette.status.danger.solid, 0.35)
+                            : (t) => alpha(t.palette.status.success.solid, 0.5),
+                    }}
+                  />
                 );
               })}
             </Box>
           ))}
         </Box>
         <Stack direction="row" spacing={2} sx={{ mt: 1.5, ml: 0.5 }}>
-          <LegendChip color="#16A34A" label="On golden path" faded />
-          <LegendChip color="#DC2626" label="Divergence turn" />
+          <LegendChip role="success" label="On golden path" faded />
+          <LegendChip role="danger" label="Divergence turn" />
         </Stack>
       </Box>
     </Panel>
   );
 }
-DivergenceTimeline.propTypes = { tasks: PropTypes.array, env: PropTypes.object };
+DivergenceTimeline.propTypes = {
+  tasks: PropTypes.array,
+  env: PropTypes.object,
+};
 
 /** ── 4. Pitch-break themes ─────────────────────────────────── */
 
@@ -278,7 +401,13 @@ export function PitchBreakThemes({ tasks, env }) {
     const map = new Map();
     losing.forEach((t) => {
       const key = `${t.useCase || "—"}::${t.persona?.name || "—"}`;
-      if (!map.has(key)) map.set(key, { useCase: t.useCase, persona: t.persona?.name, count: 0, sampleName: t.name });
+      if (!map.has(key))
+        map.set(key, {
+          useCase: t.useCase,
+          persona: t.persona?.name,
+          count: 0,
+          sampleName: t.name,
+        });
       map.get(key).count += 1;
     });
     return [...map.values()]
@@ -294,7 +423,10 @@ export function PitchBreakThemes({ tasks, env }) {
   if (!ids.length) return <NeedsGoldenSet />;
   if (!themes.length) {
     return (
-      <Panel title="Pitch-break themes" subtitle="Where losing calls concentrate">
+      <Panel
+        title="Pitch-break themes"
+        subtitle="Where losing calls concentrate"
+      >
         <EmptyMsg text="No losing calls to cluster." />
       </Panel>
     );
@@ -307,23 +439,71 @@ export function PitchBreakThemes({ tasks, env }) {
       info="Losing calls auto-grouped by use case × persona. The top row is the highest-ROI prompt fix — a single change here recovers more losses than picking off individual tasks."
     >
       <Box sx={{ px: 2.5, py: 1.5 }}>
-        <Box sx={{
-          display: "grid", gridTemplateColumns: "auto minmax(180px, 1.8fr) minmax(120px, 1fr) auto auto",
-          columnGap: 2, rowGap: 1, alignItems: "center",
-        }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns:
+              "auto minmax(180px, 1.8fr) minmax(120px, 1fr) auto auto",
+            columnGap: 2,
+            rowGap: 1,
+            alignItems: "center",
+          }}
+        >
           {["#", "Use case", "Persona", "Losing calls", "Share"].map((h, i) => (
-            <Typography key={h} sx={{
-              fontSize: 10.5, color: "text.subtitle", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase",
-              textAlign: i >= 3 ? "right" : "left",
-            }}>{h}</Typography>
+            <Typography
+              key={h}
+              sx={{
+                fontSize: 12,
+                color: "text.tertiary",
+                fontWeight: 600,
+                letterSpacing: 0.4,
+                textTransform: "none",
+                textAlign: i >= 3 ? "right" : "left",
+              }}
+            >
+              {h}
+            </Typography>
           ))}
           {themes.map((row) => (
             <Box key={row.rank} sx={{ display: "contents" }}>
-              <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>#{row.rank}</Typography>
-              <Typography noWrap sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}>{goalLabel(row.useCase) || "—"}</Typography>
-              <Typography noWrap sx={{ fontSize: 12.5, color: "text.secondary" }}>{row.persona || "—"}</Typography>
-              <Typography sx={{ fontSize: 12.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{row.count}</Typography>
-              <Typography sx={{ fontSize: 12.5, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: row.share >= 20 ? "#DC2626" : "text.primary" }}>{row.share}%</Typography>
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                #{row.rank}
+              </Typography>
+              <Typography
+                noWrap
+                sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+              >
+                {goalLabel(row.useCase) || "—"}
+              </Typography>
+              <Typography noWrap sx={{ fontSize: 13, color: "text.secondary" }}>
+                {row.persona || "—"}
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: 13,
+                  textAlign: "right",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {row.count}
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: 13,
+                  textAlign: "right",
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: 600,
+                  color: row.share >= 20 ? "status.danger.fg" : "text.primary",
+                }}
+              >
+                {row.share}%
+              </Typography>
             </Box>
           ))}
         </Box>
@@ -339,8 +519,12 @@ function NeedsGoldenSet() {
   return (
     <Panel title="Divergence" subtitle="Waiting on a golden set">
       <Box sx={{ px: 3, py: 3, textAlign: "center" }}>
-        <Iconify icon="solar:star-linear" width={22} sx={{ color: "text.disabled", mb: 0.5 }} />
-        <Typography sx={{ fontSize: 12, color: "text.subtitle" }}>
+        <Iconify
+          icon="solar:star-linear"
+          width={20}
+          sx={{ color: "text.disabled", mb: 0.5 }}
+        />
+        <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
           Mark a golden set above to see the divergence view.
         </Typography>
       </Box>
@@ -351,55 +535,127 @@ function NeedsGoldenSet() {
 function EmptyMsg({ text }) {
   return (
     <Box sx={{ px: 3, py: 3, textAlign: "center" }}>
-      <Typography sx={{ fontSize: 12, color: "text.subtitle" }}>{text}</Typography>
+      <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+        {text}
+      </Typography>
     </Box>
   );
 }
 EmptyMsg.propTypes = { text: PropTypes.string };
 
-function LegendChip({ color, label, ghost, faded }) {
+function LegendChip({ role, label, ghost, faded }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.5}>
-      <Box sx={{
-        width: 10, height: 10, borderRadius: 0.5,
-        bgcolor: (t) => (ghost || faded) ? alpha(color, ghost ? 0.24 : 0.4) : color,
-      }} />
-      <Typography sx={{ fontSize: 10.5, color: "text.subtitle" }}>{label}</Typography>
+      <Box
+        sx={{
+          width: 10,
+          height: 10,
+          borderRadius: "4px",
+          bgcolor: `status.${role}.solid`,
+          opacity: ghost ? 0.3 : faded ? 0.5 : 1,
+        }}
+      />
+      <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+        {label}
+      </Typography>
     </Stack>
   );
 }
-LegendChip.propTypes = { color: PropTypes.string, label: PropTypes.node, ghost: PropTypes.bool, faded: PropTypes.bool };
+LegendChip.propTypes = {
+  role: PropTypes.string,
+  label: PropTypes.node,
+  ghost: PropTypes.bool,
+  faded: PropTypes.bool,
+};
 
 /** Lightweight Panel — mirrors the shape RunAnalyticsV2's own Panel
  *  produces so this file doesn't have to import from that. Same
  *  className hooks so print / info tooltip / layout still apply. */
 function Panel({ title, subtitle, info, children }) {
   return (
-    <Box className="analytics-panel" sx={{
-      border: "1px solid", borderColor: "divider", borderRadius: 2,
-      bgcolor: "background.paper", display: "flex", flexDirection: "column",
-      overflow: "hidden", height: "100%",
-    }}>
-      <Stack direction="row" alignItems="flex-start" spacing={1.5} sx={{ px: 3, pt: 2.5, pb: 2 }}>
+    <Box
+      className="analytics-panel"
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        height: "100%",
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.5}
+        sx={{ px: 3, pt: 2.5, pb: 2 }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: 15, color: "text.primary", fontWeight: 700, letterSpacing: -0.1, lineHeight: 1.3 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ minWidth: 0 }}
+          >
+            <Typography
+              sx={{
+                fontSize: 13,
+                color: "text.primary",
+                fontWeight: 600,
+                letterSpacing: -0.1,
+                lineHeight: 1.3,
+              }}
+            >
               {title}
             </Typography>
             {info && (
-              <Tooltip arrow placement="top" title={<Box sx={{ px: 0.25, py: 0.25, fontSize: 12, lineHeight: 1.5, maxWidth: 280 }}>{info}</Box>}>
-                <Box component="span" sx={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 16, height: 16, borderRadius: 999, color: "text.subtitle", cursor: "help",
-                  "&:hover": { color: "text.primary" },
-                }}>
-                  <Iconify icon="solar:info-circle-linear" width={13} />
+              <Tooltip
+                arrow
+                placement="top"
+                title={
+                  <Box
+                    sx={{
+                      px: 0.25,
+                      py: 0.25,
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      maxWidth: 280,
+                    }}
+                  >
+                    {info}
+                  </Box>
+                }
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 16,
+                    height: 16,
+                    borderRadius: 999,
+                    color: "text.tertiary",
+                    cursor: "help",
+                    "&:hover": { color: "text.primary" },
+                  }}
+                >
+                  <Iconify icon="solar:info-circle-linear" width={14} />
                 </Box>
               </Tooltip>
             )}
           </Stack>
           {subtitle && (
-            <Typography sx={{ fontSize: 12.5, color: "text.subtitle", mt: 0.5, lineHeight: 1.45 }}>
+            <Typography
+              sx={{
+                fontSize: 13,
+                color: "text.tertiary",
+                mt: 0.5,
+                lineHeight: 1.45,
+              }}
+            >
               {subtitle}
             </Typography>
           )}
@@ -409,4 +665,9 @@ function Panel({ title, subtitle, info, children }) {
     </Box>
   );
 }
-Panel.propTypes = { title: PropTypes.node, subtitle: PropTypes.node, info: PropTypes.node, children: PropTypes.node };
+Panel.propTypes = {
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  info: PropTypes.node,
+  children: PropTypes.node,
+};

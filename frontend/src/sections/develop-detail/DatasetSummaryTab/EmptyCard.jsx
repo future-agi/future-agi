@@ -1,5 +1,6 @@
+import EmptyContent from "src/components/empty-content";
 import React from "react";
-import { Box, Typography, useTheme } from "@mui/material";
+import { useTheme } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -29,75 +30,29 @@ const EmptyCard = ({
       : icon;
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        width: "100%",
-        flex: 1,
-        height: "97%",
-      }}
-    >
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          flexDirection: "column",
-          gap: "16px",
-          height: "100%",
-          textAlign: "center",
-          width: "440px",
-          margin: "auto",
-        }}
-      >
-        <img src={resolvedIcon} width={"68px"} />
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "2px",
-          }}
-        >
-          <Typography
-            typography="m3"
-            fontWeight={"fontWeightMedium"}
-            color="text.primary"
-          >
-            {title}
-          </Typography>
-          <Typography
-            typography="s1"
-            color="text.secondary"
-            fontWeight={"fontWeightRegular"}
-          >
-            {description}
-          </Typography>
-        </Box>
-        {!datasetId && (
+    <EmptyContent
+      img={resolvedIcon || undefined}
+      title={title}
+      description={description}
+      sx={{ width: "100%" }}
+      action={
+        !datasetId ? (
           <LoadingButton
-            fullWidth
+            size="small"
             variant="contained"
             color="primary"
             type="submit"
             onClick={handleAddEvaluation}
-            sx={{ width: "max-content" }}
             disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
+            startIcon={
+              <Iconify icon="solar:add-linear" width="16px" height="16px" />
+            }
           >
-            <Typography
-              typography="s2"
-              fontWeight={"fontWeightSemiBold"}
-              sx={{ display: "flex", gap: 1 }}
-            >
-              {/* @ts-ignore */}
-              <Iconify icon="mdi:plus" width="16px" height="16px" />
-              Add {tab}
-            </Typography>
+            Add {tab}
           </LoadingButton>
-        )}
-      </Box>
-    </Box>
+        ) : undefined
+      }
+    />
   );
 };
 

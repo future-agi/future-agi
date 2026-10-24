@@ -1,8 +1,17 @@
 import PropTypes from "prop-types";
 import { Fragment, useContext, useEffect, useMemo, useState } from "react";
 import {
-  Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, Tooltip, Checkbox,
+  Box,
+  Stack,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  IconButton,
+  Tooltip,
+  Checkbox,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { subGoalsOfScenario } from "../../_mock/envModel";
@@ -11,8 +20,17 @@ import { versionNumber } from "../../_mock/versions";
 import { ScenarioRowContext } from "./scenarioRowContext";
 import BlockerFlag from "./BlockerFlag";
 import SourceBadge from "./SourceBadge";
-import { StateChip, ArchiveControl, TextAction, ProposedBadge } from "./ScenarioStateBits";
-import { stateActionOf, STATE_ACTION_LABEL, archivedOf } from "../../_mock/scenarioStates";
+import {
+  StateChip,
+  ArchiveControl,
+  TextAction,
+  ProposedBadge,
+} from "./ScenarioStateBits";
+import {
+  stateActionOf,
+  STATE_ACTION_LABEL,
+  archivedOf,
+} from "../../_mock/scenarioStates";
 import { subGoalResultsOf } from "../../_mock/scenarioSubGoals";
 import { envLabelOf } from "../../_mock/envVersionKinds";
 import { clickable, focusRing } from "../../components/clickable";
@@ -28,12 +46,11 @@ const selectableCheckboxSx = {
   "&.MuiCheckbox-indeterminate": { color: "text.primary" },
 };
 
-const PASS = "#16A34A";
-const FAIL = "#DC2626";
-const FLAKY = "#E9690C";
+const PASS = "status.success.solid";
+const FAIL = "status.danger.solid";
+const FLAKY = "status.warning.solid";
 
 /* Shown on row hover only — so thirty rows of icons don't shout. */
-const onHover = { opacity: 0, transition: "opacity .12s ease", ".MuiTableRow-root:hover &, &:focus-within": { opacity: 1 } };
 
 /**
  * Scenarios as a table — one calm line each.
@@ -46,17 +63,33 @@ const onHover = { opacity: 0, transition: "opacity .12s ease", ".MuiTableRow-roo
  * the row's hover.
  */
 /* A scenario a later rebuild added is not part of an older pinned version. */
-const laterThanPinned = (row, envVersion) => !!(row?.addedInEnv && envVersion
-  && versionNumber(row.addedInEnv) > versionNumber(envVersion));
+const laterThanPinned = (row, envVersion) =>
+  !!(
+    row?.addedInEnv &&
+    envVersion &&
+    versionNumber(row.addedInEnv) > versionNumber(envVersion)
+  );
 
 /* The identity columns stay put while the rest scrolls sideways. */
 const PIN_LEFT = { select: 0, "#": 40, scenario: 80 };
 const PINNED_SX = {
-  "& td.scn-pin, & th.scn-pin": { position: "sticky", bgcolor: "background.paper", zIndex: 2 },
-  "& td.scn-pin-0": { left: 0 }, "& td.scn-pin-1": { left: 40 }, "& td.scn-pin-2": { left: 80 },
+  "& td.scn-pin, & th.scn-pin": {
+    position: "sticky",
+    bgcolor: "background.paper",
+    zIndex: 2,
+  },
+  "& td.scn-pin-0": { left: 0 },
+  "& td.scn-pin-1": { left: 40 },
+  "& td.scn-pin-2": { left: 80 },
   /* The row's hover and selection tint carry into the pinned cells. */
-  "& tr:hover > td.scn-pin": { backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})` },
-  "& tr.Mui-selected > td.scn-pin, & tr.scn-selected > td.scn-pin": { backgroundImage: (t) => `linear-gradient(${t.palette.action.selected}, ${t.palette.action.selected})` },
+  "& tr:hover > td.scn-pin": {
+    backgroundImage: (t) =>
+      `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
+  },
+  "& tr.Mui-selected > td.scn-pin, & tr.scn-selected > td.scn-pin": {
+    backgroundImage: (t) =>
+      `linear-gradient(${t.palette.action.selected}, ${t.palette.action.selected})`,
+  },
   "& .scn-pin-last": { boxShadow: (t) => `1px 0 0 ${t.palette.divider}` },
 };
 
@@ -70,15 +103,42 @@ const briefLineOf = (row) => {
 const COLUMNS = [
   { id: "select", w: 40 },
   { id: "#", label: "#", w: 40 },
-  { id: "scenario", label: "Scenario", w: 380, tip: "A status shows only when the scenario needs something" },
+  {
+    id: "scenario",
+    label: "Scenario",
+    w: 380,
+    tip: "A status shows only when the scenario needs something",
+  },
   { id: "persona", label: "Persona", w: 170 },
-  { id: "subgoals", label: "Sub-goals", w: 88, align: "right", tip: "Sub-goals met in the scenario's latest run, of all it's graded on" },
-  { id: "mustPass", label: "Must-pass", w: 84, align: "center", tip: "An improvement that breaks a must-pass scenario is rejected" },
-  { id: "runs", label: "Last runs", w: 116, tip: "This scenario in the environment's last runs, oldest to latest" },
+  {
+    id: "subgoals",
+    label: "Sub-goals",
+    w: 88,
+    align: "right",
+    tip: "Sub-goals met in the scenario's latest run, of all it's graded on",
+  },
+  {
+    id: "mustPass",
+    label: "Must-pass",
+    w: 84,
+    align: "center",
+    tip: "An improvement that breaks a must-pass scenario is rejected",
+  },
+  {
+    id: "runs",
+    label: "Last runs",
+    w: 116,
+    tip: "This scenario in the environment's last runs, oldest to latest",
+  },
   /* What the scenario is about — the same words as the drawer. After the
      status columns, so how it's doing stays in view in a narrow pane. */
   { id: "brief", label: "Brief", w: 340, tip: "What the caller is told to do" },
-  { id: "passes", label: "Passes when", w: 260, tip: "What the agent has to do for the scenario to pass" },
+  {
+    id: "passes",
+    label: "Passes when",
+    w: 260,
+    tip: "What the agent has to do for the scenario to pass",
+  },
   { id: "actions", w: 104 },
 ];
 
@@ -93,8 +153,13 @@ function StatusCell({ row, state, onAction, locked }) {
     <Stack direction="row" alignItems="center" spacing={1}>
       <StateChip state={state} />
       {action && onAction && !locked && (
-        <Box sx={onHover}>
-          <TextAction onClick={(e) => { e.stopPropagation(); onAction(action, row); }}>
+        <Box className="row-hover-action">
+          <TextAction
+            onClick={(e) => {
+              e.stopPropagation();
+              onAction(action, row);
+            }}
+          >
             {STATE_ACTION_LABEL[action]}
           </TextAction>
         </Box>
@@ -102,47 +167,99 @@ function StatusCell({ row, state, onAction, locked }) {
     </Stack>
   );
 }
-StatusCell.propTypes = { row: PropTypes.object.isRequired, state: PropTypes.object, onAction: PropTypes.func, locked: PropTypes.bool };
+StatusCell.propTypes = {
+  row: PropTypes.object.isRequired,
+  state: PropTypes.object,
+  onAction: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 /* A proposed scenario waits for someone to add it — the review step. */
 function ProposedTag({ row, onAction, locked }) {
   if (!row.proposed) return null;
   return (
-    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexShrink: 0 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ flexShrink: 0 }}
+    >
       <ProposedBadge />
       {onAction && !locked && (
-        <TextAction onClick={(e) => { e.stopPropagation(); onAction("approve", row); }}>Add</TextAction>
+        <TextAction
+          onClick={(e) => {
+            e.stopPropagation();
+            onAction("approve", row);
+          }}
+        >
+          Add
+        </TextAction>
       )}
     </Stack>
   );
 }
-ProposedTag.propTypes = { row: PropTypes.object.isRequired, onAction: PropTypes.func, locked: PropTypes.bool };
+ProposedTag.propTypes = {
+  row: PropTypes.object.isRequired,
+  onAction: PropTypes.func,
+  locked: PropTypes.bool,
+};
 
 /* "2/3" — sub-goals met in the latest run the scenario was in, each one on
    hover. No run yet: just how many it has. */
 function SubGoalsCell({ total, latest, env, envState }) {
-  const results = latest ? subGoalResultsOf(latest.task, env, envState).items : [];
+  const results = latest
+    ? subGoalResultsOf(latest.task, env, envState).items
+    : [];
   /* Never run: just how many it's graded on — "–/3" read as empty. */
   if (!latest && total) {
     return (
-      <Tooltip arrow title={`Graded on ${total} sub-goal${total === 1 ? "" : "s"} · how many were met shows after the first run`}>
-        <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums", cursor: "default" }}>{total}</Typography>
+      <Tooltip
+        arrow
+        title={`Graded on ${total} sub-goal${total === 1 ? "" : "s"} · how many were met shows after the first run`}
+      >
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            fontVariantNumeric: "tabular-nums",
+            cursor: "default",
+          }}
+        >
+          {total}
+        </Typography>
       </Tooltip>
     );
   }
   if (!results.length) {
     return (
-      <Tooltip arrow title={total ? `${total} sub-goals · not scored in a recent run` : ""}>
-        <Typography sx={{ typography: "s2", color: "text.subtitle", fontVariantNumeric: "tabular-nums", cursor: "default" }}>{total ? `–/${total}` : "—"}</Typography>
+      <Tooltip
+        arrow
+        title={total ? `${total} sub-goals · not scored in a recent run` : ""}
+      >
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
+            cursor: "default",
+          }}
+        >
+          {total ? `–/${total}` : "—"}
+        </Typography>
       </Tooltip>
     );
   }
   const met = results.filter((g) => g.status === "met").length;
   const title = (
     <Stack spacing={0.25} sx={{ py: 0.25 }}>
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: "inherit" }}>{`${latest.name} · ${met} of ${results.length} met`}</Typography>
+      <Typography
+        sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+      >{`${latest.name} · ${met} of ${results.length} met`}</Typography>
       {results.map((g) => (
-        <Typography key={g.key || g.text} sx={{ typography: "s3", color: "inherit" }}>
+        <Typography
+          key={g.key || g.text}
+          sx={{ typography: "s3", color: "inherit" }}
+        >
           {`${g.status === "met" ? "✓" : g.status === "inconclusive" ? "?" : "✗"} ${g.text || g.label}`}
         </Typography>
       ))}
@@ -150,29 +267,63 @@ function SubGoalsCell({ total, latest, env, envState }) {
   );
   return (
     <Tooltip arrow title={title}>
-      <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums", cursor: "default", color: "text.secondary" }}>
-        <Box component="span" sx={{ color: met < results.length ? "text.primary" : "text.secondary", fontWeight: met < results.length ? 600 : 400 }}>{met}</Box>
-        <Box component="span" sx={{ color: "text.subtitle" }}>{`/${results.length}`}</Box>
+      <Typography
+        sx={{
+          typography: "s2",
+          fontVariantNumeric: "tabular-nums",
+          cursor: "default",
+          color: "text.secondary",
+        }}
+      >
+        <Box
+          component="span"
+          sx={{
+            color: met < results.length ? "text.primary" : "text.secondary",
+            fontWeight: met < results.length ? 600 : 400,
+          }}
+        >
+          {met}
+        </Box>
+        <Box
+          component="span"
+          sx={{ color: "text.tertiary" }}
+        >{`/${results.length}`}</Box>
       </Typography>
     </Tooltip>
   );
 }
-SubGoalsCell.propTypes = { total: PropTypes.number, latest: PropTypes.object, env: PropTypes.object, envState: PropTypes.object };
+SubGoalsCell.propTypes = {
+  total: PropTypes.number,
+  latest: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 /* The last runs as dots, oldest to latest: green passed, red failed, orange
    flaky, hollow when the scenario wasn't in that run or wasn't scored. */
 function RunDots({ history }) {
-  if (!history?.length) return <Typography sx={{ typography: "s3", color: "text.disabled" }}>No runs yet</Typography>;
+  if (!history?.length)
+    return (
+      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+        No runs yet
+      </Typography>
+    );
   return (
     <Stack direction="row" spacing={0.5} alignItems="center">
       {history.map((h) => {
-        const color = { passed: PASS, failed: FAIL, flaky: FLAKY }[h.status] || null;
-        const word = { passed: "Passed", failed: "Failed", flaky: "Flaky" }[h.status] || (h.status ? "Not scored" : "Not in this run");
+        const color =
+          { passed: PASS, failed: FAIL, flaky: FLAKY }[h.status] || null;
+        const word =
+          { passed: "Passed", failed: "Failed", flaky: "Flaky" }[h.status] ||
+          (h.status ? "Not scored" : "Not in this run");
         return (
           <Tooltip key={h.runId} arrow title={`${h.name} · ${word}`}>
             <Box
               sx={{
-                width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                flexShrink: 0,
                 bgcolor: color || "transparent",
                 border: color ? "none" : "1px solid",
                 borderColor: "text.disabled",
@@ -187,11 +338,21 @@ function RunDots({ history }) {
 RunDots.propTypes = { history: PropTypes.array };
 
 export default function ScenarioTable({
-  rows, groups, env, envState, envVersion, onEdit, onRemove, selectedIds, onSelectionChange, locked = false,
+  rows,
+  groups,
+  env,
+  envState,
+  envVersion,
+  onEdit,
+  onRemove,
+  selectedIds,
+  onSelectionChange,
+  locked = false,
 }) {
   /* Stored env labels read as major.minor ("v3" → "v2.1"). */
   const vl = (label) => (envState ? envLabelOf(env, envState, label) : label);
-  const { stateOf, onStateAction, onOpen, historyOf, latestOf } = useContext(ScenarioRowContext);
+  const { stateOf, onStateAction, onOpen, historyOf, latestOf } =
+    useContext(ScenarioRowContext);
   /*
     Two shapes come in: pre-grouped (list view mirror) or a flat rows
     array (fallback). If groups are given, render section-header rows
@@ -199,12 +360,14 @@ export default function ScenarioTable({
     list; if not, fall back to a flat table.
   */
   const sections = useMemo(
-    () => (groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }]),
+    () =>
+      groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }],
     [groups, rows],
   );
 
   const allIds = useMemo(
-    () => sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
+    () =>
+      sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
     [sections],
   );
 
@@ -234,14 +397,16 @@ export default function ScenarioTable({
 
   const toggle = (id) => {
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     commit(next);
   };
   /* Select-all affects only this batch's rows. */
   const hereSelected = allIds.filter((id) => selected.has(id)).length;
   const toggleAll = () => {
     const next = new Set(selected);
-    if (hereSelected === allIds.length && allIds.length > 0) allIds.forEach((id) => next.delete(id));
+    if (hereSelected === allIds.length && allIds.length > 0)
+      allIds.forEach((id) => next.delete(id));
     else allIds.forEach((id) => next.add(id));
     commit(next);
   };
@@ -249,22 +414,37 @@ export default function ScenarioTable({
   const someChecked = hereSelected > 0 && hereSelected < allIds.length;
   let counter = 0;
 
-  const cellSx = { py: 0, height: 48, verticalAlign: "middle", borderColor: "divider" };
+  const cellSx = {
+    py: 0,
+    height: 48,
+    verticalAlign: "middle",
+    borderColor: "divider",
+  };
   /* The runs column says how many runs its dots cover — the environment's last
      eight, or fewer while it has fewer. */
-  const firstRow = (rows && rows[0]) || groups?.find((g) => g.rows?.length)?.rows[0];
-  const runsShown = historyOf && firstRow ? (historyOf(firstRow) || []).length : 0;
+  const firstRow =
+    (rows && rows[0]) || groups?.find((g) => g.rows?.length)?.rows[0];
+  const runsShown =
+    historyOf && firstRow ? (historyOf(firstRow) || []).length : 0;
   /* No runs yet: the runs column would be "No runs yet" on every row — leave it out. */
   const columns = runsShown ? COLUMNS : COLUMNS.filter((c) => c.id !== "runs");
-  const labelOf = (c) => (c.id === "runs" && runsShown ? `Last ${runsShown} run${runsShown === 1 ? "" : "s"}` : c.label);
+  const labelOf = (c) =>
+    c.id === "runs" && runsShown
+      ? `Last ${runsShown} run${runsShown === 1 ? "" : "s"}`
+      : c.label;
 
   return (
     <Box sx={{ overflowX: "auto" }}>
       {/* Wider than most panes, so it scrolls sideways; the checkbox, #
           and Scenario stay pinned so a row never loses its name. */}
-      <Table size="small" sx={{ minWidth: 1580, tableLayout: "fixed", ...PINNED_SX }}>
+      <Table
+        size="small"
+        sx={{ minWidth: 1580, tableLayout: "fixed", ...PINNED_SX }}
+      >
         <colgroup>
-          {columns.map((c) => <col key={c.id} style={c.w ? { width: c.w } : undefined} />)}
+          {columns.map((c) => (
+            <col key={c.id} style={c.w ? { width: c.w } : undefined} />
+          ))}
         </colgroup>
         <TableHead>
           <TableRow>
@@ -274,22 +454,44 @@ export default function ScenarioTable({
                 align={c.align || (c.id === "actions" ? "right" : "left")}
                 padding={c.id === "select" ? "checkbox" : "normal"}
                 sx={{
-                  typography: "s3", fontWeight: 600, color: "text.subtitle", whiteSpace: "nowrap",
-                  bgcolor: "background.paper", borderBottom: "1px solid", borderColor: "divider", py: 1,
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.tertiary",
+                  whiteSpace: "nowrap",
+                  bgcolor: "background.paper",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  py: 1,
                   ...(c.id === "select" && { pl: 1.5 }),
                   ...(c.id === "#" && { px: 1 }),
-                  ...(PIN_LEFT[c.id] != null && { position: "sticky", left: PIN_LEFT[c.id], zIndex: 3 }),
+                  ...(PIN_LEFT[c.id] != null && {
+                    position: "sticky",
+                    left: PIN_LEFT[c.id],
+                    zIndex: 3,
+                  }),
                 }}
-                className={PIN_LEFT[c.id] != null ? `scn-pin${c.id === "scenario" ? " scn-pin-last" : ""}` : undefined}
+                className={
+                  PIN_LEFT[c.id] != null
+                    ? `scn-pin${c.id === "scenario" ? " scn-pin-last" : ""}`
+                    : undefined
+                }
               >
                 {c.id === "select" ? (
                   <Checkbox
-                    size="small" checked={allChecked} indeterminate={someChecked}
-                    onChange={toggleAll} disabled={locked} sx={selectableCheckboxSx}
+                    size="small"
+                    checked={allChecked}
+                    indeterminate={someChecked}
+                    onChange={toggleAll}
+                    disabled={locked}
+                    sx={selectableCheckboxSx}
                   />
                 ) : c.tip ? (
-                  <Tooltip arrow title={c.tip}><span>{labelOf(c)}</span></Tooltip>
-                ) : labelOf(c)}
+                  <Tooltip arrow title={c.tip}>
+                    <span>{labelOf(c)}</span>
+                  </Tooltip>
+                ) : (
+                  labelOf(c)
+                )}
               </TableCell>
             ))}
           </TableRow>
@@ -300,11 +502,42 @@ export default function ScenarioTable({
             <Fragment key={section.id}>
               {section.label && (
                 <TableRow>
-                  <TableCell colSpan={columns.length} sx={{ borderBottom: "1px solid", borderColor: "divider", py: 1, px: 2 }}>
+                  <TableCell
+                    colSpan={columns.length}
+                    sx={{
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      py: 1,
+                      px: 2,
+                    }}
+                  >
                     {/* Pinned like the identity columns, so a heading never scrolls out of view. */}
-                    <Stack direction="row" alignItems="center" spacing={1} sx={{ position: "sticky", left: 16, width: "fit-content", maxWidth: 960 }}>
-                      <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}>{section.label}</Typography>
-                      <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1}
+                      sx={{
+                        position: "sticky",
+                        left: 16,
+                        width: "fit-content",
+                        maxWidth: 960,
+                      }}
+                    >
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+                      >
+                        {section.label}
+                      </Typography>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          fontWeight: 600,
+                          color: "text.tertiary",
+                          fontVariantNumeric: "tabular-nums",
+                          flexShrink: 0,
+                        }}
+                      >
                         {section.rows.length}
                       </Typography>
                     </Stack>
@@ -320,68 +553,155 @@ export default function ScenarioTable({
                 /* The sub-goals it's graded on — a stored list (a generated or edited
                    scenario) wins, the same list a run scores, so the count before a
                    run is the denominator after it. */
-                const goals = (row.subTasks?.length ? row.subTasks : subGoalsOfScenario(row, env, envState)) || [];
-                const headline = row.summary || scenarioTitle(row.title) || row.name;
+                const goals =
+                  (row.subTasks?.length
+                    ? row.subTasks
+                    : subGoalsOfScenario(row, env, envState)) || [];
+                const headline =
+                  row.summary || scenarioTitle(row.title) || row.name;
                 const adm = admissionOf(row, env);
-                const personaMeta = [p?.ageGroup, !p?.ageGroup && p?.role].filter(Boolean).join(" · ");
+                const personaMeta = [p?.ageGroup, !p?.ageGroup && p?.role]
+                  .filter(Boolean)
+                  .join(" · ");
                 const open = onOpen ? () => onOpen(row) : undefined;
                 const stop = (e) => e.stopPropagation();
                 return (
                   <TableRow
                     key={row.id}
                     hover
-                    className={selected.has(row.id) ? "scn-selected" : undefined}
+                    className={
+                      selected.has(row.id) ? "scn-selected" : undefined
+                    }
                     {...clickable(open, { role: "row" })}
-                    sx={{ ...focusRing,
+                    sx={{
+                      ...focusRing,
                       cursor: open ? "pointer" : "default",
-                      ...(selected.has(row.id) && { bgcolor: "action.selected" }),
+                      ...(selected.has(row.id) && {
+                        bgcolor: "action.selected",
+                      }),
                       /* Archived rows stay listed, dimmed; the state and the actions keep full strength. */
                       /* On the cell's content, so a pinned cell keeps its solid background. */
                       ...(archived && { "& .scn-dim > *": { opacity: 0.45 } }),
                     }}
                   >
-                    <TableCell padding="checkbox" className="scn-pin scn-pin-0" sx={{ ...cellSx, pl: 1.5 }} onClick={stop}>
+                    <TableCell
+                      padding="checkbox"
+                      className="scn-pin scn-pin-0"
+                      sx={{ ...cellSx, pl: 1.5 }}
+                      onClick={stop}
+                    >
                       <Checkbox
-                        size="small" checked={selected.has(row.id)} onChange={() => toggle(row.id)}
-                        disabled={locked} sx={selectableCheckboxSx}
+                        size="small"
+                        checked={selected.has(row.id)}
+                        onChange={() => toggle(row.id)}
+                        disabled={locked}
+                        sx={selectableCheckboxSx}
                       />
                     </TableCell>
-                    <TableCell className="scn-pin scn-pin-1" sx={{ ...cellSx, px: 1, typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                    <TableCell
+                      className="scn-pin scn-pin-1"
+                      sx={{
+                        ...cellSx,
+                        px: 1,
+                        typography: "s3",
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {idx}
                     </TableCell>
 
                     {/* SCENARIO — what it is, in words, and how many sub-goals
                         grade it. The id-style name is on hover and inside. */}
-                    <TableCell className="scn-dim scn-pin scn-pin-2 scn-pin-last" sx={cellSx}>
-                      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-                        <Tooltip arrow enterDelay={400} title={row.name && row.name !== headline ? row.name : ""}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 500, minWidth: 120, flexShrink: 1 }}>{headline}</Typography>
+                    <TableCell
+                      className="scn-dim scn-pin scn-pin-2 scn-pin-last"
+                      sx={cellSx}
+                    >
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.75}
+                        sx={{ minWidth: 0 }}
+                      >
+                        <Tooltip
+                          arrow
+                          enterDelay={400}
+                          title={
+                            row.name && row.name !== headline ? row.name : ""
+                          }
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 500,
+                              minWidth: 120,
+                              flexShrink: 1,
+                            }}
+                          >
+                            {headline}
+                          </Typography>
                         </Tooltip>
                         {row.newTool && (
                           <Tooltip
                             arrow
-                            title={laterThanPinned(row, envVersion)
-                              ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. It isn't part of environment ${vl(envVersion)}, so runs on ${vl(envVersion)} leave it out.`
-                              : `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}`}
+                            title={
+                              laterThanPinned(row, envVersion)
+                                ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. It isn't part of environment ${vl(envVersion)}, so runs on ${vl(envVersion)} leave it out.`
+                                : `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}`
+                            }
                           >
-                            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", flexShrink: 0, px: 0.5, border: "1px solid", borderColor: "divider", borderRadius: 0.5 }}>
-                              {laterThanPinned(row, envVersion) ? `Needs environment ${vl(row.addedInEnv)}` : "New"}
+                            <Typography
+                              noWrap
+                              sx={{
+                                typography: "s3",
+                                color: "text.secondary",
+                                flexShrink: 0,
+                                px: 0.5,
+                                border: "1px solid",
+                                borderColor: "divider",
+                                borderRadius: "4px",
+                              }}
+                            >
+                              {laterThanPinned(row, envVersion)
+                                ? `Needs environment ${vl(row.addedInEnv)}`
+                                : "New"}
                             </Typography>
                           </Tooltip>
                         )}
                         {/* Where it came from — links back when there is somewhere to go. */}
-                        <SourceBadge scenario={row} env={env} envState={envState} />
-                        <ProposedTag row={row} onAction={onStateAction} locked={locked} />
+                        <SourceBadge
+                          scenario={row}
+                          env={env}
+                          envState={envState}
+                        />
+                        <ProposedTag
+                          row={row}
+                          onAction={onStateAction}
+                          locked={locked}
+                        />
                         {!adm.admitted && (
                           <Tooltip arrow title={`Set aside — ${adm.reason}`}>
                             <Box sx={{ display: "flex", flexShrink: 0 }}>
-                              <Iconify icon="solar:shield-cross-bold" width={13} sx={{ color: FAIL }} />
+                              <Iconify
+                                icon="solar:shield-cross-bold"
+                                width={14}
+                                sx={{ color: "status.danger.fg" }}
+                              />
                             </Box>
                           </Tooltip>
                         )}
                         {stateOf && (
-                          <Box onClick={stop} sx={{ display: "inline-flex", flexShrink: 0 }}>
-                            <StatusCell row={row} state={stateOf(row)} onAction={onStateAction} locked={locked} />
+                          <Box
+                            onClick={stop}
+                            sx={{ display: "inline-flex", flexShrink: 0 }}
+                          >
+                            <StatusCell
+                              row={row}
+                              state={stateOf(row)}
+                              onAction={onStateAction}
+                              locked={locked}
+                            />
                           </Box>
                         )}
                       </Stack>
@@ -389,24 +709,57 @@ export default function ScenarioTable({
 
                     {/* PERSONA — who calls, in one line. */}
                     <TableCell className="scn-dim" sx={cellSx}>
-                      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.5}
+                        sx={{ minWidth: 0 }}
+                      >
                         {p?.libraryId != null && (
-                          <Tooltip arrow title={p.edited ? "From the persona library, edited here" : "From the persona library"}>
+                          <Tooltip
+                            arrow
+                            title={
+                              p.edited
+                                ? "From the persona library, edited here"
+                                : "From the persona library"
+                            }
+                          >
                             <Box sx={{ display: "flex", flexShrink: 0 }}>
-                              <Iconify icon="solar:users-group-rounded-linear" width={13} sx={{ color: "text.subtitle" }} />
+                              <Iconify
+                                icon="solar:users-group-rounded-linear"
+                                width={14}
+                                sx={{ color: "text.tertiary" }}
+                              />
                             </Box>
                           </Tooltip>
                         )}
-                        <Typography noWrap sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>
+                        <Typography
+                          noWrap
+                          sx={{
+                            typography: "s2",
+                            color: "text.secondary",
+                            minWidth: 0,
+                          }}
+                        >
                           {p?.name || "—"}
-                          {personaMeta && <Box component="span" sx={{ color: "text.subtitle" }}>{` · ${personaMeta}`}</Box>}
+                          {personaMeta && (
+                            <Box
+                              component="span"
+                              sx={{ color: "text.tertiary" }}
+                            >{` · ${personaMeta}`}</Box>
+                          )}
                         </Typography>
                       </Stack>
                     </TableCell>
 
                     {/* SUB-GOALS — met in the latest run, of all. */}
                     <TableCell align="right" sx={cellSx}>
-                      <SubGoalsCell total={goals.length} latest={latestOf ? latestOf(row) : null} env={env} envState={envState} />
+                      <SubGoalsCell
+                        total={goals.length}
+                        latest={latestOf ? latestOf(row) : null}
+                        env={env}
+                        envState={envState}
+                      />
                     </TableCell>
 
                     {/* MUST-PASS — the triangle, toggled in place; hollow on hover. */}
@@ -415,7 +768,11 @@ export default function ScenarioTable({
                         row={row}
                         size={14}
                         locked={locked || !!row.archived}
-                        onToggle={onStateAction ? () => onStateAction("blocker", row, !row.critical) : undefined}
+                        onToggle={
+                          onStateAction
+                            ? () => onStateAction("blocker", row, !row.critical)
+                            : undefined
+                        }
                       />
                     </TableCell>
 
@@ -431,34 +788,95 @@ export default function ScenarioTable({
                       <OneLine text={briefLineOf(row)} />
                     </TableCell>
                     <TableCell className="scn-dim" sx={cellSx}>
-                      <OneLine text={row.expected || row.outcome ? asSentence(row.expected || row.outcome) : ""} />
+                      <OneLine
+                        text={
+                          row.expected || row.outcome
+                            ? asSentence(row.expected || row.outcome)
+                            : ""
+                        }
+                      />
                     </TableCell>
 
                     {/* Edit · archive · delete, on hover. */}
-                    <TableCell align="right" sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }} onClick={stop}>
-                      <Box sx={onHover}>
-                        <Tooltip arrow title={locked ? "Fork this environment to edit." : "Edit scenario"}>
+                    <TableCell
+                      align="right"
+                      sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
+                      onClick={stop}
+                    >
+                      <Box className="row-hover-action">
+                        <Tooltip
+                          arrow
+                          title={
+                            locked
+                              ? "Fork this environment to edit."
+                              : "Edit scenario"
+                          }
+                        >
                           <span>
-                            <IconButton size="small" disabled={locked} onClick={() => onEdit(row)}>
-                              <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
+                            <IconButton
+                              size="small"
+                              disabled={locked}
+                              onClick={() => onEdit(row)}
+                            >
+                              <Iconify
+                                icon="solar:pen-new-square-linear"
+                                width={16}
+                                sx={{ color: "text.tertiary" }}
+                              />
                             </IconButton>
                           </span>
                         </Tooltip>
                         {archived ? (
-                          <Tooltip arrow title={locked ? "Read-only." : "Restore — run and count it again"}>
+                          <Tooltip
+                            arrow
+                            title={
+                              locked
+                                ? "Read-only."
+                                : "Restore — run and count it again"
+                            }
+                          >
                             <span>
-                              <IconButton size="small" disabled={locked} onClick={() => onStateAction?.("restore", row)} aria-label="Restore scenario">
-                                <Iconify icon="solar:restart-linear" width={15} sx={{ color: "text.subtitle" }} />
+                              <IconButton
+                                size="small"
+                                disabled={locked}
+                                onClick={() => onStateAction?.("restore", row)}
+                                aria-label="Restore scenario"
+                              >
+                                <Iconify
+                                  icon="solar:restart-linear"
+                                  width={16}
+                                  sx={{ color: "text.tertiary" }}
+                                />
                               </IconButton>
                             </span>
                           </Tooltip>
                         ) : (
-                          <ArchiveControl disabled={locked} onArchive={(note) => onStateAction?.("archive", row, note)} />
+                          <ArchiveControl
+                            disabled={locked}
+                            onArchive={(note) =>
+                              onStateAction?.("archive", row, note)
+                            }
+                          />
                         )}
-                        <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove from this environment"}>
+                        <Tooltip
+                          arrow
+                          title={
+                            locked
+                              ? "Fork this environment to edit."
+                              : "Remove from this environment"
+                          }
+                        >
                           <span>
-                            <IconButton size="small" disabled={locked} onClick={() => onRemove(row.id)}>
-                              <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+                            <IconButton
+                              size="small"
+                              disabled={locked}
+                              onClick={() => onRemove(row.id)}
+                            >
+                              <Iconify
+                                icon="solar:trash-bin-trash-linear"
+                                width={16}
+                                sx={{ color: "text.tertiary" }}
+                              />
                             </IconButton>
                           </span>
                         </Tooltip>
@@ -492,10 +910,24 @@ ScenarioTable.propTypes = {
 
 /* A cell's text on one line; the whole of it on hover. */
 function OneLine({ text }) {
-  if (!text) return <Typography sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
+  if (!text)
+    return (
+      <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+        —
+      </Typography>
+    );
   return (
-    <Tooltip arrow enterDelay={400} title={<Box sx={{ maxWidth: 420 }}>{text}</Box>}>
-      <Typography noWrap sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{text}</Typography>
+    <Tooltip
+      arrow
+      enterDelay={400}
+      title={<Box sx={{ maxWidth: 420 }}>{text}</Box>}
+    >
+      <Typography
+        noWrap
+        sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+      >
+        {text}
+      </Typography>
     </Tooltip>
   );
 }

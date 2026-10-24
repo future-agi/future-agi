@@ -123,6 +123,7 @@ export const PLATFORMS = [
     wizardDescription: "Create Linear issues from Error Feed clusters",
     logo: null,
     icon: "simple-icons:linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     iconColor: "#5E6AD2",
     available: true,
   },

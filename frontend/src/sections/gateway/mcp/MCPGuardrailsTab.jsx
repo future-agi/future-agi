@@ -5,8 +5,6 @@ import {
   Autocomplete,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   FormControlLabel,
   IconButton,
@@ -15,6 +13,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useUpdateMCPGuardrails } from "./hooks/useMCPConfig";
@@ -144,264 +143,254 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
       )}
 
       <Stack spacing={3}>
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              General Settings
-            </Typography>
-            <Stack spacing={1}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={form.enabled}
-                    onChange={handleToggle("enabled")}
-                  />
-                }
-                label="Enable MCP Guardrails"
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={form.validateInputs}
-                    onChange={handleToggle("validateInputs")}
-                    disabled={!form.enabled}
-                  />
-                }
-                label="Validate tool inputs (check for injection patterns)"
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={form.validateOutputs}
-                    onChange={handleToggle("validateOutputs")}
-                    disabled={!form.enabled}
-                  />
-                }
-                label="Validate tool outputs"
-              />
-            </Stack>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              Blocked Tools
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Tools in this list will be blocked from execution. Use the
-              namespaced format (e.g., &quot;server_toolname&quot;).
-            </Typography>
-            <Autocomplete
-              multiple
-              freeSolo
-              options={[]}
-              value={form.blockedTools}
-              onChange={(_, newValue) => {
-                setForm((prev) => ({ ...prev, blockedTools: newValue }));
-                setIsDirty(true);
-              }}
-              disabled={!form.enabled}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    size="small"
-                    color="error"
-                    variant="outlined"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  size="small"
-                  placeholder="Type a tool name and press Enter..."
+        <Section variant="panel">
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            General Settings
+          </Typography>
+          <Stack spacing={1}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.enabled}
+                  onChange={handleToggle("enabled")}
                 />
-              )}
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              Allowed Servers
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              If set, only tools from these servers will be accessible. Leave
-              empty to allow all connected servers.
-            </Typography>
-            <Autocomplete
-              multiple
-              freeSolo
-              options={connectedServers}
-              value={form.allowedServers}
-              onChange={(_, newValue) => {
-                setForm((prev) => ({ ...prev, allowedServers: newValue }));
-                setIsDirty(true);
-              }}
-              disabled={!form.enabled}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
               }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  size="small"
-                  placeholder="Type a server ID or select from connected..."
-                />
-              )}
+              label="Enable MCP Guardrails"
             />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              Custom Injection Patterns
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add custom regex patterns to detect injection attacks in tool
-              arguments and outputs. These are checked alongside the 8 built-in
-              patterns.
-            </Typography>
-            <Autocomplete
-              multiple
-              freeSolo
-              options={[]}
-              value={form.customPatterns}
-              onChange={(_, newValue) => {
-                setForm((prev) => ({ ...prev, customPatterns: newValue }));
-                setIsDirty(true);
-              }}
-              disabled={!form.enabled}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    size="small"
-                    color="warning"
-                    variant="outlined"
-                    {...getTagProps({ index })}
-                    key={option}
-                    sx={{ fontFamily: "monospace", fontSize: 12 }}
-                  />
-                ))
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.validateInputs}
+                  onChange={handleToggle("validateInputs")}
+                  disabled={!form.enabled}
+                />
               }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  size="small"
-                  placeholder="Type a regex pattern and press Enter..."
-                  helperText="Example: (?i)\bpassword\b or .*secret.*"
-                />
-              )}
+              label="Validate tool inputs (check for injection patterns)"
             />
-          </CardContent>
-        </Card>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.validateOutputs}
+                  onChange={handleToggle("validateOutputs")}
+                  disabled={!form.enabled}
+                />
+              }
+              label="Validate tool outputs"
+            />
+          </Stack>
+        </Section>
 
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
-              Per-Tool Rate Limits
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Limit how many times a specific tool can be called per minute.
-            </Typography>
-
-            {Object.keys(form.toolRateLimits).length > 0 && (
-              <Stack spacing={1} sx={{ mb: 2 }}>
-                {Object.entries(form.toolRateLimits).map(([tool, limit]) => (
-                  <Stack
-                    key={tool}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{
-                      px: 1.5,
-                      py: 0.75,
-                      borderRadius: 1,
-                      bgcolor: "action.hover",
-                    }}
-                  >
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      sx={{ fontFamily: "monospace", fontSize: 13, flex: 1 }}
-                    >
-                      {tool}
-                    </Typography>
-                    <Chip
-                      label={`${limit}/min`}
-                      size="small"
-                      color="info"
-                      variant="outlined"
-                    />
-                    <IconButton
-                      size="small"
-                      onClick={() => handleRemoveRateLimit(tool)}
-                      disabled={!form.enabled}
-                    >
-                      <Iconify icon="mdi:close" width={16} />
-                    </IconButton>
-                  </Stack>
-                ))}
-              </Stack>
+        <Section variant="panel">
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Blocked Tools
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Tools in this list will be blocked from execution. Use the
+            namespaced format (e.g., &quot;server_toolname&quot;).
+          </Typography>
+          <Autocomplete
+            multiple
+            freeSolo
+            options={[]}
+            value={form.blockedTools}
+            onChange={(_, newValue) => {
+              setForm((prev) => ({ ...prev, blockedTools: newValue }));
+              setIsDirty(true);
+            }}
+            disabled={!form.enabled}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  label={option}
+                  size="small"
+                  color="error"
+                  variant="outlined"
+                  {...getTagProps({ index })}
+                  key={option}
+                />
+              ))
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                size="small"
+                placeholder="Type a tool name and press Enter..."
+              />
             )}
+          />
+        </Section>
 
-            <Stack direction="row" spacing={1} alignItems="flex-start">
+        <Section variant="panel">
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Allowed Servers
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            If set, only tools from these servers will be accessible. Leave
+            empty to allow all connected servers.
+          </Typography>
+          <Autocomplete
+            multiple
+            freeSolo
+            options={connectedServers}
+            value={form.allowedServers}
+            onChange={(_, newValue) => {
+              setForm((prev) => ({ ...prev, allowedServers: newValue }));
+              setIsDirty(true);
+            }}
+            disabled={!form.enabled}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  label={option}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  {...getTagProps({ index })}
+                  key={option}
+                />
+              ))
+            }
+            renderInput={(params) => (
               <TextField
+                {...params}
                 size="small"
-                label="Tool Name"
-                value={newRateTool}
-                onChange={(e) => setNewRateTool(e.target.value)}
-                disabled={!form.enabled}
-                placeholder="server_toolname"
-                sx={{ flex: 2 }}
+                placeholder="Type a server ID or select from connected..."
               />
+            )}
+          />
+        </Section>
+
+        <Section variant="panel">
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Custom Injection Patterns
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Add custom regex patterns to detect injection attacks in tool
+            arguments and outputs. These are checked alongside the 8 built-in
+            patterns.
+          </Typography>
+          <Autocomplete
+            multiple
+            freeSolo
+            options={[]}
+            value={form.customPatterns}
+            onChange={(_, newValue) => {
+              setForm((prev) => ({ ...prev, customPatterns: newValue }));
+              setIsDirty(true);
+            }}
+            disabled={!form.enabled}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  label={option}
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  {...getTagProps({ index })}
+                  key={option}
+                  sx={{ fontFamily: "monospace" }}
+                />
+              ))
+            }
+            renderInput={(params) => (
               <TextField
+                {...params}
                 size="small"
-                label="Max/min"
-                value={newRateLimit}
-                onChange={(e) => setNewRateLimit(e.target.value)}
-                disabled={!form.enabled}
-                placeholder="10"
-                type="number"
-                sx={{ flex: 1 }}
+                placeholder="Type a regex pattern and press Enter..."
+                helperText="Example: (?i)\bpassword\b or .*secret.*"
               />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={handleAddRateLimit}
-                disabled={
-                  !form.enabled || !newRateTool.trim() || !newRateLimit.trim()
-                }
-                sx={{ mt: 0.5 }}
-              >
-                Add
-              </Button>
+            )}
+          />
+        </Section>
+
+        <Section variant="panel">
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Per-Tool Rate Limits
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Limit how many times a specific tool can be called per minute.
+          </Typography>
+
+          {Object.keys(form.toolRateLimits).length > 0 && (
+            <Stack spacing={1} sx={{ mb: 2 }}>
+              {Object.entries(form.toolRateLimits).map(([tool, limit]) => (
+                <Stack
+                  key={tool}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{
+                    px: 1.5,
+                    py: 0.75,
+                    borderRadius: 1,
+                    bgcolor: "action.hover",
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    fontWeight={600}
+                    sx={{ fontFamily: "monospace", fontSize: 13, flex: 1 }}
+                  >
+                    {tool}
+                  </Typography>
+                  <Chip
+                    label={`${limit}/min`}
+                    size="small"
+                    color="info"
+                    variant="outlined"
+                  />
+                  <IconButton
+                    size="small"
+                    onClick={() => handleRemoveRateLimit(tool)}
+                    disabled={!form.enabled}
+                  >
+                    <Iconify icon="solar:close-linear" width={16} />
+                  </IconButton>
+                </Stack>
+              ))}
             </Stack>
-          </CardContent>
-        </Card>
+          )}
+
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <TextField
+              size="small"
+              label="Tool Name"
+              value={newRateTool}
+              onChange={(e) => setNewRateTool(e.target.value)}
+              disabled={!form.enabled}
+              placeholder="server_toolname"
+              sx={{ flex: 2 }}
+            />
+            <TextField
+              size="small"
+              label="Max/min"
+              value={newRateLimit}
+              onChange={(e) => setNewRateLimit(e.target.value)}
+              disabled={!form.enabled}
+              placeholder="10"
+              type="number"
+              sx={{ flex: 1 }}
+            />
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={handleAddRateLimit}
+              disabled={
+                !form.enabled || !newRateTool.trim() || !newRateLimit.trim()
+              }
+              sx={{ mt: 0.5 }}
+            >
+              Add
+            </Button>
+          </Stack>
+        </Section>
       </Stack>
 
       {!isDirty && (
         <Box sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}>
           <Button
             variant="contained"
-            startIcon={<Iconify icon="mdi:content-save" width={18} />}
+            startIcon={<Iconify icon="solar:diskette-linear" width={20} />}
             onClick={handleSave}
             disabled={updateMutation.isPending}
           >

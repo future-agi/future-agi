@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { comparisonOf, PAIR_CLASSES } from "../_mock/pairs";
 import { runIdentityOf } from "../_mock/runIdentity";
 import { creditsForUsd } from "../_mock/metering";
@@ -7,15 +8,39 @@ import { creditsText as fmtCredits } from "./runsTableFormat";
 import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DrilldownContext } from "./drilldownContext";
 import { useTheme, alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Tooltip, Popover, Dialog, IconButton } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Tooltip,
+  Popover,
+  Dialog,
+  IconButton,
+  Tab,
+  Button,
+  ButtonBase,
+  Alert,
+} from "@mui/material";
 import FitDataTable from "../components/FitDataTable";
 import Iconify from "src/components/iconify";
 import ReactApexChart from "../components/SafeApexChart";
 import { attribute, isMeasured, DOMAINS } from "../_mock/failures";
-import { deriveUseCaseLabel, csatOf, latencyOf as agentLatencyOf } from "./traceTableHelpers";
 import {
-  OUTCOME_LABELS, attributionOf, endReasonOf, measuredOnly, outcomeOf, outcomeTally, passRateOf, passShareOf,
-  samplesOf, sentimentOf,
+  deriveUseCaseLabel,
+  csatOf,
+  latencyOf as agentLatencyOf,
+} from "./traceTableHelpers";
+import {
+  OUTCOME_LABELS,
+  attributionOf,
+  endReasonOf,
+  measuredOnly,
+  outcomeOf,
+  outcomeTally,
+  passRateOf,
+  passShareOf,
+  samplesOf,
+  sentimentOf,
 } from "./taskOutcome";
 import { attachPersonaDims } from "./personaDimensions";
 import { deriveToolCalls, isToolFailure } from "./toolCalls.js";
@@ -23,29 +48,63 @@ import { costSplitOf } from "./costSplit";
 import { textTone } from "../components/textTone";
 import { voiceSegmentsOf } from "./voiceSegments";
 import { CustomWidgetBody } from "./layout/customWidgetRenderer";
-import { GoldenSetManager, DropoffFunnel, DivergenceTimeline, PitchBreakThemes } from "./goldenSet.jsx";
+import {
+  GoldenSetManager,
+  DropoffFunnel,
+  DivergenceTimeline,
+  PitchBreakThemes,
+} from "./goldenSet.jsx";
 import { useGoldenSet } from "./goldenSetState";
-import { useRunLayout, readViewFromUrl, writeViewToUrl } from "./layout/useRunLayout";
-import { SECTIONS, getPanelMeta, panelSection, snapshotAsCustom } from "./layout/panelRegistry";
+import {
+  useRunLayout,
+  readViewFromUrl,
+  writeViewToUrl,
+} from "./layout/useRunLayout";
+import {
+  SECTIONS,
+  getPanelMeta,
+  panelSection,
+  snapshotAsCustom,
+} from "./layout/panelRegistry";
 import HiddenWidgetsPopover from "./layout/HiddenWidgetsPopover";
 import ViewTabBar from "./layout/ViewTabBar";
 import SortablePanel from "./layout/SortablePanel";
 import SortableSection from "./layout/SortableSection";
 import WidgetEditor from "./layout/WidgetEditor";
-import { WidgetOpenContext, SimWidgetsContext } from "./layout/widgetOpenContext";
+import {
+  WidgetOpenContext,
+  SimWidgetsContext,
+} from "./layout/widgetOpenContext";
 import SimWidgetChart from "./widgets/SimWidgetChart";
 import { builtinQuery, hasBuiltinQuery } from "./widgets/builtinQueries";
-import { runSimQuery, simMetricCatalog, simRunsWithTasks, RUN_RANGE_PRESETS, X_AXIS_OPTIONS } from "./widgets/simWidgetQuery";
+import {
+  runSimQuery,
+  simMetricCatalog,
+  simRunsWithTasks,
+  RUN_RANGE_PRESETS,
+  X_AXIS_OPTIONS,
+} from "./widgets/simWidgetQuery";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useEnvState } from "../store";
 import {
-  DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor,
-  useSensor, useSensors,
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, sortableKeyboardCoordinates, rectSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
 import { clickable, focusRing } from "../components/clickable";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { scenarioTitle } from "../_mock/scenarios";
 
 /**
@@ -57,15 +116,19 @@ import { scenarioTitle } from "../_mock/scenarios";
  * for state (pass/fail/warn) and applied to text only.
  */
 
-const RED   = "#DC2626";
+/* eslint-disable no-restricted-syntax -- ds: data colour */
+const RED = "#DC2626";
 const GREEN = "#16A34A";
 const AMBER = "#CA8A04";
+/* eslint-enable no-restricted-syntax */
 /* Softened variants for chart fills — the KPI/table colors stay the
    full-strength state hues, but chart bars/dots use a slightly less
    saturated anchor plus a top-down gradient wash so the visual noise
    drops but the state (pass/fail) is still unmistakable. */
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const CHART_GREEN = "#34D399";
-const CHART_RED   = "#F87171";
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
+const CHART_RED = "#F87171";
 
 const numFmt = new Intl.NumberFormat();
 
@@ -77,10 +140,12 @@ const numFmt = new Intl.NumberFormat();
  */
 function downloadCsv(filename, rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
-  const cols = Array.from(rows.reduce((set, r) => {
-    Object.keys(r || {}).forEach((k) => set.add(k));
-    return set;
-  }, new Set()));
+  const cols = Array.from(
+    rows.reduce((set, r) => {
+      Object.keys(r || {}).forEach((k) => set.add(k));
+      return set;
+    }, new Set()),
+  );
   const escape = (v) => {
     if (v == null) return "";
     const s = String(v);
@@ -120,7 +185,8 @@ const latencyOf = (t) => Number(t?.latencyMs || t?.durationMs || 0);
 function hashId(id) {
   const s = String(id || "");
   let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  for (let i = 0; i < s.length; i += 1)
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
 const jitter = (id, salt, base, spread) => {
@@ -137,18 +203,26 @@ function percentile(arr, p) {
   const idx = Math.min(arr.length - 1, Math.floor((p / 100) * arr.length));
   return arr[idx];
 }
-const sortedNums = (tasks, sel) => tasks.map(sel).filter((v) => v > 0).sort((a, b) => a - b);
+const sortedNums = (tasks, sel) =>
+  tasks
+    .map(sel)
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
 
 /* A tail percentile needs enough samples to be anything but the maximum:
    with fewer than 10 values p90 is the single worst one, with fewer than 100
    p99 is. Below that the value is withheld rather than shown as if it were a
    tail. */
 const MIN_N_FOR_PERCENTILE = { 90: 10, 95: 20, 99: 100 };
-const percentileOrNull = (arr, p) => (arr.length >= (MIN_N_FOR_PERCENTILE[p] || 1) ? percentile(arr, p) : null);
+const percentileOrNull = (arr, p) =>
+  arr.length >= (MIN_N_FOR_PERCENTILE[p] || 1) ? percentile(arr, p) : null;
 const msOrDash = (v) => (v == null ? "—" : `${Math.round(v)}ms`);
 
-const passedCalls = (tasks) => measuredOnly(tasks)
-  .reduce((a, t) => a + (passShareOf(t) ?? 0) * samplesOf(t), 0);
+const passedCalls = (tasks) =>
+  measuredOnly(tasks).reduce(
+    (a, t) => a + (passShareOf(t) ?? 0) * samplesOf(t),
+    0,
+  );
 
 /* Business outcomes the CEO reads, not the QA lens. */
 function deriveBusiness(tasks) {
@@ -161,19 +235,24 @@ function deriveBusiness(tasks) {
      measured failures so the tile never reads empty in demos. */
   const escalated = tasks.filter((t) => {
     const toolCalls = (t.steps || []).flatMap((s) => s.tools || []);
-    if (toolCalls.some((c) => /escalate_to_human/.test(c.name || ""))) return true;
+    if (toolCalls.some((c) => /escalate_to_human/.test(c.name || "")))
+      return true;
     if (t.status !== "passed" && attribute(t)?.domain === "agent") {
       return hashId(t.id || "") % 100 < 45;
     }
     return false;
   }).length;
   const compliancePassed = measured.filter((t) => {
-    const r = (t.evalResults || []).find((e) => /compliance|policy|pii|hallucination/i.test(e.name || e.evalId || ""));
+    const r = (t.evalResults || []).find((e) =>
+      /compliance|policy|pii|hallucination/i.test(e.name || e.evalId || ""),
+    );
     if (!r) return t.status === "passed";
     return r.passed;
   }).length;
   /* Only costs the agent's side reported; unverified ones are counted, never summed. */
-  const totalCost = tasks.filter((t) => !t.costUnverified).reduce((a, t) => a + (t.cost || 0), 0);
+  const totalCost = tasks
+    .filter((t) => !t.costUnverified)
+    .reduce((a, t) => a + (t.cost || 0), 0);
   const costUnverified = tasks.filter((t) => t.costUnverified).length;
   const passedCount = passed.length;
   const durations = sortedNums(tasks, (t) => t.durationMs || 0);
@@ -204,8 +283,12 @@ function deriveBusiness(tasks) {
 function deriveVoiceLatency(tasks) {
   const withLat = measuredOnly(tasks).filter((t) => latencyOf(t) > 0);
   if (withLat.length === 0) return null;
-  const ttfw = [], llm = [], tts = [], asr = [];
-  const interrupts = []; const wer = [];
+  const ttfw = [],
+    llm = [],
+    tts = [],
+    asr = [];
+  const interrupts = [];
+  const wer = [];
   withLat.forEach((t) => {
     /* Shared with the widget editor's segment metrics. */
     const seg = voiceSegmentsOf(t);
@@ -217,14 +300,33 @@ function deriveVoiceLatency(tasks) {
     wer.push(jitter(t.id, "wer", 3, 9) / 100);
   });
   const sort = (a) => [...a].sort((x, y) => x - y);
-  const s = sort(ttfw); const sl = sort(llm); const st = sort(tts); const sa = sort(asr);
+  const s = sort(ttfw);
+  const sl = sort(llm);
+  const st = sort(tts);
+  const sa = sort(asr);
   const avgWer = wer.reduce((a, x) => a + x, 0) / wer.length;
   const totalInterrupts = interrupts.reduce((a, x) => a + x, 0);
   return {
-    ttfw: { p50: percentile(s, 50), p90: percentileOrNull(s, 90), p99: percentileOrNull(s, 99) },
-    llm:  { p50: percentile(sl, 50), p90: percentileOrNull(sl, 90), p99: percentileOrNull(sl, 99) },
-    tts:  { p50: percentile(st, 50), p90: percentileOrNull(st, 90), p99: percentileOrNull(st, 99) },
-    asr:  { p50: percentile(sa, 50), p90: percentileOrNull(sa, 90), p99: percentileOrNull(sa, 99) },
+    ttfw: {
+      p50: percentile(s, 50),
+      p90: percentileOrNull(s, 90),
+      p99: percentileOrNull(s, 99),
+    },
+    llm: {
+      p50: percentile(sl, 50),
+      p90: percentileOrNull(sl, 90),
+      p99: percentileOrNull(sl, 99),
+    },
+    tts: {
+      p50: percentile(st, 50),
+      p90: percentileOrNull(st, 90),
+      p99: percentileOrNull(st, 99),
+    },
+    asr: {
+      p50: percentile(sa, 50),
+      p90: percentileOrNull(sa, 90),
+      p99: percentileOrNull(sa, 99),
+    },
     werPct: avgWer * 100,
     interrupts: totalInterrupts,
     interruptsPerTask: totalInterrupts / withLat.length,
@@ -241,11 +343,19 @@ function deriveFailureClusters(tasks, limit = 4) {
     const dom = attributionOf(t)?.id || "agent";
     const uc = deriveUseCaseLabel(t) || "Uncategorised";
     const key = `${dom}::${uc}`;
-    const cur = buckets.get(key) || { domain: dom, useCase: uc, count: 0, tasks: [] };
-    cur.count += 1; cur.tasks.push(t);
+    const cur = buckets.get(key) || {
+      domain: dom,
+      useCase: uc,
+      count: 0,
+      tasks: [],
+    };
+    cur.count += 1;
+    cur.tasks.push(t);
     buckets.set(key, cur);
   });
-  return [...buckets.values()].sort((a, b) => b.count - a.count).slice(0, limit);
+  return [...buckets.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
 }
 
 /* ── kpi strip ─────────────────────────────────────────────────────── */
@@ -278,61 +388,106 @@ function deriveFailureClusters(tasks, limit = 4) {
 */
 const FILTER_TABS = [
   {
-    id: "base", label: "Base",
+    id: "base",
+    label: "Base",
     fields: [
-      { key: "Successful",           values: ["Yes", "No"],
+      {
+        key: "Successful",
+        values: ["Yes", "No"],
         test: (t, v) => {
           const o = outcomeOf(t);
           return v === "Yes" ? o === "passed" : o === "failed" || o === "flaky";
-        } },
-      { key: "Status",               values: ["Passed", "Flaky", "Failed", "Not measured"],
-        test: (t, v) => OUTCOME_LABELS[outcomeOf(t)] === v },
-      { key: "User sentiment",       values: ["Positive", "Neutral", "Negative"],
-        test: (t, v) => sentimentOf(t) === v.toLowerCase() },
-      { key: "Disconnection reason", values: ["Task complete", "Escalated", "Incomplete", "Timeout", "Dropped", "Error"],
+        },
+      },
+      {
+        key: "Status",
+        values: ["Passed", "Flaky", "Failed", "Not measured"],
+        test: (t, v) => OUTCOME_LABELS[outcomeOf(t)] === v,
+      },
+      {
+        key: "User sentiment",
+        values: ["Positive", "Neutral", "Negative"],
+        test: (t, v) => sentimentOf(t) === v.toLowerCase(),
+      },
+      {
+        key: "Disconnection reason",
+        values: [
+          "Task complete",
+          "Escalated",
+          "Incomplete",
+          "Timeout",
+          "Dropped",
+          "Error",
+        ],
         test: (t, v) => {
-          const map = { "Task complete": "complete", Escalated: "escalated", Incomplete: "incomplete", Timeout: "timeout", Dropped: "dropped", Error: "error" };
+          const map = {
+            "Task complete": "complete",
+            Escalated: "escalated",
+            Incomplete: "incomplete",
+            Timeout: "timeout",
+            Dropped: "dropped",
+            Error: "error",
+          };
           return endReasonOf(t) === map[v];
-        } },
-      { key: "Duration",             values: ["< 5s", "5–15s", "> 15s"],
+        },
+      },
+      {
+        key: "Duration",
+        values: ["< 5s", "5–15s", "> 15s"],
         test: (t, v) => {
           const s = (t.durationMs || 0) / 1000;
           if (v === "< 5s") return s < 5;
           if (v === "5–15s") return s >= 5 && s <= 15;
           return s > 15;
-        } },
-      { key: "End-to-end latency",   values: ["< 1s", "1–5s", "> 5s"],
+        },
+      },
+      {
+        key: "End-to-end latency",
+        values: ["< 1s", "1–5s", "> 5s"],
         test: (t, v) => {
           const s = latencyOf(t) / 1000;
           if (v === "< 1s") return s < 1;
           if (v === "1–5s") return s >= 1 && s <= 5;
           return s > 5;
-        } },
+        },
+      },
       /* Spend in credits; an unverified cost matches no bucket. */
-      { key: "Combined cost",        values: ["< 5 credits", "5–20 credits", "> 20 credits"],
+      {
+        key: "Combined cost",
+        values: ["< 5 credits", "5–20 credits", "> 20 credits"],
         test: (t, v) => {
           if (t.costUnverified || t.cost == null) return false;
           const c = creditsForUsd(t.cost);
           if (v === "< 5 credits") return c < 5;
           if (v === "5–20 credits") return c >= 5 && c <= 20;
           return c > 20;
-        } },
+        },
+      },
     ],
   },
   /* Only fields that really filter. Agent, task, batch, type, post-call,
      metadata and persona fields had no predicate and filtered nothing. */
   {
-    id: "scenario", label: "Scenario",
+    id: "scenario",
+    label: "Scenario",
     fields: [
-      { key: "Must-pass", values: ["Yes", "No"],
-        test: (t, v) => !!(t.critical || t.regressionMemory) === (v === "Yes") },
+      {
+        key: "Must-pass",
+        values: ["Yes", "No"],
+        test: (t, v) => !!(t.critical || t.regressionMemory) === (v === "Yes"),
+      },
     ],
   },
 ];
 
 const BREAKDOWN_FIELDS = [
-  "Agent", "Agent version", "Disconnection reason",
-  "Status", "Successful", "Type", "Sentiment",
+  "Agent",
+  "Agent version",
+  "Disconnection reason",
+  "Status",
+  "Successful",
+  "Type",
+  "Sentiment",
 ];
 
 /** Lookup a filter field's definition by its `key`. */
@@ -353,14 +508,16 @@ export function applyFilters(tasks, activeFilters) {
       const def = findFilterField(field);
       if (!def || !def.test) return true; // vocab-only fields don't filter
       return def.test(t, value);
-    })
+    }),
   );
 }
 
 function DashboardHeader({
   dashboardName = "Run analytics",
-  activeFilters = [], onFiltersChange,
-  activeBreakdowns = [], onBreakdownsChange,
+  activeFilters = [],
+  onFiltersChange,
+  activeBreakdowns = [],
+  onBreakdownsChange,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [breakdownAnchor, setBreakdownAnchor] = useState(null);
@@ -373,43 +530,61 @@ function DashboardHeader({
   const setBreakdowns = (next) => onBreakdownsChange?.(next);
 
   const addFilter = (field, value) => {
-    if (activeFilters.some((f) => f.field === field && f.value === value)) return;
+    if (activeFilters.some((f) => f.field === field && f.value === value))
+      return;
     setFilters([...activeFilters, { field, value }]);
   };
   const removeFilter = (field, value) => {
-    setFilters(activeFilters.filter((f) => !(f.field === field && f.value === value)));
+    setFilters(
+      activeFilters.filter((f) => !(f.field === field && f.value === value)),
+    );
   };
 
   const toggleBreakdown = (label) => {
     setBreakdowns(
       activeBreakdowns.includes(label)
         ? activeBreakdowns.filter((b) => b !== label)
-        : [...activeBreakdowns, label]
+        : [...activeBreakdowns, label],
     );
   };
 
-  const currentTab = FILTER_TABS.find((t) => t.id === filterTab) || FILTER_TABS[0];
-  const closeFilter = () => { setFilterAnchor(null); setPendingField(null); };
+  const currentTab =
+    FILTER_TABS.find((t) => t.id === filterTab) || FILTER_TABS[0];
+  const closeFilter = () => {
+    setFilterAnchor(null);
+    setPendingField(null);
+  };
 
   return (
     <Stack spacing={1} sx={{ mb: 0.25 }}>
       <Stack direction="row" alignItems="center" spacing={1}>
-        <Typography sx={{
-          fontSize: 13, fontWeight: 600, color: "text.subtitle",
-          textTransform: "uppercase", letterSpacing: 0.6,
-        }}>
+        <Typography
+          sx={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: "text.tertiary",
+            textTransform: "none",
+            letterSpacing: 0.6,
+          }}
+        >
           {dashboardName}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <HeaderPill
           icon="solar:filter-linear"
-          label={activeFilters.length ? `Filter · ${activeFilters.length}` : "Filter"}
+          label={
+            activeFilters.length ? `Filter · ${activeFilters.length}` : "Filter"
+          }
           primary={activeFilters.length > 0}
           onClick={(e) => setFilterAnchor(e.currentTarget)}
         />
         <HeaderPill
           icon="solar:widget-2-linear"
-          label={activeBreakdowns.length ? `Breakdown · ${activeBreakdowns.length}` : "Breakdown"}
+          label={
+            activeBreakdowns.length
+              ? `Breakdown · ${activeBreakdowns.length}`
+              : "Breakdown"
+          }
           primary={activeBreakdowns.length > 0}
           onClick={(e) => setBreakdownAnchor(e.currentTarget)}
         />
@@ -426,7 +601,12 @@ function DashboardHeader({
             />
           ))}
           {activeBreakdowns.map((b) => (
-            <FilterChip key={`b-${b}`} label={`Break by: ${b}`} tone="accent" onRemove={() => toggleBreakdown(b)} />
+            <FilterChip
+              key={`b-${b}`}
+              label={`Break by: ${b}`}
+              tone="accent"
+              onRemove={() => toggleBreakdown(b)}
+            />
           ))}
         </Stack>
       )}
@@ -443,67 +623,98 @@ function DashboardHeader({
         {pendingField ? (
           /* Value picker for the field the user just clicked. */
           <Box>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{
-              px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider",
-            }}>
-              <Box
-                component="button"
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <ButtonBase
                 type="button"
                 onClick={() => setPendingField(null)}
                 sx={{
-                  display: "inline-flex", alignItems: "center",
-                  bgcolor: "transparent", border: "none", cursor: "pointer",
-                  color: "text.subtitle", p: 0.25, borderRadius: 0.5,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  bgcolor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "text.tertiary",
+                  p: 0.25,
+                  borderRadius: "4px",
                   "&:hover": { color: "text.primary", bgcolor: "action.hover" },
                 }}
               >
                 <Iconify icon="solar:arrow-left-linear" width={14} />
-              </Box>
+              </ButtonBase>
               <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                 {pendingField.key}
               </Typography>
               <Box sx={{ flex: 1 }} />
-              <Typography sx={{ fontSize: 10.5, color: "text.subtitle" }}>Choose a value</Typography>
+              <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+                Choose a value
+              </Typography>
             </Stack>
             <Box sx={{ py: 0.5 }}>
               {(pendingField.values || []).map((v) => (
-                <Box
+                <ButtonBase
                   key={v}
-                  component="button"
                   type="button"
-                  onClick={() => { addFilter(pendingField.key, v); closeFilter(); }}
+                  onClick={() => {
+                    addFilter(pendingField.key, v);
+                    closeFilter();
+                  }}
                   sx={{
-                    display: "block", width: "100%", textAlign: "left",
-                    px: 1.5, py: 0.875, cursor: "pointer",
-                    bgcolor: "transparent", border: "none", color: "text.primary",
-                    font: "inherit", fontSize: 13,
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    px: 1.5,
+                    py: 0.875,
+                    cursor: "pointer",
+                    bgcolor: "transparent",
+                    border: "none",
+                    color: "text.primary",
+                    font: "inherit",
+                    fontSize: 13,
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
                   {v}
-                </Box>
+                </ButtonBase>
               ))}
             </Box>
           </Box>
         ) : (
           <>
-            <Stack direction="row" sx={{
-              borderBottom: "1px solid", borderColor: "divider",
-              px: 0.5,
-            }}>
+            <Stack
+              direction="row"
+              sx={{
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                px: 0.5,
+              }}
+            >
               {FILTER_TABS.map((t) => {
                 const active = t.id === filterTab;
                 return (
-                  <Box
+                  <ButtonBase
                     key={t.id}
-                    component="button"
                     type="button"
                     onClick={() => setFilterTab(t.id)}
                     sx={{
-                      px: 1.25, py: 1.25, cursor: "pointer",
-                      fontSize: 12, fontWeight: active ? 700 : 500,
-                      color: active ? "text.primary" : "text.subtitle",
-                      bgcolor: "transparent", border: "none", font: "inherit",
+                      px: 1.25,
+                      py: 1.25,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: active ? 600 : 500,
+                      color: active ? "text.primary" : "text.tertiary",
+                      bgcolor: "transparent",
+                      border: "none",
+                      font: "inherit",
                       borderBottom: "2px solid",
                       borderColor: active ? "text.primary" : "transparent",
                       whiteSpace: "nowrap",
@@ -511,39 +722,67 @@ function DashboardHeader({
                     }}
                   >
                     {t.label}
-                  </Box>
+                  </ButtonBase>
                 );
               })}
             </Stack>
             <Box sx={{ py: 0.5 }}>
               {currentTab.fields.map((f) => {
-                const activeCount = activeFilters.filter((af) => af.field === f.key).length;
+                const activeCount = activeFilters.filter(
+                  (af) => af.field === f.key,
+                ).length;
                 return (
-                  <Box
+                  <ButtonBase
                     key={f.key}
-                    component="button"
                     type="button"
                     onClick={() => setPendingField(f)}
                     sx={{
-                      display: "flex", alignItems: "center", gap: 1, width: "100%",
-                      px: 1.5, py: 0.875, cursor: "pointer",
-                      bgcolor: "transparent", border: "none", color: "text.primary",
-                      font: "inherit", fontSize: 13, textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      width: "100%",
+                      px: 1.5,
+                      py: 0.875,
+                      cursor: "pointer",
+                      bgcolor: "transparent",
+                      border: "none",
+                      color: "text.primary",
+                      font: "inherit",
+                      fontSize: 13,
+                      textAlign: "left",
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
-                    <Iconify icon="solar:add-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
-                    <Typography component="span" sx={{ fontSize: 13, flex: 1 }}>{f.key}</Typography>
+                    <Iconify
+                      icon="solar:add-circle-linear"
+                      width={14}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                    <Typography component="span" sx={{ fontSize: 13, flex: 1 }}>
+                      {f.key}
+                    </Typography>
                     {activeCount > 0 && (
-                      <Typography component="span" sx={{
-                        fontSize: 10, fontWeight: 700, color: "primary.main",
-                        px: 0.75, py: 0.125, borderRadius: 999, bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
-                      }}>
+                      <Typography
+                        component="span"
+                        sx={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: "primary.main",
+                          px: 0.75,
+                          py: 0.125,
+                          borderRadius: 999,
+                          bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+                        }}
+                      >
                         {activeCount}
                       </Typography>
                     )}
-                    <Iconify icon="solar:alt-arrow-right-linear" width={12} sx={{ color: "text.subtitle" }} />
-                  </Box>
+                    <Iconify
+                      icon="solar:alt-arrow-right-linear"
+                      width={12}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                  </ButtonBase>
                 );
               })}
             </Box>
@@ -558,7 +797,7 @@ function DashboardHeader({
         onClose={() => setBreakdownAnchor(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { width: 260, mt: 0.5 } } }}
+        slotProps={{ paper: { sx: { width: 320, mt: 0.5 } } }}
       >
         <Box sx={{ py: 0.5 }}>
           {BREAKDOWN_FIELDS.map((f) => {
@@ -566,10 +805,14 @@ function DashboardHeader({
             return (
               <Stack
                 key={f}
-                direction="row" alignItems="center" spacing={1}
+                direction="row"
+                alignItems="center"
+                spacing={1}
                 {...clickable(() => toggleBreakdown(f), { pressed: isActive })}
                 sx={{
-                  px: 1.5, py: 0.875, cursor: "pointer",
+                  px: 1.5,
+                  py: 0.875,
+                  cursor: "pointer",
                   color: isActive ? "text.primary" : "text.primary",
                   bgcolor: isActive ? "action.selected" : "transparent",
                   "&:hover": { bgcolor: "action.hover" },
@@ -577,11 +820,19 @@ function DashboardHeader({
                 }}
               >
                 <Iconify
-                  icon={isActive ? "eva:checkmark-fill" : "solar:add-circle-linear"}
+                  icon={
+                    isActive ? "solar:check-linear" : "solar:add-circle-linear"
+                  }
                   width={14}
-                  sx={{ color: isActive ? "primary.main" : "text.subtitle" }}
+                  sx={{ color: isActive ? "primary.main" : "text.tertiary" }}
                 />
-                <Typography sx={{ fontSize: 13, flex: 1, fontWeight: isActive ? 600 : 400 }}>
+                <Typography
+                  sx={{
+                    fontSize: 13,
+                    flex: 1,
+                    fontWeight: isActive ? 600 : 400,
+                  }}
+                >
                   {f}
                 </Typography>
               </Stack>
@@ -601,35 +852,55 @@ DashboardHeader.propTypes = {
 };
 
 function FilterChip({ label, tone, onRemove }) {
-  const accent = tone === "accent" ? "#7857FC" : null;
+  const accent = tone === "accent";
   return (
     <Stack
-      direction="row" alignItems="center" spacing={0.5}
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
       sx={{
-        pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
+        pl: 1,
+        pr: 0.5,
+        py: 0.375,
+        borderRadius: 999,
         border: "1px solid",
-        borderColor: accent ? alpha(accent, 0.4) : "divider",
-        bgcolor: accent ? (t) => alpha(accent, t.palette.mode === "dark" ? 0.14 : 0.06) : "transparent",
+        borderColor: accent ? "status.discovery.border" : "divider",
+        bgcolor: accent ? "status.discovery.bg" : "transparent",
       }}
     >
-      <Typography sx={{ fontSize: 11.5, color: accent || "text.primary", fontWeight: 600 }}>
+      <Typography
+        sx={{
+          fontSize: 12,
+          color: accent ? "primary.main" : "text.primary",
+          fontWeight: 600,
+        }}
+      >
         {label}
       </Typography>
-      <Box
-        {...clickable(onRemove, { label: `Remove ${label}` })}
+      <ButtonBase
+        aria-label={`Remove ${label}`}
+        onClick={onRemove}
         sx={{
-          width: 16, height: 16, borderRadius: 999, display: "grid", placeItems: "center", cursor: "pointer",
-          color: "text.subtitle",
+          width: 16,
+          height: 16,
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          color: "text.tertiary",
           "&:hover": { bgcolor: "action.hover", color: "text.primary" },
           ...focusRing,
         }}
       >
-        <Iconify icon="eva:close-fill" width={11} />
-      </Box>
+        <Iconify icon="solar:close-linear" width={12} />
+      </ButtonBase>
     </Stack>
   );
 }
-FilterChip.propTypes = { label: PropTypes.node, tone: PropTypes.string, onRemove: PropTypes.func };
+FilterChip.propTypes = {
+  label: PropTypes.node,
+  tone: PropTypes.string,
+  onRemove: PropTypes.func,
+};
 
 /**
  * Small toolbar button — used for Export PDF / other tab-level
@@ -637,16 +908,22 @@ FilterChip.propTypes = { label: PropTypes.node, tone: PropTypes.string, onRemove
  */
 function ToolbarButton({ icon, label, onClick }) {
   return (
-    <Box
-      component="button"
+    <ButtonBase
       type="button"
       onClick={onClick}
       sx={{
-        display: "inline-flex", alignItems: "center", gap: 0.75,
-        px: 1.5, py: 0.75, borderRadius: 1,
-        border: "1px solid", borderColor: "divider",
-        bgcolor: "background.paper", color: "text.primary",
-        cursor: "pointer", font: "inherit",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.75,
+        px: 1.5,
+        py: 0.75,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        color: "text.primary",
+        cursor: "pointer",
+        font: "inherit",
         transition: "border-color 120ms, background-color 120ms",
         "&:hover": {
           borderColor: (t) => alpha(t.palette.text.primary, 0.4),
@@ -654,14 +931,18 @@ function ToolbarButton({ icon, label, onClick }) {
         },
       }}
     >
-      <Iconify icon={icon} width={14} sx={{ color: "text.subtitle" }} />
-      <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 600 }}>
+      <Iconify icon={icon} width={14} sx={{ color: "text.tertiary" }} />
+      <Typography component="span" sx={{ fontSize: 13, fontWeight: 600 }}>
         {label}
       </Typography>
-    </Box>
+    </ButtonBase>
   );
 }
-ToolbarButton.propTypes = { icon: PropTypes.string, label: PropTypes.node, onClick: PropTypes.func };
+ToolbarButton.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.node,
+  onClick: PropTypes.func,
+};
 
 function HeaderPill({ icon, label, primary, onClick }) {
   /* Rendered as an actual <button> — Stack-on-a-div sometimes swallows
@@ -669,52 +950,60 @@ function HeaderPill({ icon, label, primary, onClick }) {
      fires onClick and gets keyboard focus for free. currentTarget
      stays valid because React 17+ no longer pools synthetic events. */
   return (
-    <Box
-      component="button"
+    <ButtonBase
       type="button"
       onClick={onClick}
       sx={{
-        display: "inline-flex", alignItems: "center", gap: 0.75,
-        px: 1.25, py: 0.5, borderRadius: 0.75,
-        border: "1px solid", borderColor: primary ? "text.primary" : "divider",
-        bgcolor: (t) => primary ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.08) : "background.paper") : "transparent",
-        color: primary ? "text.primary" : "text.subtitle",
-        cursor: "pointer", font: "inherit",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.75,
+        px: 1.25,
+        py: 0.5,
+        borderRadius: "4px",
+        border: "1px solid",
+        borderColor: primary ? "text.primary" : "divider",
+        bgcolor: primary ? "action.selected" : "transparent",
+        color: primary ? "text.primary" : "text.tertiary",
+        cursor: "pointer",
+        font: "inherit",
         transition: "border-color 120ms, background-color 120ms",
         "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.4) },
-        "&:focus-visible": { outline: "2px solid", outlineColor: "text.primary", outlineOffset: 1 },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "text.primary",
+          outlineOffset: 1,
+        },
       }}
     >
-      <Iconify icon={icon} width={13} sx={{ color: "inherit" }} />
-      <Typography component="span" sx={{ typography: "s2", fontSize: 11.5, fontWeight: 600, color: "inherit" }}>
+      <Iconify icon={icon} width={14} sx={{ color: "inherit" }} />
+      <Typography
+        component="span"
+        sx={{
+          typography: "s2",
+          fontSize: 12,
+          fontWeight: 600,
+          color: "inherit",
+        }}
+      >
         {label}
       </Typography>
-    </Box>
+    </ButtonBase>
   );
 }
-HeaderPill.propTypes = { icon: PropTypes.string, label: PropTypes.node, primary: PropTypes.bool, onClick: PropTypes.func };
+HeaderPill.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.node,
+  primary: PropTypes.bool,
+  onClick: PropTypes.func,
+};
 
 function BucketToggle() {
   return (
-    <Stack
-      direction="row"
-      sx={{
-        p: 0.25, borderRadius: 0.75,
-        border: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
-      }}
-    >
-      {["Hour", "Day", "Week"].map((b, i) => (
-        <Box key={b} sx={{
-          px: 1, py: 0.375, borderRadius: 0.5, cursor: "pointer",
-          typography: "s3", fontSize: 11, fontWeight: 600,
-          color: i === 1 ? "text.primary" : "text.subtitle",
-          bgcolor: (t) => i === 1 ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.1) : "#fff") : "transparent",
-        }}>
-          {b}
-        </Box>
+    <SegmentedTabs value="Day">
+      {["Hour", "Day", "Week"].map((b) => (
+        <Tab key={b} value={b} label={b} />
       ))}
-    </Stack>
+    </SegmentedTabs>
   );
 }
 
@@ -724,7 +1013,9 @@ function BucketToggle() {
    an explicit "X% vs previous period" caption — matches the shape
    Cekura ships and Bland's Total Calls / Total Cost row. */
 function KpiTileGrid({ tasks, biz, trend }) {
-  const critical = tasks.filter((t) => t.critical && (t.status === "failed" || t.status === "error")).length;
+  const critical = tasks.filter(
+    (t) => t.critical && (t.status === "failed" || t.status === "error"),
+  ).length;
   const latencies = sortedNums(tasks, (t) => latencyOf(t));
   const p90Lat = percentile(latencies, 90);
   const totalTokens = tasks.reduce((a, t) => a + (t.tokens || 0), 0);
@@ -735,104 +1026,205 @@ function KpiTileGrid({ tasks, biz, trend }) {
   };
 
   const tiles = [
-    { label: "Pass rate",
+    {
+      label: "Pass rate",
       value: `${biz.resolutionRate}%`,
       deltaPct: deltaPct(biz.resolutionRate, trend?.prevPassRate),
       goodUp: true,
-      tone: biz.resolutionRate >= 80 ? GREEN : biz.resolutionRate >= 50 ? "text.primary" : RED },
-    { label: "Total runs",
-      value: numFmt.format(biz.total),
-      deltaPct: null },
-    { label: "Escalation",
+      tone:
+        biz.resolutionRate >= 80
+          ? "status.success.fg"
+          : biz.resolutionRate >= 50
+            ? "text.primary"
+            : "status.danger.fg",
+    },
+    { label: "Total runs", value: numFmt.format(biz.total), deltaPct: null },
+    {
+      label: "Escalation",
       value: `${biz.escalationRate}%`,
       deltaPct: deltaPct(biz.escalationRate, trend?.prevEscalationRate),
       goodUp: false,
-      tone: biz.escalationRate <= 10 ? GREEN : biz.escalationRate <= 25 ? "text.primary" : RED },
-    { label: "Avg duration",
+      tone:
+        biz.escalationRate <= 10
+          ? "status.success.fg"
+          : biz.escalationRate <= 25
+            ? "text.primary"
+            : "status.danger.fg",
+    },
+    {
+      label: "Avg duration",
       value: `${biz.medHandleTimeS.toFixed(1)}s`,
-      deltaPct: null },
-    { label: "Critical issues",
+      deltaPct: null,
+    },
+    {
+      label: "Critical issues",
       value: numFmt.format(critical),
-      tone: critical ? RED : GREEN,
-      deltaPct: null },
-    { label: "Total cost",
-      value: biz.costUnverified && !biz.totalCost ? "unverified" : fmtCredits(biz.totalCost),
-      deltaPct: null },
-    { label: "Cost / pass",
+      tone: critical ? "status.danger.fg" : "status.success.fg",
+      deltaPct: null,
+    },
+    {
+      label: "Total cost",
+      value:
+        biz.costUnverified && !biz.totalCost
+          ? "unverified"
+          : fmtCredits(biz.totalCost),
+      deltaPct: null,
+    },
+    {
+      label: "Cost / pass",
       value: biz.costPerPass ? fmtCredits(biz.costPerPass) : "—",
-      deltaPct: null },
-    { label: "Latency p90",
+      deltaPct: null,
+    },
+    {
+      label: "Latency p90",
       value: `${Math.round(p90Lat)}ms`,
-      tone: p90Lat < 1500 ? GREEN : p90Lat < 3000 ? "text.primary" : RED,
-      deltaPct: null },
-    { label: "Compliance",
+      tone:
+        p90Lat < 1500
+          ? "status.success.fg"
+          : p90Lat < 3000
+            ? "text.primary"
+            : "status.danger.fg",
+      deltaPct: null,
+    },
+    {
+      label: "Compliance",
       value: `${biz.complianceRate}%`,
-      tone: biz.complianceRate >= 95 ? GREEN : biz.complianceRate >= 80 ? "text.primary" : RED,
-      deltaPct: null },
-    { label: "Tokens",
-      value: numFmt.format(totalTokens),
-      deltaPct: null },
+      tone:
+        biz.complianceRate >= 95
+          ? "status.success.fg"
+          : biz.complianceRate >= 80
+            ? "text.primary"
+            : "status.danger.fg",
+      deltaPct: null,
+    },
+    { label: "Tokens", value: numFmt.format(totalTokens), deltaPct: null },
   ];
 
   return (
-    <Box sx={{
-      display: "grid", gap: 1.5,
-      gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(5, 1fr)" },
-    }}>
-      {tiles.map((t) => <KpiTile key={t.label} {...t} />)}
+    <Box
+      sx={{
+        display: "grid",
+        gap: 1.5,
+        gridTemplateColumns: {
+          xs: "repeat(2, 1fr)",
+          sm: "repeat(3, 1fr)",
+          md: "repeat(5, 1fr)",
+        },
+      }}
+    >
+      {tiles.map((t) => (
+        <KpiTile key={t.label} {...t} />
+      ))}
     </Box>
   );
 }
-KpiTileGrid.propTypes = { tasks: PropTypes.array, biz: PropTypes.object, trend: PropTypes.object };
+KpiTileGrid.propTypes = {
+  tasks: PropTypes.array,
+  biz: PropTypes.object,
+  trend: PropTypes.object,
+};
 
 function KpiTile({ label, value, sub, tone, deltaPct, goodUp = true }) {
   const hasDelta = typeof deltaPct === "number";
   const good = goodUp ? deltaPct >= 0 : deltaPct <= 0;
-  const deltaColor = hasDelta ? (deltaPct === 0 ? "text.subtitle" : (good ? GREEN : RED)) : "text.subtitle";
+  const deltaColor = hasDelta
+    ? deltaPct === 0
+      ? "text.tertiary"
+      : good
+        ? "status.success.fg"
+        : "status.danger.fg"
+    : "text.tertiary";
   return (
-    <Box sx={{
-      p: 2, borderRadius: 1,
-      border: "1px solid", borderColor: "divider",
-      bgcolor: "background.paper",
-      display: "flex", flexDirection: "column", justifyContent: "space-between",
-      minHeight: 108,
-    }}>
+    <Box
+      sx={{
+        p: 2,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        minHeight: 108,
+      }}
+    >
       <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Typography sx={{
-          typography: "s3", color: "text.subtitle",
-          fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4,
-        }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontSize: 12,
+            fontWeight: 600,
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
+        >
           {label}
         </Typography>
         {hasDelta && (
-          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ color: deltaColor }}>
-            <Iconify icon={deltaPct >= 0 ? "solar:arrow-up-linear" : "solar:arrow-down-linear"} width={11} />
-            <Typography sx={{ typography: "s3", fontSize: 10.5, fontWeight: 700, color: deltaColor }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.25}
+            sx={{ color: deltaColor }}
+          >
+            <Iconify
+              icon={
+                deltaPct >= 0
+                  ? "solar:arrow-up-linear"
+                  : "solar:arrow-down-linear"
+              }
+              width={12}
+            />
+            <Typography
+              sx={{
+                typography: "s3",
+                fontSize: 12,
+                fontWeight: 600,
+                color: deltaColor,
+              }}
+            >
               {Math.abs(deltaPct)}%
             </Typography>
           </Stack>
         )}
       </Stack>
-      <Typography sx={{
-        typography: "m1", fontWeight: 700,
-        fontVariantNumeric: "tabular-nums", lineHeight: 1.15,
-        color: tone || "text.primary",
-        fontSize: 26, mt: 1,
-      }}>
+      <Typography
+        sx={{
+          typography: "m1",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.15,
+          color: tone || "text.primary",
+          fontSize: 24,
+          mt: 1,
+        }}
+      >
         {value}
       </Typography>
-      <Typography sx={{
-        typography: "s3", color: "text.subtitle",
-        fontSize: 10.5, mt: 0.5,
-      }}>
-        {sub || (hasDelta ? `${Math.abs(deltaPct)}% vs previous period` : "no comparison")}
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          fontSize: 12,
+          mt: 0.5,
+        }}
+      >
+        {sub ||
+          (hasDelta
+            ? `${Math.abs(deltaPct)}% vs previous period`
+            : "no comparison")}
       </Typography>
     </Box>
   );
 }
 KpiTile.propTypes = {
-  label: PropTypes.node, value: PropTypes.node, sub: PropTypes.node, tone: PropTypes.string,
-  deltaPct: PropTypes.number, goodUp: PropTypes.bool,
+  label: PropTypes.node,
+  value: PropTypes.node,
+  sub: PropTypes.node,
+  tone: PropTypes.string,
+  deltaPct: PropTypes.number,
+  goodUp: PropTypes.bool,
 };
 
 /* ── volume / trend charts (full-width) ───────────────────────────── */
@@ -859,10 +1251,17 @@ function VolumeAreaChart({ tasks }) {
       status: t.status,
     }));
     const passedCount = ordered.filter((t) => t.status === "passed").length;
-    return { categories: cats, series: [{ name: "outcome", data }], passed: passedCount, total: ordered.length };
+    return {
+      categories: cats,
+      series: [{ name: "outcome", data }],
+      passed: passedCount,
+      total: ordered.length,
+    };
   }, [tasks]);
 
-  const colors = series[0].data.map((d) => (d.status === "passed" ? CHART_GREEN : CHART_RED));
+  const colors = series[0].data.map((d) =>
+    d.status === "passed" ? CHART_GREEN : CHART_RED,
+  );
 
   return (
     <Panel
@@ -872,27 +1271,39 @@ function VolumeAreaChart({ tasks }) {
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="bar" height={140}
+          type="bar"
+          height={140}
           series={[{ name: "outcome", data: series[0].data.map((d) => d.y) }]}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+            },
             theme: { mode: theme.palette.mode },
-            plotOptions: { bar: { columnWidth: "78%", borderRadius: 0, distributed: true } },
+            plotOptions: {
+              bar: { columnWidth: "78%", borderRadius: 0, distributed: true },
+            },
             dataLabels: { enabled: false },
             stroke: { show: false },
             fill: { type: "solid", opacity: 0.9 },
             colors,
             xaxis: {
               categories,
-              axisBorder: { show: false }, axisTicks: { show: false },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
               labels: {
-                style: { colors: theme.palette.text.secondary, fontSize: "9px" },
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
                 /* Only show every Nth label to avoid overlap on 60+ tasks. */
                 formatter: (v, idx) => {
                   const n = series[0].data.length;
                   if (!n) return "";
                   const step = Math.max(1, Math.ceil(n / 12));
-                  return (typeof idx === "number" && idx % step === 0) ? v : "";
+                  return typeof idx === "number" && idx % step === 0 ? v : "";
                 },
               },
             },
@@ -904,8 +1315,17 @@ function VolumeAreaChart({ tasks }) {
               custom: ({ dataPointIndex }) => {
                 const t = tasks[dataPointIndex];
                 if (!t) return "";
-                const status = t.status === "passed" ? "Passed" : (t.status === "error" ? "Error" : "Failed");
-                const label = scenarioTitle(t.title) || t.name || t.id || `Task ${dataPointIndex + 1}`;
+                const status =
+                  t.status === "passed"
+                    ? "Passed"
+                    : t.status === "error"
+                      ? "Error"
+                      : "Failed";
+                const label =
+                  scenarioTitle(t.title) ||
+                  t.name ||
+                  t.id ||
+                  `Task ${dataPointIndex + 1}`;
                 return `<div style="padding:6px 10px;font-size:11px">
                   <div style="font-weight:700;margin-bottom:2px">T${dataPointIndex + 1} · ${status}</div>
                   <div style="opacity:0.7">${label}</div>
@@ -939,24 +1359,53 @@ const TaskLatencyOverTime = memo(function TaskLatencyOverTime({ tasks }) {
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="line" height={220}
+          type="line"
+          height={220}
           series={[{ name: "Call duration", data: latSeries }]}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+            },
             theme: { mode: theme.palette.mode },
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             stroke: { curve: "smooth", width: 2, colors: ["#7857FC"] },
             dataLabels: { enabled: false },
             xaxis: {
               categories,
-              axisBorder: { show: false }, axisTicks: { show: false },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
               tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, rotate: 0, hideOverlappingLabels: true },
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                rotate: 0,
+                hideOverlappingLabels: true,
+              },
             },
-            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
+            yaxis: {
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                formatter: (v) => `${Math.round(v)}`,
+              },
+            },
+            grid: {
+              borderColor: theme.palette.divider,
+              strokeDashArray: 4,
+              padding: { left: 8, right: 8, top: -6, bottom: -6 },
+            },
             tooltip: {
               theme: theme.palette.mode,
-              x: { formatter: (v, opts) => categories[opts?.dataPointIndex] || "" },
+              x: {
+                formatter: (v, opts) => categories[opts?.dataPointIndex] || "",
+              },
               y: { formatter: (v) => `${Math.round(v)}ms` },
             },
             markers: { size: 0 },
@@ -979,13 +1428,21 @@ const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks }) {
   const bucketSets = order.map((o) => tasks.filter((t) => outcomeOf(t) === o));
   const onSliceClick = (i) => {
     const list = bucketSets[i] || [];
-    drill({ title: `Outcome — ${OUTCOME_LABELS[order[i]]}`, subtitle: `${list.length} tasks`, tasks: list });
+    drill({
+      title: `Outcome — ${OUTCOME_LABELS[order[i]]}`,
+      subtitle: `${list.length} tasks`,
+      tasks: list,
+    });
   };
   return (
     <DonutBreakdown
       title="Outcome breakdown"
       subtitle={`${tasks.length} scenarios · passed, flaky, failed, or never measured`}
-      buckets={order.map((o, i) => ({ label: OUTCOME_LABELS[o], value: bucketSets[i].length }))}
+      buckets={order.map((o, i) => ({
+        label: OUTCOME_LABELS[o],
+        value: bucketSets[i].length,
+      }))}
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       colors={[CHART_GREEN, "#F59E0B", CHART_RED, "#94A3B8"]}
       onSliceClick={onSliceClick}
       info="Splits the run's scenarios four ways: passed on every attempt, flaky (passed on some attempts), failed on every attempt, or not counted — test invalid (the simulated caller, the starting state or a judge broke) or an error (our infrastructure or the connection). A big grey wedge is a test or infrastructure problem, not an agent one; a big amber wedge means the agent is inconsistent on the same scenario."
@@ -1007,33 +1464,63 @@ OutcomeDonutChart.propTypes = { tasks: PropTypes.array };
  * so the color slices dominate.
  */
 const DonutBreakdown = memo(function DonutBreakdown({
-  title, subtitle, buckets, colors, height = 160, onSliceClick, info,
+  title,
+  subtitle,
+  buckets,
+  colors,
+  height = 160,
+  onSliceClick,
+  info,
 }) {
   const theme = useTheme();
   const total = buckets.reduce((a, b) => a + b.value, 0) || 1;
   const series = buckets.map((b) => b.value);
   const labels = buckets.map((b) => b.label);
-  const largest = buckets.reduce((best, b, i) => (b.value > (best?.value ?? -1) ? { ...b, i } : best), null);
+  const largest = buckets.reduce(
+    (best, b, i) => (b.value > (best?.value ?? -1) ? { ...b, i } : best),
+    null,
+  );
   const largestPct = largest ? Math.round((largest.value / total) * 100) : 0;
 
   const exportRows = buckets.map((b) => ({
-    label: b.label, count: b.value, share_pct: Math.round((b.value / total) * 100),
+    label: b.label,
+    count: b.value,
+    share_pct: Math.round((b.value / total) * 100),
   }));
   return (
-    <Panel title={title} subtitle={subtitle} exportRows={exportRows} info={info}>
-      <Stack sx={{ px: 1.5, pt: 1.25, pb: 1.5 }} spacing={1} alignItems="stretch">
+    <Panel
+      title={title}
+      subtitle={subtitle}
+      exportRows={exportRows}
+      info={info}
+    >
+      <Stack
+        sx={{ px: 1.5, pt: 1.25, pb: 1.5 }}
+        spacing={1}
+        alignItems="stretch"
+      >
         <ReactApexChart
-          type="donut" height={height}
+          type="donut"
+          height={height}
           series={series}
           options={{
             chart: {
-              animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily,
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
               ...(onSliceClick && {
-                events: { dataPointSelection: (_e, _ctx, cfg) => onSliceClick(cfg.dataPointIndex, labels[cfg.dataPointIndex]) },
+                events: {
+                  dataPointSelection: (_e, _ctx, cfg) =>
+                    onSliceClick(
+                      cfg.dataPointIndex,
+                      labels[cfg.dataPointIndex],
+                    ),
+                },
               }),
             },
             theme: { mode: theme.palette.mode },
-            labels, colors,
+            labels,
+            colors,
             legend: { show: false },
             dataLabels: { enabled: false },
             stroke: { width: 2, colors: [theme.palette.background.paper] },
@@ -1049,25 +1536,43 @@ const DonutBreakdown = memo(function DonutBreakdown({
               hover: { filter: { type: "none" } },
               active: { filter: { type: "none" } },
             },
-            plotOptions: { pie: {
-              expandOnClick: false,
-              donut: { size: "68%", labels: { show: true,
-                name: { fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => (largest ? largest.label : "Total") },
-                value: {
-                  fontSize: "18px", fontWeight: 700, color: theme.palette.text.primary,
-                  formatter: () => `${largestPct}%`,
-                  offsetY: 4,
+            plotOptions: {
+              pie: {
+                expandOnClick: false,
+                donut: {
+                  size: "68%",
+                  labels: {
+                    show: true,
+                    name: {
+                      fontSize: "12px",
+                      color: theme.palette.text.tertiary,
+                      formatter: () => (largest ? largest.label : "Total"),
+                    },
+                    value: {
+                      fontSize: "16px",
+                      fontWeight: 600,
+                      color: theme.palette.text.primary,
+                      formatter: () => `${largestPct}%`,
+                      offsetY: 4,
+                    },
+                    total: {
+                      show: true,
+                      label: largest ? largest.label : "Total",
+                      fontSize: "12px",
+                      color: theme.palette.text.tertiary,
+                      formatter: () => `${largestPct}%`,
+                    },
+                  },
                 },
-                total: { show: true, label: largest ? largest.label : "Total",
-                  fontSize: "10px", color: theme.palette.text.subtitle,
-                  formatter: () => `${largestPct}%` },
-              } },
-            } },
+              },
+            },
             tooltip: {
-              intersect: false, followCursor: false,
+              intersect: false,
+              followCursor: false,
               fixed: { enabled: false },
               y: {
-                formatter: (v) => `${v} tasks · ${Math.round((v / total) * 100)}%${onSliceClick ? " · click to drill down" : ""}`,
+                formatter: (v) =>
+                  `${v} tasks · ${Math.round((v / total) * 100)}%${onSliceClick ? " · click to drill down" : ""}`,
               },
             },
           }}
@@ -1075,27 +1580,52 @@ const DonutBreakdown = memo(function DonutBreakdown({
         {/* Compact legend below the donut — each row is clickable
             when drilldown is wired, so users don't have to hit the
             small slice to filter. */}
-        <Stack direction="row" flexWrap="wrap" sx={{ px: 0.25, columnGap: 1.25, rowGap: 0.375 }}>
+        <Stack
+          direction="row"
+          flexWrap="wrap"
+          sx={{ px: 0.25, columnGap: 1.25, rowGap: 0.375 }}
+        >
           {buckets.map((b, i) => {
             const drill = onSliceClick ? () => onSliceClick(i, b.label) : null;
             return (
               <Stack
                 key={b.label}
-                direction="row" alignItems="center" spacing={0.625}
+                direction="row"
+                alignItems="center"
+                spacing={0.625}
                 {...clickable(drill || undefined)}
                 sx={{
                   minWidth: 0,
                   cursor: drill ? "pointer" : "default",
-                  borderRadius: 0.5, px: drill ? 0.5 : 0, mx: drill ? -0.5 : 0,
+                  borderRadius: "4px",
+                  px: drill ? 0.5 : 0,
+                  mx: drill ? -0.5 : 0,
                   "&:hover": drill ? { bgcolor: "action.hover" } : {},
                   ...focusRing,
                 }}
               >
-                <Box sx={{ width: 7, height: 7, borderRadius: 0.75, bgcolor: colors[i], flexShrink: 0 }} />
-                <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                  <Box component="span" sx={{ color: "text.primary" }}>{b.label}</Box>{" "}
-                  <b style={{ color: "inherit" }}>{b.value}</b>{" "}
-                  ({Math.round((b.value / total) * 100)}%)
+                <Box
+                  sx={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "4px",
+                    bgcolor: colors[i],
+                    flexShrink: 0,
+                  }}
+                />
+                <Typography
+                  sx={{
+                    fontSize: 12,
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Box component="span" sx={{ color: "text.primary" }}>
+                    {b.label}
+                  </Box>{" "}
+                  <b style={{ color: "inherit" }}>{b.value}</b> (
+                  {Math.round((b.value / total) * 100)}%)
                 </Typography>
               </Stack>
             );
@@ -1106,9 +1636,13 @@ const DonutBreakdown = memo(function DonutBreakdown({
   );
 });
 DonutBreakdown.propTypes = {
-  title: PropTypes.node, subtitle: PropTypes.node,
-  buckets: PropTypes.array, colors: PropTypes.array, height: PropTypes.number,
-  onSliceClick: PropTypes.func, info: PropTypes.node,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  buckets: PropTypes.array,
+  colors: PropTypes.array,
+  height: PropTypes.number,
+  onSliceClick: PropTypes.func,
+  info: PropTypes.node,
 };
 
 /* Success = passed vs everything else. Cekura / Retell surface this
@@ -1144,10 +1678,15 @@ const SuccessDonut = memo(function SuccessDonut({ tasks }) {
   }, [tasks]);
   const onSliceClick = (i) => {
     const label = i === 0 ? "Successful" : "Unsuccessful";
-    const filtered = i === 0
-      ? measured.filter((t) => (passShareOf(t) ?? 0) > 0)
-      : measured.filter((t) => (passShareOf(t) ?? 0) < 1);
-    drill({ title: `Call successful — ${label}`, subtitle: `${filtered.length} scenarios`, tasks: filtered });
+    const filtered =
+      i === 0
+        ? measured.filter((t) => (passShareOf(t) ?? 0) > 0)
+        : measured.filter((t) => (passShareOf(t) ?? 0) < 1);
+    drill({
+      title: `Call successful — ${label}`,
+      subtitle: `${filtered.length} scenarios`,
+      tasks: filtered,
+    });
   };
   return (
     <DonutBreakdown
@@ -1161,23 +1700,31 @@ const SuccessDonut = memo(function SuccessDonut({ tasks }) {
   );
 });
 SuccessDonut.propTypes = { tasks: PropTypes.array };
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const SUCCESS_COLORS = ["#7857FC", "#DC2626"];
 
 const SentimentDonut = memo(function SentimentDonut({ tasks }) {
   const drill = useDrilldown();
   const buckets = useMemo(() => {
     const bucket = { positive: 0, neutral: 0, negative: 0 };
-    tasks.forEach((t) => { const k = sentimentOf(t); if (k) bucket[k] = (bucket[k] || 0) + 1; });
+    tasks.forEach((t) => {
+      const k = sentimentOf(t);
+      if (k) bucket[k] = (bucket[k] || 0) + 1;
+    });
     return [
       { label: "Positive", value: bucket.positive || 0 },
-      { label: "Neutral",  value: bucket.neutral  || 0 },
+      { label: "Neutral", value: bucket.neutral || 0 },
       { label: "Negative", value: bucket.negative || 0 },
     ];
   }, [tasks]);
   const onSliceClick = (i, label) => {
     const key = ["positive", "neutral", "negative"][i];
     const filtered = tasks.filter((t) => sentimentOf(t) === key);
-    drill({ title: `User sentiment — ${label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+    drill({
+      title: `User sentiment — ${label}`,
+      subtitle: `${filtered.length} tasks`,
+      tasks: filtered,
+    });
   };
   return (
     <DonutBreakdown
@@ -1191,25 +1738,46 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
   );
 });
 SentimentDonut.propTypes = { tasks: PropTypes.array };
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const SENTIMENT_COLORS = ["#16A34A", "#94A3B8", "#DC2626"];
 
 const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
   const drill = useDrilldown();
   const labelMap = {
-    complete: "Task complete", escalated: "Escalated",
-    incomplete: "Incomplete", timeout: "Timeout", dropped: "Dropped", error: "Error",
+    complete: "Task complete",
+    escalated: "Escalated",
+    incomplete: "Incomplete",
+    timeout: "Timeout",
+    dropped: "Dropped",
+    error: "Error",
   };
   const buckets = useMemo(() => {
     const bucket = {};
-    tasks.forEach((t) => { const k = endReasonOf(t); bucket[k] = (bucket[k] || 0) + 1; });
-    const order = ["complete", "escalated", "incomplete", "timeout", "dropped", "error"];
-    return order.filter((k) => bucket[k]).map((k) => ({ label: labelMap[k], value: bucket[k], _key: k }));
+    tasks.forEach((t) => {
+      const k = endReasonOf(t);
+      bucket[k] = (bucket[k] || 0) + 1;
+    });
+    const order = [
+      "complete",
+      "escalated",
+      "incomplete",
+      "timeout",
+      "dropped",
+      "error",
+    ];
+    return order
+      .filter((k) => bucket[k])
+      .map((k) => ({ label: labelMap[k], value: bucket[k], _key: k }));
   }, [tasks]);
   const onSliceClick = (i) => {
     const bucket = buckets[i];
     if (!bucket) return;
     const filtered = tasks.filter((t) => endReasonOf(t) === bucket._key);
-    drill({ title: `Disconnection reason — ${bucket.label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+    drill({
+      title: `Disconnection reason — ${bucket.label}`,
+      subtitle: `${filtered.length} tasks`,
+      tasks: filtered,
+    });
   };
   return (
     <DonutBreakdown
@@ -1223,7 +1791,16 @@ const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
   );
 });
 DisconnectionDonut.propTypes = { tasks: PropTypes.array };
-const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#0EA5E9", "#DC2626"];
+const DISCONNECT_COLORS = [
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
+  "#7857FC",
+  "#F59E0B",
+  "#94A3B8",
+  "#DB2777",
+  "#0EA5E9",
+  "#DC2626",
+  /* eslint-enable no-restricted-syntax */
+];
 
 /**
  * Phone Inbound / Outbound — voice-agent split. Only really
@@ -1236,21 +1813,41 @@ const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#0EA5E9"
  * Shows the boundary numbers an SLO is written against and where the
  * tail starts to lift away from the median.
  */
-const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks }) {
+const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({
+  tasks,
+}) {
   const theme = useTheme();
-  const latencies = useMemo(() => sortedNums(measuredOnly(tasks), (t) => latencyOf(t)), [tasks]);
+  const latencies = useMemo(
+    () => sortedNums(measuredOnly(tasks), (t) => latencyOf(t)),
+    [tasks],
+  );
   const p50 = percentile(latencies, 50);
   const p90 = percentileOrNull(latencies, 90);
   const p99 = percentileOrNull(latencies, 99);
   const curve = useMemo(
-    () => (latencies.length ? Array.from({ length: 101 }, (_, p) => [p, Math.round(percentile(latencies, p))]) : []),
+    () =>
+      latencies.length
+        ? Array.from({ length: 101 }, (_, p) => [
+            p,
+            Math.round(percentile(latencies, p)),
+          ])
+        : [],
     [latencies],
   );
   const exportRows = [
     { percentile: "p50", duration_ms: Math.round(p50), n: latencies.length },
-    { percentile: "p90", duration_ms: p90 == null ? "" : Math.round(p90), n: latencies.length },
-    { percentile: "p99", duration_ms: p99 == null ? "" : Math.round(p99), n: latencies.length },
+    {
+      percentile: "p90",
+      duration_ms: p90 == null ? "" : Math.round(p90),
+      n: latencies.length,
+    },
+    {
+      percentile: "p99",
+      duration_ms: p99 == null ? "" : Math.round(p99),
+      n: latencies.length,
+    },
   ];
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const color = "#0EA5E9";
   const marks = [
     { p: 50, v: p50, label: "p50" },
@@ -1266,36 +1863,86 @@ const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks })
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="area" height={220}
+          type="area"
+          height={220}
           series={[{ name: "Latency", data: curve }]}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily, zoom: { enabled: false } },
+            chart: {
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+              zoom: { enabled: false },
+            },
             theme: { mode: theme.palette.mode },
             colors: [color],
             stroke: { curve: "smooth", width: 2 },
-            fill: { type: "gradient", gradient: { shadeIntensity: 0, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 100] } },
+            fill: {
+              type: "gradient",
+              gradient: {
+                shadeIntensity: 0,
+                opacityFrom: 0.25,
+                opacityTo: 0.02,
+                stops: [0, 100],
+              },
+            },
             dataLabels: { enabled: false },
             xaxis: {
-              type: "numeric", min: 0, max: 100, tickAmount: 10,
-              axisBorder: { show: false }, axisTicks: { show: false },
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `p${Math.round(v)}` },
+              type: "numeric",
+              min: 0,
+              max: 100,
+              tickAmount: 10,
+              axisBorder: { show: false },
+              axisTicks: { show: false },
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                formatter: (v) => `p${Math.round(v)}`,
+              },
               tooltip: { enabled: false },
             },
-            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 12, top: -6, bottom: 8 } },
+            yaxis: {
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                formatter: (v) => `${Math.round(v)}`,
+              },
+            },
+            grid: {
+              borderColor: theme.palette.divider,
+              strokeDashArray: 4,
+              padding: { left: 8, right: 12, top: -6, bottom: 8 },
+            },
             annotations: {
               xaxis: marks.map((m) => ({
                 x: m.p,
                 borderColor: alpha(theme.palette.text.primary, 0.35),
                 strokeDashArray: 3,
                 label: {
-                  text: m.label, orientation: "horizontal", borderWidth: 0,
-                  style: { background: "transparent", color: theme.palette.text.secondary, fontSize: "10px", fontWeight: 600 },
+                  text: m.label,
+                  orientation: "horizontal",
+                  borderWidth: 0,
+                  style: {
+                    background: "transparent",
+                    color: theme.palette.text.secondary,
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  },
                 },
               })),
               points: marks.map((m) => ({
-                x: m.p, y: Math.round(m.v),
-                marker: { size: 4, fillColor: color, strokeColor: theme.palette.background.paper, strokeWidth: 2 },
+                x: m.p,
+                y: Math.round(m.v),
+                marker: {
+                  size: 4,
+                  fillColor: color,
+                  strokeColor: theme.palette.background.paper,
+                  strokeWidth: 2,
+                },
               })),
             },
             tooltip: {
@@ -1316,38 +1963,97 @@ LatencyPercentilesPanel.propTypes = { tasks: PropTypes.array };
 function SourceTag({ children }) {
   return (
     /* mr clears the widget's ⋯ menu, which sits over the panel's top-right corner. */
-    <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", whiteSpace: "nowrap", pt: 0.25, mr: 4 }}>
+    <Typography
+      sx={{
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.secondary",
+        whiteSpace: "nowrap",
+        pt: 0.25,
+        mr: 4,
+      }}
+    >
       {children}
     </Typography>
   );
 }
 SourceTag.propTypes = { children: PropTypes.node };
 
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const HIST_PURPLE = "#7857FC";
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const HIST_RED = "#DC2626";
-const fmtMs = (v) => (v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
+const fmtMs = (v) =>
+  v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`;
 
-function histogramOptions(theme, { categories, colors, xTitle, yTitle = "calls", tooltip, columnWidth = "92%" }) {
+function histogramOptions(
+  theme,
+  {
+    categories,
+    colors,
+    xTitle,
+    yTitle = "calls",
+    tooltip,
+    columnWidth = "92%",
+  },
+) {
   return {
-    chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+    chart: {
+      toolbar: { show: false },
+      animations: { enabled: false },
+      background: "transparent",
+      fontFamily: theme.typography.fontFamily,
+    },
     theme: { mode: theme.palette.mode },
     colors,
-    plotOptions: { bar: { distributed: true, columnWidth, borderRadius: 2, borderRadiusApplication: "end" } },
+    plotOptions: {
+      bar: {
+        distributed: true,
+        columnWidth,
+        borderRadius: 2,
+        borderRadiusApplication: "end",
+      },
+    },
     dataLabels: { enabled: false },
     legend: { show: false },
     xaxis: {
       categories,
       axisTicks: { show: true, color: theme.palette.divider },
       axisBorder: { show: true, color: theme.palette.divider },
-      labels: { style: { colors: theme.palette.text.secondary, fontSize: "11px" } },
-      title: { text: xTitle, style: { color: theme.palette.text.secondary, fontSize: "12px", fontWeight: 500 } },
+      labels: {
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+      },
+      title: {
+        text: xTitle,
+        style: {
+          color: theme.palette.text.secondary,
+          fontSize: "12px",
+          fontWeight: 500,
+        },
+      },
     },
     yaxis: {
-      forceNiceScale: true, min: 0,
-      labels: { style: { colors: theme.palette.text.secondary, fontSize: "11px" }, formatter: (v) => `${Math.round(v)}` },
-      title: { text: yTitle, style: { color: theme.palette.text.secondary, fontSize: "12px", fontWeight: 500 } },
+      forceNiceScale: true,
+      min: 0,
+      labels: {
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+        formatter: (v) => `${Math.round(v)}`,
+      },
+      title: {
+        text: yTitle,
+        style: {
+          color: theme.palette.text.secondary,
+          fontSize: "12px",
+          fontWeight: 500,
+        },
+      },
     },
-    grid: { borderColor: theme.palette.divider, strokeDashArray: 4, xaxis: { lines: { show: false } }, padding: { left: 8, right: 8 } },
+    grid: {
+      borderColor: theme.palette.divider,
+      strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+      padding: { left: 8, right: 8 },
+    },
     tooltip: { theme: theme.palette.mode, y: { formatter: tooltip } },
   };
 }
@@ -1363,24 +2069,44 @@ const RESPONSE_BUCKET_MS = 25;
 const AgentResponseTimePanel = memo(function AgentResponseTimePanel({ tasks }) {
   const theme = useTheme();
   const { buckets, overPct, p50, p95 } = useMemo(() => {
-    const values = (tasks || []).map((t) => agentLatencyOf(t)).filter((v) => v > 0);
+    const values = (tasks || [])
+      .map((t) => agentLatencyOf(t))
+      .filter((v) => v > 0);
     if (!values.length) return { buckets: [], overPct: 0, p50: 0, p95: 0 };
     const sorted = [...values].sort((a, b) => a - b);
-    const lo = Math.max(0, Math.floor(sorted[0] / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS - RESPONSE_BUCKET_MS);
-    const hi = Math.ceil((sorted[sorted.length - 1] + 1) / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS + RESPONSE_BUCKET_MS;
+    const lo = Math.max(
+      0,
+      Math.floor(sorted[0] / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS -
+        RESPONSE_BUCKET_MS,
+    );
+    const hi =
+      Math.ceil((sorted[sorted.length - 1] + 1) / RESPONSE_BUCKET_MS) *
+        RESPONSE_BUCKET_MS +
+      RESPONSE_BUCKET_MS;
     const list = [];
     for (let at = lo; at < hi; at += RESPONSE_BUCKET_MS) {
-      list.push({ at, count: values.filter((v) => v >= at && v < at + RESPONSE_BUCKET_MS).length });
+      list.push({
+        at,
+        count: values.filter((v) => v >= at && v < at + RESPONSE_BUCKET_MS)
+          .length,
+      });
     }
     return {
       buckets: list,
-      overPct: pct(values.filter((v) => v >= RESPONSE_TARGET_MS).length, values.length),
+      overPct: pct(
+        values.filter((v) => v >= RESPONSE_TARGET_MS).length,
+        values.length,
+      ),
       p50: percentile(sorted, 50),
       p95: percentile(sorted, 95),
     };
   }, [tasks]);
   if (!buckets.length) return null;
-  const exportRows = buckets.map((b) => ({ from_ms: b.at, to_ms: b.at + RESPONSE_BUCKET_MS, calls: b.count }));
+  const exportRows = buckets.map((b) => ({
+    from_ms: b.at,
+    to_ms: b.at + RESPONSE_BUCKET_MS,
+    calls: b.count,
+  }));
   return (
     <Panel
       title="Agent response time per call"
@@ -1391,11 +2117,14 @@ const AgentResponseTimePanel = memo(function AgentResponseTimePanel({ tasks }) {
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
         <ReactApexChart
-          type="bar" height={260}
+          type="bar"
+          height={260}
           series={[{ name: "Calls", data: buckets.map((b) => b.count) }]}
           options={histogramOptions(theme, {
             categories: buckets.map((b) => fmtMs(b.at)),
-            colors: buckets.map((b) => (b.at >= RESPONSE_TARGET_MS ? HIST_RED : HIST_PURPLE)),
+            colors: buckets.map((b) =>
+              b.at >= RESPONSE_TARGET_MS ? HIST_RED : HIST_PURPLE,
+            ),
             xTitle: "average response time per call",
             columnWidth: "80%",
             tooltip: (v) => `${v} call${v === 1 ? "" : "s"}`,
@@ -1422,9 +2151,15 @@ const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
     const list = measuredOnly(tasks || []);
     const scores = list.map((t) => csatOf(t));
     /* Always the full 0–10 scale, so empty high scores read as a gap. */
-    const byScore = Array.from({ length: 11 }, (_, s) => scores.filter((v) => v === s).length);
+    const byScore = Array.from(
+      { length: 11 },
+      (_, s) => scores.filter((v) => v === s).length,
+    );
     const judged = list.filter((t) => (t.evalResults || []).length > 0);
-    const agree = judged.filter((t) => (outcomeOf(t) === "passed") === t.evalResults.every((r) => r.passed)).length;
+    const agree = judged.filter(
+      (t) =>
+        (outcomeOf(t) === "passed") === t.evalResults.every((r) => r.passed),
+    ).length;
     return { counts: byScore, agreePct: pct(agree, judged.length) };
   }, [tasks]);
   const exportRows = counts.map((c, s) => ({ csat: s, calls: c }));
@@ -1438,11 +2173,14 @@ const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
         <ReactApexChart
-          type="bar" height={260}
+          type="bar"
+          height={260}
           series={[{ name: "Calls", data: counts }]}
           options={histogramOptions(theme, {
             categories: counts.map((_, s) => String(s)),
-            colors: counts.map((_, s) => (s <= CSAT_BAD_AT ? HIST_RED : HIST_PURPLE)),
+            colors: counts.map((_, s) =>
+              s <= CSAT_BAD_AT ? HIST_RED : HIST_PURPLE,
+            ),
             xTitle: "CSAT score",
             tooltip: (v) => `${v} call${v === 1 ? "" : "s"}`,
           })}
@@ -1462,14 +2200,23 @@ CsatDistributionPanel.propTypes = { tasks: PropTypes.array };
  * plausible split (LLM ~55% · TTS ~25% · STT ~15% · Transport ~5%)
  * that stays stable per-task via hashId so it doesn't shimmer.
  */
-const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks }) {
+const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
+  tasks,
+}) {
   const theme = useTheme();
   const { series, categories, totals, totalCost } = useMemo(() => {
     const costed = tasks.filter((t) => (t.cost || 0) > 0);
-    if (!costed.length) return { series: [], categories: [], totals: {}, totalCost: 0 };
+    if (!costed.length)
+      return { series: [], categories: [], totals: {}, totalCost: 0 };
     const cats = costed.map((_, i) => `T${i + 1}`);
-    const llm = [], stt = [], tts = [], transport = [];
-    let sumLlm = 0, sumStt = 0, sumTts = 0, sumTrans = 0;
+    const llm = [],
+      stt = [],
+      tts = [],
+      transport = [];
+    let sumLlm = 0,
+      sumStt = 0,
+      sumTts = 0,
+      sumTrans = 0;
     costed.forEach((t) => {
       /* Shared with the widget editor's per-stage cost metrics. */
       const split = costSplitOf(t);
@@ -1477,14 +2224,20 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks })
       const s = split.stt;
       const tt = split.tts;
       const tr = split.transport;
-      llm.push(l); stt.push(s); tts.push(tt); transport.push(tr);
-      sumLlm += l; sumStt += s; sumTts += tt; sumTrans += tr;
+      llm.push(l);
+      stt.push(s);
+      tts.push(tt);
+      transport.push(tr);
+      sumLlm += l;
+      sumStt += s;
+      sumTts += tt;
+      sumTrans += tr;
     });
     return {
       series: [
-        { name: "LLM",       data: llm },
-        { name: "TTS",       data: tts },
-        { name: "STT",       data: stt },
+        { name: "LLM", data: llm },
+        { name: "TTS", data: tts },
+        { name: "STT", data: stt },
         { name: "Transport", data: transport },
       ],
       categories: cats,
@@ -1495,10 +2248,12 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks })
   if (!series.length) return null;
 
   const legend = [
-    { key: "LLM",       value: totals.llm,       color: "#7857FC" },
-    { key: "TTS",       value: totals.tts,       color: "#0EA5E9" },
-    { key: "STT",       value: totals.stt,       color: "#F59E0B" },
+    /* eslint-disable no-restricted-syntax -- ds: data colour */
+    { key: "LLM", value: totals.llm, color: "#7857FC" },
+    { key: "TTS", value: totals.tts, color: "#0EA5E9" },
+    { key: "STT", value: totals.stt, color: "#F59E0B" },
     { key: "Transport", value: totals.transport, color: "#94A3B8" },
+    /* eslint-enable no-restricted-syntax */
   ];
   const exportRows = legend.map((l) => ({
     stage: l.key,
@@ -1515,47 +2270,103 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks })
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="bar" height={220}
+          type="bar"
+          height={220}
           series={series}
           options={{
             chart: {
-              type: "bar", stacked: true,
-              toolbar: { show: false }, animations: { enabled: false },
-              background: "transparent", fontFamily: theme.typography.fontFamily,
+              type: "bar",
+              stacked: true,
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
             },
             theme: { mode: theme.palette.mode },
             colors: legend.map((l) => l.color),
             fill: { type: "solid", opacity: 0.9 },
             stroke: { show: false },
             plotOptions: {
-              bar: { columnWidth: "62%", borderRadius: 2, borderRadiusApplication: "end", borderRadiusWhenStacked: "last" },
+              bar: {
+                columnWidth: "62%",
+                borderRadius: 2,
+                borderRadiusApplication: "end",
+                borderRadiusWhenStacked: "last",
+              },
             },
             dataLabels: { enabled: false },
             legend: { show: false },
             xaxis: {
               categories,
-              axisBorder: { show: false }, axisTicks: { show: false },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
               tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, hideOverlappingLabels: true },
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                hideOverlappingLabels: true,
+              },
             },
-            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => fmtCredits(Number(v)) } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
+            yaxis: {
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                formatter: (v) => fmtCredits(Number(v)),
+              },
+            },
+            grid: {
+              borderColor: theme.palette.divider,
+              strokeDashArray: 4,
+              padding: { left: 8, right: 8, top: -6, bottom: -6 },
+            },
             tooltip: {
               theme: theme.palette.mode,
-              shared: true, intersect: false,
+              shared: true,
+              intersect: false,
               y: { formatter: (v) => fmtCredits(Number(v)) },
             },
           }}
         />
         {/* Legend below with totals + share, Retell-style */}
-        <Stack direction="row" flexWrap="wrap" sx={{ mt: 1.25, px: 0.5, columnGap: 1.75, rowGap: 0.5 }}>
+        <Stack
+          direction="row"
+          flexWrap="wrap"
+          sx={{ mt: 1.25, px: 0.5, columnGap: 1.75, rowGap: 0.5 }}
+        >
           {legend.map((l) => (
-            <Stack key={l.key} direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-              <Box sx={{ width: 8, height: 8, borderRadius: 0.75, bgcolor: l.color, flexShrink: 0 }} />
-              <Typography sx={{ fontSize: 11.5, color: "text.subtitle", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                <Box component="span" sx={{ color: "text.primary" }}>{l.key}</Box>{" "}
-                <b style={{ color: "inherit" }}>{fmtCredits(l.value)}</b>{" "}
-                ({Math.round((l.value / totalCost) * 100)}%)
+            <Stack
+              key={l.key}
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ minWidth: 0 }}
+            >
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "4px",
+                  bgcolor: l.color,
+                  flexShrink: 0,
+                }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Box component="span" sx={{ color: "text.primary" }}>
+                  {l.key}
+                </Box>{" "}
+                <b style={{ color: "inherit" }}>{fmtCredits(l.value)}</b> (
+                {Math.round((l.value / totalCost) * 100)}%)
               </Typography>
             </Stack>
           ))}
@@ -1574,12 +2385,22 @@ VoiceCostBreakdownPanel.propTypes = { tasks: PropTypes.array };
  * as first-class panels.
  */
 const MetricDistribution = memo(function MetricDistribution({
-  title, subtitle, tasks, accessor, formatter, color = "#7857FC", info,
+  title,
+  subtitle,
+  tasks,
+  accessor,
+  formatter,
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  color = "#7857FC",
+  info,
 }) {
   const theme = useTheme();
   const { series, categories, exportRows } = useMemo(() => {
-    const values = tasks.map(accessor).filter((v) => Number.isFinite(v) && v > 0);
-    if (!values.length) return { series: [{ data: [] }], categories: [], exportRows: [] };
+    const values = tasks
+      .map(accessor)
+      .filter((v) => Number.isFinite(v) && v > 0);
+    if (!values.length)
+      return { series: [{ data: [] }], categories: [], exportRows: [] };
     const min = Math.min(...values);
     const max = Math.max(...values);
     /* 8 fixed-width buckets from min→max. Small spread degenerates to
@@ -1605,13 +2426,24 @@ const MetricDistribution = memo(function MetricDistribution({
   }, [tasks, accessor, formatter]);
 
   return (
-    <Panel title={title} subtitle={subtitle} exportRows={exportRows} info={info}>
+    <Panel
+      title={title}
+      subtitle={subtitle}
+      exportRows={exportRows}
+      info={info}
+    >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="bar" height={220}
+          type="bar"
+          height={220}
           series={series}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+            },
             theme: { mode: theme.palette.mode },
             plotOptions: { bar: { columnWidth: "70%", borderRadius: 2 } },
             dataLabels: { enabled: false },
@@ -1620,13 +2452,35 @@ const MetricDistribution = memo(function MetricDistribution({
             colors: [color],
             xaxis: {
               categories,
-              axisBorder: { show: false }, axisTicks: { show: false },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
               tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, hideOverlappingLabels: true },
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                hideOverlappingLabels: true,
+              },
             },
-            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 0, right: 0, top: -6, bottom: -6 } },
-            tooltip: { theme: theme.palette.mode, y: { formatter: (v) => `${v} tasks` } },
+            yaxis: {
+              labels: {
+                style: {
+                  colors: theme.palette.text.secondary,
+                  fontSize: "12px",
+                },
+                formatter: (v) => `${Math.round(v)}`,
+              },
+            },
+            grid: {
+              borderColor: theme.palette.divider,
+              strokeDashArray: 4,
+              padding: { left: 0, right: 0, top: -6, bottom: -6 },
+            },
+            tooltip: {
+              theme: theme.palette.mode,
+              y: { formatter: (v) => `${v} tasks` },
+            },
           }}
         />
       </Box>
@@ -1634,9 +2488,13 @@ const MetricDistribution = memo(function MetricDistribution({
   );
 });
 MetricDistribution.propTypes = {
-  title: PropTypes.node, subtitle: PropTypes.node,
-  tasks: PropTypes.array, accessor: PropTypes.func, formatter: PropTypes.func,
-  color: PropTypes.string, info: PropTypes.node,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  tasks: PropTypes.array,
+  accessor: PropTypes.func,
+  formatter: PropTypes.func,
+  color: PropTypes.string,
+  info: PropTypes.node,
 };
 
 /**
@@ -1655,30 +2513,63 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
        field as duration, so it was the same distribution twice.) */
     const measured = measuredOnly(tasks);
     const defs = [
-      { key: "duration", label: "Call duration",     fmt: (v) => `${v.toFixed(1)}s`,          accessor: (t) => (t.durationMs || 0) / 1000, population: measured },
-      { key: "cost",     label: "Cost per scenario", fmt: (v) => fmtCredits(v),          accessor: (t) => t.cost || 0, population: tasks.filter((t) => !t.costUnverified) },
-      { key: "tokens",   label: "Tokens per scenario", fmt: (v) => numFmt.format(Math.round(v)), accessor: (t) => t.tokens || 0, population: tasks },
-      { key: "turns",    label: "Turns per call",    fmt: (v) => `${Math.round(v)}`,          accessor: (t) => t.steps?.length || 0, population: measured },
+      {
+        key: "duration",
+        label: "Call duration",
+        fmt: (v) => `${v.toFixed(1)}s`,
+        accessor: (t) => (t.durationMs || 0) / 1000,
+        population: measured,
+      },
+      {
+        key: "cost",
+        label: "Cost per scenario",
+        fmt: (v) => fmtCredits(v),
+        accessor: (t) => t.cost || 0,
+        population: tasks.filter((t) => !t.costUnverified),
+      },
+      {
+        key: "tokens",
+        label: "Tokens per scenario",
+        fmt: (v) => numFmt.format(Math.round(v)),
+        accessor: (t) => t.tokens || 0,
+        population: tasks,
+      },
+      {
+        key: "turns",
+        label: "Turns per call",
+        fmt: (v) => `${Math.round(v)}`,
+        accessor: (t) => t.steps?.length || 0,
+        population: measured,
+      },
     ];
     return defs.map((d) => {
-      const values = d.population.map(d.accessor).filter((v) => Number.isFinite(v) && v > 0);
+      const values = d.population
+        .map(d.accessor)
+        .filter((v) => Number.isFinite(v) && v > 0);
       if (!values.length) return { ...d, empty: true };
       const sorted = [...values].sort((a, b) => a - b);
       return {
-        ...d, count: values.length,
-        p50: percentile(sorted, 50), p90: percentileOrNull(sorted, 90), p99: percentileOrNull(sorted, 99),
-        min: sorted[0], max: sorted[sorted.length - 1],
+        ...d,
+        count: values.length,
+        p50: percentile(sorted, 50),
+        p90: percentileOrNull(sorted, 90),
+        p99: percentileOrNull(sorted, 99),
+        min: sorted[0],
+        max: sorted[sorted.length - 1],
       };
     });
   }, [tasks]);
 
-  const exportRows = metrics.filter((m) => !m.empty).map((m) => ({
-    metric: m.label, samples: m.count,
-    p50: Number(m.p50.toFixed(4)),
-    p90: m.p90 == null ? "" : Number(m.p90.toFixed(4)),
-    p99: m.p99 == null ? "" : Number(m.p99.toFixed(4)),
-    max: Number(m.max.toFixed(4)),
-  }));
+  const exportRows = metrics
+    .filter((m) => !m.empty)
+    .map((m) => ({
+      metric: m.label,
+      samples: m.count,
+      p50: Number(m.p50.toFixed(4)),
+      p90: m.p90 == null ? "" : Number(m.p90.toFixed(4)),
+      p99: m.p99 == null ? "" : Number(m.p99.toFixed(4)),
+      max: Number(m.max.toFixed(4)),
+    }));
 
   return (
     <Panel
@@ -1687,23 +2578,42 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
       exportRows={exportRows}
       info="One tile per metric with the numbers that describe its shape, and n — how many values it is built from. Duration and turns count measured calls only; cost and tokens count every scenario, since they were spent either way. p90 is shown from 10 values and p99 from 100 — below that they would just be the maximum. A big gap between p50 and the tail means a few outliers are dragging the run. Turns count every message from either side."
     >
-      <Box sx={{
-        display: "grid",
-        gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
-        bgcolor: "divider", gap: "1px",
-        "& > *": { bgcolor: "background.paper" },
-      }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "1fr 1fr",
+            sm: "repeat(2, 1fr)",
+            md: "repeat(4, 1fr)",
+          },
+          bgcolor: "divider",
+          gap: "1px",
+          "& > *": { bgcolor: "background.paper" },
+        }}
+      >
         {metrics.map((m) => (
-          <Box key={m.key} sx={{
-            px: 2.25, py: 2,
-            display: "flex", flexDirection: "column",
-            minHeight: 140,
-          }}>
-            <Typography sx={{
-              fontSize: 10.5, fontWeight: 600, color: "text.subtitle",
-              textTransform: "uppercase", letterSpacing: 0.6,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>
+          <Box
+            key={m.key}
+            sx={{
+              px: 2.25,
+              py: 2,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 140,
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "text.tertiary",
+                textTransform: "none",
+                letterSpacing: 0.6,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {m.label}
             </Typography>
             {m.empty ? (
@@ -1713,15 +2623,31 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
             ) : (
               <>
                 {/* p90 hero */}
-                <Stack direction="row" alignItems="baseline" spacing={0.5} sx={{ mt: 1 }}>
-                  <Typography sx={{
-                    fontSize: 22, fontWeight: 700, lineHeight: 1,
-                    fontVariantNumeric: "tabular-nums", letterSpacing: -0.3,
-                    color: "text.primary",
-                  }}>
+                <Stack
+                  direction="row"
+                  alignItems="baseline"
+                  spacing={0.5}
+                  sx={{ mt: 1 }}
+                >
+                  <Typography
+                    sx={{
+                      fontSize: 20,
+                      fontWeight: 600,
+                      lineHeight: 1,
+                      fontVariantNumeric: "tabular-nums",
+                      letterSpacing: -0.3,
+                      color: "text.primary",
+                    }}
+                  >
                     {m.p90 == null ? "—" : m.fmt(m.p90)}
                   </Typography>
-                  <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 600 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      color: "text.tertiary",
+                      fontWeight: 600,
+                    }}
+                  >
                     p90 · n = {m.count}
                   </Typography>
                 </Stack>
@@ -1733,11 +2659,31 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
                     ["p99", m.p99 == null ? "—" : m.fmt(m.p99)],
                     ["max", m.fmt(m.max)],
                   ].map(([k, v]) => (
-                    <Stack key={k} direction="row" justifyContent="space-between" alignItems="baseline">
-                      <Typography sx={{ fontSize: 10.5, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>
+                    <Stack
+                      key={k}
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="baseline"
+                    >
+                      <Typography
+                        sx={{
+                          fontSize: 12,
+                          color: "text.tertiary",
+                          textTransform: "none",
+                          letterSpacing: 0.4,
+                          fontWeight: 600,
+                        }}
+                      >
                         {k}
                       </Typography>
-                      <Typography sx={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "text.primary" }}>
+                      <Typography
+                        sx={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          fontVariantNumeric: "tabular-nums",
+                          color: "text.primary",
+                        }}
+                      >
                         {v}
                       </Typography>
                     </Stack>
@@ -1756,7 +2702,9 @@ DistributionSummary.propTypes = { tasks: PropTypes.array };
 /* DrilldownContext moved to its own module (./drilldownContext) so
    the unified widget renderer can use the same context without
    importing this file. */
-function useDrilldown() { return useContext(DrilldownContext) || (() => {}); }
+function useDrilldown() {
+  return useContext(DrilldownContext) || (() => {});
+}
 
 /**
  * Right-side drawer that shows a filtered task list. Opens when
@@ -1765,7 +2713,14 @@ function useDrilldown() { return useContext(DrilldownContext) || (() => {}); }
  * in the URL — the Test runs table reads that and scrolls / opens
  * the task row.
  */
-function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered, env }) {
+function TaskDrilldownDrawer({
+  open,
+  onClose,
+  title,
+  subtitle,
+  tasks: filtered,
+  env,
+}) {
   const golden = useGoldenSet(env || {});
   const covered = useDrawerCovered(open);
   return (
@@ -1777,88 +2732,196 @@ function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered, 
       slotProps={{
         paper: {
           sx: {
-            position: "fixed", right: 0, top: 0, bottom: 0, m: 0,
-            width: { xs: "100vw", sm: 520 }, maxWidth: "100vw",
-            height: "100vh", maxHeight: "100vh",
+            position: "fixed",
+            right: 0,
+            top: 0,
+            bottom: 0,
+            m: 0,
+            width: { xs: "100vw", sm: 640 },
+            maxWidth: "100vw",
+            height: "100vh",
+            maxHeight: "100vh",
             borderRadius: 0,
-            display: "flex", flexDirection: "column",
+            display: "flex",
+            flexDirection: "column",
           },
         },
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1.5} sx={{
-        px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider",
-      }}>
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.5}
+        sx={{
+          px: 2.5,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontSize: 11, fontWeight: 600, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Drill-down · {filtered?.length || 0} {filtered?.length === 1 ? "task" : "tasks"}
+          <Typography
+            sx={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.5,
+            }}
+          >
+            Drill-down · {filtered?.length || 0}{" "}
+            {filtered?.length === 1 ? "task" : "tasks"}
           </Typography>
-          <Typography sx={{ fontSize: 15, fontWeight: 700, mt: 0.25, letterSpacing: -0.1 }}>
+          <Typography
+            sx={{
+              fontSize: 13,
+              fontWeight: 600,
+              mt: 0.25,
+              letterSpacing: -0.1,
+            }}
+          >
             {title}
           </Typography>
           {subtitle && (
-            <Typography sx={{ fontSize: 12, color: "text.subtitle", mt: 0.25 }}>
+            <Typography sx={{ fontSize: 12, color: "text.tertiary", mt: 0.25 }}>
               {subtitle}
             </Typography>
           )}
         </Box>
-        <IconButton size="small" onClick={onClose} aria-label="Close drill-down">
-          <Iconify icon="eva:close-fill" width={18} />
+        <IconButton
+          size="small"
+          onClick={onClose}
+          aria-label="Close drill-down"
+        >
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Stack>
       <Box sx={{ flex: 1, overflowY: "auto" }}>
-        {(!filtered || filtered.length === 0) ? (
+        {!filtered || filtered.length === 0 ? (
           <Box sx={{ p: 4, textAlign: "center" }}>
-            <Typography sx={{ fontSize: 13, color: "text.subtitle" }}>
+            <Typography sx={{ fontSize: 13, color: "text.tertiary" }}>
               No tasks match this selection.
             </Typography>
           </Box>
         ) : (
           <Stack divider={<Box sx={{ height: "1px", bgcolor: "divider" }} />}>
             {filtered.map((t, i) => {
-              const status = t.status === "passed" ? "Passed"
-                : t.status === "error" ? "Error"
-                : t.status === "failed" ? "Failed"
-                : "Unknown";
-              const statusColor = t.status === "passed" ? "#16A34A"
-                : t.status === "error" ? "#DC2626"
-                : t.status === "failed" ? "#DC2626"
-                : "text.subtitle";
+              const status =
+                t.status === "passed"
+                  ? "Passed"
+                  : t.status === "error"
+                    ? "Error"
+                    : t.status === "failed"
+                      ? "Failed"
+                      : "Unknown";
+              const statusRole =
+                t.status === "passed"
+                  ? "success"
+                  : t.status === "error" || t.status === "failed"
+                    ? "danger"
+                    : "neutral";
               const isGold = golden.ids.includes(t.id);
               return (
                 <Box key={t.id || i} sx={{ px: 2.5, py: 1.5 }}>
                   <Stack direction="row" alignItems="baseline" spacing={1}>
-                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       #{i + 1}
                     </Typography>
-                    <Typography sx={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <Typography
+                      sx={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {scenarioTitle(t.title) || t.name || t.id}
                     </Typography>
-                    <Tooltip arrow title={isGold ? "Remove from golden set" : "Mark as golden — ground truth for the divergence widgets"}>
+                    <Tooltip
+                      arrow
+                      title={
+                        isGold
+                          ? "Remove from golden set"
+                          : "Mark as golden — ground truth for the divergence widgets"
+                      }
+                    >
                       <IconButton
-                        size="small" onClick={() => golden.toggle(t.id)}
-                        sx={{ width: 26, height: 26, color: isGold ? "#F59E0B" : "text.disabled", "&:hover": { color: "#F59E0B" } }}
-                        aria-label={isGold ? "Remove from golden set" : "Mark as golden"}
+                        size="small"
+                        onClick={() => golden.toggle(t.id)}
+                        sx={{
+                          color: isGold ? "status.warning.fg" : "text.disabled",
+                          "&:hover": { color: "status.warning.fg" },
+                        }}
+                        aria-label={
+                          isGold ? "Remove from golden set" : "Mark as golden"
+                        }
                       >
-                        <Iconify icon={isGold ? "solar:star-bold" : "solar:star-linear"} width={14} />
+                        <Iconify
+                          icon={
+                            isGold ? "solar:star-bold" : "solar:star-linear"
+                          }
+                          width={14}
+                        />
                       </IconButton>
                     </Tooltip>
-                    <Typography sx={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
-                      {status}
-                    </Typography>
+                    <StatusBadge
+                      status={t.status}
+                      label={status}
+                      role={statusRole}
+                      size="sm"
+                    />
                   </Stack>
                   <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
-                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {((t.durationMs || 0) / 1000).toFixed(1)}s
                     </Typography>
-                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {t.steps?.length || 0} turns
                     </Typography>
-                    <Typography sx={{ fontSize: 11, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                      {t.costUnverified ? "cost unverified" : fmtCredits(t.cost || 0)}
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {t.costUnverified
+                        ? "cost unverified"
+                        : fmtCredits(t.cost || 0)}
                     </Typography>
                     {t.persona?.name && (
-                      <Typography sx={{ fontSize: 11, color: "text.subtitle", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <Typography
+                        sx={{
+                          fontSize: 12,
+                          color: "text.tertiary",
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {t.persona.name}
                       </Typography>
                     )}
@@ -1873,8 +2936,11 @@ function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered, 
   );
 }
 TaskDrilldownDrawer.propTypes = {
-  open: PropTypes.bool, onClose: PropTypes.func,
-  title: PropTypes.node, subtitle: PropTypes.node, tasks: PropTypes.array,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  tasks: PropTypes.array,
   env: PropTypes.object,
 };
 
@@ -1887,11 +2953,13 @@ TaskDrilldownDrawer.propTypes = {
  */
 const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
   const colorOf = (t) => {
+    /* eslint-disable no-restricted-syntax -- ds: data colour */
     if (t.status === "passed") return "#7857FC";
-    if (t.status === "error")  return "#DC2626";
-    if (t.escalated)           return "#F59E0B";
+    if (t.status === "error") return "#DC2626";
+    if (t.escalated) return "#F59E0B";
     if (t.status === "failed") return "#DC2626";
     return "#94A3B8";
+    /* eslint-enable no-restricted-syntax */
   };
   const total = tasks.length;
   const passed = tasks.filter((t) => t.status === "passed").length;
@@ -1902,31 +2970,54 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
       info="One cell per task, colour-coded by outcome. Useful when the run has enough tasks that a bar chart blurs — the grid keeps every task visible at once so bad clusters (a block of red) show up as visual patterns you can point at."
     >
       <Box sx={{ px: 2, py: 2 }}>
-        <Box sx={{
-          display: "grid",
-          /* Auto-fit tiles: 24px min, filling the row. On a wide panel
+        <Box
+          sx={{
+            display: "grid",
+            /* Auto-fit tiles: 24px min, filling the row. On a wide panel
              fits ~12-16 per row; wraps naturally as the panel narrows. */
-          gridTemplateColumns: "repeat(auto-fill, minmax(24px, 1fr))",
-          gap: "6px",
-        }}>
+            gridTemplateColumns: "repeat(auto-fill, minmax(24px, 1fr))",
+            gap: "6px",
+          }}
+        >
           {tasks.map((t, i) => {
             const c = colorOf(t);
-            const name = scenarioTitle(t.title) || t.name || t.id || `Task ${i + 1}`;
-            const statusText = t.status === "passed" ? "Passed"
-              : t.status === "error" ? "Error"
-              : t.escalated ? "Escalated"
-              : t.status === "failed" ? "Failed"
-              : "Unknown";
-            const dur = t.durationMs ? ` · ${(t.durationMs / 1000).toFixed(1)}s` : "";
+            const name =
+              scenarioTitle(t.title) || t.name || t.id || `Task ${i + 1}`;
+            const statusText =
+              t.status === "passed"
+                ? "Passed"
+                : t.status === "error"
+                  ? "Error"
+                  : t.escalated
+                    ? "Escalated"
+                    : t.status === "failed"
+                      ? "Failed"
+                      : "Unknown";
+            const dur = t.durationMs
+              ? ` · ${(t.durationMs / 1000).toFixed(1)}s`
+              : "";
             return (
               <Tooltip
-                key={t.id || i} arrow
+                key={t.id || i}
+                arrow
                 title={
                   <Box sx={{ p: 0.5 }}>
-                    <Typography sx={{ fontSize: 11, fontWeight: 700, color: "common.white" }}>
-                      T{i + 1} · {statusText}{dur}
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "common.white",
+                      }}
+                    >
+                      T{i + 1} · {statusText}
+                      {dur}
                     </Typography>
-                    <Typography sx={{ fontSize: 11, color: (th) => alpha(th.palette.common.white, 0.75) }}>
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        color: (th) => alpha(th.palette.common.white, 0.75),
+                      }}
+                    >
                       {name}
                     </Typography>
                   </Box>
@@ -1935,14 +3026,13 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
                 <Box
                   sx={{
                     aspectRatio: "1 / 1",
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     bgcolor: alpha(c, 0.85),
                     border: "1px solid",
                     borderColor: alpha(c, 0.4),
                     cursor: "pointer",
-                    transition: "transform 0.15s ease, border-color 0.15s ease",
+                    transition: "border-color 150ms ease",
                     "&:hover": {
-                      transform: "scale(1.15)",
                       borderColor: c,
                     },
                   }}
@@ -1953,15 +3043,40 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
         </Box>
 
         {/* Compact legend */}
-        <Stack direction="row" spacing={2} sx={{ mt: 2, pt: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            mt: 2,
+            pt: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           {[
-            { label: "Passed",    color: "#7857FC" },
-            { label: "Failed",    color: "#DC2626" },
+            /* eslint-disable no-restricted-syntax -- ds: data colour */
+            { label: "Passed", color: "#7857FC" },
+            { label: "Failed", color: "#DC2626" },
             { label: "Escalated", color: "#F59E0B" },
+            /* eslint-enable no-restricted-syntax */
           ].map((l) => (
-            <Stack key={l.label} direction="row" alignItems="center" spacing={0.75}>
-              <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: l.color }} />
-              <Typography sx={{ fontSize: 11, color: "text.subtitle" }}>{l.label}</Typography>
+            <Stack
+              key={l.label}
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+            >
+              <Box
+                sx={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "4px",
+                  bgcolor: l.color,
+                }}
+              />
+              <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+                {l.label}
+              </Typography>
             </Stack>
           ))}
         </Stack>
@@ -2014,31 +3129,59 @@ function KpiStrip({ tasks, biz, trend, env }) {
     .filter((t) => !t.fault?.transport && !t.fault?.environment)
     .reduce((a, t) => a + samplesOf(t), 0);
   const mN = measured.length;
-  const avgOf = (sel) => (mN ? measured.reduce((a, t) => a + sel(t), 0) / mN : 0);
+  const avgOf = (sel) =>
+    mN ? measured.reduce((a, t) => a + sel(t), 0) / mN : 0;
   /* Talk ratio is speaking time, not message count. */
-  const talk = measured.reduce((acc, t) => {
-    (t.steps || []).forEach((st) => {
-      const d = Number(st.duration) || 0;
-      if (st.role === "agent") acc.agent += d; else if (st.role === "customer") acc.customer += d;
-    });
-    return acc;
-  }, { agent: 0, customer: 0 });
-  const agentTalkPct = talk.agent + talk.customer
-    ? Math.round((talk.agent / (talk.agent + talk.customer)) * 100)
-    : 50;
+  const talk = measured.reduce(
+    (acc, t) => {
+      (t.steps || []).forEach((st) => {
+        const d = Number(st.duration) || 0;
+        if (st.role === "agent") acc.agent += d;
+        else if (st.role === "customer") acc.customer += d;
+      });
+      return acc;
+    },
+    { agent: 0, customer: 0 },
+  );
+  const agentTalkPct =
+    talk.agent + talk.customer
+      ? Math.round((talk.agent / (talk.agent + talk.customer)) * 100)
+      : 50;
 
   /* Legacy test-run KPIs (Call details + System metrics), in the
      legacy order. WPM, stop latency and talk ratio are voice-only. */
   const legacyCards = [
-    { label: isVoice ? "Total Calls" : "Total Chats", value: numFmt.format(n), sub: `${tasks.length} scenarios` },
-    { label: isVoice ? "Connected" : "Completed", value: numFmt.format(connected), sub: `of ${n}` },
-    { label: isVoice ? "Calls Connected(%)" : "Completion(%)", value: `${pct(connected, n)}%` },
+    {
+      label: isVoice ? "Total Calls" : "Total Chats",
+      value: numFmt.format(n),
+      sub: `${tasks.length} scenarios`,
+    },
+    {
+      label: isVoice ? "Connected" : "Completed",
+      value: numFmt.format(connected),
+      sub: `of ${n}`,
+    },
+    {
+      label: isVoice ? "Calls Connected(%)" : "Completion(%)",
+      value: `${pct(connected, n)}%`,
+    },
     { label: "Avg CSAT Score", value: mN ? avgOf(csatOf).toFixed(1) : "—" },
     { label: "Agent Latency", value: `${Math.round(avgOf(agentLatencyOf))}ms` },
-    isVoice && { label: "Agent WPM", value: Math.round(avgOf((t) => jitter(t.id, "wpm", 150, 40))), sub: "words/min" },
-    isVoice && { label: "Agent Stop Latency", value: `${Math.round(avgOf((t) => jitter(t.id, "stop", 180, 240)))}ms` },
+    isVoice && {
+      label: "Agent WPM",
+      value: Math.round(avgOf((t) => jitter(t.id, "wpm", 150, 40))),
+      sub: "words/min",
+    },
+    isVoice && {
+      label: "Agent Stop Latency",
+      value: `${Math.round(avgOf((t) => jitter(t.id, "stop", 180, 240)))}ms`,
+    },
     { label: "Avg Turn Count", value: avgTurns ? avgTurns.toFixed(1) : "—" },
-    isVoice && { label: "Talk Ratio", value: `${agentTalkPct}/${100 - agentTalkPct}`, sub: "agent/customer" },
+    isVoice && {
+      label: "Talk Ratio",
+      value: `${agentTalkPct}/${100 - agentTalkPct}`,
+      sub: "agent/customer",
+    },
   ].filter(Boolean);
 
   const cards = [
@@ -2062,29 +3205,53 @@ function KpiStrip({ tasks, biz, trend, env }) {
     },
     {
       label: "Total cost",
-      value: biz.costUnverified && !biz.totalCost ? "unverified" : fmtCredits(biz.totalCost),
-      sub: biz.costUnverified ? `this run · ${biz.costUnverified} unverified` : "this run",
+      value:
+        biz.costUnverified && !biz.totalCost
+          ? "unverified"
+          : fmtCredits(biz.totalCost),
+      sub: biz.costUnverified
+        ? `this run · ${biz.costUnverified} unverified`
+        : "this run",
     },
   ];
 
   return (
-    <Box sx={{
-      border: "1px solid", borderColor: "divider", borderRadius: 1.5,
-      bgcolor: "background.paper",
-      display: "grid",
-      gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(5, 1fr)", lg: "repeat(7, 1fr)" },
-      overflow: "hidden",
-      /* Right + bottom hairline per cell; the container clips the ones on
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        display: "grid",
+        gridTemplateColumns: {
+          xs: "repeat(2, 1fr)",
+          sm: "repeat(3, 1fr)",
+          md: "repeat(5, 1fr)",
+          lg: "repeat(7, 1fr)",
+        },
+        overflow: "hidden",
+        /* Right + bottom hairline per cell; the container clips the ones on
          its outer edge, and a partial last row leaves no grey gap cells. */
-      "& > *": { boxShadow: (t) => `1px 0 0 ${t.palette.divider}, 0 1px 0 ${t.palette.divider}` },
-    }}>
-      {cards.map((c) => <HeroKpi key={c.label} {...c} />)}
+        "& > *": {
+          boxShadow: (t) =>
+            `1px 0 0 ${t.palette.divider}, 0 1px 0 ${t.palette.divider}`,
+        },
+      }}
+    >
+      {cards.map((c) => (
+        <HeroKpi key={c.label} {...c} />
+      ))}
     </Box>
   );
 }
 KpiStrip.propTypes = {
-  tasks: PropTypes.array, evals: PropTypes.array, biz: PropTypes.object, trend: PropTypes.object, env: PropTypes.object,
-  runHistory: PropTypes.array, currentRunId: PropTypes.string,
+  tasks: PropTypes.array,
+  evals: PropTypes.array,
+  biz: PropTypes.object,
+  trend: PropTypes.object,
+  env: PropTypes.object,
+  runHistory: PropTypes.array,
+  currentRunId: PropTypes.string,
 };
 
 /**
@@ -2097,46 +3264,86 @@ function HeroKpi({ label, value, sub, delta, goodUp }) {
   const hasDelta = typeof delta === "number" && delta !== 0;
   const up = delta > 0;
   const positive = goodUp ? up : !up;
-  const deltaColor = hasDelta ? (positive ? "#16A34A" : "#DC2626") : "text.subtitle";
+  const deltaColor = hasDelta
+    ? positive
+      ? "status.success.fg"
+      : "status.danger.fg"
+    : "text.tertiary";
 
   return (
-    <Box sx={{
-      px: 2, py: 1.75, minWidth: 0,
-      display: "flex", flexDirection: "column", alignItems: "flex-start",
-      minHeight: 96,
-    }}>
-      <Typography sx={{
-        color: "text.subtitle",
-        fontSize: 11, fontWeight: 500, letterSpacing: 0,
-      }}>
+    <Box
+      sx={{
+        px: 2,
+        py: 1.75,
+        minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        minHeight: 96,
+      }}
+    >
+      <Typography
+        sx={{
+          color: "text.tertiary",
+          fontSize: 12,
+          fontWeight: 500,
+          letterSpacing: 0,
+        }}
+      >
         {label}
       </Typography>
 
-      <Typography sx={{
-        mt: 0.75,
-        fontSize: 26, fontWeight: 700, lineHeight: 1,
-        fontVariantNumeric: "tabular-nums", letterSpacing: -0.5,
-        color: "text.primary",
-      }}>
+      <Typography
+        sx={{
+          mt: 0.75,
+          fontSize: 24,
+          fontWeight: 600,
+          lineHeight: 1,
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: -0.5,
+          color: "text.primary",
+        }}
+      >
         {value}
       </Typography>
 
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: "auto", pt: 0.75 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ mt: "auto", pt: 0.75 }}
+      >
         {hasDelta && (
-          <Stack direction="row" alignItems="center" spacing={0.125} sx={{ color: deltaColor }}>
-            <Iconify icon={up ? "solar:arrow-up-linear" : "solar:arrow-down-linear"} width={11} />
-            <Typography sx={{
-              fontSize: 11, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: deltaColor,
-            }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.125}
+            sx={{ color: deltaColor }}
+          >
+            <Iconify
+              icon={up ? "solar:arrow-up-linear" : "solar:arrow-down-linear"}
+              width={12}
+            />
+            <Typography
+              sx={{
+                fontSize: 12,
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                color: deltaColor,
+              }}
+            >
               {Math.abs(delta)}%
             </Typography>
           </Stack>
         )}
         {sub && (
-          <Typography sx={{
-            color: "text.subtitle", fontSize: 11,
-            fontVariantNumeric: "tabular-nums",
-          }}>
+          <Typography
+            sx={{
+              color: "text.tertiary",
+              fontSize: 12,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {sub}
           </Typography>
         )}
@@ -2145,8 +3352,12 @@ function HeroKpi({ label, value, sub, delta, goodUp }) {
   );
 }
 HeroKpi.propTypes = {
-  label: PropTypes.node, value: PropTypes.node, sub: PropTypes.node,
-  delta: PropTypes.number, goodUp: PropTypes.bool, series: PropTypes.array,
+  label: PropTypes.node,
+  value: PropTypes.node,
+  sub: PropTypes.node,
+  delta: PropTypes.number,
+  goodUp: PropTypes.bool,
+  series: PropTypes.array,
 };
 
 /* ── use case risk list ────────────────────────────────────────────── */
@@ -2183,12 +3394,16 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
       const p = passed / total;
       const denom = 1 + (z * z) / total;
       const centre = p + (z * z) / (2 * total);
-      const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total);
+      const margin =
+        z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total);
       return (centre + margin) / denom;
     };
     const all = [...groups.entries()]
       .map(([label, { passed, failed, total }]) => ({
-        label, passed, failed, total,
+        label,
+        passed,
+        failed,
+        total,
         rate: total ? Math.round((passed / total) * 100) : 0,
         risk: upper(passed, total),
       }))
@@ -2197,9 +3412,14 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
     return { rows: all, totalGroups: groups.size, totalRuns: measured };
   }, [tasks]);
 
-  const suffix = totalGroups > TOP_N ? ` · showing weakest ${TOP_N} of ${totalGroups}` : "";
+  const suffix =
+    totalGroups > TOP_N ? ` · showing weakest ${TOP_N} of ${totalGroups}` : "";
   const exportRows = rows.map((r) => ({
-    use_case: r.label, passed: r.passed, failed: r.failed, total: r.total, pass_rate_pct: r.rate,
+    use_case: r.label,
+    passed: r.passed,
+    failed: r.failed,
+    total: r.total,
+    pass_rate_pct: r.rate,
   }));
   return (
     <Panel
@@ -2227,7 +3447,9 @@ const UseCaseRiskStacked = memo(function UseCaseRiskStacked({ rows }) {
   if (!rows?.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           No measured tasks yet.
         </Typography>
       </Box>
@@ -2244,45 +3466,69 @@ const UseCaseRiskStacked = memo(function UseCaseRiskStacked({ rows }) {
   return (
     <Box sx={{ px: 2, pt: 1, pb: 1.5 }}>
       <ReactApexChart
-        type="bar" height={chartHeight}
+        type="bar"
+        height={chartHeight}
         series={[
           { name: "Passed", data: passedData },
           { name: "Failed", data: failedData },
         ]}
         options={{
           chart: {
-            type: "bar", stacked: true,
-            toolbar: { show: false }, animations: { enabled: false },
-            background: "transparent", fontFamily: theme.typography.fontFamily,
+            type: "bar",
+            stacked: true,
+            toolbar: { show: false },
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
           },
           theme: { mode: theme.palette.mode },
+          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
           colors: ["#7857FC", "#DC2626"],
           fill: { type: "solid", opacity: 0.9 },
           stroke: { show: false },
           plotOptions: {
-            bar: { horizontal: true, barHeight: "58%", borderRadius: 3, borderRadiusApplication: "end" },
+            bar: {
+              horizontal: true,
+              barHeight: "58%",
+              borderRadius: 3,
+              borderRadiusApplication: "end",
+            },
           },
           dataLabels: {
             enabled: true,
-            style: { fontSize: "10.5px", fontWeight: 700, colors: ["#fff"] },
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+            style: { fontSize: "12px", fontWeight: 600, colors: ["#fff"] },
             formatter: (v) => (v > 0 ? v : ""),
           },
           legend: {
-            show: true, position: "top", horizontalAlign: "right",
-            fontSize: "11px", labels: { colors: theme.palette.text.secondary },
-            markers: { size: 6 }, itemMargin: { horizontal: 10 },
+            show: true,
+            position: "top",
+            horizontalAlign: "right",
+            fontSize: "12px",
+            labels: { colors: theme.palette.text.secondary },
+            markers: { size: 6 },
+            itemMargin: { horizontal: 10 },
           },
           xaxis: {
             categories,
-            axisBorder: { show: false }, axisTicks: { show: false },
-            labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` },
+            axisBorder: { show: false },
+            axisTicks: { show: false },
+            labels: {
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+              formatter: (v) => `${Math.round(v)}`,
+            },
           },
           yaxis: {
-            labels: { style: { colors: theme.palette.text.secondary, fontSize: "12px" }, maxWidth: 620 },
+            labels: {
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+              maxWidth: 620,
+            },
           },
           grid: {
-            borderColor: theme.palette.divider, strokeDashArray: 4,
-            xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } },
+            borderColor: theme.palette.divider,
+            strokeDashArray: 4,
+            xaxis: { lines: { show: true } },
+            yaxis: { lines: { show: false } },
             padding: { left: 0, right: 16, top: -8, bottom: -8 },
           },
           tooltip: {
@@ -2306,12 +3552,21 @@ UseCaseRiskStacked.propTypes = { rows: PropTypes.array };
    and renders one bar per row with a colored gradient, a value chip
    on the right, and a meta caption underneath. Replaces the six
    different tables we used to draw for these lists. */
-function HorizontalBarChart({ rows, unit = "", max, emptyText, colorFn, height, valueFormatter }) {
-  const theme = useTheme();
+function HorizontalBarChart({
+  rows,
+  unit = "",
+  max,
+  emptyText,
+  colorFn,
+  height,
+  valueFormatter,
+}) {
   if (!rows || rows.length === 0) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "No data yet."}
         </Typography>
       </Box>
@@ -2319,7 +3574,14 @@ function HorizontalBarChart({ rows, unit = "", max, emptyText, colorFn, height, 
   }
   const values = rows.map((r) => r.value);
   const cap = max || Math.max(...values, 1);
-  const defaultColor = (v) => (unit === "%" ? (v >= 80 ? GREEN : v >= 50 ? AMBER : RED) : (theme.palette.mode === "dark" ? "#F3F4F6" : "#111827"));
+  const defaultColor = (v) =>
+    unit === "%"
+      ? v >= 80
+        ? "status.success.solid"
+        : v >= 50
+          ? "status.warning.solid"
+          : "status.danger.solid"
+      : "text.primary";
   const barColor = (v) => (colorFn ? colorFn(v) : defaultColor(v));
   const fmt = valueFormatter || ((v) => `${Math.round(v)}${unit}`);
   const rowH = height || 44;
@@ -2329,47 +3591,82 @@ function HorizontalBarChart({ rows, unit = "", max, emptyText, colorFn, height, 
         const width = Math.max(2, (r.value / cap) * 100);
         const color = barColor(r.value);
         return (
-          <Box key={r.label} sx={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 3fr) auto",
-            columnGap: 1.5, rowGap: 0.25, alignItems: "center",
-            py: 0.75,
-            transition: "background-color 120ms",
-            borderRadius: 0.75,
-            "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02) },
-            px: 1,
-          }}>
+          <Box
+            key={r.label}
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 3fr) auto",
+              columnGap: 1.5,
+              rowGap: 0.25,
+              alignItems: "center",
+              py: 0.75,
+              transition: "background-color 120ms",
+              borderRadius: "4px",
+              "&:hover": { bgcolor: "action.hover" },
+              px: 1,
+            }}
+          >
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{
-                typography: "s2", fontSize: 12.5, fontWeight: 600,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }} title={r.label}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={r.label}
+              >
                 {r.label}
               </Typography>
               {r.meta && (
-                <Typography sx={{ typography: "s3", fontSize: 10.5, color: "text.subtitle", mt: 0.25 }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontSize: 12,
+                    color: "text.tertiary",
+                    mt: 0.25,
+                  }}
+                >
                   {r.meta}
                 </Typography>
               )}
             </Box>
-            <Box sx={{
-              height: rowH === 44 ? 10 : 8, borderRadius: 999,
-              bgcolor: (t) => t.palette.mode === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)",
-              overflow: "hidden", position: "relative",
-            }}>
-              <Box sx={{
-                position: "absolute", top: 0, left: 0, bottom: 0,
-                width: `${width}%`,
-                bgcolor: color,
+            <Box
+              sx={{
+                height: rowH === 44 ? 10 : 8,
                 borderRadius: 999,
-                transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
-              }} />
+                bgcolor: "action.hover",
+                overflow: "hidden",
+                position: "relative",
+              }}
+            >
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  width: `${width}%`,
+                  bgcolor: color,
+                  borderRadius: 999,
+                  transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+                }}
+              />
             </Box>
-            <Typography sx={{
-              typography: "s2", fontSize: 13, fontWeight: 700,
-              color: textTone(color), fontVariantNumeric: "tabular-nums",
-              minWidth: 56, textAlign: "right", whiteSpace: "nowrap",
-            }}>
+            <Typography
+              sx={{
+                typography: "s2",
+                fontSize: 13,
+                fontWeight: 600,
+                color: textTone(color),
+                fontVariantNumeric: "tabular-nums",
+                minWidth: 56,
+                textAlign: "right",
+                whiteSpace: "nowrap",
+              }}
+            >
               {fmt(r.value)}
             </Typography>
           </Box>
@@ -2379,8 +3676,12 @@ function HorizontalBarChart({ rows, unit = "", max, emptyText, colorFn, height, 
   );
 }
 HorizontalBarChart.propTypes = {
-  rows: PropTypes.array, unit: PropTypes.string, max: PropTypes.number,
-  emptyText: PropTypes.string, colorFn: PropTypes.func, height: PropTypes.number,
+  rows: PropTypes.array,
+  unit: PropTypes.string,
+  max: PropTypes.number,
+  emptyText: PropTypes.string,
+  colorFn: PropTypes.func,
+  height: PropTypes.number,
   valueFormatter: PropTypes.func,
 };
 
@@ -2389,16 +3690,27 @@ HorizontalBarChart.propTypes = {
 const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
   const rows = useMemo(() => {
     if (!evals?.length) return [];
-    return evals.map((e) => {
-      /* A grader's verdict only counts where the call produced one — an
+    return evals
+      .map((e) => {
+        /* A grader's verdict only counts where the call produced one — an
          unmeasured task (environment, connection or grader broke) is not a
          failed check. */
-      const results = measuredOnly(tasks).map((t) => t.evalResults?.find((r) => r.id === e.id)).filter(Boolean);
-      const passed = results.filter((r) => r.passed).length;
-      const total = results.length;
-      const passRate = total ? Math.round((passed / total) * 100) : 0;
-      return { id: e.id, name: e.name, category: e.category || "—", passRate, passed, total };
-    }).sort((a, b) => a.passRate - b.passRate);
+        const results = measuredOnly(tasks)
+          .map((t) => t.evalResults?.find((r) => r.id === e.id))
+          .filter(Boolean);
+        const passed = results.filter((r) => r.passed).length;
+        const total = results.length;
+        const passRate = total ? Math.round((passed / total) * 100) : 0;
+        return {
+          id: e.id,
+          name: e.name,
+          category: e.category || "—",
+          passRate,
+          passed,
+          total,
+        };
+      })
+      .sort((a, b) => a.passRate - b.passRate);
   }, [tasks, evals]);
 
   const overall = useMemo(() => {
@@ -2412,10 +3724,18 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
   return (
     <Panel
       title="Evaluations"
-      subtitle={overall
-        ? `${rows.length} grader${rows.length === 1 ? "" : "s"} · ${overall.passed} of ${overall.total} checks passed (${overall.rate}%)`
-        : "Grader pass rates"}
-      exportRows={rows.map((r) => ({ grader: r.name, category: r.category, pass_rate: r.passRate, passed: r.passed, total: r.total }))}
+      subtitle={
+        overall
+          ? `${rows.length} grader${rows.length === 1 ? "" : "s"} · ${overall.passed} of ${overall.total} checks passed (${overall.rate}%)`
+          : "Grader pass rates"
+      }
+      exportRows={rows.map((r) => ({
+        grader: r.name,
+        category: r.category,
+        pass_rate: r.passRate,
+        passed: r.passed,
+        total: r.total,
+      }))}
       info="One row per evaluator with its own pass rate over the measured calls. A task passes only when its attempts pass, and a grader failing on many calls is usually why — so the grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest."
     >
       <EvalGraderTable rows={rows} />
@@ -2431,72 +3751,139 @@ function EvalGraderTable({ rows }) {
   if (!rows?.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ fontSize: 12, color: "text.subtitle" }}>No evaluations recorded yet.</Typography>
+        <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
+          No evaluations recorded yet.
+        </Typography>
       </Box>
     );
   }
   return (
     <Box>
       {/* Header */}
-      <Box sx={{
-        display: "grid",
-        gridTemplateColumns: "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
-        columnGap: 2, alignItems: "center",
-        px: 3, py: 1.25,
-        borderBottom: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015),
-      }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns:
+            "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
+          columnGap: 2,
+          alignItems: "center",
+          px: 3,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.neutral",
+        }}
+      >
         {["Grader", "Category", "Pass rate", "%", "Passed"].map((h, i) => (
-          <Typography key={h} sx={{
-            fontSize: 10.5, fontWeight: 700, color: "text.subtitle",
-            textTransform: "uppercase", letterSpacing: 0.5,
-            textAlign: i >= 3 ? "right" : "left",
-          }}>{h}</Typography>
+          <Typography
+            key={h}
+            sx={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.5,
+              textAlign: i >= 3 ? "right" : "left",
+            }}
+          >
+            {h}
+          </Typography>
         ))}
       </Box>
       {rows.map((r) => {
         const color = r.passRate >= 80 ? GREEN : r.passRate >= 50 ? AMBER : RED;
         return (
-          <Box key={r.id} sx={{
-            display: "grid",
-            gridTemplateColumns: "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
-            columnGap: 2, alignItems: "center",
-            px: 3, py: 1.5,
-            borderBottom: "1px solid",
-            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.03),
-            "&:last-of-type": { borderBottom: "none" },
-            "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015) },
-          }}>
-            <Typography sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>
+          <Box
+            key={r.id}
+            sx={{
+              display: "grid",
+              gridTemplateColumns:
+                "minmax(180px, 1.4fr) minmax(120px, 0.9fr) minmax(180px, 2fr) 60px 90px",
+              columnGap: 2,
+              alignItems: "center",
+              px: 3,
+              py: 1.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              "&:last-of-type": { borderBottom: "none" },
+              "&:hover": { bgcolor: "action.hover" },
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "text.primary",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={r.name}
+            >
               {r.name}
             </Typography>
-            <Typography sx={{ fontSize: 11.5, color: "text.subtitle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.tertiary",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {r.category}
             </Typography>
-            <Box sx={{
-              height: 8, borderRadius: 999, overflow: "hidden",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.05),
-              position: "relative",
-            }}>
-              <Box sx={{
-                position: "absolute", left: 0, top: 0, bottom: 0,
-                width: `${Math.max(1.5, r.passRate)}%`, bgcolor: color,
-                transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
-              }} />
+            <Box
+              sx={{
+                height: 8,
+                borderRadius: 999,
+                overflow: "hidden",
+                bgcolor: "action.hover",
+                position: "relative",
+              }}
+            >
+              <Box
+                sx={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${Math.max(1.5, r.passRate)}%`,
+                  bgcolor: color,
+                  transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+                }}
+              />
             </Box>
-            <Typography sx={{
-              fontSize: 13, fontWeight: 700, color: textTone(color), textAlign: "right",
-              fontVariantNumeric: "tabular-nums", letterSpacing: -0.2,
-            }}>
+            <Typography
+              sx={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: textTone(color),
+                textAlign: "right",
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: -0.2,
+              }}
+            >
               {r.passRate}%
             </Typography>
-            <Typography sx={{
-              fontSize: 12, color: "text.primary", textAlign: "right",
-              fontVariantNumeric: "tabular-nums", fontWeight: 600,
-            }}>
-              <Box component="span" sx={{ color: "text.primary" }}>{r.passed}</Box>
-              <Box component="span" sx={{ color: "text.subtitle", mx: 0.5 }}>/</Box>
-              <Box component="span" sx={{ color: "text.subtitle" }}>{r.total}</Box>
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.primary",
+                textAlign: "right",
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: 600,
+              }}
+            >
+              <Box component="span" sx={{ color: "text.primary" }}>
+                {r.passed}
+              </Box>
+              <Box component="span" sx={{ color: "text.tertiary", mx: 0.5 }}>
+                /
+              </Box>
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                {r.total}
+              </Box>
             </Typography>
           </Box>
         );
@@ -2514,23 +3901,34 @@ function RadialGaugeGrid({ rows, emptyText }) {
   if (!rows?.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "Nothing to show yet."}
         </Typography>
       </Box>
     );
   }
   return (
-    <Box sx={{
-      display: "grid", gap: 2.5,
-      gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)" },
-      px: 3, pb: 3,
-    }}>
-      {rows.map((r) => <RadialGauge key={r.label} {...r} />)}
+    <Box
+      sx={{
+        display: "grid",
+        gap: 2.5,
+        gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)" },
+        px: 3,
+        pb: 3,
+      }}
+    >
+      {rows.map((r) => (
+        <RadialGauge key={r.label} {...r} />
+      ))}
     </Box>
   );
 }
-RadialGaugeGrid.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
+RadialGaugeGrid.propTypes = {
+  rows: PropTypes.array,
+  emptyText: PropTypes.string,
+};
 
 function RadialGauge({ label, value, meta }) {
   const color = value >= 80 ? GREEN : value >= 50 ? AMBER : RED;
@@ -2541,42 +3939,81 @@ function RadialGauge({ label, value, meta }) {
   const dash = (Math.min(100, Math.max(0, value)) / 100) * circumference;
   return (
     <Stack direction="row" alignItems="center" spacing={2}>
-      <Box sx={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <Box
+        sx={{ position: "relative", width: size, height: size, flexShrink: 0 }}
+      >
         <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
           <circle
-            cx={size / 2} cy={size / 2} r={radius}
-            fill="none" strokeWidth={stroke}
-            stroke="currentColor" opacity={0.08}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            stroke="currentColor"
+            opacity={0.08}
           />
           <circle
-            cx={size / 2} cy={size / 2} r={radius}
-            fill="none" strokeWidth={stroke}
-            stroke={color} strokeLinecap="round"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            stroke={color}
+            strokeLinecap="round"
             strokeDasharray={`${dash} ${circumference}`}
-            style={{ transition: "stroke-dasharray 320ms cubic-bezier(0.2, 0.8, 0.2, 1)" }}
+            style={{
+              transition:
+                "stroke-dasharray 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+            }}
           />
         </svg>
-        <Box sx={{
-          position: "absolute", inset: 0, display: "flex",
-          flexDirection: "column", alignItems: "center", justifyContent: "center",
-        }}>
-          <Typography sx={{
-            typography: "s1", fontSize: 17, fontWeight: 700,
-            color: textTone(color), fontVariantNumeric: "tabular-nums", letterSpacing: -0.3,
-          }}>
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s1",
+              fontSize: 16,
+              fontWeight: 600,
+              color: textTone(color),
+              fontVariantNumeric: "tabular-nums",
+              letterSpacing: -0.3,
+            }}
+          >
             {value}%
           </Typography>
         </Box>
       </Box>
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{
-          typography: "s2", fontSize: 13.5, fontWeight: 600,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }} title={label}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontSize: 13,
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={label}
+        >
           {label}
         </Typography>
         {meta && (
-          <Typography sx={{ typography: "s3", fontSize: 11.5, color: "text.subtitle", mt: 0.25 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontSize: 12,
+              color: "text.tertiary",
+              mt: 0.25,
+            }}
+          >
             {meta} passed
           </Typography>
         )}
@@ -2584,7 +4021,11 @@ function RadialGauge({ label, value, meta }) {
     </Stack>
   );
 }
-RadialGauge.propTypes = { label: PropTypes.node, value: PropTypes.number, meta: PropTypes.node };
+RadialGauge.propTypes = {
+  label: PropTypes.node,
+  value: PropTypes.number,
+  meta: PropTypes.node,
+};
 
 /* ── attribution table ────────────────────────────────────────────── */
 
@@ -2600,14 +4041,16 @@ function AttributionTable({ tasks }) {
       (held[d.id] = held[d.id] || 0), held[d.id]++;
     });
     const total = Object.values(held).reduce((a, v) => a + v, 0);
-    return Object.entries(held).map(([id, count]) => ({
-      id,
-      label: DOMAIN_LABEL[id]?.label || id,
-      short: DOMAIN_LABEL[id]?.short || id,
-      retry: DOMAIN_LABEL[id]?.retry || "—",
-      count,
-      share: total ? Math.round((count / total) * 100) : 0,
-    })).sort((a, b) => b.count - a.count);
+    return Object.entries(held)
+      .map(([id, count]) => ({
+        id,
+        label: DOMAIN_LABEL[id]?.label || id,
+        short: DOMAIN_LABEL[id]?.short || id,
+        retry: DOMAIN_LABEL[id]?.retry || "—",
+        count,
+        share: total ? Math.round((count / total) * 100) : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
   }, [tasks]);
 
   if (!rows.length) return null;
@@ -2631,22 +4074,34 @@ function AttributionDonut({ rows }) {
   const theme = useTheme();
   const series = rows.map((r) => r.count);
   const labels = rows.map((r) => r.label);
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const colors = rows.map((r) => DOMAINS[r.id]?.color || "#7857FC");
   const total = series.reduce((a, x) => a + x, 0) || 1;
   return (
-    <Box sx={{
-      display: "grid",
-      gridTemplateColumns: { xs: "1fr", sm: "220px minmax(0, 420px)" },
-      gap: 3, alignItems: "center", justifyContent: "center",
-      px: 2, py: 2.5,
-    }}>
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", sm: "220px minmax(0, 420px)" },
+        gap: 3,
+        alignItems: "center",
+        justifyContent: "center",
+        px: 2,
+        py: 2.5,
+      }}
+    >
       <ReactApexChart
-        type="donut" height={220}
+        type="donut"
+        height={220}
         series={series}
         options={{
-          chart: { animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+          chart: {
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
+          },
           theme: { mode: theme.palette.mode },
-          labels, colors,
+          labels,
+          colors,
           legend: { show: false },
           dataLabels: { enabled: false },
           stroke: { width: 2, colors: [theme.palette.background.paper] },
@@ -2656,16 +4111,37 @@ function AttributionDonut({ rows }) {
             hover: { filter: { type: "none" } },
             active: { filter: { type: "none" } },
           },
-          plotOptions: { pie: {
-            expandOnClick: false,
-            donut: { size: "70%", labels: { show: true,
-              name: { fontSize: "10px", color: theme.palette.text.subtitle },
-              value: { fontSize: "22px", fontWeight: 700, color: theme.palette.text.primary, formatter: (v) => `${v}` },
-              total: { show: true, label: "Non-passing", fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => `${total}` },
-            } },
-          } },
+          plotOptions: {
+            pie: {
+              expandOnClick: false,
+              donut: {
+                size: "70%",
+                labels: {
+                  show: true,
+                  name: {
+                    fontSize: "12px",
+                    color: theme.palette.text.tertiary,
+                  },
+                  value: {
+                    fontSize: "20px",
+                    fontWeight: 600,
+                    color: theme.palette.text.primary,
+                    formatter: (v) => `${v}`,
+                  },
+                  total: {
+                    show: true,
+                    label: "Non-passing",
+                    fontSize: "12px",
+                    color: theme.palette.text.tertiary,
+                    formatter: () => `${total}`,
+                  },
+                },
+              },
+            },
+          },
           tooltip: {
-            intersect: false, followCursor: false,
+            intersect: false,
+            followCursor: false,
             fixed: { enabled: false },
             y: { formatter: (v) => `${v} failures` },
           },
@@ -2673,22 +4149,67 @@ function AttributionDonut({ rows }) {
       />
       <Stack spacing={0.75}>
         {rows.map((r, i) => (
-          <Box key={r.id} sx={{
-            display: "grid", gridTemplateColumns: "auto 1fr auto auto",
-            columnGap: 1.25, alignItems: "center",
-            px: 1, py: 0.75, borderRadius: 0.75,
-            "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02) },
-          }}>
-            <Box sx={{ width: 10, height: 10, borderRadius: 999, bgcolor: colors[i] }} />
+          <Box
+            key={r.id}
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto auto",
+              columnGap: 1.25,
+              alignItems: "center",
+              px: 1,
+              py: 0.75,
+              borderRadius: "4px",
+              "&:hover": { bgcolor: "action.hover" },
+            }}
+          >
+            <Box
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                bgcolor: colors[i],
+              }}
+            />
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s2", fontWeight: 600, fontSize: 12.5 }}>{r.label}</Typography>
-              <Typography sx={{ typography: "s3", fontSize: 10.5, color: "text.subtitle", mt: 0.125 }}>{r.retry}</Typography>
+              <Typography
+                sx={{ typography: "s2", fontWeight: 600, fontSize: 13 }}
+              >
+                {r.label}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontSize: 12,
+                  color: "text.tertiary",
+                  mt: 0.125,
+                }}
+              >
+                {r.retry}
+              </Typography>
             </Box>
-            <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums", fontSize: 13 }}>{r.count}</Typography>
-            <Typography sx={{
-              typography: "s3", fontSize: 11.5, fontWeight: 600, fontVariantNumeric: "tabular-nums",
-              color: colors[i], minWidth: 46, textAlign: "right",
-            }}>{r.share}%</Typography>
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 13,
+              }}
+            >
+              {r.count}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontSize: 12,
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                color: colors[i],
+                minWidth: 46,
+                textAlign: "right",
+              }}
+            >
+              {r.share}%
+            </Typography>
           </Box>
         ))}
       </Stack>
@@ -2698,24 +4219,46 @@ function AttributionDonut({ rows }) {
 AttributionDonut.propTypes = { rows: PropTypes.array };
 
 const DOMAIN_LABEL = {
-  agent:       { label: "Agent behaviour",   short: "Agent",       retry: "Recorded · never retried" },
-  environment: { label: "Environment",       short: "Environment", retry: "Retried when transient" },
-  transport:   { label: "Transport",         short: "Transport",   retry: "Bounded retry, new call id" },
-  simulator:   { label: "Simulated caller",  short: "Simulator",   retry: "Retried within policy" },
-  grading:     { label: "Grading",           short: "Grading",     retry: "Re-graded from evidence" },
+  agent: {
+    label: "Agent behaviour",
+    short: "Agent",
+    retry: "Recorded · never retried",
+  },
+  environment: {
+    label: "Environment",
+    short: "Environment",
+    retry: "Retried when transient",
+  },
+  transport: {
+    label: "Transport",
+    short: "Transport",
+    retry: "Bounded retry, new call id",
+  },
+  simulator: {
+    label: "Simulated caller",
+    short: "Simulator",
+    retry: "Retried within policy",
+  },
+  grading: {
+    label: "Grading",
+    short: "Grading",
+    retry: "Re-graded from evidence",
+  },
 };
 
 /* ── slowest / most expensive tables ──────────────────────────────── */
 
 const SlowestTable = memo(function SlowestTable({ tasks }) {
-  const rows = useMemo(() => (
-    /* Measured calls only — a scenario whose environment never came up
+  const rows = useMemo(
+    () =>
+      /* Measured calls only — a scenario whose environment never came up
        still has step timings, but it is not a slow call. */
-    measuredOnly(tasks)
-      .filter((t) => t.durationMs != null)
-      .sort((a, b) => b.durationMs - a.durationMs)
-      .slice(0, 8)
-  ), [tasks]);
+      measuredOnly(tasks)
+        .filter((t) => t.durationMs != null)
+        .sort((a, b) => b.durationMs - a.durationMs)
+        .slice(0, 8),
+    [tasks],
+  );
 
   const exportRows = rows.map((t, i) => ({
     rank: i + 1,
@@ -2739,6 +4282,7 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
           meta: `${t.steps?.length || 0} turns · ${t.tokens != null ? numFmt.format(t.tokens) : "—"} tokens`,
         }))}
         formatter={(v) => `${Number(v).toFixed(1)}s`}
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         color="#7857FC"
         emptyText="No tasks with duration yet."
       />
@@ -2748,12 +4292,14 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
 SlowestTable.propTypes = { tasks: PropTypes.array };
 
 const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
-  const rows = useMemo(() => (
-    [...tasks]
-      .filter((t) => t.cost != null)
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 8)
-  ), [tasks]);
+  const rows = useMemo(
+    () =>
+      [...tasks]
+        .filter((t) => t.cost != null)
+        .sort((a, b) => b.cost - a.cost)
+        .slice(0, 8),
+    [tasks],
+  );
   if (!rows.length) return null;
   const exportRows = rows.map((t, i) => ({
     rank: i + 1,
@@ -2777,6 +4323,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
           meta: `${t.tokens != null ? numFmt.format(t.tokens) : "—"} tokens · ${((t.durationMs || 0) / 1000).toFixed(1)}s`,
         }))}
         formatter={(v) => fmtCredits(Number(v))}
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         color="#DB2777"
         emptyText="No cost data yet."
       />
@@ -2793,7 +4340,20 @@ ExpensiveTable.propTypes = { tasks: PropTypes.array };
 /* Vivid palette that matches the W&B categorical look — bright,
    saturated, high-contrast. Each tool holds its color across all
    three panels so the eye tracks a tool between charts. */
-const TOOL_COLORS = ["#3B82F6", "#F97316", "#14B8A6", "#A855F7", "#EC4899", "#EAB308", "#22C55E", "#EF4444", "#06B6D4", "#8B5CF6"];
+const TOOL_COLORS = [
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
+  "#3B82F6",
+  "#F97316",
+  "#14B8A6",
+  "#A855F7",
+  "#EC4899",
+  "#EAB308",
+  "#22C55E",
+  "#EF4444",
+  "#06B6D4",
+  "#7857FC",
+  /* eslint-enable no-restricted-syntax */
+];
 
 function colorForTool(name, allNames) {
   const idx = allNames.indexOf(name);
@@ -2808,16 +4368,25 @@ const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
   const theme = useTheme();
   const rows = useMemo(() => {
     /* Calls the agent actually made — a required tool it skipped is not a call. */
-    const calls = deriveToolCalls(tasks).filter((c) => c.toolStatus !== "not_called");
+    const calls = deriveToolCalls(tasks).filter(
+      (c) => c.toolStatus !== "not_called",
+    );
     const byName = new Map();
-    calls.forEach((c) => byName.set(c.toolName, (byName.get(c.toolName) || 0) + 1));
+    calls.forEach((c) =>
+      byName.set(c.toolName, (byName.get(c.toolName) || 0) + 1),
+    );
     return [...byName.entries()]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
   }, [tasks]);
   const total = rows.reduce((a, r) => a + r.count, 0);
   const allNames = rows.map((r) => r.name);
-  const exportRows = rows.map((r, i) => ({ rank: i + 1, tool: r.name, calls: r.count, share_pct: total ? Math.round((r.count / total) * 100) : 0 }));
+  const exportRows = rows.map((r, i) => ({
+    rank: i + 1,
+    tool: r.name,
+    calls: r.count,
+    share_pct: total ? Math.round((r.count / total) * 100) : 0,
+  }));
   return (
     <Panel
       title="Tool call volume"
@@ -2827,23 +4396,72 @@ const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <ReactApexChart
-          type="bar" height={320}
+          type="bar"
+          height={320}
           series={[{ name: "Calls", data: rows.map((r) => r.count) }]}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+            },
             theme: { mode: theme.palette.mode },
             colors: rows.map((r) => colorForTool(r.name, allNames)),
-            plotOptions: { bar: { columnWidth: "72%", borderRadius: 3, borderRadiusApplication: "end", distributed: true } },
-            dataLabels: { enabled: true, formatter: (v) => v, style: { fontSize: "10px", fontWeight: 700, colors: [theme.palette.text.primary] }, offsetY: -16 },
+            plotOptions: {
+              bar: {
+                columnWidth: "72%",
+                borderRadius: 3,
+                borderRadiusApplication: "end",
+                distributed: true,
+              },
+            },
+            dataLabels: {
+              enabled: true,
+              formatter: (v) => v,
+              style: {
+                fontSize: "12px",
+                fontWeight: 600,
+                colors: [theme.palette.text.primary],
+              },
+              offsetY: -16,
+            },
             xaxis: {
               categories: rows.map((r) => r.name),
-              axisBorder: { show: false }, axisTicks: { show: false },
-              labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary }, rotate: -30, trim: false, hideOverlappingLabels: false },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
+              labels: {
+                style: {
+                  fontSize: "12px",
+                  colors: theme.palette.text.secondary,
+                },
+                rotate: -30,
+                trim: false,
+                hideOverlappingLabels: false,
+              },
             },
-            yaxis: { labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary } } },
-            grid: { borderColor: alpha(theme.palette.text.primary, 0.06), strokeDashArray: 3, xaxis: { lines: { show: false } }, padding: { bottom: 24, top: 8 } },
+            yaxis: {
+              labels: {
+                style: {
+                  fontSize: "12px",
+                  colors: theme.palette.text.secondary,
+                },
+              },
+            },
+            grid: {
+              borderColor: alpha(theme.palette.text.primary, 0.06),
+              strokeDashArray: 3,
+              xaxis: { lines: { show: false } },
+              padding: { bottom: 24, top: 8 },
+            },
             legend: { show: false },
-            tooltip: { theme: theme.palette.mode, y: { formatter: (v) => `${v} calls · ${total ? Math.round((v / total) * 100) : 0}%` } },
+            tooltip: {
+              theme: theme.palette.mode,
+              y: {
+                formatter: (v) =>
+                  `${v} calls · ${total ? Math.round((v / total) * 100) : 0}%`,
+              },
+            },
           }}
         />
       </Box>
@@ -2861,7 +4479,6 @@ ToolCallVolumePanel.propTypes = { tasks: PropTypes.array };
  * calls out the danger threshold. */
 const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   /* Two different failures, owned by two different teams, kept apart:
      the tool broke (the call errored — infra), or the agent never called a
      tool the scenario required (a prompt / agent fix). The denominator is
@@ -2885,12 +4502,20 @@ const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
         failRate: r.total ? r1((r.fails / r.total) * 100) : 0,
         skipRate: r.total ? r1((r.skipped / r.total) * 100) : 0,
       }))
-      .sort((a, b) => (b.failRate + b.skipRate) - (a.failRate + a.skipRate) || b.total - a.total);
+      .sort(
+        (a, b) =>
+          b.failRate + b.skipRate - (a.failRate + a.skipRate) ||
+          b.total - a.total,
+      );
   }, [tasks]);
   const exportRows = rows.map((r, i) => ({
-    rank: i + 1, tool: r.name, needed_or_called: r.total,
-    tool_failed: r.fails, tool_failed_pct: r.failRate,
-    not_called: r.skipped, not_called_pct: r.skipRate,
+    rank: i + 1,
+    tool: r.name,
+    needed_or_called: r.total,
+    tool_failed: r.fails,
+    tool_failed_pct: r.failRate,
+    not_called: r.skipped,
+    not_called_pct: r.skipRate,
   }));
   return (
     <Panel
@@ -2901,32 +4526,71 @@ const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <ReactApexChart
-          type="bar" height={320}
+          type="bar"
+          height={320}
           series={[
             { name: "Tool failed", data: rows.map((r) => r.failRate) },
-            { name: "Not called when required", data: rows.map((r) => r.skipRate) },
+            {
+              name: "Not called when required",
+              data: rows.map((r) => r.skipRate),
+            },
           ]}
           options={{
-            chart: { stacked: true, toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: {
+              stacked: true,
+              toolbar: { show: false },
+              animations: { enabled: false },
+              background: "transparent",
+              fontFamily: theme.typography.fontFamily,
+            },
             theme: { mode: theme.palette.mode },
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             colors: [HIST_RED, "#F59E0B"],
-            plotOptions: { bar: { horizontal: true, barHeight: "62%", borderRadius: 3, borderRadiusApplication: "end" } },
+            plotOptions: {
+              bar: {
+                horizontal: true,
+                barHeight: "62%",
+                borderRadius: 3,
+                borderRadiusApplication: "end",
+              },
+            },
             dataLabels: { enabled: false },
             xaxis: {
               categories: rows.map((r) => r.name),
               max: 100,
-              axisBorder: { show: false }, axisTicks: { show: false },
-              labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary }, formatter: (v) => `${Math.round(v)}%` },
+              axisBorder: { show: false },
+              axisTicks: { show: false },
+              labels: {
+                style: {
+                  fontSize: "12px",
+                  colors: theme.palette.text.secondary,
+                },
+                formatter: (v) => `${Math.round(v)}%`,
+              },
             },
-            yaxis: { labels: { style: { fontSize: "11px", colors: theme.palette.text.primary, fontWeight: 600 } } },
+            yaxis: {
+              labels: {
+                style: {
+                  fontSize: "12px",
+                  colors: theme.palette.text.primary,
+                  fontWeight: 600,
+                },
+              },
+            },
             grid: {
-              borderColor: alpha(theme.palette.text.primary, isDark ? 0.08 : 0.06),
+              borderColor: theme.palette.divider,
               strokeDashArray: 3,
               xaxis: { lines: { show: true } },
               yaxis: { lines: { show: false } },
               padding: { right: 16, left: 4, top: 8, bottom: 8 },
             },
-            legend: { show: true, position: "top", horizontalAlign: "left", fontSize: "11px", labels: { colors: theme.palette.text.secondary } },
+            legend: {
+              show: true,
+              position: "top",
+              horizontalAlign: "left",
+              fontSize: "12px",
+              labels: { colors: theme.palette.text.secondary },
+            },
             tooltip: {
               theme: theme.palette.mode,
               shared: true,
@@ -2959,12 +4623,19 @@ ToolFailureRatePanel.propTypes = { tasks: PropTypes.array };
  * charts above so the eye reads it as a leaderboard rather than
  * another list.
  */
-const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, color, emptyText }) {
+const RankedColumnChart = memo(function RankedColumnChart({
+  rows,
+  formatter,
+  color,
+  emptyText,
+}) {
   const theme = useTheme();
   if (!rows?.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "No data yet."}
         </Typography>
       </Box>
@@ -2988,43 +4659,66 @@ const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, col
   return (
     <Box sx={{ px: 1, pt: 1, pb: 0.5 }}>
       <ReactApexChart
-        type="bar" height={320}
+        type="bar"
+        height={320}
         series={[{ name: "value", data: values }]}
         options={{
-          chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+          chart: {
+            toolbar: { show: false },
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
+          },
           theme: { mode: theme.palette.mode },
           colors: [color],
           fill: { type: "solid", opacity: 0.9 },
           stroke: { show: false },
           plotOptions: {
-            bar: { columnWidth: "52%", borderRadius: 4, borderRadiusApplication: "end" },
+            bar: {
+              columnWidth: "52%",
+              borderRadius: 4,
+              borderRadiusApplication: "end",
+            },
           },
           dataLabels: {
             enabled: true,
             offsetY: -18,
-            style: { fontSize: "11px", fontWeight: 700, colors: [theme.palette.text.primary] },
+            style: {
+              fontSize: "12px",
+              fontWeight: 600,
+              colors: [theme.palette.text.primary],
+            },
             formatter: fmt,
           },
           legend: { show: false },
           xaxis: {
             categories,
-            axisBorder: { show: false }, axisTicks: { show: false },
+            axisBorder: { show: false },
+            axisTicks: { show: false },
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "10.5px", fontWeight: 600 },
-              rotate: -35, rotateAlways: true,
-              trim: false, hideOverlappingLabels: false,
+              style: {
+                colors: theme.palette.text.secondary,
+                fontSize: "12px",
+                fontWeight: 600,
+              },
+              rotate: -35,
+              rotateAlways: true,
+              trim: false,
+              hideOverlappingLabels: false,
               offsetY: 2,
             },
           },
           yaxis: {
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "10px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: fmt,
             },
           },
           grid: {
-            borderColor: theme.palette.divider, strokeDashArray: 4,
-            xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } },
+            borderColor: theme.palette.divider,
+            strokeDashArray: 4,
+            xaxis: { lines: { show: false } },
+            yaxis: { lines: { show: true } },
             padding: { left: 8, right: 8, top: 20, bottom: 40 },
           },
           tooltip: {
@@ -3060,21 +4754,37 @@ RankedColumnChart.propTypes = {
  * also happen to be the failing ones.
  */
 function TaskScatter({
-  tasks, xKey, yKey, sizeKey, xLabel, yLabel, xFormatter, yFormatter, emptyText,
+  tasks,
+  xKey,
+  yKey,
+  sizeKey,
+  xLabel,
+  yLabel,
+  xFormatter,
+  yFormatter,
+  emptyText,
 }) {
   const theme = useTheme();
-  const rows = useMemo(() => tasks.map((t) => ({
-    t,
-    x: xKey(t),
-    y: yKey(t),
-    z: sizeKey ? sizeKey(t) : 8,
-    passed: t.status === "passed",
-  })).filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y)), [tasks, xKey, yKey, sizeKey]);
+  const rows = useMemo(
+    () =>
+      tasks
+        .map((t) => ({
+          t,
+          x: xKey(t),
+          y: yKey(t),
+          z: sizeKey ? sizeKey(t) : 8,
+          passed: t.status === "passed",
+        }))
+        .filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y)),
+    [tasks, xKey, yKey, sizeKey],
+  );
 
   if (!rows.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "No data yet."}
         </Typography>
       </Box>
@@ -3084,50 +4794,86 @@ function TaskScatter({
   const passRows = rows.filter((r) => r.passed);
   const failRows = rows.filter((r) => !r.passed);
   const type = sizeKey ? "bubble" : "scatter";
-  const toSeries = (arr) => arr.map((r) => (sizeKey ? [r.x, r.y, Math.max(1, r.z)] : [r.x, r.y]));
+  const toSeries = (arr) =>
+    arr.map((r) => (sizeKey ? [r.x, r.y, Math.max(1, r.z)] : [r.x, r.y]));
 
   /* ApexCharts crashes on a fully-empty series in bubble mode. Emit
      only the buckets that actually have points, and store the order
      so the tooltip's seriesIndex still lines up with the right bucket. */
   const buckets = [];
-  if (passRows.length) buckets.push({ name: "Passed", color: "#7857FC", rows: passRows });
-  if (failRows.length) buckets.push({ name: "Failed", color: "#DC2626", rows: failRows });
+  if (passRows.length)
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    buckets.push({ name: "Passed", color: "#7857FC", rows: passRows });
+  if (failRows.length)
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    buckets.push({ name: "Failed", color: "#DC2626", rows: failRows });
 
   return (
     <Box sx={{ px: 1, pt: 1, pb: 0.5 }}>
       <ReactApexChart
-        type={type} height={320}
+        type={type}
+        height={320}
         series={buckets.map((b) => ({ name: b.name, data: toSeries(b.rows) }))}
         options={{
-          chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily, zoom: { enabled: false } },
+          chart: {
+            toolbar: { show: false },
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
+            zoom: { enabled: false },
+          },
           theme: { mode: theme.palette.mode },
           colors: buckets.map((b) => b.color),
           fill: { opacity: 0.6 },
           markers: { size: sizeKey ? 0 : 6, strokeWidth: 0 },
-          plotOptions: sizeKey ? { bubble: { minBubbleRadius: 4, maxBubbleRadius: 22 } } : {},
+          plotOptions: sizeKey
+            ? { bubble: { minBubbleRadius: 4, maxBubbleRadius: 22 } }
+            : {},
           legend: {
-            show: true, position: "top", horizontalAlign: "right",
-            fontSize: "11px", labels: { colors: theme.palette.text.secondary },
-            markers: { size: 6 }, itemMargin: { horizontal: 10 },
+            show: true,
+            position: "top",
+            horizontalAlign: "right",
+            fontSize: "12px",
+            labels: { colors: theme.palette.text.secondary },
+            markers: { size: 6 },
+            itemMargin: { horizontal: 10 },
           },
           xaxis: {
             type: "numeric",
-            title: { text: xLabel, style: { color: theme.palette.text.subtitle, fontSize: "10px", fontWeight: 600 } },
-            axisBorder: { show: false }, axisTicks: { show: false },
+            title: {
+              text: xLabel,
+              style: {
+                color: theme.palette.text.tertiary,
+                fontSize: "12px",
+                fontWeight: 600,
+              },
+            },
+            axisBorder: { show: false },
+            axisTicks: { show: false },
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "10px" },
-              formatter: (v) => (xFormatter ? xFormatter(v) : `${Math.round(v)}`),
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+              formatter: (v) =>
+                xFormatter ? xFormatter(v) : `${Math.round(v)}`,
             },
           },
           yaxis: {
-            title: { text: yLabel, style: { color: theme.palette.text.subtitle, fontSize: "10px", fontWeight: 600 } },
+            title: {
+              text: yLabel,
+              style: {
+                color: theme.palette.text.tertiary,
+                fontSize: "12px",
+                fontWeight: 600,
+              },
+            },
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "10px" },
-              formatter: (v) => (yFormatter ? yFormatter(v) : `${Math.round(v)}`),
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+              formatter: (v) =>
+                yFormatter ? yFormatter(v) : `${Math.round(v)}`,
             },
           },
           grid: {
-            borderColor: theme.palette.divider, strokeDashArray: 4,
+            borderColor: theme.palette.divider,
+            strokeDashArray: 4,
             padding: { left: 8, right: 8, top: -4, bottom: -6 },
           },
           tooltip: {
@@ -3136,7 +4882,8 @@ function TaskScatter({
               const bucket = buckets[seriesIndex];
               const r = bucket?.rows?.[dataPointIndex];
               if (!r) return "";
-              const label = scenarioTitle(r.t.title) || r.t.name || r.t.id || "Task";
+              const label =
+                scenarioTitle(r.t.title) || r.t.name || r.t.id || "Task";
               return `<div style="padding:6px 10px;font-size:11px">
                 <div style="font-weight:700;margin-bottom:2px">${label}</div>
                 <div style="opacity:0.75">${xLabel}: ${xFormatter ? xFormatter(r.x) : r.x} · ${yLabel}: ${yFormatter ? yFormatter(r.y) : r.y}${sizeKey ? ` · ${r.z.toFixed(1)}s` : ""}</div>
@@ -3150,9 +4897,13 @@ function TaskScatter({
 }
 TaskScatter.propTypes = {
   tasks: PropTypes.array,
-  xKey: PropTypes.func, yKey: PropTypes.func, sizeKey: PropTypes.func,
-  xLabel: PropTypes.string, yLabel: PropTypes.string,
-  xFormatter: PropTypes.func, yFormatter: PropTypes.func,
+  xKey: PropTypes.func,
+  yKey: PropTypes.func,
+  sizeKey: PropTypes.func,
+  xLabel: PropTypes.string,
+  yLabel: PropTypes.string,
+  xFormatter: PropTypes.func,
+  yFormatter: PropTypes.func,
   emptyText: PropTypes.string,
 };
 
@@ -3178,11 +4929,20 @@ TaskScatter.propTypes = {
  * whose value < 50 (used for pass-rate panels); otherwise all bars
  * share the neutral brand accent.
  */
-function SlimBarList({ rows, max, formatter, unit = "", emphasize, emptyText }) {
+function SlimBarList({
+  rows,
+  max,
+  formatter,
+  unit = "",
+  emphasize,
+  emptyText,
+}) {
   if (!rows || rows.length === 0) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "No data yet."}
         </Typography>
       </Box>
@@ -3190,7 +4950,9 @@ function SlimBarList({ rows, max, formatter, unit = "", emphasize, emptyText }) 
   }
   const fmt = formatter || ((v) => `${Math.round(v)}${unit}`);
   const cap = max || Math.max(...rows.map((r) => r.value), 1);
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const accent = "#7857FC";
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const alert = "#F87171";
   return (
     <Box sx={{ px: 2.5, py: 1.5 }}>
@@ -3212,13 +4974,23 @@ function SlimBarList({ rows, max, formatter, unit = "", emphasize, emptyText }) 
             }}
           >
             <Box sx={{ minWidth: 0 }}>
-              <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.5 }}>
+              <Stack
+                direction="row"
+                alignItems="baseline"
+                spacing={1}
+                sx={{ mb: 0.5 }}
+              >
                 <Typography
                   sx={{
-                    typography: "s2", fontSize: 13, fontWeight: 600,
+                    typography: "s2",
+                    fontSize: 13,
+                    fontWeight: 600,
                     color: "text.primary",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    flex: 1, minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    minWidth: 0,
                   }}
                   title={r.meta ? `${r.label} — ${r.meta}` : r.label}
                 >
@@ -3227,34 +4999,53 @@ function SlimBarList({ rows, max, formatter, unit = "", emphasize, emptyText }) 
                 {r.sub && (
                   <Typography
                     sx={{
-                      typography: "s3", fontSize: 11, color: "text.subtitle",
-                      flexShrink: 0, fontVariantNumeric: "tabular-nums",
+                      typography: "s3",
+                      fontSize: 12,
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                      fontVariantNumeric: "tabular-nums",
                     }}
                   >
                     {r.sub}
                   </Typography>
                 )}
               </Stack>
-              <Box sx={{
-                height: 4, borderRadius: 999,
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-                position: "relative", overflow: "hidden",
-              }}>
-                <Box sx={{
-                  position: "absolute", left: 0, top: 0, bottom: 0,
-                  width: `${width}%`,
-                  bgcolor: barColor,
+              <Box
+                sx={{
+                  height: 4,
                   borderRadius: 999,
-                  transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
-                }} />
+                  bgcolor: "action.selected",
+                  position: "relative",
+                  overflow: "hidden",
+                }}
+              >
+                <Box
+                  sx={{
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: `${width}%`,
+                    bgcolor: barColor,
+                    borderRadius: 999,
+                    transition: "width 320ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+                  }}
+                />
               </Box>
             </Box>
-            <Typography sx={{
-              typography: "s1", fontSize: 15, fontWeight: 700,
-              fontVariantNumeric: "tabular-nums",
-              color: isAlert ? alert : "text.primary",
-              flexShrink: 0, letterSpacing: -0.2, minWidth: 56, textAlign: "right",
-            }}>
+            <Typography
+              sx={{
+                typography: "s1",
+                fontSize: 13,
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
+                color: isAlert ? alert : "text.primary",
+                flexShrink: 0,
+                letterSpacing: -0.2,
+                minWidth: 56,
+                textAlign: "right",
+              }}
+            >
               {fmt(r.value)}
             </Typography>
           </Box>
@@ -3276,13 +5067,21 @@ SlimBarList.propTypes = {
  * ApexCharts horizontal bar — legacy helper kept for the KPI section.
  */
 const ApexHBarChart = memo(function ApexHBarChart({
-  rows, unit = "", emptyText, formatter, colorFn, height, xAxisMax,
+  rows,
+  unit = "",
+  emptyText,
+  formatter,
+  colorFn,
+  height,
+  xAxisMax,
 }) {
   const theme = useTheme();
   if (!rows || rows.length === 0) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "No data yet."}
         </Typography>
       </Box>
@@ -3301,6 +5100,7 @@ const ApexHBarChart = memo(function ApexHBarChart({
      "worst → best", and length communicates size, so a single
      accent lets the value labels do the work.
      Callers can still opt into per-row coloring with `colorFn`. */
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const accent = "#7857FC"; // brand purple — matches the top-of-page charts
   const colors = colorFn ? values.map(colorFn) : [accent];
   const fmt = formatter || ((v) => `${Math.round(v)}${unit}`);
@@ -3311,10 +5111,17 @@ const ApexHBarChart = memo(function ApexHBarChart({
   return (
     <Box sx={{ px: 1, pt: 1, pb: 1.5 }}>
       <ReactApexChart
-        type="bar" height={chartHeight}
+        type="bar"
+        height={chartHeight}
         series={[{ name: "value", data: values }]}
         options={{
-          chart: { type: "bar", toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+          chart: {
+            type: "bar",
+            toolbar: { show: false },
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
+          },
           theme: { mode: theme.palette.mode },
           plotOptions: {
             bar: {
@@ -3331,7 +5138,11 @@ const ApexHBarChart = memo(function ApexHBarChart({
           dataLabels: {
             enabled: true,
             offsetX: 36,
-            style: { fontSize: "11px", fontWeight: 700, colors: [theme.palette.text.primary] },
+            style: {
+              fontSize: "12px",
+              fontWeight: 600,
+              colors: [theme.palette.text.primary],
+            },
             formatter: fmt,
           },
           legend: { show: false },
@@ -3350,7 +5161,7 @@ const ApexHBarChart = memo(function ApexHBarChart({
             axisBorder: { show: false },
             axisTicks: { show: false },
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "10px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: fmt,
             },
             max: xAxisMax,
@@ -3397,40 +5208,77 @@ function RankedList({ rows, emptyText }) {
   if (!rows?.length) {
     return (
       <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+        >
           {emptyText || "Nothing to show yet."}
         </Typography>
       </Box>
     );
   }
   return (
-    <Stack sx={{ px: 3, pb: 2 }} divider={<Box sx={{ height: "1px", bgcolor: "divider" }} />}>
+    <Stack
+      sx={{ px: 3, pb: 2 }}
+      divider={<Box sx={{ height: "1px", bgcolor: "divider" }} />}
+    >
       {rows.map((r) => (
-        <Stack direction="row" alignItems="center" spacing={2.5} key={`${r.rank}-${r.label}`} sx={{ py: 1.5 }}>
-          <Typography sx={{
-            typography: "s3", fontSize: 12, fontWeight: 700, color: "text.subtitle",
-            fontVariantNumeric: "tabular-nums", width: 20, textAlign: "left",
-          }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={2.5}
+          key={`${r.rank}-${r.label}`}
+          sx={{ py: 1.5 }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+              width: 20,
+              textAlign: "left",
+            }}
+          >
             {String(r.rank).padStart(2, "0")}
           </Typography>
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{
-              typography: "s2", fontSize: 13.5, fontWeight: 600,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }} title={r.label}>
+            <Typography
+              sx={{
+                typography: "s2",
+                fontSize: 13,
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={r.label}
+            >
               {r.label}
             </Typography>
             {r.meta && (
-              <Typography sx={{ typography: "s3", fontSize: 11.5, color: "text.subtitle", mt: 0.25 }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontSize: 12,
+                  color: "text.tertiary",
+                  mt: 0.25,
+                }}
+              >
                 {r.meta}
               </Typography>
             )}
           </Box>
-          <Typography sx={{
-            typography: "s1", fontSize: 15, fontWeight: 700,
-            fontVariantNumeric: "tabular-nums", flexShrink: 0,
-            letterSpacing: -0.2,
-          }}>
+          <Typography
+            sx={{
+              typography: "s1",
+              fontSize: 13,
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              flexShrink: 0,
+              letterSpacing: -0.2,
+            }}
+          >
             {r.value}
           </Typography>
         </Stack>
@@ -3446,32 +5294,72 @@ RankedList.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
    Just a clean surface with a plain title + subtitle header and lots
    of padding. Deliberately restrained to stop reading as "AI dashboard
    template". Rule from memory: never edge-stripe a rounded card. */
-function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename, info, footer }) {
+function Panel({
+  title,
+  subtitle,
+  children,
+  minHeight,
+  action,
+  exportRows,
+  exportFilename,
+  info,
+  footer,
+}) {
   const onOpen = useContext(WidgetOpenContext);
   const hasExport = Array.isArray(exportRows) && exportRows.length > 0;
   const onExport = () => {
-    const safe = (title || "panel").toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const safe = (title || "panel")
+      .toString()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
     downloadCsv(exportFilename || `${safe}.csv`, exportRows);
   };
   return (
-    <Box className="analytics-panel" sx={{
-      border: "1px solid", borderColor: "divider", borderRadius: 2,
-      bgcolor: "background.paper", display: "flex", flexDirection: "column",
-      overflow: "hidden",
-      minHeight,
-    }}>
-      <Stack direction="row" alignItems="flex-start" spacing={1.5} sx={{
-        px: 3, pt: 2.5, pb: 2,
-      }}>
+    <Box
+      className="analytics-panel"
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="flex-start"
+        spacing={1.5}
+        sx={{
+          px: 3,
+          pt: 2.5,
+          pb: 2,
+        }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ minWidth: 0 }}
+          >
             <Typography
               {...clickable(onOpen)}
               sx={{
                 ...focusRing,
-                typography: "s1", color: "text.primary", fontWeight: 700,
-                fontSize: 15, letterSpacing: -0.1, lineHeight: 1.3,
-                ...(onOpen && { cursor: "pointer", "&:hover": { color: "primary.main" } }),
+                typography: "s1",
+                color: "text.primary",
+                fontWeight: 600,
+                fontSize: 13,
+                letterSpacing: -0.1,
+                lineHeight: 1.3,
+                ...(onOpen && {
+                  cursor: "pointer",
+                  "&:hover": { color: "primary.main" },
+                }),
               }}
             >
               {title}
@@ -3479,7 +5367,15 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
             {info && <PanelInfoIcon info={info} title={title} />}
           </Stack>
           {subtitle && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12.5, mt: 0.5, lineHeight: 1.45 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                fontSize: 13,
+                mt: 0.5,
+                lineHeight: 1.45,
+              }}
+            >
               {subtitle}
             </Typography>
           )}
@@ -3498,19 +5394,36 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
             className="analytics-no-print"
             aria-label={`Download ${title} as CSV`}
             sx={{
-              position: "absolute", width: 1, height: 1, padding: 0, margin: -1,
-              overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+              position: "absolute",
+              width: 1,
+              height: 1,
+              padding: 0,
+              margin: -1,
+              overflow: "hidden",
+              clip: "rect(0 0 0 0)",
+              whiteSpace: "nowrap",
+              border: 0,
             }}
           />
         )}
       </Stack>
-      <Box sx={{ flex: 1, minHeight: 0 }}>
-        {children}
-      </Box>
+      <Box sx={{ flex: 1, minHeight: 0 }}>{children}</Box>
       {footer && (
-        <Box sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
+        <Box
+          sx={{
+            px: 3,
+            py: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>Read: </Box>
+            <Box
+              component="span"
+              sx={{ fontWeight: 600, color: "text.primary" }}
+            >
+              Read:{" "}
+            </Box>
             {footer}
           </Typography>
         </Box>
@@ -3519,9 +5432,13 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
   );
 }
 Panel.propTypes = {
-  title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node, minHeight: PropTypes.number,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  children: PropTypes.node,
+  minHeight: PropTypes.number,
   action: PropTypes.node,
-  exportRows: PropTypes.array, exportFilename: PropTypes.string,
+  exportRows: PropTypes.array,
+  exportFilename: PropTypes.string,
   info: PropTypes.node,
   footer: PropTypes.node,
 };
@@ -3534,21 +5451,39 @@ function PanelInfoIcon({ info, title }) {
     <Tooltip
       arrow
       placement="top"
-      title={<Box sx={{ px: 0.25, py: 0.25, fontSize: 12, lineHeight: 1.5, maxWidth: 280 }}>{info}</Box>}
+      title={
+        <Box
+          sx={{
+            px: 0.25,
+            py: 0.25,
+            fontSize: 12,
+            lineHeight: 1.5,
+            maxWidth: 280,
+          }}
+        >
+          {info}
+        </Box>
+      }
     >
       <Box
         component="span"
         aria-label={`About ${title || "this chart"}`}
         className="analytics-no-print"
         sx={{
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          width: 16, height: 16, borderRadius: 999,
-          color: "text.subtitle", cursor: "help", flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 16,
+          height: 16,
+          borderRadius: 999,
+          color: "text.tertiary",
+          cursor: "help",
+          flexShrink: 0,
           transition: "color 120ms",
           "&:hover": { color: "text.primary" },
         }}
       >
-        <Iconify icon="solar:info-circle-linear" width={13} />
+        <Iconify icon="solar:info-circle-linear" width={14} />
       </Box>
     </Tooltip>
   );
@@ -3562,7 +5497,12 @@ function PanelChart({ title, subtitle, children, info }) {
     </Panel>
   );
 }
-PanelChart.propTypes = { title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node, info: PropTypes.node };
+PanelChart.propTypes = {
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  children: PropTypes.node,
+  info: PropTypes.node,
+};
 
 /* ── regression banner ─────────────────────────────────────────────── */
 
@@ -3577,41 +5517,68 @@ function RegressionBanner({ delta }) {
   const rows = label.id === "rows";
   const good = label.id === "improved";
   const bad = label.id === "regressed";
-  const tone = bad ? RED : good ? GREEN : null;
+  const tone = bad ? "status.danger.fg" : good ? "status.success.fg" : null;
   return (
-    <Stack direction="row" alignItems="center" spacing={2}
-      sx={{
-        px: 2.25, py: 1.25, borderRadius: 1,
-        border: "1px solid", borderColor: "divider",
-        bgcolor: (t) => (tone ? alpha(tone, t.palette.mode === "dark" ? 0.08 : 0.05) : "transparent"),
-      }}
+    <Alert
+      severity={bad ? "error" : good ? "success" : "info"}
+      icon={
+        <Iconify
+          icon={
+            side
+              ? "solar:transfer-horizontal-linear"
+              : good
+                ? "solar:arrow-up-linear"
+                : bad
+                  ? "solar:arrow-down-linear"
+                  : label.id === "same"
+                    ? "solar:minus-circle-linear"
+                    : "solar:question-circle-linear"
+          }
+          width={16}
+        />
+      }
     >
-      <Iconify
-        icon={side ? "solar:transfer-horizontal-linear" : good ? "solar:arrow-up-linear" : bad ? "solar:arrow-down-linear" : label.id === "same" ? "solar:minus-circle-linear" : "solar:question-circle-linear"}
-        width={16}
-        sx={{ color: tone || "text.secondary" }}
-      />
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {side ? `Side by side with ${delta.prevLabel}` : rows ? `No verdict against ${delta.prevLabel}` : `${label.label} vs ${delta.prevLabel}`}
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {side
+            ? `Side by side with ${delta.prevLabel}`
+            : rows
+              ? `No verdict against ${delta.prevLabel}`
+              : `${label.label} vs ${delta.prevLabel}`}
           {!side && !rows && delta.passRate != null && (
-            <Box component="span" sx={{ color: tone || "text.secondary", ml: 1, fontWeight: 800 }}>
-              {delta.passRate >= 0 ? "+" : ""}{delta.passRate} pts pass rate
+            <Box
+              component="span"
+              sx={{ color: tone || "text.secondary", ml: 1, fontWeight: 600 }}
+            >
+              {delta.passRate >= 0 ? "+" : ""}
+              {delta.passRate} pts pass rate
             </Box>
           )}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
-          {side ? label.note : (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontSize: 12,
+            mt: 0.25,
+          }}
+        >
+          {side ? (
+            label.note
+          ) : (
             <>
-              {delta.newlyPassing} scenarios newly passing · {delta.regressions} regressed
-              {delta.costDeltaPct !== null ? ` · cost per call ${delta.costDeltaPct > 0 ? "+" : ""}${delta.costDeltaPct}%` : ""}
+              {delta.newlyPassing} scenarios newly passing · {delta.regressions}{" "}
+              regressed
+              {delta.costDeltaPct !== null
+                ? ` · cost per call ${delta.costDeltaPct > 0 ? "+" : ""}${delta.costDeltaPct}%`
+                : ""}
               {` · compared on ${delta.shared} scenario${delta.shared === 1 ? "" : "s"}`}
               {rows ? ` — ${label.note}` : ""}
             </>
           )}
         </Typography>
       </Box>
-    </Stack>
+    </Alert>
   );
 }
 RegressionBanner.propTypes = { delta: PropTypes.object };
@@ -3631,7 +5598,12 @@ function TrendRow({ runHistory, currentRunId }) {
       id: r.id,
       passRate: r.passRate ?? 0,
       escalation: r.escalationRate ?? Math.max(0, 20 - i * 2),
-      costPerPass: r.costPerPass ?? (r.cost ? r.cost / Math.max(1, Math.round(r.passRate / 100 * (r.scenarios || 1))) : 0),
+      costPerPass:
+        r.costPerPass ??
+        (r.cost
+          ? r.cost /
+            Math.max(1, Math.round((r.passRate / 100) * (r.scenarios || 1)))
+          : 0),
       latencyP90: r.latencyP90 ?? r.medLatencyMs ?? 0,
     }));
   }, [runHistory]);
@@ -3639,21 +5611,56 @@ function TrendRow({ runHistory, currentRunId }) {
 
   const spark = (label, key, unit = "%", goodUp = true) => {
     const values = series.map((r) => r[key]);
-    const first = values[0]; const last = values[values.length - 1];
+    const first = values[0];
+    const last = values[values.length - 1];
     const dir = last - first;
     const good = goodUp ? dir >= 0 : dir <= 0;
-    const color = Math.abs(dir) < 0.5 ? theme.palette.text.subtitle : (good ? CHART_GREEN : CHART_RED);
+    const color =
+      Math.abs(dir) < 0.5
+        ? theme.palette.text.tertiary
+        : good
+          ? CHART_GREEN
+          : CHART_RED;
     return (
       <Box sx={{ px: 2, py: 1.5, minWidth: 0 }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontSize: 12,
+            fontWeight: 600,
+            textTransform: "none",
+            letterSpacing: 0.5,
+          }}
+        >
           {label}
         </Typography>
-        <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mt: 0.375 }}>
-          <Typography sx={{ typography: "m1", fontWeight: 700, fontVariantNumeric: "tabular-nums", fontSize: 18 }}>
-            {unit === "$" ? `$${last.toFixed(3)}` : unit === "ms" ? `${Math.round(last)}ms` : `${Math.round(last)}${unit}`}
+        <Stack
+          direction="row"
+          alignItems="baseline"
+          spacing={1}
+          sx={{ mt: 0.375 }}
+        >
+          <Typography
+            sx={{
+              typography: "m1",
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              fontSize: 16,
+            }}
+          >
+            {unit === "$"
+              ? `$${last.toFixed(3)}`
+              : unit === "ms"
+                ? `${Math.round(last)}ms`
+                : `${Math.round(last)}${unit}`}
           </Typography>
-          <Typography sx={{ typography: "s3", fontSize: 10.5, fontWeight: 700, color }}>
-            {dir >= 0 ? "+" : ""}{unit === "$" ? dir.toFixed(3) : Math.round(dir)}{unit === "$" ? "" : unit === "ms" ? "ms" : unit}
+          <Typography
+            sx={{ typography: "s3", fontSize: 12, fontWeight: 600, color }}
+          >
+            {dir >= 0 ? "+" : ""}
+            {unit === "$" ? dir.toFixed(3) : Math.round(dir)}
+            {unit === "$" ? "" : unit === "ms" ? "ms" : unit}
           </Typography>
         </Stack>
       </Box>
@@ -3661,21 +5668,31 @@ function TrendRow({ runHistory, currentRunId }) {
   };
 
   return (
-    <Box sx={{
-      border: "1px solid", borderColor: "divider", borderRadius: 1,
-      bgcolor: "background.paper",
-      display: "grid",
-      gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
-      "& > * + *": { borderLeft: { md: "1px solid" }, borderColor: { md: "divider" } },
-    }}>
-      {spark("Pass rate · trend",  "passRate",    "%",  true)}
-      {spark("Escalation · trend", "escalation",  "%",  false)}
-      {spark("Cost / pass",        "costPerPass", "$",  false)}
-      {spark("Latency p90",        "latencyP90",  "ms", false)}
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.paper",
+        display: "grid",
+        gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
+        "& > * + *": {
+          borderLeft: { md: "1px solid" },
+          borderColor: { md: "divider" },
+        },
+      }}
+    >
+      {spark("Pass rate · trend", "passRate", "%", true)}
+      {spark("Escalation · trend", "escalation", "%", false)}
+      {spark("Cost / pass", "costPerPass", "$", false)}
+      {spark("Latency p90", "latencyP90", "ms", false)}
     </Box>
   );
 }
-TrendRow.propTypes = { runHistory: PropTypes.array, currentRunId: PropTypes.string };
+TrendRow.propTypes = {
+  runHistory: PropTypes.array,
+  currentRunId: PropTypes.string,
+};
 
 /* ── voice latency panel ──────────────────────────────────────────── */
 
@@ -3687,25 +5704,77 @@ function VoiceLatencyPanel({ voice }) {
   /* Over the SLO reads red; everything else stays plain (no amber text). */
   const ms = (v, unit) => (v == null ? "—" : `${Math.round(v)}${unit}`);
   const rows = [
-    { id: "ttfw", label: "Time to first word (TTFW)", m: voice.ttfw, warn: 1200 },
+    {
+      id: "ttfw",
+      label: "Time to first word (TTFW)",
+      m: voice.ttfw,
+      warn: 1200,
+    },
     { id: "llm", label: "LLM response", m: voice.llm, warn: 2500 },
     { id: "tts", label: "Text-to-speech", m: voice.tts, warn: 800 },
     { id: "asr", label: "Speech recognition", m: voice.asr, warn: 500 },
   ];
-  const cellNum = (sx) => ({ typography: "s2", fontVariantNumeric: "tabular-nums", ...sx });
+  const cellNum = (sx) => ({
+    typography: "s2",
+    fontVariantNumeric: "tabular-nums",
+    ...sx,
+  });
   const columns = [
-    { id: "label", header: "Segment", meta: { flex: 2 }, cell: ({ row: { original: r } }) => <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{r.label}</Typography> },
-    { id: "p50", header: "p50", meta: { flex: 1 }, cell: ({ row: { original: r } }) => <Typography sx={cellNum()}>{ms(r.m.p50, "ms")}</Typography> },
     {
-      id: "p90", header: "p90", meta: { flex: 1 },
+      id: "label",
+      header: "Segment",
+      meta: { flex: 2 },
       cell: ({ row: { original: r } }) => (
-        <Typography sx={cellNum({ fontWeight: 700, color: r.m.p90 == null ? "text.disabled" : r.m.p90 > r.warn ? RED : "text.primary" })}>{ms(r.m.p90, "ms")}</Typography>
+        <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+          {r.label}
+        </Typography>
       ),
     },
     {
-      id: "p99", header: "p99", meta: { flex: 1 },
+      id: "p50",
+      header: "p50",
+      meta: { flex: 1 },
       cell: ({ row: { original: r } }) => (
-        <Typography sx={cellNum({ color: r.m.p99 == null ? "text.disabled" : r.m.p99 > r.warn ? RED : "text.subtitle" })}>{ms(r.m.p99, "ms")}</Typography>
+        <Typography sx={cellNum()}>{ms(r.m.p50, "ms")}</Typography>
+      ),
+    },
+    {
+      id: "p90",
+      header: "p90",
+      meta: { flex: 1 },
+      cell: ({ row: { original: r } }) => (
+        <Typography
+          sx={cellNum({
+            fontWeight: 600,
+            color:
+              r.m.p90 == null
+                ? "text.disabled"
+                : r.m.p90 > r.warn
+                  ? "status.danger.fg"
+                  : "text.primary",
+          })}
+        >
+          {ms(r.m.p90, "ms")}
+        </Typography>
+      ),
+    },
+    {
+      id: "p99",
+      header: "p99",
+      meta: { flex: 1 },
+      cell: ({ row: { original: r } }) => (
+        <Typography
+          sx={cellNum({
+            color:
+              r.m.p99 == null
+                ? "text.disabled"
+                : r.m.p99 > r.warn
+                  ? "status.danger.fg"
+                  : "text.tertiary",
+          })}
+        >
+          {ms(r.m.p99, "ms")}
+        </Typography>
       ),
     },
   ];
@@ -3718,17 +5787,57 @@ function VoiceLatencyPanel({ voice }) {
       <Box sx={{ px: 1 }}>
         <FitDataTable columns={columns} data={rows} getRowId={(r) => r.id} />
       </Box>
-      <Stack direction="row" spacing={3} sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack
+        direction="row"
+        spacing={3}
+        sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
+      >
         <Box>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 10.5, fontWeight: 600, textTransform: "uppercase" }}>ASR word-error rate</Typography>
-          <Typography sx={{ typography: "s1", fontWeight: 700, fontSize: 15, mt: 0.25, color: voice.werPct < 8 ? GREEN : voice.werPct < 15 ? "text.primary" : RED }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontSize: 12,
+              fontWeight: 600,
+              textTransform: "none",
+            }}
+          >
+            ASR word-error rate
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s1",
+              fontWeight: 600,
+              fontSize: 13,
+              mt: 0.25,
+              color:
+                voice.werPct < 8
+                  ? "status.success.fg"
+                  : voice.werPct < 15
+                    ? "text.primary"
+                    : "status.danger.fg",
+            }}
+          >
             {voice.werPct.toFixed(1)}%
           </Typography>
         </Box>
         <Box>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 10.5, fontWeight: 600, textTransform: "uppercase" }}>Interruptions</Typography>
-          <Typography sx={{ typography: "s1", fontWeight: 700, fontSize: 15, mt: 0.25 }}>
-            {voice.interruptsPerTask.toFixed(1)} / call · {voice.interrupts} total
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontSize: 12,
+              fontWeight: 600,
+              textTransform: "none",
+            }}
+          >
+            Interruptions
+          </Typography>
+          <Typography
+            sx={{ typography: "s1", fontWeight: 600, fontSize: 13, mt: 0.25 }}
+          >
+            {voice.interruptsPerTask.toFixed(1)} / call · {voice.interrupts}{" "}
+            total
           </Typography>
         </Box>
       </Stack>
@@ -3746,7 +5855,9 @@ VoiceLatencyPanel.propTypes = { voice: PropTypes.object };
 function FailureClustersPanel({ tasks }) {
   const theme = useTheme();
   const clusters = useMemo(() => deriveFailureClusters(tasks, 4), [tasks]);
-  const totalFailed = tasks.filter((t) => t.status !== "passed" && isMeasured(t)).length;
+  const totalFailed = tasks.filter(
+    (t) => t.status !== "passed" && isMeasured(t),
+  ).length;
   return (
     <Panel
       title="Top failure themes"
@@ -3755,7 +5866,9 @@ function FailureClustersPanel({ tasks }) {
     >
       {clusters.length === 0 ? (
         <Box sx={{ p: 3, textAlign: "center" }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", fontSize: 12 }}
+          >
             No failures — nothing to cluster.
           </Typography>
         </Box>
@@ -3765,36 +5878,71 @@ function FailureClustersPanel({ tasks }) {
             const dom = DOMAINS[c.domain] || DOMAINS.agent;
             const share = pct(c.count, totalFailed);
             return (
-              <Box key={`${c.domain}::${c.useCase}`} sx={{
-                display: "grid", gridTemplateColumns: "auto 1fr auto auto",
-                gap: 1.25, alignItems: "center",
-                px: 1.25, py: 0.75, borderRadius: 0.75,
-                "&:hover": { bgcolor: "action.hover" },
-              }}>
-                <Box sx={{
-                  px: 0.75, py: 0.25, borderRadius: 0.5,
-                  bgcolor: alpha(dom.color, theme.palette.mode === "dark" ? 0.18 : 0.12),
-                  color: textTone(dom.color), fontSize: 10.5, fontWeight: 700,
-                  lineHeight: 1.4, whiteSpace: "nowrap",
-                }}>
+              <Box
+                key={`${c.domain}::${c.useCase}`}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr auto auto",
+                  gap: 1.25,
+                  alignItems: "center",
+                  px: 1.25,
+                  py: 0.75,
+                  borderRadius: "4px",
+                  "&:hover": { bgcolor: "action.hover" },
+                }}
+              >
+                <Box
+                  sx={{
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: "4px",
+                    bgcolor: alpha(
+                      dom.color,
+                      theme.palette.mode === "dark" ? 0.18 : 0.12,
+                    ),
+                    color: textTone(dom.color),
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: 1.4,
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {dom.short}
                 </Box>
-                <Typography sx={{
-                  typography: "s2", fontWeight: 600,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }} title={c.useCase}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={c.useCase}
+                >
                   {c.useCase}
                 </Typography>
-                <Typography sx={{
-                  typography: "s2", fontWeight: 700, color: RED,
-                  fontVariantNumeric: "tabular-nums", minWidth: 42, textAlign: "right",
-                }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    color: "status.danger.fg",
+                    fontVariantNumeric: "tabular-nums",
+                    minWidth: 42,
+                    textAlign: "right",
+                  }}
+                >
                   {c.count}
                 </Typography>
-                <Typography sx={{
-                  typography: "s3", fontSize: 11, color: "text.subtitle",
-                  fontVariantNumeric: "tabular-nums", minWidth: 34, textAlign: "right",
-                }}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontSize: 12,
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                    minWidth: 34,
+                    textAlign: "right",
+                  }}
+                >
                   {share}%
                 </Typography>
               </Box>
@@ -3812,22 +5960,42 @@ FailureClustersPanel.propTypes = { tasks: PropTypes.array };
 /* Buckets tasks by latency, overlays a 2000ms SLA line so the reader
    can see the tail past the threshold. The percentage-under-SLA badge
    is the single number a CX lead wants — "89% of calls under 2s". */
-const LatencyHistogramPanel = memo(function LatencyHistogramPanel({ tasks, slaMs = 2000 }) {
+const LatencyHistogramPanel = memo(function LatencyHistogramPanel({
+  tasks,
+  slaMs = 2000,
+}) {
   const theme = useTheme();
   const { buckets, categories, colors, underSla, total } = useMemo(() => {
     const lats = tasks.map((t) => latencyOf(t)).filter((v) => v > 0);
-    if (!lats.length) return { buckets: [], categories: [], colors: [], underSla: 0, total: 0 };
+    if (!lats.length)
+      return { buckets: [], categories: [], colors: [], underSla: 0, total: 0 };
     const edges = [500, 1000, 1500, 2000, 2500, 3000, 4000, Infinity];
-    const labels = ["<0.5s", "0.5–1s", "1–1.5s", "1.5–2s", "2–2.5s", "2.5–3s", "3–4s", "≥4s"];
+    const labels = [
+      "<0.5s",
+      "0.5–1s",
+      "1–1.5s",
+      "1.5–2s",
+      "2–2.5s",
+      "2.5–3s",
+      "3–4s",
+      "≥4s",
+    ];
     const b = new Array(edges.length).fill(0);
     lats.forEach((v) => {
       const i = edges.findIndex((e) => v < e);
       if (i >= 0) b[i] += 1;
     });
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     const cols = edges.map((e) => (e <= slaMs ? CHART_GREEN : "#F59E0B"));
     if (edges[edges.length - 1] === Infinity) cols[cols.length - 1] = CHART_RED;
     const under = lats.filter((v) => v <= slaMs).length;
-    return { buckets: b, categories: labels, colors: cols, underSla: under, total: lats.length };
+    return {
+      buckets: b,
+      categories: labels,
+      colors: cols,
+      underSla: under,
+      total: lats.length,
+    };
   }, [tasks, slaMs]);
 
   const pctUnder = total ? Math.round((underSla / total) * 100) : 0;
@@ -3839,58 +6007,110 @@ const LatencyHistogramPanel = memo(function LatencyHistogramPanel({ tasks, slaMs
       info="Shape of the latency curve, bucketed. A tall stack on the left = most tasks are fast, healthy. A long tail on the right = a few slow tasks that are dragging your percentiles. The subtitle counts how many tasks stayed under your SLA."
     >
       <ReactApexChart
-        type="bar" height={260}
+        type="bar"
+        height={260}
         series={[{ name: "Tasks", data: buckets }]}
         options={{
-          chart: { type: "bar", toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+          chart: {
+            type: "bar",
+            toolbar: { show: false },
+            animations: { enabled: false },
+            background: "transparent",
+            fontFamily: theme.typography.fontFamily,
+          },
           theme: { mode: theme.palette.mode },
-          plotOptions: { bar: { columnWidth: "56%", borderRadius: 2, distributed: true } },
+          plotOptions: {
+            bar: { columnWidth: "56%", borderRadius: 2, distributed: true },
+          },
           dataLabels: { enabled: false },
           legend: { show: false },
           stroke: { show: false },
           fill: { type: "solid", opacity: 0.9 },
           colors,
-          xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" } } },
-          yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
-          grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 0, right: 0, top: -6, bottom: -6 } },
+          xaxis: {
+            categories,
+            axisBorder: { show: false },
+            axisTicks: { show: false },
+            labels: {
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+            },
+          },
+          yaxis: {
+            labels: {
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+              formatter: (v) => `${Math.round(v)}`,
+            },
+          },
+          grid: {
+            borderColor: theme.palette.divider,
+            strokeDashArray: 4,
+            padding: { left: 0, right: 0, top: -6, bottom: -6 },
+          },
           tooltip: { y: { formatter: (v) => `${v} tasks` } },
         }}
       />
     </PanelChart>
   );
 });
-LatencyHistogramPanel.propTypes = { tasks: PropTypes.array, slaMs: PropTypes.number };
+LatencyHistogramPanel.propTypes = {
+  tasks: PropTypes.array,
+  slaMs: PropTypes.number,
+};
 
 /* ── shell ─────────────────────────────────────────────────────────── */
 
-export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentRunId }) {
+export default function RunAnalyticsV2({
+  tasks,
+  evals,
+  env,
+  runHistory,
+  currentRunId,
+}) {
   const layout = useRunLayout({ surface: env?.surface || "generic" });
   const navigate = useNavigate();
   const { envState } = useEnvState(env?.id);
   /* Widget queries read every run of the environment (runs are their
      x-axis) — manual runs and improvement trials, numbered like the runs
      table. */
-  const simRuns = useMemo(() => simRunsWithTasks(env, envState), [env, envState]);
+  const simRuns = useMemo(
+    () => simRunsWithTasks(env, envState),
+    [env, envState],
+  );
   const simCatalog = useMemo(() => simMetricCatalog(simRuns), [simRuns]);
   /* The layout object is rebuilt every render; read it through a ref so the
      context value only changes when the data does, not on every render. */
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const simWidgets = useMemo(() => ({
-    runs: simRuns,
-    catalog: simCatalog,
-    currentRunId,
-    open: (widgetId) => navigate(paths.dashboard.simulate.runWidget(env?.id, currentRunId, widgetId)),
-    duplicateBuiltin: (panelId) => {
-      const built = builtinQuery(panelId, simCatalog);
-      if (!built) return;
-      const { approx, ...q } = built; // eslint-disable-line no-unused-vars
-      const title = `${getPanelMeta(panelId)?.title || "Widget"} (copy)`;
-      layoutRef.current.addCustomWidget({ id: `sim-${Math.random().toString(36).slice(2, 10)}`, kind: "sim_query", title, ...q });
-    },
-  }), [simRuns, simCatalog, currentRunId, env?.id, navigate]);
+  const simWidgets = useMemo(
+    () => ({
+      runs: simRuns,
+      catalog: simCatalog,
+      currentRunId,
+      open: (widgetId) =>
+        navigate(
+          paths.dashboard.simulate.runWidget(env?.id, currentRunId, widgetId),
+        ),
+      duplicateBuiltin: (panelId) => {
+        const built = builtinQuery(panelId, simCatalog);
+        if (!built) return;
+        const { approx, ...q } = built; // eslint-disable-line no-unused-vars
+        const title = `${getPanelMeta(panelId)?.title || "Widget"} (copy)`;
+        layoutRef.current.addCustomWidget({
+          id: `sim-${Math.random().toString(36).slice(2, 10)}`,
+          kind: "sim_query",
+          title,
+          ...q,
+        });
+      },
+    }),
+    [simRuns, simCatalog, currentRunId, env?.id, navigate],
+  );
   const [hiddenAnchor, setHiddenAnchor] = useState(null);
-  const [editorState, setEditorState] = useState({ open: false, target: null, opts: null });
+  const [editorState, setEditorState] = useState({
+    open: false,
+    target: null,
+    opts: null,
+  });
   const [renameTarget, setRenameTarget] = useState(null); // custom widget id
   const [renameValue, setRenameValue] = useState("");
 
@@ -3899,12 +6119,18 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
      sync so switching in the popover updates the shareable link. */
   useEffect(() => {
     const desired = readViewFromUrl();
-    if (desired && layout.viewNames.includes(desired) && desired !== layout.activeView) {
+    if (
+      desired &&
+      layout.viewNames.includes(desired) &&
+      desired !== layout.activeView
+    ) {
       layout.switchView(desired);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { writeViewToUrl(layout.activeView); }, [layout.activeView]);
+  useEffect(() => {
+    writeViewToUrl(layout.activeView);
+  }, [layout.activeView]);
 
   /* Rename dialog is opened via a window CustomEvent so the deep-in
      render loop doesn't have to hoist setState refs up here. */
@@ -3926,13 +6152,17 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
   const openDrilldown = (payload) => setDrilldown(payload || null);
   const closeDrilldown = () => setDrilldown(null);
   const isVoice = env?.surface === "voice";
-  const voice = useMemo(() => (isVoice ? deriveVoiceLatency(tasks) : null), [isVoice, tasks]);
+  const voice = useMemo(
+    () => (isVoice ? deriveVoiceLatency(tasks) : null),
+    [isVoice, tasks],
+  );
 
   /* Trend context: pull the previous run's aggregates so the KPI
      strip can render deltas and the regression banner can name the
      newly-passing / regressed count. */
   const { delta, trend } = useMemo(() => {
-    if (!runHistory || runHistory.length === 0) return { delta: null, trend: null };
+    if (!runHistory || runHistory.length === 0)
+      return { delta: null, trend: null };
     /* Only compare when the run on screen is in the history — a trial or a
        live run has no "previous run" in that list, and falling back to the
        latest pair compared two runs unrelated to this page. */
@@ -3941,12 +6171,21 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
     if (!prevRun) return { delta: null, trend: null };
     /* One verdict, the one Compare gives: scenario by scenario over the
        comparable pairs, and side by side when the environment versions differ. */
-    const read = env ? comparisonOf([prevRun, { ...runHistory[idx], tasks }], env, envState) : null;
+    const read = env
+      ? comparisonOf([prevRun, { ...runHistory[idx], tasks }], env, envState)
+      : null;
     if (!read) return { delta: null, trend: null };
     const side = read.label.id === "side";
-    const usable = read.pairs.filter((p) => PAIR_CLASSES[p.cls].inDelta && p.shareA != null && p.shareB != null);
-    const newlyPassing = usable.filter((p) => p.flip.kind === "improved").length;
-    const regressions = usable.filter((p) => p.flip.kind === "regressed").length;
+    const usable = read.pairs.filter(
+      (p) =>
+        PAIR_CLASSES[p.cls].inDelta && p.shareA != null && p.shareB != null,
+    );
+    const newlyPassing = usable.filter(
+      (p) => p.flip.kind === "improved",
+    ).length;
+    const regressions = usable.filter(
+      (p) => p.flip.kind === "regressed",
+    ).length;
     /* Cost per call over the calls whose cost was reported, so different
        scenario counts / repeats still compare and unverified costs never count. */
     const perCall = (list) => {
@@ -3956,13 +6195,19 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
     };
     const currCost = perCall(tasks);
     const prevCost = perCall(prevRun.tasks);
-    const costDeltaPct = !side && prevCost > 0 ? Math.round(((currCost - prevCost) / prevCost) * 100) : null;
+    const costDeltaPct =
+      !side && prevCost > 0
+        ? Math.round(((currCost - prevCost) / prevCost) * 100)
+        : null;
     const prevPassed = passedCalls(prevRun.tasks || []);
-    const prevTotal = (prevRun.tasks || []).filter((t) => !t.costUnverified).reduce((a, t) => a + (t.cost || 0), 0);
+    const prevTotal = (prevRun.tasks || [])
+      .filter((t) => !t.costUnverified)
+      .reduce((a, t) => a + (t.cost || 0), 0);
     return {
       delta: {
         label: read.label,
-        passRate: read.interval.delta == null ? null : Math.round(read.interval.delta),
+        passRate:
+          read.interval.delta == null ? null : Math.round(read.interval.delta),
         newlyPassing,
         regressions,
         costDeltaPct,
@@ -3970,31 +6215,33 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         prevLabel: `Run ${prevRun.ordinal ?? idx} · ${runIdentityOf(prevRun, envState, env).label}`,
       },
       /* KPI deltas only on the same environment version. */
-      trend: side ? null : {
-        prevPassRate: passRateOf(prevRun.tasks || []),
-        prevEscalationRate: prevRun.escalationRate,
-        prevCostPerPass: prevPassed ? prevTotal / prevPassed : null,
-      },
+      trend: side
+        ? null
+        : {
+            prevPassRate: passRateOf(prevRun.tasks || []),
+            prevEscalationRate: prevRun.escalationRate,
+            prevCostPerPass: prevPassed ? prevTotal / prevPassed : null,
+          },
     };
   }, [runHistory, currentRunId, tasks, env, envState]);
 
   return (
     <DrilldownContext.Provider value={openDrilldown}>
-    <TaskDrilldownDrawer
-      open={!!drilldown}
-      onClose={closeDrilldown}
-      title={drilldown?.title}
-      subtitle={drilldown?.subtitle}
-      tasks={drilldown?.tasks}
-      env={env}
-    />
-    <Stack spacing={2} className="analytics-root">
-      {/* Print CSS — activates when the user hits Cmd+P or the Export
+      <TaskDrilldownDrawer
+        open={!!drilldown}
+        onClose={closeDrilldown}
+        title={drilldown?.title}
+        subtitle={drilldown?.subtitle}
+        tasks={drilldown?.tasks}
+        env={env}
+      />
+      <Stack spacing={2} className="analytics-root">
+        {/* Print CSS — activates when the user hits Cmd+P or the Export
           button below. Hides app chrome, expands the analytics tab to
           full width, keeps chart cards from splitting across pages,
           and forces a white background so the printed PDF is readable.
           Scoped via `.analytics-root` so it never leaks to other tabs. */}
-      <style>{`
+        <style>{`
         @media print {
           @page { size: A3; margin: 12mm; }
           body, html { background: #fff !important; }
@@ -4021,95 +6268,144 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         }
       `}</style>
 
-      {/* Toolbar — Views on the left, Add widget + Export on the right.
+        {/* Toolbar — Views on the left, Add widget + Export on the right.
           Drag-to-reorder happens directly on the widgets, and every
           panel's kebab menu handles delete/resize/duplicate/download,
           so no standalone Customize button is needed. Hidden from print. */}
-      <Stack direction="row" alignItems="center" spacing={1} className="analytics-no-print" sx={{ mb: 0 }}>
-        <ViewTabBar
-          activeView={layout.activeView}
-          viewNames={layout.viewNames}
-          defaultName={layout.DEFAULT_VIEW_NAME}
-          onSwitch={layout.switchView}
-          onSave={layout.saveAsView}
-          onRename={layout.renameView}
-          onDuplicate={layout.duplicateView}
-          onDelete={layout.deleteView}
-          onReorder={layout.reorderViews}
-        />
-        <ToolbarButton
-          icon="solar:add-circle-linear"
-          label="Add widget"
-          onClick={() => simWidgets.open("new")}
-        />
-        <ToolbarButton
-          icon="solar:eye-closed-linear"
-          label={layout.hiddenIds.length > 0 ? `Hidden (${layout.hiddenIds.length})` : "Hidden"}
-          onClick={(e) => setHiddenAnchor(e.currentTarget)}
-        />
-        <ToolbarButton
-          icon="solar:printer-linear"
-          label="Export PDF"
-          onClick={() => window.print()}
-        />
-      </Stack>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          className="analytics-no-print"
+          sx={{ mb: 0 }}
+        >
+          <ViewTabBar
+            activeView={layout.activeView}
+            viewNames={layout.viewNames}
+            defaultName={layout.DEFAULT_VIEW_NAME}
+            onSwitch={layout.switchView}
+            onSave={layout.saveAsView}
+            onRename={layout.renameView}
+            onDuplicate={layout.duplicateView}
+            onDelete={layout.deleteView}
+            onReorder={layout.reorderViews}
+          />
+          <ToolbarButton
+            icon="solar:add-circle-linear"
+            label="Add widget"
+            onClick={() => simWidgets.open("new")}
+          />
+          <ToolbarButton
+            icon="solar:eye-closed-linear"
+            label={
+              layout.hiddenIds.length > 0
+                ? `Hidden (${layout.hiddenIds.length})`
+                : "Hidden"
+            }
+            onClick={(e) => setHiddenAnchor(e.currentTarget)}
+          />
+          <ToolbarButton
+            icon="solar:printer-linear"
+            label="Export PDF"
+            onClick={() => window.print()}
+          />
+        </Stack>
 
-      {/* 2. Regression banner (only when a prior run exists). Kept as a
+        {/* 2. Regression banner (only when a prior run exists). Kept as a
           fixed lede — it's a run-level alert, not a widget the user
           would reorder. */}
-      <RegressionBanner delta={delta} />
+        <RegressionBanner delta={delta} />
 
-      {/* 3. Top-of-page KPI strip. Also fixed at the top — it's the
+        {/* 3. Top-of-page KPI strip. Also fixed at the top — it's the
           answer the user came for, not something to reorder past. */}
-      <KpiStrip tasks={tasks} evals={evals} biz={biz} trend={trend} runHistory={runHistory} currentRunId={currentRunId} env={env} />
+        <KpiStrip
+          tasks={tasks}
+          evals={evals}
+          biz={biz}
+          trend={trend}
+          runHistory={runHistory}
+          currentRunId={currentRunId}
+          env={env}
+        />
 
-      {/* Registry-driven body. The list of visible ids comes from the
+        {/* Registry-driven body. The list of visible ids comes from the
           layout hook, and we render them in sections in the order the
           user has arranged. This is what makes reorder, hide/show,
           named views and custom widgets all work with one code path. */}
-      <SimWidgetsContext.Provider value={simWidgets}>
-        <LayoutBody
-          layout={layout}
-          renderPanel={(id) => renderBuiltinPanel(id, { tasks, evals, biz, voice, env, override: layout.getOverride(id) })}
-          renderCustomPanel={(widget) => renderCustomPanel(widget, { tasks, evals, biz, voice, env }, layout.getOverride(widget.id))}
-          openEditor={(widget) => setEditorState({ open: true, target: widget, opts: null })}
-        />
-      </SimWidgetsContext.Provider>
-    </Stack>
-    <HiddenWidgetsPopover
-      anchorEl={hiddenAnchor}
-      onClose={() => setHiddenAnchor(null)}
-      layout={layout}
-    />
-    <WidgetEditor
-      open={editorState.open}
-      onClose={() => setEditorState({ open: false, target: null, opts: null })}
-      initial={editorState.target}
-      onSave={(widget) => {
-        if (editorState.target) layout.updateCustomWidget(editorState.target.id, widget);
-        else layout.addCustomWidget(widget);
-      }}
-      ctx={{ tasks, evals, biz, voice, env, graderResults: deriveGraderResults(tasks, evals) }}
-    />
-    <RenameWidgetDialog
-      open={!!renameTarget}
-      title={renameValue}
-      onClose={() => setRenameTarget(null)}
-      onChange={setRenameValue}
-      onSave={() => {
-        const t = renameValue.trim();
-        /* Rename goes through the override map, not the base config,
+        <SimWidgetsContext.Provider value={simWidgets}>
+          <LayoutBody
+            layout={layout}
+            renderPanel={(id) =>
+              renderBuiltinPanel(id, {
+                tasks,
+                evals,
+                biz,
+                voice,
+                env,
+                override: layout.getOverride(id),
+              })
+            }
+            renderCustomPanel={(widget) =>
+              renderCustomPanel(
+                widget,
+                { tasks, evals, biz, voice, env },
+                layout.getOverride(widget.id),
+              )
+            }
+            openEditor={(widget) =>
+              setEditorState({ open: true, target: widget, opts: null })
+            }
+          />
+        </SimWidgetsContext.Provider>
+      </Stack>
+      <HiddenWidgetsPopover
+        anchorEl={hiddenAnchor}
+        onClose={() => setHiddenAnchor(null)}
+        layout={layout}
+      />
+      <WidgetEditor
+        open={editorState.open}
+        onClose={() =>
+          setEditorState({ open: false, target: null, opts: null })
+        }
+        initial={editorState.target}
+        onSave={(widget) => {
+          if (editorState.target)
+            layout.updateCustomWidget(editorState.target.id, widget);
+          else layout.addCustomWidget(widget);
+        }}
+        ctx={{
+          tasks,
+          evals,
+          biz,
+          voice,
+          env,
+          graderResults: deriveGraderResults(tasks, evals),
+        }}
+      />
+      <RenameWidgetDialog
+        open={!!renameTarget}
+        title={renameValue}
+        onClose={() => setRenameTarget(null)}
+        onChange={setRenameValue}
+        onSave={() => {
+          const t = renameValue.trim();
+          /* Rename goes through the override map, not the base config,
            so "Reset to default" restores the shipped/first-save name. */
-        if (renameTarget && t) layout.patchOverride(renameTarget, { title: t });
-        setRenameTarget(null);
-      }}
-    />
+          if (renameTarget && t)
+            layout.patchOverride(renameTarget, { title: t });
+          setRenameTarget(null);
+        }}
+      />
     </DrilldownContext.Provider>
   );
 }
 RunAnalyticsV2.propTypes = {
-  tasks: PropTypes.array, evals: PropTypes.array, env: PropTypes.object,
-  runHistory: PropTypes.array, currentRunId: PropTypes.string,
+  tasks: PropTypes.array,
+  evals: PropTypes.array,
+  env: PropTypes.object,
+  runHistory: PropTypes.array,
+  currentRunId: PropTypes.string,
 };
 
 /* ── layout renderer ─────────────────────────────────────────────
@@ -4125,7 +6421,9 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
 
   const [activeId, setActiveId] = useState(null);
@@ -4170,7 +6468,8 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
      namespace so they never collide with widget ids. Only the
      section header responds to this DndContext's listeners. */
   const [activeSectionId, setActiveSectionId] = useState(null);
-  const onSectionDragStart = (event) => setActiveSectionId(event.active?.id || null);
+  const onSectionDragStart = (event) =>
+    setActiveSectionId(event.active?.id || null);
   const onSectionDragCancel = () => setActiveSectionId(null);
   const onSectionDragEnd = (event) => {
     setActiveSectionId(null);
@@ -4180,7 +6479,9 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
     const oldIndex = currentOrder.indexOf(active.id);
     const newIndex = currentOrder.indexOf(over.id);
     if (oldIndex < 0 || newIndex < 0) return;
-    const nextOrder = arrayMove(currentOrder, oldIndex, newIndex).map((id) => id.replace(/^section:/, ""));
+    const nextOrder = arrayMove(currentOrder, oldIndex, newIndex).map((id) =>
+      id.replace(/^section:/, ""),
+    );
     layout.reorderSections(nextOrder);
   };
 
@@ -4207,12 +6508,20 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
           onDragCancel={onDragCancel}
           onDragEnd={onDragEnd}
         >
-          <SortableContext items={layout.visibleIds} strategy={rectSortingStrategy}>
+          <SortableContext
+            items={layout.visibleIds}
+            strategy={rectSortingStrategy}
+          >
             {orderedSections.map((section) => {
               const ids = bySection.get(section.id);
               if (!ids || ids.length === 0) return null;
               return (
-                <SortableSection key={section.id} sectionId={section.id} label={section.label} hint={section.hint}>
+                <SortableSection
+                  key={section.id}
+                  sectionId={section.id}
+                  label={section.label}
+                  hint={section.hint}
+                >
                   <LayoutSection
                     section={section}
                     ids={ids}
@@ -4228,14 +6537,18 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
             })}
           </SortableContext>
           <DragOverlay dropAnimation={null}>
-            {activeId ? <DragGhost label={labelForId(activeId, layout, customById)} /> : null}
+            {activeId ? (
+              <DragGhost label={labelForId(activeId, layout, customById)} />
+            ) : null}
           </DragOverlay>
         </DndContext>
       </SortableContext>
       <DragOverlay dropAnimation={null}>
-        {activeSectionId
-          ? <DragGhost label={`Section: ${SECTIONS.find((s) => `section:${s.id}` === activeSectionId)?.label || activeSectionId}`} />
-          : null}
+        {activeSectionId ? (
+          <DragGhost
+            label={`Section: ${SECTIONS.find((s) => `section:${s.id}` === activeSectionId)?.label || activeSectionId}`}
+          />
+        ) : null}
       </DragOverlay>
     </DndContext>
   );
@@ -4248,18 +6561,25 @@ function labelForId(id, layout, customById) {
 
 function DragGhost({ label }) {
   return (
-    <Box sx={(t) => ({
-      pointerEvents: "none",
-      px: 1.5, py: 1,
-      borderRadius: 1.25,
-      border: "1px solid",
-      borderColor: alpha(t.palette.primary.main, 0.8),
-      bgcolor: alpha(t.palette.background.paper, 0.98),
-      color: "text.primary",
-      fontSize: 13, fontWeight: 700,
-      boxShadow: "0 12px 32px -8px rgba(0,0,0,0.35)",
-      display: "inline-flex", alignItems: "center", gap: 1,
-    })}>
+    <Box
+      sx={(t) => ({
+        pointerEvents: "none",
+        px: 1.5,
+        py: 1,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: alpha(t.palette.primary.main, 0.8),
+        bgcolor: alpha(t.palette.background.paper, 0.98),
+        color: "text.primary",
+        fontSize: 13,
+        fontWeight: 600,
+        // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
+        boxShadow: "0 12px 32px -8px rgba(0,0,0,0.35)",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 1,
+      })}
+    >
       <Iconify icon="solar:hamburger-menu-linear" width={14} />
       {label}
     </Box>
@@ -4272,43 +6592,69 @@ DragGhost.propTypes = { label: PropTypes.node };
    the common "just fix the title" case. */
 function RenameWidgetDialog({ open, title, onClose, onChange, onSave }) {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      fullWidth
+    >
       <Box sx={{ p: 2.5 }}>
-        <Typography sx={{ fontSize: 15, fontWeight: 700, mb: 1.5 }}>Rename widget</Typography>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1.5 }}>
+          Rename widget
+        </Typography>
         <Box
           component="input"
           autoFocus
           value={title}
           onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSave(); if (e.key === "Escape") onClose(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave();
+            if (e.key === "Escape") onClose();
+          }}
           sx={{
             width: "100%",
-            fontSize: 14, fontFamily: "inherit",
-            px: 1.25, py: 1, borderRadius: 1,
-            border: "1px solid", borderColor: "divider",
-            bgcolor: "background.paper", color: "text.primary",
+            fontSize: 13,
+            fontFamily: "inherit",
+            px: 1.25,
+            py: 1,
+            borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            color: "text.primary",
             outline: "none",
             "&:focus": { borderColor: "primary.main" },
           }}
         />
-        <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ mt: 2 }}>
-          <Box component="button" type="button" onClick={onClose} sx={ghostBtnSx}>Cancel</Box>
-          <Box component="button" type="button" onClick={onSave} sx={{ ...ghostBtnSx, bgcolor: "primary.main", color: "#fff", borderColor: "primary.main" }}>Save</Box>
+        <Stack
+          direction="row"
+          spacing={1}
+          justifyContent="flex-end"
+          sx={{ mt: 2 }}
+        >
+          <Button variant="outlined" size="small" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={onSave}
+          >
+            Save
+          </Button>
         </Stack>
       </Box>
     </Dialog>
   );
 }
 RenameWidgetDialog.propTypes = {
-  open: PropTypes.bool, title: PropTypes.string,
-  onClose: PropTypes.func, onChange: PropTypes.func, onSave: PropTypes.func,
-};
-const ghostBtnSx = {
-  fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
-  px: 1.5, py: 0.75, borderRadius: 1, cursor: "pointer",
-  border: "1px solid", borderColor: "divider",
-  bgcolor: "transparent", color: "text.primary",
-  "&:hover": { bgcolor: "action.hover" },
+  open: PropTypes.bool,
+  title: PropTypes.string,
+  onClose: PropTypes.func,
+  onChange: PropTypes.func,
+  onSave: PropTypes.func,
 };
 LayoutBody.propTypes = {
   layout: PropTypes.object.isRequired,
@@ -4329,7 +6675,16 @@ function sectionForId(id, layout, customById) {
  * dnd wiring lives at the parent so users can drop cross-section;
  * this component just lays out its slice of the full visible list.
  */
-function LayoutSection({ section, ids, layout, customById, renderPanel, renderCustomPanel, openEditor, activeId }) {
+function LayoutSection({
+  section,
+  ids,
+  layout,
+  customById,
+  renderPanel,
+  renderCustomPanel,
+  openEditor,
+  activeId,
+}) {
   const cols = section.columns || 2;
   const simWidgets = useContext(SimWidgetsContext);
 
@@ -4337,33 +6692,49 @@ function LayoutSection({ section, ids, layout, customById, renderPanel, renderCu
     /* Section header is rendered by SortableSection wrapping this
        component, so we only emit the grid here. */
     <Box>
-      <Box sx={{
-        display: "grid", gap: 1.5,
-        gridTemplateColumns: {
-          xs: "1fr",
-          sm: cols >= 4 ? "repeat(2, 1fr)" : `repeat(${Math.min(cols, 2)}, 1fr)`,
-          md: `repeat(${cols}, 1fr)`,
-        },
-        alignItems: "stretch",
-      }}>
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: {
+            xs: "1fr",
+            sm:
+              cols >= 4
+                ? "repeat(2, 1fr)"
+                : `repeat(${Math.min(cols, 2)}, 1fr)`,
+            md: `repeat(${cols}, 1fr)`,
+          },
+          alignItems: "stretch",
+        }}
+      >
         {ids.map((id, index) => {
           const isCustom = customById.has(id);
           const customWidget = customById.get(id);
           const meta = getPanelMeta(id);
-          const defaultSpan = isCustom ? cols : (meta?.defaultSpan || 1);
+          const defaultSpan = isCustom ? cols : meta?.defaultSpan || 1;
           const overrideSpan = layout.spans?.[id];
           const span = Math.min(overrideSpan || defaultSpan, cols);
 
           const actions = buildPanelActions({
             simWidgets,
-            id, index, ids, layout, isCustom, customWidget,
-            cols, currentSpan: span,
+            id,
+            index,
+            ids,
+            layout,
+            isCustom,
+            customWidget,
+            cols,
+            currentSpan: span,
             openEditor,
             openRename: (targetId, title) => {
               /* Rename shows a lightweight dialog owned by the shell.
                  Broadcast via a custom event so this render loop
                  doesn't need to prop-thread setState three levels up. */
-              window.dispatchEvent(new CustomEvent("run-analytics:rename", { detail: { id: targetId, title } }));
+              window.dispatchEvent(
+                new CustomEvent("run-analytics:rename", {
+                  detail: { id: targetId, title },
+                }),
+              );
             },
             openCustomizeCopy: (targetId) => {
               const snap = snapshotAsCustom(targetId);
@@ -4374,7 +6745,10 @@ function LayoutSection({ section, ids, layout, customById, renderPanel, renderCu
           });
 
           return (
-            <Box key={id} sx={{ gridColumn: { md: span > 1 ? `span ${span}` : "auto" } }}>
+            <Box
+              key={id}
+              sx={{ gridColumn: { md: span > 1 ? `span ${span}` : "auto" } }}
+            >
               <SortablePanel
                 id={id}
                 sectionColumns={cols}
@@ -4404,9 +6778,12 @@ function LayoutSection({ section, ids, layout, customById, renderPanel, renderCu
   );
 }
 LayoutSection.propTypes = {
-  section: PropTypes.object.isRequired, ids: PropTypes.array.isRequired,
-  layout: PropTypes.object.isRequired, customById: PropTypes.instanceOf(Map).isRequired,
-  renderPanel: PropTypes.func.isRequired, renderCustomPanel: PropTypes.func.isRequired,
+  section: PropTypes.object.isRequired,
+  ids: PropTypes.array.isRequired,
+  layout: PropTypes.object.isRequired,
+  customById: PropTypes.instanceOf(Map).isRequired,
+  renderPanel: PropTypes.func.isRequired,
+  renderCustomPanel: PropTypes.func.isRequired,
   openEditor: PropTypes.func.isRequired,
   activeId: PropTypes.string,
 };
@@ -4416,39 +6793,61 @@ LayoutSection.propTypes = {
  * mutations to the layout hook (single source of truth) and packages
  * the callbacks in the shape SortablePanel expects.
  */
-function buildPanelActions({ simWidgets, id, index, ids, layout, isCustom, customWidget, cols, currentSpan, openEditor, openRename, openCustomizeCopy }) {
+function buildPanelActions({
+  simWidgets,
+  id,
+  index,
+  ids,
+  layout,
+  isCustom,
+  customWidget,
+  cols,
+  currentSpan,
+  openEditor,
+  openRename,
+  openCustomizeCopy,
+}) {
   /* Widgets built on a query (saved sim widgets, and every built-in that has
      a query form) open in the full-page editor. Legacy custom widgets keep
      their dialog. */
-  const opensInEditor = isCustom ? customWidget?.kind === "sim_query" : hasBuiltinQuery(id);
+  const opensInEditor = isCustom
+    ? customWidget?.kind === "sim_query"
+    : hasBuiltinQuery(id);
   const editAction = opensInEditor
     ? () => simWidgets?.open(id)
-    : isCustom ? () => openEditor(customWidget) : null;
+    : isCustom
+      ? () => openEditor(customWidget)
+      : null;
   const positionInGlobal = layout.visibleIds.indexOf(id);
   const sectionIndices = ids.map((sid) => layout.visibleIds.indexOf(sid));
   const firstGlobal = Math.min(...sectionIndices);
   const lastGlobal = Math.max(...sectionIndices);
   return {
-    onMoveUp:     () => index > 0            && layout.moveTo(id, positionInGlobal - 1),
-    onMoveDown:   () => index < ids.length-1 && layout.moveTo(id, positionInGlobal + 1),
-    onMoveTop:    () => layout.moveTo(id, firstGlobal),
+    onMoveUp: () => index > 0 && layout.moveTo(id, positionInGlobal - 1),
+    onMoveDown: () =>
+      index < ids.length - 1 && layout.moveTo(id, positionInGlobal + 1),
+    onMoveTop: () => layout.moveTo(id, firstGlobal),
     onMoveBottom: () => layout.moveTo(id, lastGlobal),
-    onSetSpan:    (span) => layout.setSpan(id, Math.min(span, cols)),
-    onResetSpan:  () => layout.resetSpan(id),
-    onHide:       () => layout.hide(id),
-    onDuplicate:  isCustom
+    onSetSpan: (span) => layout.setSpan(id, Math.min(span, cols)),
+    onResetSpan: () => layout.resetSpan(id),
+    onHide: () => layout.hide(id),
+    onDuplicate: isCustom
       ? () => layout.duplicateCustomWidget(id)
-      : hasBuiltinQuery(id) ? () => simWidgets?.duplicateBuiltin(id) : null,
-    onEdit:       editAction,
-    onRename:     isCustom ? () => openRename?.(id, customWidget?.title || "") : null,
+      : hasBuiltinQuery(id)
+        ? () => simWidgets?.duplicateBuiltin(id)
+        : null,
+    onEdit: editAction,
+    onRename: isCustom
+      ? () => openRename?.(id, customWidget?.title || "")
+      : null,
     onCustomizeCopy: isCustom ? null : () => openCustomizeCopy?.(id),
-    onDelete:     isCustom ? () => layout.removeCustomWidget(id) : null,
+    onDelete: isCustom ? () => layout.removeCustomWidget(id) : null,
     /* Menu Download → click the panel's own CSV icon so built-in
        and custom widgets share the same download path without
        prop-threading exportRows all the way back up here. */
-    onExport:     () => triggerPanelExport(id),
-    onCopyLink:   () => copyWidgetLink(id, layout.activeView),
-    onPrintOnly:  () => printOnly(id),
+    onExport: () => triggerPanelExport(id),
+    onCopyLink: () => copyWidgetLink(id, layout.activeView),
+    onPrintOnly: () => printOnly(id),
     onResetOverride: () => layout.resetOverride(id),
   };
 }
@@ -4456,10 +6855,13 @@ function buildPanelActions({ simWidgets, id, index, ids, layout, isCustom, custo
 function copyWidgetLink(id, viewName) {
   try {
     const url = new URL(window.location.href);
-    if (viewName && viewName !== "Default") url.searchParams.set("view", viewName);
+    if (viewName && viewName !== "Default")
+      url.searchParams.set("view", viewName);
     url.hash = `widget-${id}`;
     navigator.clipboard?.writeText(url.toString());
-  } catch { /* clipboard may be blocked in dev — noop */ }
+  } catch {
+    /* clipboard may be blocked in dev — noop */
+  }
 }
 
 function triggerPanelExport(id) {
@@ -4467,14 +6869,19 @@ function triggerPanelExport(id) {
      "Download {title} as CSV". Find the button inside this
      widget's sortable wrapper and click it — one code path,
      both entry points. */
-  const wrap = document.querySelector(`.sortable-panel-wrap[data-widget-id="${CSS.escape(id)}"]`);
+  const wrap = document.querySelector(
+    `.sortable-panel-wrap[data-widget-id="${CSS.escape(id)}"]`,
+  );
   const btn = wrap?.querySelector('[aria-label^="Download "]');
   btn?.click();
 }
 
 function printOnly(id) {
   const root = document.querySelector(".analytics-root");
-  if (!root) { window.print(); return; }
+  if (!root) {
+    window.print();
+    return;
+  }
   const wraps = root.querySelectorAll(".sortable-panel-wrap");
   const suppressed = [];
   wraps.forEach((el) => {
@@ -4503,39 +6910,69 @@ function printOnly(id) {
 function renderBuiltinPanel(id, ctx) {
   const { tasks, evals, biz, voice, env, override } = ctx;
   if (override?.simQuery) {
-    return <SimWidgetPanel config={{ ...override.simQuery, title: override.title || override.simQuery.title }} />;
+    return (
+      <SimWidgetPanel
+        config={{
+          ...override.simQuery,
+          title: override.title || override.simQuery.title,
+        }}
+      />
+    );
   }
   switch (id) {
-    case "success_donut":        return <SuccessDonut tasks={tasks} />;
-    case "outcome_donut":        return <OutcomeDonutChart tasks={tasks} />;
-    case "sentiment_donut":      return <SentimentDonut tasks={tasks} />;
-    case "disconnection_donut":  return <DisconnectionDonut tasks={tasks} />;
-    case "dual_line_over_time":  return <TaskLatencyOverTime tasks={tasks} />;
-    case "latency_percentiles":  return <LatencyPercentilesPanel tasks={tasks} />;
-    case "agent_response_time":  return <AgentResponseTimePanel tasks={tasks} />;
-    case "csat_distribution":    return <CsatDistributionPanel tasks={tasks} />;
-    case "distribution_summary": return <DistributionSummary tasks={tasks} env={env} />;
-    case "attribution":          return <AttributionTable tasks={tasks} />;
-    case "use_case_risk_list":   return <UseCaseRiskList tasks={tasks} />;
-    case "evals_table":          return <EvalsTable tasks={tasks} evals={evals} />;
-    case "voice_latency":        return voice ? <VoiceLatencyPanel voice={voice} /> : null;
-    case "voice_cost_breakdown": return voice ? <VoiceCostBreakdownPanel tasks={tasks} /> : null;
-    case "slowest_tasks":        return <SlowestTable tasks={tasks} />;
-    case "expensive_tasks":      return <ExpensiveTable tasks={tasks} />;
+    case "success_donut":
+      return <SuccessDonut tasks={tasks} />;
+    case "outcome_donut":
+      return <OutcomeDonutChart tasks={tasks} />;
+    case "sentiment_donut":
+      return <SentimentDonut tasks={tasks} />;
+    case "disconnection_donut":
+      return <DisconnectionDonut tasks={tasks} />;
+    case "dual_line_over_time":
+      return <TaskLatencyOverTime tasks={tasks} />;
+    case "latency_percentiles":
+      return <LatencyPercentilesPanel tasks={tasks} />;
+    case "agent_response_time":
+      return <AgentResponseTimePanel tasks={tasks} />;
+    case "csat_distribution":
+      return <CsatDistributionPanel tasks={tasks} />;
+    case "distribution_summary":
+      return <DistributionSummary tasks={tasks} env={env} />;
+    case "attribution":
+      return <AttributionTable tasks={tasks} />;
+    case "use_case_risk_list":
+      return <UseCaseRiskList tasks={tasks} />;
+    case "evals_table":
+      return <EvalsTable tasks={tasks} evals={evals} />;
+    case "voice_latency":
+      return voice ? <VoiceLatencyPanel voice={voice} /> : null;
+    case "voice_cost_breakdown":
+      return voice ? <VoiceCostBreakdownPanel tasks={tasks} /> : null;
+    case "slowest_tasks":
+      return <SlowestTable tasks={tasks} />;
+    case "expensive_tasks":
+      return <ExpensiveTable tasks={tasks} />;
 
     /* Tools section — new per Monika's ask. Info tooltip flags
        infra vs prompt so users route the fix to the right team. */
-    case "tool_call_volume":  return <ToolCallVolumePanel tasks={tasks} />;
-    case "tool_failure_rate": return <ToolFailureRatePanel tasks={tasks} />;
+    case "tool_call_volume":
+      return <ToolCallVolumePanel tasks={tasks} />;
+    case "tool_failure_rate":
+      return <ToolFailureRatePanel tasks={tasks} />;
 
     /* Golden set & divergence — per Ajeevansh. Section header hint
        tells users what "golden" means before they read the widgets. */
-    case "golden_set_manager":  return <GoldenSetManager tasks={tasks} env={env} />;
-    case "dropoff_funnel":      return <DropoffFunnel tasks={tasks} env={env} />;
-    case "divergence_timeline": return <DivergenceTimeline tasks={tasks} env={env} />;
-    case "pitch_break_themes":  return <PitchBreakThemes tasks={tasks} env={env} />;
+    case "golden_set_manager":
+      return <GoldenSetManager tasks={tasks} env={env} />;
+    case "dropoff_funnel":
+      return <DropoffFunnel tasks={tasks} env={env} />;
+    case "divergence_timeline":
+      return <DivergenceTimeline tasks={tasks} env={env} />;
+    case "pitch_break_themes":
+      return <PitchBreakThemes tasks={tasks} env={env} />;
 
-    default: return null;
+    default:
+      return null;
   }
 }
 
@@ -4553,16 +6990,37 @@ function ctxWithDerived(ctx) {
 function SimWidgetPanel({ config }) {
   const sim = useContext(SimWidgetsContext);
   const result = useMemo(
-    () => (sim ? runSimQuery(config.query, sim.runs, sim.currentRunId, sim.catalog) : { series: [], buckets: [] }),
+    () =>
+      sim
+        ? runSimQuery(config.query, sim.runs, sim.currentRunId, sim.catalog)
+        : { series: [], buckets: [] },
     [config.query, sim],
   );
-  const visible = Array.isArray(config.visible_series) ? new Set(config.visible_series) : null;
-  const range = RUN_RANGE_PRESETS.find((p) => p.value === config.query?.range)?.label;
-  const axis = X_AXIS_OPTIONS.find((o) => o.value === config.query?.xAxis)?.label;
-  const subtitle = [range, config.query?.range !== "this" && axis].filter(Boolean).join(" · ");
+  const visible = Array.isArray(config.visible_series)
+    ? new Set(config.visible_series)
+    : null;
+  const range = RUN_RANGE_PRESETS.find(
+    (p) => p.value === config.query?.range,
+  )?.label;
+  const axis = X_AXIS_OPTIONS.find(
+    (o) => o.value === config.query?.xAxis,
+  )?.label;
+  const subtitle = [range, config.query?.range !== "this" && axis]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <Panel title={config.title || "Untitled widget"} subtitle={subtitle} info={config.description || undefined}>
-      <Box sx={{ height: config.chart_type === "metric" ? 180 : 300, px: 2, pb: 2 }}>
+    <Panel
+      title={config.title || "Untitled widget"}
+      subtitle={subtitle}
+      info={config.description || undefined}
+    >
+      <Box
+        sx={{
+          height: config.chart_type === "metric" ? 180 : 300,
+          px: 2,
+          pb: 2,
+        }}
+      >
         <SimWidgetChart
           series={result.series}
           buckets={result.buckets}
@@ -4589,7 +7047,10 @@ function renderCustomPanel(widget, ctx, override) {
     <Panel title={config.title} subtitle="Custom widget" info={config.info}>
       <CustomWidgetBody
         config={config}
-        ctx={{ ...ctx, graderResults: deriveGraderResults(ctx.tasks, ctx.evals) }}
+        ctx={{
+          ...ctx,
+          graderResults: deriveGraderResults(ctx.tasks, ctx.evals),
+        }}
       />
     </Panel>
   );
@@ -4628,21 +7089,36 @@ function deriveGraderResults(tasks, evals) {
  */
 function SectionHeader({ title, subtitle }) {
   return (
-    <Box sx={{
-      pt: 2, mt: 0.5, mb: 0.5, px: 0.25,
-      borderTop: "1px solid",
-      borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
-    }}>
-      <Typography sx={{
-        fontSize: 18, fontWeight: 700, letterSpacing: -0.2, lineHeight: 1.2,
-        color: "text.primary",
-      }}>
+    <Box
+      sx={{
+        pt: 2,
+        mt: 0.5,
+        mb: 0.5,
+        px: 0.25,
+        borderTop: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography
+        sx={{
+          fontSize: 16,
+          fontWeight: 600,
+          letterSpacing: -0.2,
+          lineHeight: 1.2,
+          color: "text.primary",
+        }}
+      >
         {title}
       </Typography>
       {subtitle && (
-        <Typography sx={{
-          typography: "s3", color: "text.subtitle", fontSize: 12.5, mt: 0.5,
-        }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontSize: 13,
+            mt: 0.5,
+          }}
+        >
           {subtitle}
         </Typography>
       )}

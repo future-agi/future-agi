@@ -26,6 +26,7 @@ import { flattenObject } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
 import { useCallLogsSearchStore } from "./states";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LogDetailDrawerContent = ({
   logDetail,
@@ -195,10 +196,7 @@ const LogDetailDrawerContent = ({
           <Button
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="akar-icons:chevron-left-small" />}
-            sx={{
-              padding: "4px 12px",
-            }}
+            startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
             onClick={onPrev}
             disabled={logDetail?.rowIndex === 0}
           >
@@ -207,10 +205,7 @@ const LogDetailDrawerContent = ({
           <LoadingButton
             variant="outlined"
             size="small"
-            endIcon={<Iconify icon="akar-icons:chevron-right-small" />}
-            sx={{
-              padding: "4px 12px",
-            }}
+            endIcon={<Iconify icon="solar:alt-arrow-right-linear" />}
             onClick={onNext}
             loading={isFetching}
             disabled={totalCount === logDetail?.rowIndex + 1}
@@ -225,7 +220,7 @@ const LogDetailDrawerContent = ({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </Box>
@@ -249,16 +244,6 @@ const LogDetailDrawerContent = ({
             value={tabValue}
             onChange={(e, value) => setTabValue(value)}
             indicatorColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
-            sx={{
-              "& .MuiTab-root": {
-                ...theme.typography.s2_1,
-              },
-            }}
           >
             <Tab value="fields" label="Fields" />
             <Tab value="json" label="JSON" />
@@ -304,7 +289,7 @@ const LogDetailDrawerContent = ({
                 endAdornment: search && (
                   <InputAdornment position="end">
                     <Iconify
-                      icon="mingcute:close-line"
+                      icon="solar:close-linear"
                       onClick={() => {
                         setSearch("");
                       }}
@@ -328,7 +313,7 @@ const LogDetailDrawerContent = ({
                 getRowId={({ data }) => data.key}
                 pagination={false}
                 suppressScrollOnNewData={true}
-                rowHeight={55}
+                rowHeight={44}
                 domLayout="autoHeight"
                 rowData={filteredRows}
               />
@@ -341,7 +326,7 @@ const LogDetailDrawerContent = ({
               border: "1px solid",
               borderColor: "divider",
               padding: "10px",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               backgroundColor: "background.neutral",
             }}
           >
@@ -375,21 +360,22 @@ const LogDetailDrawer = ({
   module,
   callLogs,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       open={open}
       onClose={onClose}
       anchor="right"
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflow: "visible",
-          width: "623px",
+          width: "640px",
         },
       }}
       ModalProps={{

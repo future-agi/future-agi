@@ -16,6 +16,7 @@ import {
   Stack,
   Link,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "../iconify";
 import TraceTree from "./trace-tree";
 import DrawerRight from "./drawer-right";
@@ -66,6 +67,7 @@ const TraceDetailDrawerChild = ({
   const [showRightSection] = useState(false);
   const [annotateRunDrawerOpen, setAnnotateRunDrawerOpen] = useState(null);
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
+  const annotationCovered = useDrawerCovered(annotationSidebarOpen);
   const [actionToDataset, setActionToDataset] = useState(false);
   const [configureAnnotationsDrawerOpen, setConfigureAnnotationsDrawerOpen] =
     useState(false);
@@ -434,7 +436,7 @@ const TraceDetailDrawerChild = ({
             sx={{
               height: `${topSectionHeight}%`,
               ...(dragging === false && {
-                transition: "ease-in-out 0.3s",
+                transition: "ease-in-out 200ms",
               }),
             }}
           >
@@ -449,8 +451,8 @@ const TraceDetailDrawerChild = ({
                   width: "6px",
                 },
                 "&::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
                 "&::-webkit-scrollbar-track": {
                   backgroundColor: "transparent",
@@ -479,7 +481,7 @@ const TraceDetailDrawerChild = ({
                       <Link
                         href="https://docs.futureagi.com/docs/observe/features/manual-tracing/instrument-with-traceai-helpers"
                         underline="always"
-                        color="blue.500"
+                        color="status.info.fg"
                         target="_blank"
                         rel="noopener noreferrer"
                         fontWeight="fontWeightMedium"
@@ -493,6 +495,7 @@ const TraceDetailDrawerChild = ({
                 <ShowComponent condition={showNavigation}>
                   <Box sx={{ display: "flex", gap: 2 }}>
                     <Button
+                      size="small"
                       variant="outlined"
                       sx={{
                         color: "text.primary",
@@ -500,10 +503,7 @@ const TraceDetailDrawerChild = ({
                         display: "flex",
                         alignItems: "center",
                         gap: 2,
-                        height: "28px",
                         width: "fit-content",
-                        fontWeight: 400,
-                        fontSize: "14px",
                       }}
                       disabled={!previousNextTraceData?.previousTraceId}
                       onClick={() =>
@@ -524,6 +524,7 @@ const TraceDetailDrawerChild = ({
                       />
                     </Button>
                     <Button
+                      size="small"
                       variant="outlined"
                       sx={{
                         color: "text.primary",
@@ -531,10 +532,7 @@ const TraceDetailDrawerChild = ({
                         display: "flex",
                         alignItems: "center",
                         gap: 2,
-                        height: "28px",
                         width: "fit-content",
-                        fontWeight: 400,
-                        fontSize: "14px",
                       }}
                       disabled={!previousNextTraceData?.nextTraceId}
                       onClick={() =>
@@ -575,7 +573,7 @@ const TraceDetailDrawerChild = ({
             sx={{
               height: `${topSectionHeight}%`,
               ...(dragging === false && {
-                transition: "ease-in-out 0.3s",
+                transition: "ease-in-out 200ms",
               }),
             }}
           >
@@ -641,7 +639,7 @@ const TraceDetailDrawerChild = ({
                 height: `${bottomSectionHeight}%`,
                 zIndex: 3,
                 ...(dragging === false && {
-                  transition: "ease-in-out 0.3s",
+                  transition: "ease-in-out 200ms",
                 }),
               }}
             >
@@ -657,13 +655,14 @@ const TraceDetailDrawerChild = ({
                     sx={{
                       position: "absolute",
                       left: "91%",
+                      // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
                       boxShadow: "3",
                       borderRadius: "50%",
                       bgcolor: "background.paper",
                       height: "23px",
                       width: "23px",
                       ...(dragging === false && {
-                        transition: "ease-in-out 0.3s",
+                        transition: "ease-in-out 200ms",
                       }),
                       cursor: "pointer",
                       zIndex: 4,
@@ -674,9 +673,9 @@ const TraceDetailDrawerChild = ({
                     onClick={handleCollapse} // Toggle collapse on click
                   >
                     <Iconify
-                      icon="bi:arrows-collapse"
-                      width={15}
-                      height={15}
+                      icon="solar:chevrons-down-up-linear"
+                      width={16}
+                      height={16}
                       color="text.secondary"
                     />
                   </Box>
@@ -684,6 +683,7 @@ const TraceDetailDrawerChild = ({
                 <Box
                   sx={{
                     position: "absolute",
+                    // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
                     boxShadow: "3",
                     borderRadius: "50%", // This makes it a circle
                     backgroundColor: dragging
@@ -693,7 +693,7 @@ const TraceDetailDrawerChild = ({
                     width: "23px",
                     left: "2.5%",
                     ...(dragging === false && {
-                      transition: "ease-in-out 0.3s",
+                      transition: "ease-in-out 200ms",
                     }),
                     cursor: dragging ? "grabbing" : "grab",
                     zIndex: 4,
@@ -751,9 +751,10 @@ const TraceDetailDrawerChild = ({
           anchor="right"
           open={annotationSidebarOpen}
           onClose={() => setAnnotationSidebarOpen(false)}
+          sx={coveredDrawerSx(annotationCovered)}
           PaperProps={{
             sx: {
-              width: 420,
+              width: 480,
               backgroundColor: "background.paper",
             },
           }}
@@ -845,18 +846,21 @@ const TraceDetailDrawer = ({
     onClose();
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={handleClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           overflowY: "hidden",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "95vw",
         },
@@ -869,7 +873,7 @@ const TraceDetailDrawer = ({
     >
       <Box sx={{ position: "absolute", top: 10, right: 10, zIndex: 1 }}>
         <IconButton onClick={handleClose}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       {traceData && (

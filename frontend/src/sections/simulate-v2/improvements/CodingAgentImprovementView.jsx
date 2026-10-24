@@ -18,15 +18,30 @@ import OmegaHandoff from "../run/OmegaHandoff";
  * agent's attempts, each with the verdict we sent back, and — once one is
  * accepted — the same next steps as any change that ships.
  */
-export default function CodingAgentImprovementView({ env, envState, record, patch, onBack, backLabel, handoff }) {
+export default function CodingAgentImprovementView({
+  env,
+  envState,
+  record,
+  patch,
+  onBack,
+  backLabel,
+  handoff,
+}) {
   const { agents, state: simState } = useConnectedAgents();
   const { prs, improverSessions } = useIntegrations();
-  const session = useMemo(() => improverSessionFor(env.id, record.id, { improverSessions }), [env.id, record.id, improverSessions]);
+  const session = useMemo(
+    () => improverSessionFor(env.id, record.id, { improverSessions }),
+    [env.id, record.id, improverSessions],
+  );
   const tier = candidateRouteOf(envState?.agent).tier;
 
   /* Attempts arrive over time — re-read while the agent is still working. */
   const [now, setNow] = useState(() => Date.now());
-  const coder = coderStatusOf(record, env.id, { now, surface: env.surface, tier });
+  const coder = coderStatusOf(record, env.id, {
+    now,
+    surface: env.surface,
+    tier,
+  });
   useEffect(() => {
     if (coder.key !== "running") return undefined;
     const t = setInterval(() => setNow(Date.now()), 2000);
@@ -34,52 +49,96 @@ export default function CodingAgentImprovementView({ env, envState, record, patc
   }, [coder.key]);
 
   const row = useMemo(
-    () => improvementRowsOf({ state: simState, agents, prs, now }).find((r) => r.envId === env.id && r.recordId === record.id) || null,
+    () =>
+      improvementRowsOf({ state: simState, agents, prs, now }).find(
+        (r) => r.envId === env.id && r.recordId === record.id,
+      ) || null,
     [simState, agents, prs, now, env.id, record.id],
   );
   const accepted = coder.attempt || null;
   const issueId = record.trigger?.issueId || null;
 
   return (
-    <Box sx={{ height: "100%", overflow: "auto", p: 2, display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{
+        height: "100%",
+        overflow: "auto",
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <Box sx={{ mb: 2, flexShrink: 0 }}>
         <Button
-          size="small" onClick={onBack}
+          size="small"
+          onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", ml: -0.75, mb: 0.75, minWidth: 0 }}
+          sx={{ color: "text.secondary", ml: -0.75, mb: 0.75, minWidth: 0 }}
         >
           {`Back to ${backLabel}`}
         </Button>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "m3", fontWeight: 700 }}>{row?.name || record.name}</Typography>
+          <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
+            {row?.name || record.name}
+          </Typography>
           <StatusPill ending={row?.status} headline={row?.headline} />
         </Stack>
         <Tooltip arrow placement="bottom-start" title={record.id}>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, width: "fit-content", maxWidth: "100%" }}>
-            {[row?.identity, env.name, issueId || row?.trigger?.label].filter(Boolean).join(" · ")}
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              color: "text.subtitle",
+              mt: 0.25,
+              width: "fit-content",
+              maxWidth: "100%",
+            }}
+          >
+            {[row?.identity, env.name, issueId || row?.trigger?.label]
+              .filter(Boolean)
+              .join(" · ")}
           </Typography>
         </Tooltip>
       </Box>
 
       {/* ── who fixes it, and who judges ── */}
-      <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, px: 2, py: 1.5, mb: 2 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+          px: 2,
+          py: 1.5,
+          mb: 2,
+        }}
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {`${coder.improver} writes the fix · Future AGI checks every attempt`}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+        >
           {`It makes each change and submits it for checking. We run it and today's agent on the same scenarios and send back a verdict — it never sees the held-back scenarios and can't edit the ones that judge it.${record.reproduce?.total ? ` Today: reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} of ${issueId || "the issue"}'s scenarios.` : ""}`}
         </Typography>
       </Box>
 
       {/* ── its attempts, each with the verdict it got ── */}
-      <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+      <Box
+        sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+      >
         {session ? (
           <ImproverAttempts
-            record={record} env={env} envState={envState} session={session}
-            name={row?.name || record.name} searchSpent={0}
+            record={record}
+            env={env}
+            envState={envState}
+            session={session}
+            name={row?.name || record.name}
+            searchSpent={0}
           />
         ) : (
-          <Typography sx={{ px: 2, py: 2, typography: "s2", color: "text.subtitle" }}>
+          <Typography
+            sx={{ px: 2, py: 2, typography: "s2", color: "text.subtitle" }}
+          >
             {`Waiting for ${coder.improver} to pick up the brief.`}
           </Typography>
         )}
@@ -88,19 +147,32 @@ export default function CodingAgentImprovementView({ env, envState, record, patc
       {/* ── accepted: the same next steps as any change that ships ── */}
       {accepted && (
         <Box sx={{ mt: 3 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>What happens next</Typography>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            What happens next
+          </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
-            {"Nothing goes live from here — it's released when someone makes it live where the agent runs."}
+            {
+              "Nothing goes live from here — it's released when someone makes it live where the agent runs."
+            }
           </Typography>
           <OmegaHandoff
             env={env}
             envState={envState}
             patch={patch}
-            included={[{ id: accepted.id, kind: "System prompt", title: accepted.title, diff: [] }]}
+            included={[
+              {
+                id: accepted.id,
+                kind: "System prompt",
+                title: accepted.title,
+                diff: [],
+              },
+            ]}
             projected={accepted.score}
             projectedOn="the scenarios it was shown"
             current={accepted.before}
-            willFix={accepted.visible.filter((x) => x.outcome === "fixed").length}
+            willFix={
+              accepted.visible.filter((x) => x.outcome === "fixed").length
+            }
             handoffKey={handoff?.key}
             landedVersion={handoff?.landedVersion}
             provenance={handoff?.provenance}

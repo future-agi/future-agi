@@ -50,7 +50,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
         <Typography
           sx={{
             fontSize: "13px",
-            fontWeight: 700,
+            fontWeight: 600,
             fontFamily: "monospace",
             color: "text.secondary",
             lineHeight: 1,
@@ -67,7 +67,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
           {selected?.label || "Mustache"}
         </Typography>
         <Iconify
-          icon="eva:chevron-down-fill"
+          icon="solar:alt-arrow-down-linear"
           width={16}
           height={16}
           sx={{
@@ -85,7 +85,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { borderRadius: "8px", p: 0.5, minWidth: 220, mt: 0.5 },
+            sx: { borderRadius: "8px", p: 0.5, minWidth: 240, mt: 0.5 },
           },
         }}
       >
@@ -101,8 +101,8 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
           >
             <Typography
               sx={{
-                fontSize: "14px",
-                fontWeight: 700,
+                fontSize: "13px",
+                fontWeight: 600,
                 fontFamily: "monospace",
                 width: 40,
                 textAlign: "center",
@@ -121,7 +121,7 @@ const TemplateFormatSelector = ({ value, onChange, disabled }) => {
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 {fmt.description}
               </Typography>

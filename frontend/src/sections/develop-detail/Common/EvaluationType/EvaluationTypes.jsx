@@ -1,12 +1,4 @@
-import {
-  Box,
-  Button,
-  Skeleton,
-  Tab,
-  Tabs,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Skeleton, Tab, Tabs, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import Label from "src/components/label";
 import EvaluationTypeCard from "../EvaluationTypeCard";
@@ -42,7 +34,6 @@ const EvaluationTypes = ({
   datasetId,
   isNarrow = false,
 }) => {
-  const theme = useTheme();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
@@ -131,7 +122,7 @@ const EvaluationTypes = ({
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} color="text.primary">
+          <Typography fontWeight={600} color="text.primary">
             Preset Evaluations
           </Typography>
           <Button variant="soft" size="small" onClick={onClose}>
@@ -157,12 +148,6 @@ const EvaluationTypes = ({
           }}
         >
           <Tabs
-            textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
             TabScrollButtonProps={{
@@ -176,17 +161,11 @@ const EvaluationTypes = ({
             <Tab
               label="All"
               value="all"
-              sx={{
-                "&.MuiTab-root": {
-                  marginRight: 2,
-                  fontSize: 12,
-                },
-              }}
               icon={
                 loadingEvalList ? (
                   <Skeleton variant="text" width={20} height={35} />
                 ) : (
-                  <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
+                  <Label variant="soft" color="success">
                     {/* {evalList.length} */} {categoryCount["all"]}
                   </Label>
                 )
@@ -202,22 +181,12 @@ const EvaluationTypes = ({
                   loadingEvalList ? (
                     <Skeleton variant="text" width={20} height={35} />
                   ) : (
-                    <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
+                    <Label variant="soft" color="success">
                       {categoryCount[value] ?? 0}
                     </Label>
                   )
                 }
                 iconPosition="end"
-                sx={{
-                  "&.MuiTab-root": {
-                    marginRight: 2,
-                    fontSize: 12,
-                    "&.Mui-selected": {
-                      color: "inherit",
-                    },
-                    color: "text.secondary",
-                  },
-                }}
               />
             ))}
           </Tabs>

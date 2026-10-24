@@ -1,8 +1,13 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, TextField, IconButton,
-  Switch, Button,
+  Box,
+  Stack,
+  Typography,
+  TextField,
+  IconButton,
+  Switch,
+  Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { FIELD } from "../../_mock/agentTypes";
@@ -20,7 +25,9 @@ import { clickable, focusRing } from "../../components/clickable";
 export default function DynamicField({ field, value, onChange, values }) {
   /* A field can take its label from another field's value — see the provider
      -> assistant/agent/pathway mapping on voice_platform. */
-  const resolved = field.labelFrom ? field.labelFrom.map[values?.[field.labelFrom.key]] : null;
+  const resolved = field.labelFrom
+    ? field.labelFrom.map[values?.[field.labelFrom.key]]
+    : null;
   field = resolved ? { ...field, ...resolved } : field;
 
   // Conditional visibility (e.g. hide the token field when auth is "none").
@@ -32,23 +39,40 @@ export default function DynamicField({ field, value, onChange, values }) {
 
   const label = (
     <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.625 }}>
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{field.label}</Typography>
-      {field.required && <Box component="span" sx={{ color: "error.main", typography: "s2" }}>*</Box>}
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {field.label}
+      </Typography>
+      {field.required && (
+        <Box component="span" sx={{ color: "error.main", typography: "s2" }}>
+          *
+        </Box>
+      )}
     </Stack>
   );
 
   const help = field.help && (
-    <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.625 }}>{field.help}</Typography>
+    <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.625 }}>
+      {field.help}
+    </Typography>
   );
 
   switch (field.type) {
     case FIELD.SWITCH:
       return (
-        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          spacing={2}
+        >
           <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>{field.label}</Typography>
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {field.label}
+            </Typography>
             {field.help && (
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{field.help}</Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {field.help}
+              </Typography>
             )}
           </Box>
           <Switch
@@ -74,7 +98,9 @@ export default function DynamicField({ field, value, onChange, values }) {
           >
             <option value="">Select…</option>
             {field.options.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </TextField>
           {help}
@@ -91,9 +117,16 @@ export default function DynamicField({ field, value, onChange, values }) {
               return (
                 <Box
                   key={o.value}
-                  {...clickable(() => onChange(o.value), { role: "radio", checked: selected })}
-                  sx={{ ...focusRing,
-                    flex: 1, p: 1.5, borderRadius: 1, cursor: "pointer",
+                  {...clickable(() => onChange(o.value), {
+                    role: "radio",
+                    checked: selected,
+                  })}
+                  sx={{
+                    ...focusRing,
+                    flex: 1,
+                    p: 1.5,
+                    borderRadius: 1,
+                    cursor: "pointer",
                     border: "1px solid",
                     /*
                       Neutral text-primary tint in dark theme, purple
@@ -102,34 +135,59 @@ export default function DynamicField({ field, value, onChange, values }) {
                       every card picker across the connect flow
                       selects the same way.
                     */
-                    borderColor: (t) => selected
-                      ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.35) : t.palette.primary.main)
-                      : t.palette.divider,
-                    bgcolor: (t) => selected
-                      ? (t.palette.mode === "dark"
-                        ? alpha(t.palette.text.primary, 0.06)
-                        : alpha(t.palette.primary.main, 0.05))
-                      : "transparent",
-                    transition: "border-color .15s ease, background-color .15s ease",
+                    borderColor: (t) =>
+                      selected
+                        ? t.palette.mode === "dark"
+                          ? alpha(t.palette.text.primary, 0.35)
+                          : t.palette.primary.main
+                        : t.palette.divider,
+                    bgcolor: (t) =>
+                      selected
+                        ? t.palette.mode === "dark"
+                          ? alpha(t.palette.text.primary, 0.06)
+                          : alpha(t.palette.primary.main, 0.05)
+                        : "transparent",
+                    transition:
+                      "border-color .15s ease, background-color .15s ease",
                     "&:hover": {
-                      borderColor: (t) => selected
-                        ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.35) : t.palette.primary.main)
-                        : t.palette.text.disabled,
+                      borderColor: (t) =>
+                        selected
+                          ? t.palette.mode === "dark"
+                            ? alpha(t.palette.text.primary, 0.35)
+                            : t.palette.primary.main
+                          : t.palette.text.disabled,
                     },
                   }}
                 >
-                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.25 }}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.75}
+                    sx={{ mb: 0.25 }}
+                  >
                     <Iconify
-                      icon={selected ? "solar:check-circle-bold" : "solar:circle-linear"}
-                      width={15}
-                      sx={{ color: (t) => selected
-                        ? (t.palette.mode === "dark" ? t.palette.text.primary : t.palette.primary.main)
-                        : t.palette.text.subtitle,
+                      icon={
+                        selected
+                          ? "solar:check-circle-bold"
+                          : "solar:circle-linear"
+                      }
+                      width={16}
+                      sx={{
+                        color: (t) =>
+                          selected
+                            ? t.palette.mode === "dark"
+                              ? t.palette.text.primary
+                              : t.palette.primary.main
+                            : t.palette.text.tertiary,
                       }}
                     />
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>{o.label}</Typography>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                      {o.label}
+                    </Typography>
                   </Stack>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{o.desc}</Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {o.desc}
+                  </Typography>
                 </Box>
               );
             })}
@@ -143,7 +201,10 @@ export default function DynamicField({ field, value, onChange, values }) {
         <Box>
           {label}
           <TextField
-            fullWidth multiline minRows={3} size="small"
+            fullWidth
+            multiline
+            minRows={3}
+            size="small"
             value={value ?? ""}
             placeholder={field.placeholder}
             onChange={(e) => onChange(e.target.value)}
@@ -161,21 +222,31 @@ export default function DynamicField({ field, value, onChange, values }) {
           {label}
           <SecretRefField
             value={typeof value === "string" ? value : ""}
-            placeholder={defaultRefFor(field.key.replace(/([a-z])([A-Z])/g, "$1_$2"))}
+            placeholder={defaultRefFor(
+              field.key.replace(/([a-z])([A-Z])/g, "$1_$2"),
+            )}
             onChange={onChange}
           />
         </Box>
       );
 
     case FIELD.KEYVALUE:
-      return <KeyValueField value={value} onChange={onChange} label={label} help={help} />;
+      return (
+        <KeyValueField
+          value={value}
+          onChange={onChange}
+          label={label}
+          help={help}
+        />
+      );
 
     default:
       return (
         <Box>
           {label}
           <TextField
-            fullWidth size="small"
+            fullWidth
+            size="small"
             value={value ?? ""}
             placeholder={field.placeholder}
             onChange={(e) => onChange(e.target.value)}
@@ -214,21 +285,41 @@ function KeyValueField({ value, onChange, label, help }) {
         {pairs.map((p, i) => (
           <Stack key={i} direction="row" spacing={0.75} alignItems="center">
             <TextField
-              size="small" placeholder="Key" value={p.k}
+              size="small"
+              placeholder="Key"
+              value={p.k}
               onChange={(e) => update(i, { k: e.target.value })}
-              sx={{ flex: 1, "& .MuiInputBase-root": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+              sx={{
+                flex: 1,
+                "& .MuiInputBase-root": {
+                  typography: "s2",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                },
+              }}
             />
             <TextField
-              size="small" placeholder="Value" value={p.v}
+              size="small"
+              placeholder="Value"
+              value={p.v}
               onChange={(e) => update(i, { v: e.target.value })}
-              sx={{ flex: 1.4, "& .MuiInputBase-root": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+              sx={{
+                flex: 1.4,
+                "& .MuiInputBase-root": {
+                  typography: "s2",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                },
+              }}
             />
             <IconButton
               size="small"
               onClick={() => onChange(pairs.filter((_, idx) => idx !== i))}
               disabled={pairs.length === 1}
             >
-              <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+              <Iconify
+                icon="solar:trash-bin-trash-linear"
+                width={16}
+                sx={{ color: "text.tertiary" }}
+              />
             </IconButton>
           </Stack>
         ))}
@@ -237,7 +328,7 @@ function KeyValueField({ value, onChange, label, help }) {
         size="small"
         startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
         onClick={() => onChange([...pairs, { k: "", v: "" }])}
-        sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}
+        sx={{ mt: 0.75, color: "text.secondary" }}
       >
         Add row
       </Button>
@@ -246,6 +337,8 @@ function KeyValueField({ value, onChange, label, help }) {
   );
 }
 KeyValueField.propTypes = {
-  value: PropTypes.array, onChange: PropTypes.func,
-  label: PropTypes.node, help: PropTypes.node,
+  value: PropTypes.array,
+  onChange: PropTypes.func,
+  label: PropTypes.node,
+  help: PropTypes.node,
 };

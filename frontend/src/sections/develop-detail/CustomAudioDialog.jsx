@@ -6,7 +6,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "../../utils/axios";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color/svg-color";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import { enqueueSnackbar } from "notistack";
@@ -136,7 +135,7 @@ const CustomAudioDialog = ({ open, onClose, selectedModel, onSuccess }) => {
         (screenState === SCREEN_STATES.FORM && isValid)
       }
       onClose={handleModalClose}
-      modalWidth="499px"
+      modalWidth="560px"
       actionBtnTitle={screenState === SCREEN_STATES.SUCCESS ? "OK" : "Save"}
       onSubmit={
         screenState === SCREEN_STATES.SUCCESS
@@ -167,7 +166,7 @@ const CustomAudioDialog = ({ open, onClose, selectedModel, onSuccess }) => {
             fontWeight={"fontWeightRegular"}
             sx={{
               padding: 1,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               border: "solid 1px",
               bgcolor: "background.neutral",
               borderColor: "divider",
@@ -213,19 +212,7 @@ const CustomAudioDialog = ({ open, onClose, selectedModel, onSuccess }) => {
           />
 
           {isError && (
-            <Alert
-              icon={
-                <Iconify icon="fluent:warning-24-regular" color="red.500" />
-              }
-              severity="error"
-              sx={{
-                color: "red.500",
-                border: "1px solid",
-                borderColor: "red.200",
-                backgroundColor: "red.o5",
-                mt: 2,
-              }}
-            >
+            <Alert severity="error" sx={{ mt: 2 }}>
               {error?.result ||
                 "We couldn't validate the voice—please double-check the ID."}
             </Alert>
@@ -293,7 +280,7 @@ const CustomAudioDialog = ({ open, onClose, selectedModel, onSuccess }) => {
               width: 64,
               height: 64,
               borderRadius: "50%",
-              bgcolor: "green.600",
+              bgcolor: "status.success.solid",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

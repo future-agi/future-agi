@@ -1,12 +1,4 @@
-import {
-  Box,
-  Divider,
-  MenuItem,
-  Popover,
-  Tab,
-  Tabs,
-  useTheme,
-} from "@mui/material";
+import { Box, Divider, MenuItem, Popover, Tab, Tabs } from "@mui/material";
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 
@@ -37,8 +29,6 @@ const PerformanceDetailSection = ({
 
   const sortRef = useRef();
 
-  const theme = useTheme();
-
   return (
     <Box>
       <Box
@@ -51,11 +41,6 @@ const PerformanceDetailSection = ({
           value={selectedDataset}
           onChange={(e, value) => setSelectedDataset(value)}
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
         >
           {datasets.map((dataset, idx) => (
             <Tab label={`Dataset ${idx + 1}`} value={idx} key={idx} />
@@ -75,11 +60,6 @@ const PerformanceDetailSection = ({
           value={selectedDetailTab}
           onChange={(e, value) => setSelectedDetailTab(value)}
           textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
         >
           {secondaryTabs.map(({ label, value }) => (
             <Tab label={label} value={value} key={value} />
@@ -90,7 +70,7 @@ const PerformanceDetailSection = ({
           {/* <Button
             ref={sortRef}
             startIcon={
-              <Iconify icon="bi:filter-left" sx={{ color: "primary.main" }} />
+              <Iconify icon="solar:filter-linear" sx={{ color: "primary.main" }} />
             }
             size="small"
             onClick={() => setSortOpen(true)}

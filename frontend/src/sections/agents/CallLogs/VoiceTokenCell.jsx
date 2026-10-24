@@ -12,14 +12,14 @@ const BreakdownTooltip = ({ promptTokens, completionTokens, totalTokens }) => (
     <BRow
       label="Input tokens"
       value={promptTokens}
-      icon="mdi:arrow-down"
+      icon="solar:arrow-down-linear"
       bold
     />
     <Box sx={{ my: 0.75 }} />
     <BRow
       label="Output tokens"
       value={completionTokens}
-      icon="mdi:arrow-up"
+      icon="solar:arrow-up-linear"
       bold
     />
     <Box sx={{ borderTop: "1px solid rgba(255,255,255,0.15)", my: 0.75 }} />
@@ -140,7 +140,7 @@ const VoiceTokenCell = (params) => {
             {fShortenNumber(promptTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-down"
+            icon="solar:arrow-down-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -149,7 +149,7 @@ const VoiceTokenCell = (params) => {
             {fShortenNumber(completionTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-up"
+            icon="solar:arrow-up-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -198,7 +198,7 @@ const VoiceTokenCell = (params) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={14}
               color="text.secondary"
             />

@@ -26,6 +26,7 @@ import { trackEvent, Events } from "src/utils/Mixpanel";
 import Versions from "../TopMenuOptions/Versions";
 import Variables from "../TopMenuOptions/Variables";
 import ModelSettings from "../TopMenuOptions/ModelSettings";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const RightMenu = ({
   handleLabelsAdd,
@@ -51,7 +52,7 @@ const RightMenu = ({
   const gridApiRef = useRef(null);
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [open, setOpen] = useState(false);
-  const [drawerWidth, setDrawerWidth] = useState("550px");
+  const [drawerWidth, setDrawerWidth] = useState("640px");
   const [configModal, setConfigureModal] = useState(false);
   const [openEvals, setOpenEvals] = useState(false);
 
@@ -93,17 +94,17 @@ const RightMenu = ({
     {
       label: "Model Settings",
       color: "info.main",
-      icon: "codicon:settings",
+      icon: "solar:settings-linear",
     },
     {
       label: "Variables",
       color: "info.primary",
-      icon: "tdesign:brackets",
+      icon: "solar:brackets-linear",
     },
     {
       label: "Evaluate",
       color: "info.success",
-      icon: "material-symbols:check-circle-outline",
+      icon: "solar:check-circle-linear",
     },
   ];
 
@@ -112,7 +113,7 @@ const RightMenu = ({
       setOpen(true);
       setSelectedLabel(label);
       setDrawerWidth(
-        label === "Variables" && variables.length ? "700px" : "550px",
+        label === "Variables" && variables.length ? "960px" : "640px",
       );
       trackEvent(
         label === "Model Settings"
@@ -207,6 +208,7 @@ const RightMenu = ({
     currentTitle,
   ]);
 
+  const covered = useDrawerCovered(open);
   return (
     <Box sx={{ display: "flex", alignItems: "center" }}>
       <Box sx={{ display: "flex", alignItems: "center" }}>
@@ -214,13 +216,13 @@ const RightMenu = ({
           <IconButton
             onClick={() => {
               setOpen(true);
-              setDrawerWidth("550px");
+              setDrawerWidth("640px");
               setSelectedLabel("Versions");
             }}
           >
             <Iconify
               sx={{ cursor: "pointer" }}
-              icon="stash:version"
+              icon="solar:git-commit-linear"
               color="text.disabled"
             />
           </IconButton>
@@ -233,7 +235,7 @@ const RightMenu = ({
         >
           <Iconify
             sx={{ cursor: "pointer" }}
-            icon="mdi:code"
+            icon="solar:code-linear"
               color="text.disabled"
             />
           </IconButton>
@@ -259,7 +261,7 @@ const RightMenu = ({
               size="small"
               startIcon={<Iconify icon={icon} />}
               onClick={() => handleButtonClick(label)}
-              sx={{ color, padding: "5px 8px" }}
+              sx={{ color }}
             >
               {label}
             </Button>
@@ -272,7 +274,6 @@ const RightMenu = ({
           fullWidth
           size="medium"
           variant="contained"
-          sx={{ padding: "6px 24px", fontSize: "14px" }}
           color="primary"
           onClick={() => {
             handleLabelsAdd("prompt");
@@ -287,6 +288,7 @@ const RightMenu = ({
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setOpen(false)}
         PaperProps={{
           sx: {
@@ -294,7 +296,7 @@ const RightMenu = ({
             width: drawerWidth,
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -331,10 +333,11 @@ const RightMenu = ({
         <Box
           sx={{
             width: "100%",
-            maxWidth: "926px",
+            maxWidth: "960px",
             bgcolor: "background.paper",
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: 24,
-            borderRadius: "16px",
+            borderRadius: "12px",
             mx: "auto",
           }}
         >
@@ -346,7 +349,7 @@ const RightMenu = ({
           >
             <Typography>Configure a tool</Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
           <Box sx={{ px: "24px", pb: "30px" }}>
@@ -375,7 +378,7 @@ const RightMenu = ({
               <Button
                 onClick={handleClose}
                 variant="outline"
-                startIcon={<Iconify icon="basil:copy-outline" />}
+                startIcon={<Iconify icon="solar:copy-linear" />}
                 color="primary"
               >
                 Copy

@@ -16,12 +16,12 @@ const EvalCustomHeaderCellRenderer = ({ displayName }) => {
       {displayName == "Score" ? (
         <Iconify
           width={16}
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           color="text.secondary"
         />
       ) : null}
       <Typography
-        sx={{ fontSize: "13px", fontWeight: 700, color: "text.secondary" }}
+        sx={{ fontSize: "13px", fontWeight: 600, color: "text.secondary" }}
       >
         {displayName}
       </Typography>

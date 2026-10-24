@@ -141,7 +141,7 @@ const TestRunHeader = () => {
           endAdornment: search && (
             <InputAdornment position="end">
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={() => {}}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
               />
@@ -170,10 +170,7 @@ const TestRunHeader = () => {
             ref={scenarioPopoverRef}
             sx={{ whiteSpace: "nowrap", minWidth: "fit-content" }}
             startIcon={
-              <SvgColor
-                src="/assets/icons/navbar/ic_sessions.svg"
-                sx={{ width: "16px", height: "16px" }}
-              />
+              <SvgColor width={16} src="/assets/icons/navbar/ic_sessions.svg" />
             }
           >
             Scenarios ({selectedScenarios.length})

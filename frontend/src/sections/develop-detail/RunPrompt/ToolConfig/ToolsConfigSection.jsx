@@ -134,14 +134,12 @@ const ToolsConfigSection = ({
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  padding: theme.spacing(1, 2),
                 }}
                 startIcon={
                   <SvgColor
+                    width={20}
                     sx={{
                       color: "text.secondary",
-                      height: 20,
-                      width: 20,
                     }}
                     src={"/assets/icons/ic_add.svg"}
                   />

@@ -47,31 +47,8 @@ export default function AnnotationTaskTableRow({ row }) {
 
   function stringAvatar(name) {
     return {
-      sx: {
-        bgcolor: stringToColor(name),
-      },
       children: `${name.split(" ")[0][0]}${name.split(" ")[1][0]}`,
     };
-  }
-
-  function stringToColor(string) {
-    let hash = 0;
-    let i;
-
-    /* eslint-disable no-bitwise */
-    for (i = 0; i < string.length; i += 1) {
-      hash = string.charCodeAt(i) + ((hash << 5) - hash);
-    }
-
-    let color = "#";
-
-    for (i = 0; i < 3; i += 1) {
-      const value = (hash >> (i * 8)) & 0xff;
-      color += `00${value.toString(16)}`.slice(-2);
-    }
-    /* eslint-enable no-bitwise */
-
-    return color;
   }
 
   return (
@@ -82,16 +59,11 @@ export default function AnnotationTaskTableRow({ row }) {
           borderRadius: 2,
           [`&.${tableRowClasses.selected}, &:hover`]: {
             backgroundColor: "background.paper",
-            boxShadow: theme.customShadows.z20,
-            transition: theme.transitions.create(
-              ["background-color", "box-shadow"],
-              {
-                duration: theme.transitions.duration.shortest,
-              },
-            ),
+            transition: theme.transitions.create(["background-color"], {
+              duration: theme.transitions.duration.shortest,
+            }),
             "&:hover": {
               backgroundColor: "background.paper",
-              boxShadow: theme.customShadows.z20,
             },
           },
           [`& .${tableCellClasses.root}`]: {
@@ -120,7 +92,7 @@ export default function AnnotationTaskTableRow({ row }) {
               sx={{
                 maxWidth: 360,
                 cursor: "pointer",
-                ...(details.value && { fontWeight: "fontWeightBold" }),
+                ...(details.value && { fontWeight: "fontWeightSemiBold" }),
               }}
             >
               {row.taskName}
@@ -137,7 +109,11 @@ export default function AnnotationTaskTableRow({ row }) {
           sx={{ whiteSpace: "nowrap" }}
         ></TableCell>
 
-        <TableCell align="right" onClick={handleClick}>
+        <TableCell
+          sx={{ fontVariantNumeric: "tabular-nums" }}
+          align="right"
+          onClick={handleClick}
+        >
           <AvatarGroup
             max={4}
             sx={{
@@ -157,7 +133,6 @@ export default function AnnotationTaskTableRow({ row }) {
                   key={person.id}
                   alt={person.name}
                   {...stringAvatar(person.name)}
-                  sx={{ bgcolor: "background.neutral" }}
                 />
               ))}
           </AvatarGroup>
@@ -166,6 +141,7 @@ export default function AnnotationTaskTableRow({ row }) {
         <TableCell
           align="right"
           sx={{
+            fontVariantNumeric: "tabular-nums",
             px: 1,
             whiteSpace: "nowrap",
           }}
@@ -174,7 +150,7 @@ export default function AnnotationTaskTableRow({ row }) {
             color={popover.open ? "inherit" : "default"}
             onClick={popover.onOpen}
           >
-            <Iconify icon="eva:more-vertical-fill" />
+            <Iconify icon="solar:menu-dots-vertical-linear" />
           </IconButton>
         </TableCell>
       </TableRow>
@@ -186,7 +162,7 @@ export default function AnnotationTaskTableRow({ row }) {
         sx={{ width: 160 }}
       >
         <MenuItem onClick={() => {}}>
-          <Iconify icon="eva:link-2-fill" />
+          <Iconify icon="solar:link-linear" />
           Copy Link
         </MenuItem>
 
@@ -197,7 +173,11 @@ export default function AnnotationTaskTableRow({ row }) {
 
         <Divider sx={{ borderStyle: "dashed" }} />
 
-        <MenuItem onClick={() => {}} sx={{ color: "error.main" }}>
+        <MenuItem
+          onClick={() => {}}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
+        >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete
         </MenuItem>

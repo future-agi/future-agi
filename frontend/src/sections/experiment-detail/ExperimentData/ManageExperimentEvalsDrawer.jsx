@@ -6,11 +6,11 @@ import {
   Drawer,
   IconButton,
   LinearProgress,
-  Paper,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { Icon } from "@iconify/react";
 import PropTypes from "prop-types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import { ShowComponent } from "src/components/show";
 import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const isUUID = (str) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -270,11 +271,13 @@ const ManageExperimentEvalsDrawer = ({
     ...experimentVirtualColumns,
     ...(allColumns || []),
   ];
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={onClose}
         PaperProps={{
           sx: (t) => ({
@@ -317,7 +320,7 @@ const ManageExperimentEvalsDrawer = ({
               Add Evaluations
             </Typography>
             <IconButton onClick={onClose} sx={{ p: 0, color: "text.primary" }}>
-              <Icon icon="mingcute:close-line" />
+              <Icon icon="solar:close-linear" />
             </IconButton>
           </Box>
           {isUpdating && <LinearProgress sx={{ mb: 1, borderRadius: 1 }} />}
@@ -349,7 +352,7 @@ const ManageExperimentEvalsDrawer = ({
                 textAlign="center"
                 height="100%"
               >
-                <Typography fontSize={16} fontWeight="bold" mb={1}>
+                <Typography fontSize={16} fontWeight="600" mb={1}>
                   No evaluations added
                 </Typography>
                 <Typography
@@ -368,15 +371,13 @@ const ManageExperimentEvalsDrawer = ({
                   }}
                   startIcon={
                     <SvgColor
+                      width={16}
                       src="/assets/icons/action_buttons/ic_add.svg"
                       sx={{
-                        width: 16,
-                        height: 16,
                         color: "inherit",
                       }}
                     />
                   }
-                  sx={{ px: 3, fontWeight: 500 }}
                 >
                   Add Evaluations
                 </Button>
@@ -388,7 +389,7 @@ const ManageExperimentEvalsDrawer = ({
                   borderColor: "divider",
                   padding: 2,
                   height: "100%",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                 }}
               >
                 <Box>
@@ -410,10 +411,9 @@ const ManageExperimentEvalsDrawer = ({
                         }}
                         startIcon={
                           <SvgColor
+                            width={16}
                             src="/assets/icons/action_buttons/ic_add.svg"
                             sx={{
-                              width: 16,
-                              height: 16,
                               color: "primary.main",
                             }}
                           />
@@ -422,8 +422,6 @@ const ManageExperimentEvalsDrawer = ({
                         sx={{
                           color: "primary.main",
                           borderColor: "primary.main",
-                          fontSize: "12px",
-                          fontWeight: 500,
                           "& .MuiButton-startIcon": {
                             margin: 0,
                             paddingRight: theme.spacing(1),
@@ -449,16 +447,7 @@ const ManageExperimentEvalsDrawer = ({
                       [];
 
                     return (
-                      <Paper
-                        key={evalId}
-                        sx={{
-                          p: 2,
-                          border: "1px solid",
-                          borderColor: "divider",
-                          borderRadius: 1,
-                          backgroundColor: "background.paper",
-                        }}
-                      >
+                      <Section variant="panel" key={evalId} sx={{ p: 2 }}>
                         <Box
                           sx={{
                             display: "flex",
@@ -483,10 +472,6 @@ const ManageExperimentEvalsDrawer = ({
                                   label="Composite"
                                   size="small"
                                   sx={{
-                                    height: "20px",
-                                    fontSize: "10px",
-                                    fontWeight: 600,
-                                    borderRadius: "2px",
                                     bgcolor: "info.lighter",
                                     color: "info.dark",
                                     "& .MuiChip-label": { px: 0.75 },
@@ -507,14 +492,9 @@ const ManageExperimentEvalsDrawer = ({
                                   label={`Group name - ${evalItem.evalGroup}.`}
                                   size="small"
                                   sx={{
-                                    height: "24px",
                                     backgroundColor: "background.neutral",
                                     borderColor: "divider",
-                                    fontSize: "11px",
-                                    borderRadius: "2px",
-                                    paddingX: "12px",
                                     lineHeight: "16px",
-                                    fontWeight: 400,
                                     color: "text.primary",
                                     "& .MuiChip-label": { padding: 0 },
                                     ".MuiChip-icon ": { marginRight: "6px" },
@@ -525,8 +505,9 @@ const ManageExperimentEvalsDrawer = ({
                                   }}
                                   icon={
                                     <SvgColor
+                                      width={16}
                                       src="/assets/icons/ic_dashed_square.svg"
-                                      sx={{ width: 16, height: 16, mr: 1 }}
+                                      sx={{ mr: 1 }}
                                       style={{
                                         color: theme.palette.text.primary,
                                       }}
@@ -540,14 +521,9 @@ const ManageExperimentEvalsDrawer = ({
                                   label={evalItem.model}
                                   size="small"
                                   sx={{
-                                    height: "24px",
                                     backgroundColor: "background.neutral",
                                     borderColor: "divider",
-                                    fontSize: "11px",
-                                    borderRadius: "2px",
-                                    paddingX: "12px",
                                     lineHeight: "16px",
-                                    fontWeight: 400,
                                     color: "text.primary",
                                     "& .MuiChip-label": { padding: 0 },
                                     "&:hover": {
@@ -563,23 +539,17 @@ const ManageExperimentEvalsDrawer = ({
                                 size="small"
                                 icon={
                                   <SvgColor
+                                    width={16}
                                     src="/assets/icons/custom/eval_columns.svg"
-                                    sx={{ width: 16, height: 16 }}
                                     style={{
                                       color: theme.palette.text.primary,
                                     }}
                                   />
                                 }
                                 sx={{
-                                  height: "24px",
                                   backgroundColor: "background.neutral",
                                   borderColor: "divider",
-                                  fontSize: "11px",
-                                  borderRadius: "2px",
-                                  paddingX: "12px",
-                                  paddingY: "4px",
                                   lineHeight: "16px",
-                                  fontWeight: 400,
                                   color: "text.primary",
                                   "&:hover": {
                                     backgroundColor: "background.neutral",
@@ -597,7 +567,6 @@ const ManageExperimentEvalsDrawer = ({
                               ml: 1,
                               border: "1px solid",
                               borderColor: "divider",
-                              borderRadius: "2px",
                               color: "text.disabled",
                             }}
                           >
@@ -618,7 +587,6 @@ const ManageExperimentEvalsDrawer = ({
                               ml: 1,
                               border: "1px solid",
                               borderColor: "divider",
-                              borderRadius: "2px",
                               color: "error.main",
                             }}
                           >
@@ -640,7 +608,6 @@ const ManageExperimentEvalsDrawer = ({
                               ml: 1,
                               border: "1px solid",
                               borderColor: "divider",
-                              borderRadius: "2px",
                               color: "text.disabled",
                             }}
                           >
@@ -650,7 +617,7 @@ const ManageExperimentEvalsDrawer = ({
                             />
                           </IconButton>
                         </Box>
-                      </Paper>
+                      </Section>
                     );
                   })}
                 </Stack>
@@ -676,8 +643,6 @@ const ManageExperimentEvalsDrawer = ({
               sx={{
                 color: "primary.main",
                 borderColor: "primary.main",
-                fontSize: "12px",
-                fontWeight: 500,
                 whiteSpace: "nowrap",
               }}
             >
@@ -688,7 +653,7 @@ const ManageExperimentEvalsDrawer = ({
               color="primary"
               onClick={() => setOpenConfirmRun(true)}
               size="small"
-              sx={{ width: "150px", fontWeight: 500 }}
+              sx={{ width: "150px" }}
               disabled={evals.length === 0 || isUpdating}
             >
               Run Evaluations

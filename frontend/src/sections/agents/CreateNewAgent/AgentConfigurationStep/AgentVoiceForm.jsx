@@ -278,7 +278,7 @@ export default function AgentVoiceForm() {
               flexDirection: "row",
               alignItems: "center",
               gap: 1,
-              color: "blue.600",
+              color: "status.info.fg",
             }}
           >
             <SvgColor
@@ -301,12 +301,12 @@ export default function AgentVoiceForm() {
               flexDirection: "row",
               alignItems: "center",
               gap: 0.5,
-              color: "green.600",
+              color: "status.success.fg",
             }}
           >
             <SvgColor
               src="/assets/icons/ic_success_fill.svg"
-              sx={{ width: 16, height: 16, color: "green.600" }}
+              sx={{ width: 16, height: 16, color: "status.success.fg" }}
             />
             <Typography typography={"s3"} fontWeight={"fontWeightMedium"}>
               {`Synced with ${selectedProvider}`}
@@ -475,7 +475,7 @@ export default function AgentVoiceForm() {
                 </Typography>
                 <Link
                   href="https://docs.futureagi.com/docs/observe"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
@@ -494,13 +494,6 @@ export default function AgentVoiceForm() {
                 size="small"
                 arrow
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -572,16 +565,10 @@ export default function AgentVoiceForm() {
                 !livekitApiSecret
               }
               sx={{
-                textTransform: "none",
-                fontWeight: "fontWeightMedium",
-                fontSize: 13,
                 borderColor: "action.selected",
                 color: "text.primary",
-                height: 40,
                 minWidth: 160,
                 mt: 0.25,
-                px: 2.5,
-                borderRadius: 0.5,
                 flexShrink: 0,
               }}
             >
@@ -601,12 +588,12 @@ export default function AgentVoiceForm() {
             <Box display="flex" alignItems="center" gap={0.5}>
               <SvgColor
                 src="/assets/icons/ic_success_fill.svg"
-                sx={{ width: 16, height: 16, color: "green.600" }}
+                sx={{ width: 16, height: 16, color: "status.success.fg" }}
               />
               <Typography
                 typography="s2"
                 fontWeight="fontWeightMedium"
-                color="green.600"
+                color="status.success.fg"
               >
                 Connection successful
               </Typography>
@@ -616,12 +603,12 @@ export default function AgentVoiceForm() {
             <Box display="flex" alignItems="center" gap={0.5}>
               <SvgColor
                 src="/assets/icons/ic_failed.svg"
-                sx={{ width: 16, height: 16, color: "red.600" }}
+                sx={{ width: 16, height: 16, color: "status.danger.fg" }}
               />
               <Typography
                 typography="s2"
                 fontWeight="fontWeightMedium"
-                color="red.600"
+                color="status.danger.fg"
               >
                 {livekitValidationError}
               </Typography>
@@ -747,16 +734,10 @@ export default function AgentVoiceForm() {
                   }
                 }}
               >
-                <ToggleButton
-                  value={VOICE_TRANSPORT.WEBRTC}
-                  sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-                >
+                <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
                   {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
                 </ToggleButton>
-                <ToggleButton
-                  value={VOICE_TRANSPORT.TELEPHONY}
-                  sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-                >
+                <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
                   {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
                 </ToggleButton>
               </ToggleButtonGroup>
@@ -886,13 +867,6 @@ export default function AgentVoiceForm() {
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -950,9 +924,6 @@ export default function AgentVoiceForm() {
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: { sx: { maxWidth: "200px !important" } },
-                }}
               >
                 <Box>
                   <SwitchField

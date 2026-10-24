@@ -131,7 +131,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -226,13 +226,14 @@ export default function InviteAcceptedPage() {
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
           sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
             width: "100%",
           }}
         >
@@ -246,10 +247,6 @@ export default function InviteAcceptedPage() {
         variant="contained"
         loading={isPending}
         color="primary"
-        sx={{
-          borderRadius: 0.5,
-          height: "42px",
-        }}
       >
         Set Password & Continue
       </LoadingButton>
@@ -261,7 +258,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -270,13 +267,14 @@ export default function InviteAcceptedPage() {
         Invite Link Expired
       </Typography>
       <Alert
-        icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+        icon={
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            color="status.danger.fg"
+          />
+        }
         severity="error"
         sx={{
-          color: "red.500",
-          border: "1px solid",
-          borderColor: "red.200",
-          backgroundColor: "red.o5",
           width: "100%",
         }}
       >
@@ -309,7 +307,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightMedium"
         sx={{
-          fontSize: "14px",
+          fontSize: "13px",
           color: "text.secondary",
           fontFamily: "Inter",
         }}
@@ -335,7 +333,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -344,13 +342,11 @@ export default function InviteAcceptedPage() {
         Wrong Account
       </Typography>
       <Alert
-        icon={<Iconify icon="fluent:warning-24-regular" color="warning.main" />}
+        icon={
+          <Iconify icon="solar:danger-triangle-linear" color="warning.main" />
+        }
         severity="warning"
         sx={{
-          color: "warning.dark",
-          border: "1px solid",
-          borderColor: "warning.light",
-          backgroundColor: "warning.lighter",
           width: "100%",
         }}
       >
@@ -372,10 +368,6 @@ export default function InviteAcceptedPage() {
         variant="contained"
         color="primary"
         onClick={handleLogoutAndRetry}
-        sx={{
-          borderRadius: 0.5,
-          height: "42px",
-        }}
       >
         Logout & Try Again
       </Button>

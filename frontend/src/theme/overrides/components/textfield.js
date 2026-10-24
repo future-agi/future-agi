@@ -7,17 +7,18 @@ import { outlinedInputClasses } from "@mui/material/OutlinedInput";
 // ----------------------------------------------------------------------
 
 export function textField(theme) {
-  const lightMode = theme.palette.mode === "light";
-
+  // Future AGI Design System: 32px fields (small) / 36px (medium), 13px
+  // values, border.default at rest, border.strong on hover, border.focus plus a
+  // soft ring when focused.
   const color = {
-    focused: lightMode ? theme.palette.black[500] : theme.palette.grey[400],
-    active: lightMode ? theme.palette.black[500] : theme.palette.grey[400],
-    placeholder: lightMode ? theme.palette.black[300] : theme.palette.grey[600],
+    focused: theme.palette.text.secondary,
+    active: theme.palette.text.secondary,
+    placeholder: theme.palette.text.disabled,
   };
 
   const font = {
-    label: theme.typography.body1,
-    value: theme.typography.body2,
+    label: { fontSize: 13, lineHeight: "20px" },
+    value: { fontSize: 13, lineHeight: "20px" },
   };
 
   return {
@@ -25,8 +26,11 @@ export function textField(theme) {
     MuiFormHelperText: {
       styleOverrides: {
         root: {
-          marginTop: theme.spacing(1),
-          color: theme.palette.text.secondary,
+          marginTop: 6,
+          marginLeft: 0,
+          fontSize: 12,
+          lineHeight: "16px",
+          color: theme.palette.text.subtitle,
         },
       },
     },
@@ -35,14 +39,14 @@ export function textField(theme) {
     MuiFormLabel: {
       styleOverrides: {
         asterisk: {
-          color: theme.palette.red[500],
+          color: theme.palette.error.main,
         },
         root: {
           ...font.value,
           color: color.placeholder,
           [`&.${inputLabelClasses.shrink}`]: {
             ...font.label,
-            fontWeight: 600,
+            fontWeight: 500,
             color: color.active,
             [`&.${inputLabelClasses.focused}`]: {
               color: color.focused,
@@ -111,24 +115,25 @@ export function textField(theme) {
     MuiOutlinedInput: {
       styleOverrides: {
         root: {
+          borderRadius: theme.shape.borderRadius,
           [`&.${outlinedInputClasses.focused}`]: {
+            boxShadow: theme.customShadows.focusInput,
             [`& .${outlinedInputClasses.notchedOutline}`]: {
-              borderColor: lightMode
-                ? theme.palette.black[100]
-                : theme.palette.border.hover,
+              borderColor: theme.palette.border.focus,
               borderWidth: 1,
             },
           },
-          [`&:hover`]: {
+          [`&:hover:not(.${outlinedInputClasses.focused})`]: {
             [`& .${outlinedInputClasses.notchedOutline}`]: {
-              borderColor: lightMode
-                ? theme.palette.black[100]
-                : theme.palette.border.hover,
+              borderColor: theme.palette.border.strong,
             },
           },
           [`&.${outlinedInputClasses.error}`]: {
             [`& .${outlinedInputClasses.notchedOutline}`]: {
               borderColor: theme.palette.error.main,
+            },
+            [`&.${outlinedInputClasses.focused}`]: {
+              boxShadow: `0 0 0 3px ${theme.palette.error.lighter}`,
             },
           },
           [`&.${outlinedInputClasses.disabled}`]: {
@@ -140,15 +145,21 @@ export function textField(theme) {
         input: {
           backgroundColor: "transparent",
           color: theme.palette.text.primary,
+          padding: "6px 12px",
           "::placeholder": {
             color: color.placeholder,
             opacity: 1,
           },
         },
+        inputSizeSmall: {
+          padding: "4px 10px",
+        },
+        // No notch: the label lives above the field, so the border runs
+        // unbroken.
         notchedOutline: {
-          borderColor: lightMode
-            ? theme.palette.black[100]
-            : theme.palette.border.default,
+          top: 0,
+          "& legend": { display: "none" },
+          borderColor: theme.palette.border.default,
           transition: theme.transitions.create(["border-color"], {
             duration: theme.transitions.duration.shortest,
           }),
@@ -189,12 +200,30 @@ export function textField(theme) {
       styleOverrides: {
         root: {
           display: "flex",
-          paddingLeft: theme.spacing(0.75), // 2px
-          paddingRight: theme.spacing(0.75), // 2px
           flexDirection: "row",
           alignItems: "center",
-          background: theme.palette.background.paper,
-          zIndex: 1, // Ensures label appears above border
+        },
+        // Design system: the label sits above the field (13/20, 500,
+        // fg.default, 6px gap), never inside the border. `&&&` outranks the
+        // FormLabel shrink/filled transforms above.
+        outlined: {
+          "&&&": {
+            position: "relative",
+            transform: "none",
+            marginBottom: 6,
+            padding: 0,
+            maxWidth: "100%",
+            fontSize: 13,
+            lineHeight: "20px",
+            fontWeight: 500,
+            color: theme.palette.text.primary,
+          },
+          [`&&&.${inputLabelClasses.error}`]: {
+            color: theme.palette.error.main,
+          },
+          [`&&&.${inputLabelClasses.disabled}`]: {
+            color: theme.palette.text.disabled,
+          },
         },
       },
     },

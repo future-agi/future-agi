@@ -15,6 +15,7 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import logger from "src/utils/logger";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const BillingInfoModal = ({ open, onClose }) => {
   const [isLoading, setIsLoading] = useState(false);
@@ -289,15 +290,18 @@ const BillingInfoModal = ({ open, onClose }) => {
     }
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 1000,
           backgroundColor: "background.paper",
@@ -326,6 +330,7 @@ const BillingInfoModal = ({ open, onClose }) => {
             padding: theme.spacing(2),
             overflow: "hidden",
             backgroundColor: "background.paper",
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: 3,
             zIndex: 1000,
             flexDirection: "column",
@@ -347,7 +352,7 @@ const BillingInfoModal = ({ open, onClose }) => {
               Billing Information
             </Typography>
             <Iconify
-              icon="mingcute:close-line"
+              icon="solar:close-linear"
               color="text.primary"
               onClick={onClose}
               sx={{ cursor: "pointer" }}

@@ -1,4 +1,4 @@
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Divider, Stack } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -388,7 +388,7 @@ const CreateSyntheticDataView = ({
               type="button"
               color="error"
               size="small"
-              sx={{ paddingX: "24px", minWidth: "88px" }}
+              sx={{ minWidth: "88px" }}
               onClick={handleBack}
             >
               Yes
@@ -403,12 +403,11 @@ const CreateSyntheticDataView = ({
             width: "max-content",
             border: "1px solid",
             borderColor: "action.hover",
-            paddingX: "12px",
           }}
           startIcon={
             <Iconify
               // @ts-ignore
-              icon="octicon:chevron-left-24"
+              icon="solar:alt-arrow-left-linear"
               width="24px"
               sx={{ color: "text.secondary" }}
             />
@@ -435,24 +434,20 @@ const CreateSyntheticDataView = ({
           />
           <Stack direction={"row"} gap={3} alignItems={"center"}>
             {activeTab.value !== "addDetails" && (
-              <Typography
-                variant="s1"
-                fontWeight="fontWeightMedium"
-                color="text.secondary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  cursor: "pointer",
-                }}
+              <Button
+                size="small"
+                variant="text"
+                color="inherit"
+                endIcon={
+                  <Iconify
+                    icon="solar:question-circle-linear"
+                    color="text.secondary"
+                  />
+                }
                 onClick={() => setOpenHelp(true)}
               >
                 Help
-                <Iconify
-                  icon="material-symbols-light:help-outline"
-                  color="text.secondary"
-                />
-              </Typography>
+              </Button>
             )}
             {/* <ShowComponent condition={editMode}>
               <IconButton

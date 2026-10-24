@@ -1,4 +1,4 @@
-import { alpha, Box, IconButton, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
@@ -8,7 +8,6 @@ export const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
     props;
   const refButton = useRef(null);
-  const theme = useTheme();
 
   useEffect(() => {
     eGridHeader.style.padding = "0px";
@@ -40,7 +39,7 @@ export const CustomDevelopDetailColumn = (props) => {
     } else if (col.originType === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           sx={{ color: "info.success" }}
         />
       );
@@ -55,27 +54,27 @@ export const CustomDevelopDetailColumn = (props) => {
         />
       );
     } else if (col.originType === "annotation_label") {
-      return <Iconify icon="jam:write" sx={iconStyle} />;
+      return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
     } else if (col.originType === "vector_db") {
       return <Iconify icon="solar:widget-broken" sx={iconStyle} />;
     } else if (col.originType === "extracted_entities") {
-      return <Iconify icon="material-symbols:chip-extraction" sx={iconStyle} />;
+      return <Iconify icon="solar:cpu-linear" sx={iconStyle} />;
     } else if (col.originType === "extracted_json") {
-      return <Iconify icon="mdi:code-json" sx={iconStyle} />;
+      return <Iconify icon="solar:code-linear" sx={iconStyle} />;
     } else if (col.originType === "python_code") {
-      return <Iconify icon="mdi:code" sx={iconStyle} />;
+      return <Iconify icon="solar:code-linear" sx={iconStyle} />;
     } else if (col.originType === "classification") {
-      return <Iconify icon="mingcute:classify-2-line" sx={iconStyle} />;
+      return <Iconify icon="solar:tag-horizontal-linear" sx={iconStyle} />;
     } else if (col.originType === "api_call") {
-      return <Iconify icon="hugeicons:api" sx={iconStyle} />;
+      return <Iconify icon="solar:plug-circle-linear" sx={iconStyle} />;
     } else if (col.originType === "conditional") {
-      return <Iconify icon="hugeicons:node-add" sx={iconStyle} />;
+      return <Iconify icon="solar:widget-add-linear" sx={iconStyle} />;
     } else if (col.dataType === "text") {
-      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
+      return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
     } else if (col.dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
+      return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
     } else if (col.dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
+      return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
     } else if (col.dataType === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
     } else if (col.dataType === "boolean") {
@@ -83,9 +82,9 @@ export const CustomDevelopDetailColumn = (props) => {
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
     } else if (col.dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
+      return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
     } else if (col.dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
+      return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
     } else if (col.dataType === "image") {
       return (
         <SvgColor
@@ -110,7 +109,7 @@ export const CustomDevelopDetailColumn = (props) => {
     } else if (col.dataType === "images") {
       return (
         <Iconify
-          icon="material-symbols:art-track-outline"
+          icon="solar:gallery-linear"
           sx={{ width: 20, height: 20, color: "text.secondary" }}
         />
       );
@@ -118,24 +117,19 @@ export const CustomDevelopDetailColumn = (props) => {
   };
 
   const getBackgroundColor = (originType) => {
-    const isDark = theme.palette.mode === "dark";
     if (
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
       return "var(--surface-highlight)";
     } else if (originType === "run_prompt") {
-      return isDark ? alpha(theme.palette.info.main, 0.18) : "info.lighter";
+      return "status.info.bg";
     } else if (originType === "optimisation") {
-      return isDark
-        ? alpha(theme.palette.primary.main, 0.16)
-        : "primary.lighter";
+      return "status.discovery.bg";
     } else if (originType === "annotation_label") {
-      return isDark
-        ? alpha(theme.palette.primary.main, 0.16)
-        : "primary.lighter";
+      return "status.discovery.bg";
     }
-    return isDark ? "background.neutral" : "whiteScale.100";
+    return "background.neutral";
   };
 
   return (
@@ -152,13 +146,13 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={500} fontSize="14px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="13px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>

@@ -193,7 +193,11 @@ export const TreeNode = ({
         </div>
         {hasChildren && (
           <button className="tree-node__toggle" onClick={handleToggle}>
-            <Iconify icon="tabler:chevron-up" width={16} color="black.1000" />
+            <Iconify
+              icon="solar:alt-arrow-up-linear"
+              width={16}
+              color="text.primary"
+            />
           </button>
         )}
       </div>

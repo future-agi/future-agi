@@ -32,7 +32,7 @@ const BpIcon = styled("span")(({ theme }) => ({
   borderRadius: "50%",
   width: RADIO_SIZE,
   height: RADIO_SIZE,
-  boxShadow: `inset 0 0 0 3px ${theme.palette.mode === "dark" ? "#52525b" : "#D1D1D1"}, inset 0 -1px 0 rgba(16,22,26,.1)`,
+  boxShadow: `inset 0 0 0 3px ${theme.palette.border.hover}`,
   backgroundColor: theme.palette.background.paper,
   backgroundImage:
     "linear-gradient(180deg,hsla(0,0%,100%,.8),hsla(0,0%,100%,0))",
@@ -48,8 +48,7 @@ const BpIcon = styled("span")(({ theme }) => ({
     }),
   },
   ...theme.applyStyles?.("dark", {
-    boxShadow: "0 0 0 1px rgb(16 22 26 / 40%)",
-    backgroundColor: "#394b59",
+    backgroundColor: theme.palette.background.neutral,
     backgroundImage:
       "linear-gradient(180deg,hsla(0,0%,100%,.05),hsla(0,0%,100%,0))",
   }),

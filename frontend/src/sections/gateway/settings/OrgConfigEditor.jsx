@@ -115,9 +115,9 @@ const OrgConfigEditor = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="md"
+      maxWidth={false}
       fullWidth
-      PaperProps={{ sx: { minHeight: "70vh" } }}
+      PaperProps={{ sx: { maxWidth: 960, minHeight: "70vh" } }}
     >
       <DialogTitle>
         <Stack

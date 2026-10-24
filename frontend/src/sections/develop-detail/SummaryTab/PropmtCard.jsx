@@ -70,6 +70,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
     chart: {
       type: "bar",
       background: "transparent",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       foreColor: isDark ? "#a1a1aa" : undefined,
       toolbar: { show: false },
     },
@@ -93,16 +94,20 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
       },
     },
     grid: {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       borderColor: isDark ? "#27272a" : undefined,
     },
   });
 
   // Chart options for each chart type
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const optionsOne = generateChartOptions(chartData.avgPromptToken, "#9585D5");
   const optionsTwo = generateChartOptions(
     chartData.avgCompletionToken,
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     "#E6CAF5",
   );
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const optionsThree = generateChartOptions(chartData.avgTotalToken, "#BF75E5");
 
   if (isLoading) {
@@ -133,7 +138,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}
@@ -151,7 +156,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}
@@ -171,7 +176,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
           <Box
             sx={{
               p: "24px",
-              borderRadius: "16px",
+              borderRadius: "12px",
               border: "1px solid var(--border-default)",
               mb: "29px",
             }}

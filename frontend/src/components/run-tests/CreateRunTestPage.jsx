@@ -12,10 +12,8 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
-  Paper,
   IconButton,
   CircularProgress,
-  TablePagination,
   Container,
   useTheme,
   stepConnectorClasses,
@@ -25,6 +23,8 @@ import {
   Stack,
   FormControlLabel,
 } from "@mui/material";
+import Section from "src/components/section";
+import { TablePaginationCustom } from "src/components/table";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -81,7 +81,6 @@ const steps = [
 ];
 
 const StepCircle = styled(Box)(({ theme, active, completed }) => {
-  const isDark = theme.palette.mode === "dark";
   return {
     width: 36,
     height: 36,
@@ -92,9 +91,7 @@ const StepCircle = styled(Box)(({ theme, active, completed }) => {
     backgroundColor: completed
       ? theme.palette.background.paper
       : active
-        ? isDark
-          ? theme.palette.background.neutral
-          : theme.palette.primary.lighter
+        ? theme.palette.background.neutral
         : theme.palette.background.paper,
     border: `1px solid ${
       completed
@@ -109,8 +106,8 @@ const StepCircle = styled(Box)(({ theme, active, completed }) => {
         ? theme.palette.primary.main
         : theme.palette.text.disabled,
     fontWeight: 600,
-    fontSize: 14,
-    transition: "all 0.3s",
+    fontSize: 13,
+    transition: "all 0.2s",
     zIndex: 10,
   };
 });
@@ -995,7 +992,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 }
                 sx={{
                   "& .MuiOutlinedInput-root": {
-                    fontSize: "14px",
+                    fontSize: "13px",
                   },
                 }}
               />
@@ -1019,19 +1016,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
                   <Button
                     variant="contained"
                     color="primary"
-                    sx={{
-                      px: "24px",
-                      borderRadius: "8px",
-                      height: "38px",
-                    }}
                     startIcon={
                       <Iconify
-                        icon="octicon:plus-24"
+                        icon="solar:add-linear"
                         color="background.paper"
-                        sx={{
-                          width: "20px",
-                          height: "20px",
-                        }}
+                        width="20px"
                       />
                     }
                     onClick={() =>
@@ -1087,8 +1076,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                       startAdornment: (
                         <Box sx={{ mr: 1 }}>
                           <Iconify
-                            icon="eva:search-fill"
-                            width={20}
+                            icon="solar:magnifier-linear"
+                            width={16}
                             sx={{ color: "text.disabled" }}
                           />
                         </Box>
@@ -1204,21 +1193,13 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 }}
                               >
                                 {scenario.scenarioType === "dataset" && (
-                                  <Chip
-                                    label="Dataset"
-                                    size="small"
-                                    sx={{
-                                      height: "20px",
-                                      fontSize: "11px",
-                                    }}
-                                  />
+                                  <Chip label="Dataset" size="small" />
                                 )}
                                 {isEmpty ? (
                                   <Chip
                                     label="No datapoints"
                                     size="small"
                                     sx={{
-                                      height: "20px",
                                       color: "text.disabled",
                                       bgcolor: "action.hover",
                                     }}
@@ -1240,15 +1221,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                         chosen size covers everything strands the user at that
                         size with no way back. */}
                     {scenariosTotal > 0 && (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          justifyContent: "center",
-                          mt: 3,
-                        }}
-                      >
-                        <TablePagination
-                          component="div"
+                      <Box sx={{ mt: 3 }}>
+                        <TablePaginationCustom
                           count={scenariosTotal}
                           page={scenariosPage - 1}
                           onPageChange={(event, newPage) =>
@@ -1294,7 +1268,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
       //               }}
       //               startIcon={
       //                 <Iconify
-      //                   icon="octicon:plus-24"
+      //                   icon="solar:add-linear"
       //                   color="background.paper"
       //                   sx={{
       //                     width: "20px",
@@ -1342,8 +1316,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
       //                 startAdornment: (
       //                   <Box sx={{ mr: 1 }}>
       //                     <Iconify
-      //                       icon="eva:search-fill"
-      //                       width={20}
+      //                       icon="solar:magnifier-linear"
+      //                       width={16}
       //                       sx={{ color: "text.disabled" }}
       //                     />
       //                   </Box>
@@ -1468,7 +1442,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
-                fontSize="14px"
+                fontSize="13px"
                 sx={{
                   textDecoration: "underline",
                 }}
@@ -1487,13 +1461,13 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 flexDirection: "row",
                 alignItems: "center",
 
-                backgroundColor: "blue.o5",
+                backgroundColor: "status.info.bg",
               }}
             >
               <SvgColor
                 src="/assets/icons/ic_info.svg"
                 sx={{
-                  color: "blue.500",
+                  color: "status.info.fg",
                   width: theme.spacing(2),
                   height: theme.spacing(2),
                 }}
@@ -1518,7 +1492,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 justifyContent: "space-between",
                 alignItems: "center",
                 border: "1px solid",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 borderColor: "divider",
                 paddingY: 1.5,
                 paddingX: 2,
@@ -1576,7 +1550,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 </Typography>
                 <Button
                   variant="contained"
-                  startIcon={<Iconify icon="eva:plus-fill" />}
+                  startIcon={<Iconify icon="solar:add-linear" />}
                   onClick={() => {
                     setEditingEvalId(null);
                     setOpenEvaluationDialog(true);
@@ -1629,14 +1603,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}
                   >
                     {evaluationsConfig.map((evalItem) => (
-                      <Paper
+                      <Section
+                        variant="panel"
                         key={evalItem.evalId}
-                        sx={{
-                          p: 2,
-                          border: "1px solid",
-                          borderColor: "divider",
-                          borderRadius: 1,
-                        }}
+                        sx={{ p: 2 }}
                       >
                         <Box
                           sx={{
@@ -1671,14 +1641,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                   label={`Group name - ${evalItem?.group_name}.`}
                                   size="small"
                                   sx={{
-                                    height: "24px",
                                     backgroundColor: "background.neutral",
                                     borderColor: "divider",
-                                    fontSize: "11px",
-                                    borderRadius: "2px",
-                                    paddingX: "12px",
-                                    lineHeight: "16px",
-                                    fontWeight: 400,
                                     color: "text.primary",
                                     "& .MuiChip-label": {
                                       padding: 0,
@@ -1694,7 +1658,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                   icon={
                                     <SvgColor
                                       src="/assets/icons/ic_dashed_square.svg"
-                                      sx={{ width: 16, height: 16, mr: 1 }}
+                                      width={16}
+                                      sx={{ mr: 1 }}
                                       style={{
                                         color: theme.palette.text.primary,
                                       }}
@@ -1736,7 +1701,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               ml: 1,
                               border: "1px solid",
                               borderColor: "divider",
-                              borderRadius: "2px",
                               color: "text.disabled",
                             }}
                           >
@@ -1760,7 +1724,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               ml: 1,
                               border: "1px solid",
                               borderColor: "divider",
-                              borderRadius: "2px",
                               color: "text.disabled",
                             }}
                           >
@@ -1773,7 +1736,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             />
                           </IconButton>
                         </Box>
-                      </Paper>
+                      </Section>
                     ))}
                   </Box>
                 </Box>
@@ -1827,20 +1790,13 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
             <Box sx={{ maxWidth: 800, mx: "auto" }}>
               {/* Test Configuration Section */}
-              <Paper
-                sx={{
-                  p: 3,
-                  mb: 3,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
+              <Section variant="panel" sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                   <SvgColor
                     src={"/icons/runTest/ic_settings.svg"}
                     sx={{ mr: 2, width: 24 }}
                   />
-                  <Typography typography="m3" fontWeight={"fontWeightBold"}>
+                  <Typography typography="m3" fontWeight={600}>
                     Test Configuration
                   </Typography>
                 </Box>
@@ -1884,23 +1840,16 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     </Box>
                   )}
                 </Box>
-              </Paper>
+              </Section>
 
               {/* Test Scenarios Section */}
-              <Paper
-                sx={{
-                  p: 3,
-                  mb: 3,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
+              <Section variant="panel" sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                   <SvgColor
                     src={"/icons/runTest/ic_workflow.svg"}
                     sx={{ mr: 2, width: 24 }}
                   />
-                  <Typography typography="m3" fontWeight={"fontWeightBold"}>
+                  <Typography typography="m3" fontWeight={600}>
                     Selected Test Scenarios
                   </Typography>
                 </Box>
@@ -1955,23 +1904,16 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     })}
                   </Box>
                 </Box>
-              </Paper>
+              </Section>
 
               {/* Test Agent Section */}
-              {/* <Paper
-                sx={{
-                  p: 3,
-                  mb: 3,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
+              {/* <Section variant="panel" sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                   <SvgColor
                     src={"/icons/runTest/ic_user.svg"}
                     sx={{ mr: 2, width: 24 }}
                   />
-                  <Typography variant="m3" fontWeight={"fontWeightBold"}>
+                  <Typography variant="m3" fontWeight={600}>
                     Selected Test Agent
                   </Typography>
                 </Box>
@@ -1984,7 +1926,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                       <Box
                         sx={{
                           p: 1.5,
-                               backgroundColor: theme.palette.mode === "light" ? "whiteScale.100" : "background.default",
+                          backgroundColor: "background.neutral",
                           borderRadius: 1,
                         }}
                       >
@@ -2004,23 +1946,16 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     );
                   })()}
                 </Box>
-              </Paper> */}
+              </Section> */}
 
               {/* Evaluations Section */}
-              <Paper
-                sx={{
-                  p: 3,
-                  mb: 3,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
+              <Section variant="panel" sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
                   <SvgColor
                     src={"/icons/runTest/ic_shield.svg"}
                     sx={{ mr: 2, width: 24 }}
                   />
-                  <Typography typography="m3" fontWeight={"fontWeightBold"}>
+                  <Typography typography="m3" fontWeight={600}>
                     Selected Evaluations
                   </Typography>
                 </Box>
@@ -2065,14 +2000,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               label={`Group name - ${evalItem?.groupName}.`}
                               size="small"
                               sx={{
-                                height: "24px",
                                 backgroundColor: "background.neutral",
                                 borderColor: "divider",
-                                fontSize: "11px",
-                                borderRadius: "2px",
-                                paddingX: "12px",
-                                lineHeight: "16px",
-                                fontWeight: 400,
                                 color: "text.primary",
                                 "& .MuiChip-label": {
                                   padding: 0,
@@ -2088,7 +2017,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               icon={
                                 <SvgColor
                                   src="/assets/icons/ic_dashed_square.svg"
-                                  sx={{ width: 16, height: 16, mr: 1 }}
+                                  width={16}
+                                  sx={{ mr: 1 }}
                                   style={{ color: theme.palette.text.primary }}
                                 />
                               }
@@ -2110,7 +2040,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     ))}
                   </Box>
                 </Box>
-              </Paper>
+              </Section>
             </Box>
           </Box>
         );
@@ -2167,7 +2097,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 "&:hover": { bgcolor: "background.neutral" },
               }}
             >
-              <Iconify icon="eva:close-fill" width={24} />
+              <Iconify icon="solar:close-linear" width={24} />
             </IconButton>
           </Box>
 
@@ -2243,7 +2173,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             sx={{
                               width: 24,
                               height: 24,
-                              color: "green.500",
+                              color: "status.success.fg",
                             }}
                           />
                         ) : (
@@ -2291,7 +2221,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                   mt: 2,
                 }}
               >
-                <Paper sx={{ flex: 1, p: 4 }}>{renderStepContent()}</Paper>
+                <Section variant="panel" sx={{ flex: 1, p: 4 }}>
+                  {renderStepContent()}
+                </Section>
               </Box>
 
               {/* Action Buttons — pinned to the bottom of the viewport so
@@ -2311,7 +2243,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 <Button
                   variant="outlined"
                   onClick={activeStep === 0 ? onClose : handleBack}
-                  startIcon={<Iconify icon="akar-icons:chevron-left-small" />}
+                  startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
                 >
                   Back
                 </Button>
@@ -2342,9 +2274,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                       variant="contained"
                       onClick={handleNextStep}
                       disabled={!canProceed()}
-                      endIcon={
-                        <Iconify icon="akar-icons:chevron-right-small" />
-                      }
+                      endIcon={<Iconify icon="solar:alt-arrow-right-linear" />}
                       sx={{
                         bgcolor: "primary.main",
                         color: "primary.contrastText",

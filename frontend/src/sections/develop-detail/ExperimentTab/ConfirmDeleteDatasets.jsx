@@ -44,7 +44,7 @@ const ConfirmDeleteDatasets = ({ open, onClose, onConfirm, isLoading }) => {
             <Typography variant="h6">Delete Experiments</Typography>
           </Box>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

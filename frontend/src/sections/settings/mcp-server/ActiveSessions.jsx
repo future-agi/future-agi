@@ -1,8 +1,6 @@
+import ErrorState from "src/components/error-state";
 import {
-  Alert,
   Box,
-  Card,
-  Chip,
   CircularProgress,
   Table,
   TableBody,
@@ -13,14 +11,10 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useMCPSessions } from "src/api/mcp";
-
-const STATUS_COLORS = {
-  active: "success",
-  idle: "warning",
-  disconnected: "default",
-};
 
 const TRANSPORT_LABELS = {
   streamable_http: "HTTP",
@@ -50,7 +44,7 @@ export default function ActiveSessions() {
   const hasSessions = Array.isArray(sessions) && sessions.length > 0;
 
   return (
-    <Card variant="outlined" sx={{ p: theme.spacing(3) }}>
+    <Section variant="panel" sx={{ p: theme.spacing(3) }}>
       <Box
         display="flex"
         alignItems="center"
@@ -78,11 +72,9 @@ export default function ActiveSessions() {
           </Typography>
         </Box>
         {hasSessions && (
-          <Chip
+          <StatusBadge
+            status="connected"
             label={`${sessions.length} connected`}
-            size="small"
-            color="success"
-            variant="outlined"
           />
         )}
       </Box>
@@ -94,9 +86,10 @@ export default function ActiveSessions() {
       )}
 
       {isError && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          Failed to load sessions.
-        </Alert>
+        <ErrorState
+          title="Failed to load sessions"
+          sx={{ height: "auto", flexGrow: 0 }}
+        />
       )}
 
       {!isLoading && !isError && (
@@ -128,7 +121,7 @@ export default function ActiveSessions() {
                           sx={{
                             typography: "s2",
                             color: "text.secondary",
-                            textTransform: "uppercase",
+                            textTransform: "none",
                             fontSize: 12,
                           }}
                         >
@@ -138,16 +131,8 @@ export default function ActiveSessions() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          label={session.status || "active"}
-                          size="small"
-                          color={
-                            STATUS_COLORS[
-                              (session.status || "active").toLowerCase()
-                            ] || "default"
-                          }
-                          variant="outlined"
-                          sx={{ textTransform: "capitalize", fontSize: 12 }}
+                        <StatusBadge
+                          status={(session.status || "active").toLowerCase()}
                         />
                       </TableCell>
                       <TableCell>
@@ -182,7 +167,7 @@ export default function ActiveSessions() {
               }}
             >
               <Iconify
-                icon="ph:plugs-bold"
+                icon="solar:plug-circle-linear"
                 width={32}
                 sx={{ color: "text.disabled", mb: 1 }}
               />
@@ -209,6 +194,6 @@ export default function ActiveSessions() {
           )}
         </>
       )}
-    </Card>
+    </Section>
   );
 }

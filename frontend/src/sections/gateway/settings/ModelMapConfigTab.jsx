@@ -42,7 +42,7 @@ const ModelMapConfigTab = ({ modelMap, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:swap-horizontal" width={24} />
+        <Icon icon="solar:transfer-horizontal-linear" width={24} />
         <Typography variant="h6">Model Map</Typography>
       </Stack>
 
@@ -75,7 +75,7 @@ const ModelMapConfigTab = ({ modelMap, onChange }) => {
                   color="primary"
                   variant="outlined"
                 />
-                <Icon icon="mdi:arrow-right" width={16} />
+                <Icon icon="solar:arrow-right-linear" width={16} />
                 <Chip
                   label={providerId}
                   size="small"
@@ -83,10 +83,11 @@ const ModelMapConfigTab = ({ modelMap, onChange }) => {
                   variant="outlined"
                 />
                 <IconButton
+                  sx={{ color: "status.danger.fg" }}
                   size="small"
                   onClick={() => removeMapping(modelName)}
                 >
-                  <Icon icon="mdi:delete-outline" width={16} color="#d32f2f" />
+                  <Icon icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </Stack>
             ))}
@@ -119,7 +120,7 @@ const ModelMapConfigTab = ({ modelMap, onChange }) => {
             )}
             sx={{ width: 220 }}
           />
-          <Icon icon="mdi:arrow-right" width={16} />
+          <Icon icon="solar:arrow-right-linear" width={16} />
           <TextField
             size="small"
             placeholder="Provider ID (e.g. openai)"

@@ -26,11 +26,17 @@ const ViewFullTranscript = ({
   simulationCallType,
 }) => {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ display: "flex", justifyContent: "space-between" }}>
         Call Transcript
         <IconButton onClick={onClose}>
-          <Iconify icon="akar-icons:cross" width={16} height={16} />
+          <Iconify icon="solar:close-linear" width={16} height={16} />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ maxHeight: 300, overflowY: "auto" }}>

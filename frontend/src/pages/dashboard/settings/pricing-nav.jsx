@@ -39,42 +39,6 @@ const PricingNavComponent = ({ tabs, currentTab, onTabChange }) => {
         <Tabs
           value={currentTab?.path || tabs[0]?.path}
           onChange={handleTabChange}
-          textColor="primary"
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-            },
-          }}
-          sx={{
-            minHeight: 48,
-            "& .MuiTabs-flexContainer": {
-              gap: 0,
-            },
-            "& .MuiTab-root": {
-              minHeight: 48,
-              paddingX: theme.spacing(1.5),
-              margin: theme.spacing(0),
-              marginRight: theme.spacing(0) + "!important",
-              minWidth: "auto",
-              fontWeight: "fontWeightMedium",
-              typography: "s1",
-              color: "text.disabled",
-              textTransform: "none",
-              transition: theme.transitions.create(
-                ["color", "background-color"],
-                {
-                  duration: theme.transitions.duration.short,
-                },
-              ),
-              "&.Mui-selected": {
-                color: "primary.main",
-                fontWeight: "fontWeightSemiBold",
-              },
-              "&:first-of-type": {
-                marginLeft: 0,
-              },
-            },
-          }}
         >
           {tabs.map((tab) => (
             <Tab

@@ -17,6 +17,7 @@ import { resetEvalStore } from "../../sections/evals/store/useEvalStore";
 import { useScenarioColumnConfig } from "src/sections/test/common";
 import { voiceEvalColumns, chatEvalColumns } from "./common";
 import { AGENT_TYPES } from "src/sections/agents/constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvaluationSelectionContent = ({
   onClose,
@@ -303,6 +304,7 @@ const EvaluationSelectionDialog = ({
   module,
   defaultWidth = "100%",
 }) => {
+  const covered = useDrawerCovered(open);
   useEffect(() => {
     return () => {
       resetEvalStore();
@@ -315,12 +317,13 @@ const EvaluationSelectionDialog = ({
         anchor="right"
         open={open}
         onClose={onClose}
+        sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
             padding: 2,
             height: "100vh",
             backgroundColor: "background.paper",
-            borderRadius: "2px !important",
+            borderRadius: "4px !important",
           },
         }}
         ModalProps={{

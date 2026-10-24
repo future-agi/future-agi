@@ -1447,7 +1447,7 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Item Reserved</Typography>
         <Alert severity="warning" sx={{ maxWidth: 480 }}>
           {msg}
@@ -1492,7 +1492,7 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Queue Not Active</Typography>
         <Typography color="text.secondary">
           This queue is currently <strong>{queueStatus}</strong>. Annotations
@@ -1531,7 +1531,7 @@ export default function AnnotateWorkspaceView() {
         }}
       >
         <Iconify
-          icon="eva:checkmark-circle-2-fill"
+          icon="solar:check-circle-bold"
           width={64}
           color="success.main"
         />
@@ -1629,7 +1629,7 @@ export default function AnnotateWorkspaceView() {
               <Box sx={{ p: 1.5, pb: 0 }}>
                 <Typography
                   variant="caption"
-                  fontWeight={700}
+                  fontWeight={600}
                   color="text.secondary"
                   sx={{ display: "block", mb: 0.75 }}
                 >
@@ -1718,7 +1718,7 @@ export default function AnnotateWorkspaceView() {
                   sx={{ flex: 1, minHeight: 0, p: 3, textAlign: "center" }}
                 >
                   <Iconify
-                    icon="mingcute:lock-fill"
+                    icon="solar:lock-linear"
                     width={48}
                     color="text.disabled"
                   />

@@ -19,27 +19,15 @@ const CompactTabs = ({ value, onChange, tabs }) => {
       scrollButtons="auto"
       allowScrollButtonsMobile
       sx={{
-        minHeight: 32,
         borderBottom: "1px solid",
         borderColor: "divider",
         "& .MuiTabs-flexContainer": { gap: 0 },
         "& .MuiTab-root": {
-          minHeight: 32,
-          fontSize: 12,
-          fontWeight: 500,
-          textTransform: "none",
           minWidth: "unset !important",
-          padding: "0 10px !important",
           marginRight: "0 !important",
           gap: "4px",
-          color: "text.secondary",
           fontFamily: "'Inter', sans-serif",
           letterSpacing: 0,
-        },
-        "& .Mui-selected": { color: "primary.main", fontWeight: 600 },
-        "& .MuiTabs-indicator": {
-          backgroundColor: "primary.main",
-          height: 2,
         },
         "& .MuiTabs-scrollButtons": {
           width: 24,

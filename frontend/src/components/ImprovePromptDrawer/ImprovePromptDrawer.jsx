@@ -21,6 +21,7 @@ import {
 } from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import { useActiveSocket } from "src/hooks/use-active-socket";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const schema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
@@ -33,6 +34,7 @@ export default function ImprovePromptDrawer({
   onApplyPrompt,
   promptFor,
 }) {
+  const covered = useDrawerCovered(open);
   const { id } = useParams();
   const extractedPromptText = extractTextFromPrompt(existingPrompt);
   const [showImrpovedPrompt, setShowImrpovedPrompt] = useState(false);
@@ -293,12 +295,12 @@ export default function ImprovePromptDrawer({
         anchor="right"
         open={open}
         onClose={handleSoftClose}
+        sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
             height: "100vh",
             position: "fixed",
             zIndex: 2,
-            boxShadow: "-10px 0px 100px #00000035",
             backgroundColor: "background.paper",
             overflow: "visible",
           },

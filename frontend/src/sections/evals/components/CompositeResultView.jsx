@@ -1,11 +1,12 @@
-import { Box, Chip, Divider, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Chip, Divider, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import {
   getLabel,
-  getStatusColor,
+  evalResultRole,
 } from "src/sections/develop-detail/DataTab/common";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
 const AGGREGATION_LABELS = {
   weighted_avg: "Weighted Average",
@@ -25,7 +26,6 @@ const AGGREGATION_LABELS = {
  * playground drawer.
  */
 const CompositeResultView = ({ compositeResult }) => {
-  const theme = useTheme();
   const {
     aggregation_enabled: aggregationEnabled,
     aggregation_function: aggregationFunction,
@@ -67,12 +67,7 @@ const CompositeResultView = ({ compositeResult }) => {
                   {aggregateScore.toFixed(3)}
                 </Typography>
                 {aggregatePass != null && (
-                  <Chip
-                    size="small"
-                    label={aggregatePass ? "PASS" : "FAIL"}
-                    color={aggregatePass ? "success" : "error"}
-                    sx={{ fontWeight: 600 }}
-                  />
+                  <StatusBadge status={aggregatePass ? "passed" : "failed"} />
                 )}
               </Box>
             </>
@@ -95,10 +90,10 @@ const CompositeResultView = ({ compositeResult }) => {
             color="default"
           />
           {failedChildren > 0 && (
-            <Chip
-              size="small"
+            <StatusBadge
               label={`${failedChildren} failed`}
-              color="error"
+              role="danger"
+              dot={false}
             />
           )}
         </Stack>
@@ -116,7 +111,6 @@ const CompositeResultView = ({ compositeResult }) => {
       </Typography>
       <Stack spacing={1}>
         {children.map((child) => {
-          const statusColor = child.status === "failed" ? "error" : "default";
           return (
             <Box
               key={child.child_id}
@@ -155,34 +149,30 @@ const CompositeResultView = ({ compositeResult }) => {
                       size="small"
                       label={`w: ${child.weight}`}
                       variant="outlined"
-                      sx={{ height: 18, fontSize: "10px" }}
                     />
                   )}
                 </Box>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                   {child.score != null && (
-                    <Chip
-                      size="small"
-                      label={child.score.toFixed(3)}
+                    <Typography
+                      component="span"
+                      variant="s2"
                       sx={{
-                        ...getStatusColor(child.score, theme),
-                        fontWeight: 600,
+                        color: "text.primary",
+                        fontVariantNumeric: "tabular-nums",
                       }}
-                    />
+                    >
+                      {child.score.toFixed(3)}
+                    </Typography>
                   )}
                   {child.output != null && child.score == null && (
-                    <Chip
-                      size="small"
+                    <StatusBadge
                       label={getLabel(child.output)}
-                      sx={getStatusColor(child.output, theme)}
+                      role={evalResultRole(child.output)}
+                      dot={false}
                     />
                   )}
-                  <Chip
-                    size="small"
-                    label={child.status}
-                    color={statusColor}
-                    sx={{ textTransform: "capitalize" }}
-                  />
+                  <StatusBadge status={child.status} />
                 </Box>
               </Box>
               {child.reason && (
@@ -192,7 +182,7 @@ const CompositeResultView = ({ compositeResult }) => {
                     "& div, pre": { whiteSpace: "pre-wrap" },
                   }}
                 >
-                  <CellMarkdown fontSize={11} text={child.reason} />
+                  <CellMarkdown fontSize={12} text={child.reason} />
                 </Box>
               )}
               {child.error && (
@@ -227,7 +217,7 @@ const CompositeResultView = ({ compositeResult }) => {
               "& div, pre": { whiteSpace: "pre-wrap" },
             }}
           >
-            <CellMarkdown fontSize={11} text={summary} />
+            <CellMarkdown fontSize={12} text={summary} />
           </Box>
         </Box>
       )} */}

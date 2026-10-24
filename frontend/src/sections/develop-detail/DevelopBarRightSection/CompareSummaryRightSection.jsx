@@ -24,15 +24,9 @@ const CompareSummaryRightSection = ({
         {/* Button to Open Drawer */}
         {isChooseWinnerButtonVisible && (
           <Button
-            sx={{
-              paddingX: "20px",
-              borderRadius: "10px",
-              fontWeight: 600,
-              height: "32px",
-            }}
             variant="contained"
             color="primary"
-            startIcon={<Iconify icon="mdi:crown-outline" />}
+            startIcon={<Iconify icon="solar:crown-linear" />}
             onClick={() => setIsDrawerOpen(true)} // Open drawer on click
             size="small"
           >
@@ -45,7 +39,7 @@ const CompareSummaryRightSection = ({
 
         {/* Download Button */}
         {/* <IconButton size="small">
-                    <Iconify icon="material-symbols:download" />
+                    <Iconify icon="solar:download-minimalistic-linear" />
                 </IconButton> */}
       </Box>
 

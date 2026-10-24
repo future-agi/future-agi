@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import EvaluateCell from "../EvaluateCellRenderer/EvaluateCell";
 import CustomTooltip from "src/components/tooltip";
 import Iconify from "src/components/iconify";
@@ -18,7 +17,7 @@ const PartialInputWarningBadge = ({ warnings }) => {
   return (
     <CustomTooltip show title={message} arrow>
       <Box
-        sx={(theme) => ({
+        sx={{
           position: "absolute",
           top: 4,
           right: 4,
@@ -28,20 +27,14 @@ const PartialInputWarningBadge = ({ warnings }) => {
           width: 18,
           height: 18,
           borderRadius: "50%",
-          backgroundColor: alpha(
-            theme.palette.warning.main,
-            theme.palette.mode === "dark" ? 0.24 : 0.16,
-          ),
-          color:
-            theme.palette.mode === "dark"
-              ? theme.palette.warning.light
-              : theme.palette.warning.dark,
+          backgroundColor: "status.warning.bg",
+          color: "status.warning.fg",
           cursor: "help",
-        })}
+        }}
         data-testid="partial-input-warning"
       >
         <Iconify
-          icon="material-symbols:warning-rounded"
+          icon="solar:danger-triangle-linear"
           width="14px"
           height="14px"
         />

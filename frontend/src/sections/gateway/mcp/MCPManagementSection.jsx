@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { Box, Stack, Tab, Tabs, Card, Skeleton, Alert } from "@mui/material";
+import { Box, Stack, Tab, Tabs, Skeleton, Alert } from "@mui/material";
+import Section from "src/components/section";
 import { useNavigate, useParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import SectionHeader from "../components/SectionHeader";
@@ -108,7 +109,7 @@ const MCPManagementSection = () => {
           </Stack>
         </Stack>
         <Skeleton width="50%" height={40} sx={{ mb: 3 }} />
-        <Card>
+        <Section variant="panel">
           {[...Array(4)].map((_, i) => (
             <Stack
               key={i}
@@ -127,7 +128,7 @@ const MCPManagementSection = () => {
               <Skeleton width="15%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -138,6 +139,7 @@ const MCPManagementSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.mcp}
         title="MCP Tools"
         subtitle="Manage Model Context Protocol servers, tools, and guardrails"
@@ -146,14 +148,14 @@ const MCPManagementSection = () => {
             label: "Add Server",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setAddServerOpen(true),
           },
           {
             label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
             variant: "outlined",
             size: "small",
-            icon: "mdi:refresh",
+            icon: "solar:refresh-linear",
             onClick: handleReload,
             disabled: reloadMutation.isPending,
           },
@@ -171,7 +173,7 @@ const MCPManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Overview" />
         <Tab label="Tools" />

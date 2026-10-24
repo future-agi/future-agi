@@ -52,7 +52,7 @@ export default function AccountBillingAddress({ addressBook }) {
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={addressForm.onTrue}
             >
               Address
@@ -73,7 +73,7 @@ export default function AccountBillingAddress({ addressBook }) {
                   }}
                   sx={{ position: "absolute", top: 8, right: 8 }}
                 >
-                  <Iconify icon="eva:more-vertical-fill" />
+                  <Iconify icon="solar:menu-dots-vertical-linear" />
                 </IconButton>
               }
               sx={{
@@ -92,7 +92,7 @@ export default function AccountBillingAddress({ addressBook }) {
             logger.debug("SET AS PRIMARY", addressId);
           }}
         >
-          <Iconify icon="eva:star-fill" />
+          <Iconify icon="solar:star-bold" />
           Set as primary
         </MenuItem>
 
@@ -111,7 +111,8 @@ export default function AccountBillingAddress({ addressBook }) {
             handleClose();
             logger.debug("DELETE", addressId);
           }}
-          sx={{ color: "error.main" }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
         >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete

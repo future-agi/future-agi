@@ -24,9 +24,9 @@ export const GeneratePromptButton = styled(Button, {
   return {
     position: "relative",
     background: "transparent",
-    fontSize: "11px",
+    fontSize: "12px",
     lineHeight: "16px",
-    fontWeight: "700",
+    fontWeight: "600",
     padding,
     color: "transparent", // default for gradient text
     height,

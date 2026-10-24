@@ -11,15 +11,15 @@ import IPOPTooltipComponent from "src/sections/projects/LLMTracing/Renderers/IPO
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 const LABEL_BG_COLORS = {
-  [LABELS.PRODUCTION]: "green.o10",
-  [LABELS.STAGING]: "orange.o10",
+  [LABELS.PRODUCTION]: "status.success.bg",
+  [LABELS.STAGING]: "status.warning.bg",
   [LABELS.DEFAULT]: "action.hover",
   fallback: "background.neutral",
 };
 
 const LABEL_TEXT_COLORS = {
-  [LABELS.PRODUCTION]: "green.500",
-  [LABELS.STAGING]: "orange.500",
+  [LABELS.PRODUCTION]: "status.success.fg",
+  [LABELS.STAGING]: "status.warning.fg",
   [LABELS.DEFAULT]: "primary.main",
   fallback: "text.secondary",
 };
@@ -69,24 +69,18 @@ export const gridStyle = {
 export const getMetricsTabSx = (theme) => ({
   borderBottom: 1,
   borderColor: "divider",
-  minHeight: 42,
   "& .MuiTabs-flexContainer": { gap: 0 },
   "& .MuiTab-root": {
-    minHeight: 42,
     paddingX: theme.spacing(2),
     margin: theme.spacing(0),
     marginRight: `${theme.spacing(0)} !important`,
     minWidth: "auto",
-    fontWeight: "fontWeightMedium",
-    typography: "s1",
     color: "text.disabled",
-    textTransform: "none",
     transition: theme.transitions.create(["color", "background-color"], {
       duration: theme.transitions.duration.short,
     }),
     "&.Mui-selected": {
-      color: "primary.main",
-      fontWeight: "fontWeightSemiBold",
+      color: theme.palette.text.primary,
     },
     "&:not(.Mui-selected)": { color: theme.palette.text.disabled },
     "&:first-of-type": { marginLeft: 0 },

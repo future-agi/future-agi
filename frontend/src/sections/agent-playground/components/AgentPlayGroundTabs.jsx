@@ -65,37 +65,18 @@ export default function AgentPlayGroundTabs() {
       onChange={handleTabChange}
       textColor="primary"
       scrollButtons={false}
-      TabIndicatorProps={{
-        style: {
-          backgroundColor: theme.palette.primary.main,
-        },
-      }}
       sx={{
-        minHeight: 42,
-        fontSize: 14,
         "& .MuiTabs-flexContainer": {
           gap: 0,
         },
         "& .MuiTab-root": {
-          minHeight: 42,
           paddingX: theme.spacing(1.5),
           margin: theme.spacing(0),
           marginRight: theme.spacing(0) + "!important",
           minWidth: "auto",
-          fontWeight: "fontWeightMedium",
-          typography: "s1",
-          color: "text.secondary",
-          textTransform: "none",
           transition: theme.transitions.create(["color", "background-color"], {
             duration: theme.transitions.duration.short,
           }),
-          "&.Mui-selected": {
-            color: "primary.main",
-            fontWeight: "fontWeightSemiBold",
-          },
-          "&:not(.Mui-selected)": {
-            color: theme.palette.text.secondary,
-          },
           "&:first-of-type": {
             marginLeft: 0,
           },

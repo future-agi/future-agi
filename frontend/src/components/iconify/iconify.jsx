@@ -19,6 +19,13 @@ addIcon("solar:circle-linear", {
   height: 24,
 });
 
+/* Same for the plain outline square (unchecked checkbox state). */
+addIcon("solar:square-linear", {
+  body: '<rect x="3" y="3" width="18" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+  width: 24,
+  height: 24,
+});
+
 /**
  * A wrapper component for displaying Iconify icons with customizable width and styling
  * Get Iconify icons from https://iconify.design/

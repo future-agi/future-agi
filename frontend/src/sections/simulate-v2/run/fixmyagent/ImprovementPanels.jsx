@@ -15,7 +15,14 @@ import { scenarioTitle } from "../../_mock/scenarios";
   which members and channels a change touches.
 */
 
-const heading = { typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5, mb: 0.75 };
+const heading = {
+  typography: "s3",
+  fontWeight: 600,
+  color: "text.tertiary",
+  textTransform: "none",
+  letterSpacing: 0.5,
+  mb: 0.75,
+};
 const box = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
 /**
@@ -27,36 +34,129 @@ export function FinalistsTable({ result, bare = false }) {
   if (!list.length) return null;
   return (
     <Box sx={bare ? undefined : { px: 2.5, pt: 2.25 }}>
-      {!bare && <Typography sx={heading}>{`Finalists · scored once on the held-back set${result.textSearch ? " · as real calls" : ""}`}</Typography>}
+      {!bare && (
+        <Typography
+          sx={heading}
+        >{`Finalists · scored once on the held-back set${result.textSearch ? " · as real calls" : ""}`}</Typography>
+      )}
       {/* Inside a tab: one quiet line says what the table is. */}
       {bare && (
-        <Typography sx={{ px: 2, py: 1, typography: "s3", color: "text.subtitle", borderBottom: "1px solid", borderColor: "divider" }}>
+        <Typography
+          sx={{
+            px: 2,
+            py: 1,
+            typography: "s3",
+            color: "text.tertiary",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           {`Scored once on held-back scenarios, never shown while searching${result.textSearch ? ", as real calls" : ""} — the winner is the best that passes.`}
         </Typography>
       )}
       <Box sx={bare ? undefined : box}>
-        <Stack direction="row" spacing={1.5} sx={{ px: 1.5, py: 0.75, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           {["Run", "Target", "Held back", ""].map((h, i) => (
-            <Typography key={h || i} sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, width: i < 3 ? 90 : "auto", flex: i === 3 ? 1 : "none" }}>{h}</Typography>
+            <Typography
+              key={h || i}
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                fontWeight: 600,
+                width: i < 3 ? 90 : "auto",
+                flex: i === 3 ? 1 : "none",
+              }}
+            >
+              {h}
+            </Typography>
           ))}
         </Stack>
         {list.map((f, i) => {
           const lift = f.heldScore - result.heldBase;
           return (
-            <Stack key={f.n} direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-              <Typography sx={{ typography: "s2", fontWeight: f.winner ? 700 : 500, width: 90, fontVariantNumeric: "tabular-nums" }}>{`Run ${f.n}`}</Typography>
-              <Typography sx={{ typography: "s2", width: 90, color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>{`${f.score}%`}</Typography>
-              <Typography sx={{ typography: "s2", width: 90, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+            <Stack
+              key={f.n}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 1.5,
+                py: 0.875,
+                borderTop: i ? "1px solid" : "none",
+                borderColor: "divider",
+              }}
+            >
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: f.winner ? 600 : 500,
+                  width: 90,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >{`Run ${f.n}`}</Typography>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  width: 90,
+                  color: "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >{`${f.score}%`}</Typography>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  width: 90,
+                  fontWeight: 600,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
                 {`${f.heldScore}%`}
-                <Box component="span" sx={{ typography: "s3", color: "text.subtitle", fontWeight: 400, ml: 0.75 }}>{`${lift >= 0 ? "+" : "−"}${Math.abs(lift)}`}</Box>
+                <Box
+                  component="span"
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    fontWeight: 400,
+                    ml: 0.75,
+                  }}
+                >{`${lift >= 0 ? "+" : "−"}${Math.abs(lift)}`}</Box>
               </Typography>
-              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+                sx={{ flex: 1, minWidth: 0 }}
+              >
                 <Iconify
-                  icon={f.accepted ? "solar:check-circle-linear" : "solar:close-circle-linear"}
-                  width={14} sx={{ color: f.accepted ? "text.secondary" : "text.disabled", flexShrink: 0 }}
+                  icon={
+                    f.accepted
+                      ? "solar:check-circle-linear"
+                      : "solar:close-circle-linear"
+                  }
+                  width={14}
+                  sx={{
+                    color: f.accepted ? "text.secondary" : "text.disabled",
+                    flexShrink: 0,
+                  }}
                 />
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {f.winner ? "Winner — the best finalist that passes" : f.accepted ? "Passes" : f.why}
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.tertiary" }}
+                >
+                  {f.winner
+                    ? "Winner — the best finalist that passes"
+                    : f.accepted
+                      ? "Passes"
+                      : f.why}
                 </Typography>
               </Stack>
             </Stack>
@@ -78,15 +178,31 @@ export function MustPassNote({ result, bare = false }) {
   if (!m) return null;
   const flaky = result.flakyToday || [];
   const once = (result.winner?.mustPassFails || []).filter((f) => !f.repeated);
-  const parts = [m.marked ? `${m.marked} you marked` : null, m.remembered ? `${m.remembered} from regression memory` : null, `${m.passing} that pass every repeat today`].filter(Boolean);
+  const parts = [
+    m.marked ? `${m.marked} you marked` : null,
+    m.remembered ? `${m.remembered} from regression memory` : null,
+    `${m.passing} that pass every repeat today`,
+  ].filter(Boolean);
   return (
     <Box sx={bare ? null : { px: 2.5, pt: 1.25 }}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
         {`Must-pass set: ${m.total} — ${parts.join(", ")}. A failure disqualifies only when it repeats on a re-run.`}
-        {once.length ? ` ${once.length} failed once on the winner and passed the re-run.` : ""}
+        {once.length
+          ? ` ${once.length} failed once on the winner and passed the re-run.`
+          : ""}
         {flaky.length ? " " : ""}
         {flaky.length > 0 && (
-          <Box component="span" {...clickable(() => setOpen((o) => !o), { expanded: open })} sx={{ color: "text.secondary", fontWeight: 600, cursor: "pointer", "&:hover": { color: "text.primary" }, ...focusRing }}>
+          <Box
+            component="span"
+            {...clickable(() => setOpen((o) => !o), { expanded: open })}
+            sx={{
+              color: "text.secondary",
+              fontWeight: 600,
+              cursor: "pointer",
+              "&:hover": { color: "text.primary" },
+              ...focusRing,
+            }}
+          >
             {`${flaky.length} flaky today — shown, never disqualifying`}
           </Box>
         )}
@@ -94,7 +210,20 @@ export function MustPassNote({ result, bare = false }) {
       {open && (
         <Stack sx={{ ...box, mt: 0.75 }}>
           {flaky.map((t, i) => (
-            <Typography key={t.id} noWrap sx={{ typography: "s3", color: "text.secondary", px: 1.5, py: 0.625, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>{scenarioTitle(t.title)}</Typography>
+            <Typography
+              key={t.id}
+              noWrap
+              sx={{
+                typography: "s3",
+                color: "text.secondary",
+                px: 1.5,
+                py: 0.625,
+                borderTop: i ? "1px solid" : "none",
+                borderColor: "divider",
+              }}
+            >
+              {scenarioTitle(t.title)}
+            </Typography>
           ))}
         </Stack>
       )}
@@ -108,29 +237,64 @@ MustPassNote.propTypes = { result: PropTypes.object, bare: PropTypes.bool };
  * frozen environment version. Approving a new version with the new contract
  * runs the baseline again on it before anything is compared.
  */
-export function ContractNotice({ contract, envVersion, nextVersion, approval, onApprove }) {
+export function ContractNotice({
+  contract,
+  envVersion,
+  nextVersion,
+  approval,
+  onApprove,
+}) {
   if (!contract) return null;
-  const next = nextVersion || (envVersion && /^v\d+$/.test(envVersion) ? `v${Number(envVersion.slice(1)) + 1}` : "a new version");
+  const next =
+    nextVersion ||
+    (envVersion && /^v\d+$/.test(envVersion)
+      ? `v${Number(envVersion.slice(1)) + 1}`
+      : "a new version");
   return (
     <Box sx={{ px: 2.5, pt: 2.25 }}>
       <Typography sx={heading}>Changes the contract</Typography>
-      <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{ ...box, px: 1.5, py: 1.25 }}>
-        <Iconify icon="solar:document-add-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
+      <Stack
+        direction="row"
+        spacing={1.25}
+        alignItems="flex-start"
+        sx={{ ...box, px: 1.5, py: 1.25 }}
+      >
+        <Iconify
+          icon="solar:document-add-linear"
+          width={16}
+          sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+        />
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>{contract.title}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {contract.title}
+          </Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+          >
             {approval
               ? approval.candidate
                 ? `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to} first: ${approval.baseline.train}% on the target scenarios, ${approval.baseline.held}% held back. Then the change, on ${approval.to} only: ${approval.candidate.train}% on the target scenarios (${signedPts(approval.candidate.train - approval.baseline.train)}), ${approval.candidate.held}% held back (${signedPts(approval.candidate.held - approval.baseline.held)}). Never compared against ${approval.from || "the old version"}.`
                 : `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to}: ${approval.baseline.train}% on the target scenarios, ${approval.baseline.held}% held back. A run with this change is compared there, never against ${approval.from}.`
               : contractMessage(contract, envVersion || "the frozen version")}
           </Typography>
-          {contract.why && !approval && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>{contract.why}</Typography>}
+          {contract.why && !approval && (
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+            >
+              {contract.why}
+            </Typography>
+          )}
         </Box>
         {!approval && (
           <Button
-            size="small" variant="outlined" onClick={() => onApprove?.(next)}
-            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+            size="small"
+            variant="outlined"
+            onClick={() => onApprove?.(next)}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
           >
             {`Approve ${next} and re-run the baseline`}
           </Button>
@@ -139,7 +303,13 @@ export function ContractNotice({ contract, envVersion, nextVersion, approval, on
     </Box>
   );
 }
-ContractNotice.propTypes = { contract: PropTypes.object, envVersion: PropTypes.string, nextVersion: PropTypes.string, approval: PropTypes.object, onApprove: PropTypes.func };
+ContractNotice.propTypes = {
+  contract: PropTypes.object,
+  envVersion: PropTypes.string,
+  nextVersion: PropTypes.string,
+  approval: PropTypes.object,
+  onApprove: PropTypes.func,
+};
 
 const signedPts = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)} pts`;
 
@@ -148,32 +318,126 @@ const signedPts = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)} pt
  * set there had to hold. Targets stay the main environment's.
  */
 export function OtherEnvironments({ result }) {
-  const finalists = (result?.finalists || []).filter((f) => (f.envs || []).length);
+  const finalists = (result?.finalists || []).filter(
+    (f) => (f.envs || []).length,
+  );
   if (!finalists.length) return null;
-  const envs = finalists[0].envs.map((e) => ({ id: e.envId, name: e.name, mustPass: e.mustPass }));
+  const envs = finalists[0].envs.map((e) => ({
+    id: e.envId,
+    name: e.name,
+    mustPass: e.mustPass,
+  }));
   return (
     <Box sx={{ px: 2.5, pt: 2.25 }}>
-      <Typography sx={heading}>{`Other environments · each finalist ran once in ${envs.length === 1 ? "it" : `all ${envs.length}`}`}</Typography>
+      <Typography
+        sx={heading}
+      >{`Other environments · each finalist ran once in ${envs.length === 1 ? "it" : `all ${envs.length}`}`}</Typography>
       <Box sx={box}>
-        <Stack direction="row" spacing={1.5} sx={{ px: 1.5, py: 0.75, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, flex: 1 }}>Environment</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, width: 90 }}>Must-pass</Typography>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontWeight: 600,
+              flex: 1,
+            }}
+          >
+            Environment
+          </Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontWeight: 600,
+              width: 90,
+            }}
+          >
+            Must-pass
+          </Typography>
           {finalists.map((f) => (
-            <Typography key={f.n} sx={{ typography: "s3", color: "text.subtitle", fontWeight: f.winner ? 700 : 600, width: 150 }}>{`Run ${f.n}${f.winner ? " · winner" : ""}`}</Typography>
+            <Typography
+              key={f.n}
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                fontWeight: f.winner ? 600 : 500,
+                width: 150,
+              }}
+            >{`Run ${f.n}${f.winner ? " · winner" : ""}`}</Typography>
           ))}
         </Stack>
         {envs.map((e, i) => (
-          <Stack key={e.id} direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-            <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>{e.name}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary", width: 90, fontVariantNumeric: "tabular-nums" }}>{e.mustPass}</Typography>
+          <Stack
+            key={e.id}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{
+              px: 1.5,
+              py: 0.875,
+              borderTop: i ? "1px solid" : "none",
+              borderColor: "divider",
+            }}
+          >
+            <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+              {e.name}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                width: 90,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {e.mustPass}
+            </Typography>
             {finalists.map((f) => {
               const run = f.envs.find((x) => x.envId === e.id);
               const bad = run && !run.held;
               return (
-                <Stack key={f.n} direction="row" alignItems="center" spacing={0.5} sx={{ width: 150, minWidth: 0 }}>
-                  <Iconify icon={bad ? "solar:close-circle-bold" : "solar:check-circle-linear"} width={14} sx={{ color: bad ? "#DC2626" : "text.secondary", flexShrink: 0 }} />
-                  <Typography noWrap sx={{ typography: "s3", color: bad ? "#DC2626" : "text.subtitle" }}>
-                    {!run ? "—" : bad ? `“${run.broke.title}” failed twice` : run.broke ? "held · 1 failed once" : "held"}
+                <Stack
+                  key={f.n}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{ width: 150, minWidth: 0 }}
+                >
+                  <Iconify
+                    icon={
+                      bad
+                        ? "solar:close-circle-bold"
+                        : "solar:check-circle-linear"
+                    }
+                    width={14}
+                    sx={{
+                      color: bad ? "status.danger.fg" : "text.secondary",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: bad ? "status.danger.fg" : "text.tertiary",
+                    }}
+                  >
+                    {!run
+                      ? "—"
+                      : bad
+                        ? `“${run.broke.title}” failed twice`
+                        : run.broke
+                          ? "held · 1 failed once"
+                          : "held"}
                   </Typography>
                 </Stack>
               );
@@ -181,8 +445,9 @@ export function OtherEnvironments({ result }) {
           </Stack>
         ))}
       </Box>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-        Targets come from the main environment only — here a finalist just has to keep what passes today.
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
+        Targets come from the main environment only — here a finalist just has
+        to keep what passes today.
       </Typography>
     </Box>
   );
@@ -199,13 +464,47 @@ export function StaticNotice({ result }) {
   if (!stopped.length) return null;
   return (
     <Box sx={{ px: 2.5, pt: 2.25 }}>
-      <Typography sx={heading}>{`Stopped at Static checks · ${stopped.length} of ${result.trials.length}`}</Typography>
+      <Typography
+        sx={heading}
+      >{`Stopped at Static checks · ${stopped.length} of ${result.trials.length}`}</Typography>
       <Box sx={box}>
         {stopped.map((t, i) => (
-          <Stack key={t.n} direction="row" alignItems="flex-start" spacing={1.25} sx={{ px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-            <Iconify icon="solar:shield-cross-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
-            <Typography sx={{ typography: "s2", fontWeight: 600, width: 64, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{`Run ${t.n}`}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{t.static.reason}</Typography>
+          <Stack
+            key={t.n}
+            direction="row"
+            alignItems="flex-start"
+            spacing={1.25}
+            sx={{
+              px: 1.5,
+              py: 0.875,
+              borderTop: i ? "1px solid" : "none",
+              borderColor: "divider",
+            }}
+          >
+            <Iconify
+              icon="solar:shield-cross-linear"
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+            />
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                width: 64,
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >{`Run ${t.n}`}</Typography>
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {t.static.reason}
+            </Typography>
           </Stack>
         ))}
       </Box>
@@ -221,39 +520,87 @@ const CODE_SURFACES = ["code", "structure"];
  * the files — shown above its diff, and where it was built.
  */
 export function CodePlan({ env, record, proposals = [] }) {
-  const code = proposals.filter((p) => CODE_SURFACES.includes(KIND_SURFACE[p.kind] || "code"));
+  const code = proposals.filter((p) =>
+    CODE_SURFACES.includes(KIND_SURFACE[p.kind] || "code"),
+  );
   if (!code.length) return null;
-  const cause = record?.snapshot?.rootCause || record?.diagnosis?.[0]?.headline || code[0].why;
+  const cause =
+    record?.snapshot?.rootCause ||
+    record?.diagnosis?.[0]?.headline ||
+    code[0].why;
   const tests = record?.result?.repoTests || record?.frozen?.repoTests || null;
-  const files = [...new Set([
-    ...code.map((p) => changeFileFor(env, p)?.path).filter(Boolean),
-    ...(tests ? code.map((p) => `${env?.id || "agent"}/tests/test_${String(p.step || p.id).toLowerCase().replace(/[^a-z0-9]+/g, "_")}.py`) : []),
-  ])];
+  const files = [
+    ...new Set([
+      ...code.map((p) => changeFileFor(env, p)?.path).filter(Boolean),
+      ...(tests
+        ? code.map(
+            (p) =>
+              `${env?.id || "agent"}/tests/test_${String(p.step || p.id)
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "_")}.py`,
+          )
+        : []),
+    ]),
+  ];
   const steps = [
     ...code.map((p) => p.title),
-    ...(tests ? [`Add a test for each, then run ${tests} and the full regression set`] : ["Run the full regression set"]),
+    ...(tests
+      ? [`Add a test for each, then run ${tests} and the full regression set`]
+      : ["Run the full regression set"]),
   ];
   const mono = "ui-monospace, Menlo, monospace";
   return (
     <Box sx={{ px: 2, py: 1.5 }}>
       <Typography sx={{ ...heading, mb: 0.5 }}>Plan</Typography>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{`Root cause: ${String(cause || "—").replace(/\.$/, "")}.`}</Typography>
+      <Typography
+        sx={{ typography: "s2", color: "text.secondary" }}
+      >{`Root cause: ${String(cause || "—").replace(/\.$/, "")}.`}</Typography>
       <Stack component="ol" spacing={0.25} sx={{ m: 0, mt: 0.75, pl: 2.5 }}>
-        {steps.map((st) => <Typography key={st} component="li" sx={{ typography: "s2" }}>{st}</Typography>)}
+        {steps.map((st) => (
+          <Typography key={st} component="li" sx={{ typography: "s2" }}>
+            {st}
+          </Typography>
+        ))}
       </Stack>
-      <Stack direction="row" flexWrap="wrap" columnGap={1.5} rowGap={0.25} sx={{ mt: 0.75 }}>
-        {files.map((f) => <Typography key={f} sx={{ typography: "s3", fontFamily: mono, color: "text.secondary" }}>{f}</Typography>)}
+      <Stack
+        direction="row"
+        flexWrap="wrap"
+        columnGap={1.5}
+        rowGap={0.25}
+        sx={{ mt: 0.75 }}
+      >
+        {files.map((f) => (
+          <Typography
+            key={f}
+            sx={{ typography: "s3", fontFamily: mono, color: "text.secondary" }}
+          >
+            {f}
+          </Typography>
+        ))}
       </Stack>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 0.75 }}>
-        <Iconify icon="solar:branching-paths-up-linear" width={14} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ mt: 0.75 }}
+      >
+        <Iconify
+          icon="solar:branching-paths-up-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {`Built in its own sandboxed worktree · branch fagi/${String(record?.id || "improvement").toLowerCase()}`}
         </Typography>
       </Stack>
     </Box>
   );
 }
-CodePlan.propTypes = { env: PropTypes.object, record: PropTypes.object, proposals: PropTypes.array };
+CodePlan.propTypes = {
+  env: PropTypes.object,
+  record: PropTypes.object,
+  proposals: PropTypes.array,
+};
 
 /**
  * Code candidates that didn't fit the sealed environment — they moved the
@@ -262,22 +609,60 @@ CodePlan.propTypes = { env: PropTypes.object, record: PropTypes.object, proposal
  * rebuilding the environment from the candidate's commit is how to test one.
  */
 export function UnfitNotice({ result }) {
-  const unfit = (result?.trials || []).filter((t) => t.compat && t.compat.pass === false);
+  const unfit = (result?.trials || []).filter(
+    (t) => t.compat && t.compat.pass === false,
+  );
   if (!unfit.length) return null;
   return (
     <Box sx={{ px: 2.5, pt: 2.25 }}>
-      <Typography sx={heading}>{`Didn't fit the sealed environment · ${unfit.length} of ${result.trials.length}`}</Typography>
+      <Typography
+        sx={heading}
+      >{`Didn't fit the sealed environment · ${unfit.length} of ${result.trials.length}`}</Typography>
       <Box sx={box}>
         {unfit.map((t, i) => (
-          <Stack key={t.n} direction="row" alignItems="flex-start" spacing={1.25} sx={{ px: 1.5, py: 0.875, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-            <Iconify icon="solar:box-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
-            <Typography sx={{ typography: "s2", fontWeight: 600, width: 64, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{`Run ${t.n}`}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{t.compat.reason}</Typography>
+          <Stack
+            key={t.n}
+            direction="row"
+            alignItems="flex-start"
+            spacing={1.25}
+            sx={{
+              px: 1.5,
+              py: 0.875,
+              borderTop: i ? "1px solid" : "none",
+              borderColor: "divider",
+            }}
+          >
+            <Iconify
+              icon="solar:box-linear"
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+            />
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: 600,
+                width: 64,
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >{`Run ${t.n}`}</Typography>
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {t.compat.reason}
+            </Typography>
           </Stack>
         ))}
       </Box>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-        Checked before any scenario ran, so none of them were scored or could win. The environment was built from one commit — its image, install steps, entry point and start command.
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
+        Checked before any scenario ran, so none of them were scored or could
+        win. The environment was built from one commit — its image, install
+        steps, entry point and start command.
       </Typography>
     </Box>
   );
@@ -294,20 +679,31 @@ export function IssueScenariosNotice({ rows, envName, onAdd }) {
   const fromTraces = rows.length - fresh;
   return (
     <Box sx={{ px: 2.5, pt: 2.25 }}>
-      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ...box, px: 1.5, py: 1 }}>
-        <Iconify icon="solar:list-check-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{ ...box, px: 1.5, py: 1 }}
+      >
+        <Iconify
+          icon="solar:list-check-linear"
+          width={16}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
             {`${rows.length} ${rows.length === 1 ? "scenario" : "scenarios"} from this improvement`}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {`${[fromTraces ? `${fromTraces} from the issue's traces` : null, fresh ? `${fresh} fresh ${fresh === 1 ? "variation" : "variations"} from the held-back check` : null].filter(Boolean).join(", ")}. They stay with the improvement until you add them${envName ? ` to ${envName}` : ""} — as proposed scenarios.`}
           </Typography>
         </Box>
         <Button
-          size="small" variant="outlined" onClick={onAdd}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+          size="small"
+          variant="outlined"
+          onClick={onAdd}
+          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
           {`Add ${rows.length} ${rows.length === 1 ? "scenario" : "scenarios"} to the environment`}
         </Button>
@@ -315,7 +711,11 @@ export function IssueScenariosNotice({ rows, envName, onAdd }) {
     </Box>
   );
 }
-IssueScenariosNotice.propTypes = { rows: PropTypes.array, envName: PropTypes.string, onAdd: PropTypes.func };
+IssueScenariosNotice.propTypes = {
+  rows: PropTypes.array,
+  envName: PropTypes.string,
+  onAdd: PropTypes.func,
+};
 
 /**
  * Which members a proposal changes, and the channels a shared-part change
@@ -335,9 +735,15 @@ export function ChangeScope({ scope, channelNotes = [], target }) {
   return (
     <Stack direction="row" flexWrap="wrap" columnGap={1.5} rowGap={0.25}>
       {lines.map((l) => (
-        <Typography key={l} sx={{ typography: "s3", color: "text.secondary" }}>{l}</Typography>
+        <Typography key={l} sx={{ typography: "s3", color: "text.secondary" }}>
+          {l}
+        </Typography>
       ))}
     </Stack>
   );
 }
-ChangeScope.propTypes = { scope: PropTypes.object, channelNotes: PropTypes.array, target: PropTypes.string };
+ChangeScope.propTypes = {
+  scope: PropTypes.object,
+  channelNotes: PropTypes.array,
+  target: PropTypes.string,
+};

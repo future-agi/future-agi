@@ -1,5 +1,4 @@
 import { Box, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { format, isValid } from "date-fns";
 import PropTypes from "prop-types";
 import React from "react";
@@ -27,10 +26,7 @@ const CallLogsCellRenderer = (props) => {
   ) {
     return (
       <CustomTooltip size="small" show={!!value} arrow title={value}>
-        <Box
-          className="ipop-cell"
-          sx={{ px: 1.5, color: "text.secondary" }}
-        >
+        <Box className="ipop-cell" sx={{ px: 1.5, color: "text.secondary" }}>
           {value || "-"}
         </Box>
       </CustomTooltip>
@@ -63,7 +59,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Box display="flex" flexDirection="row" alignItems="center" gap={0.5}>
         <Iconify
-          icon="radix-icons:clock"
+          icon="solar:clock-circle-linear"
           width={14}
           height={14}
           sx={{ mb: 0.2, color: "text.primary" }}
@@ -90,37 +86,20 @@ const CallLogsCellRenderer = (props) => {
   } else if (columnId === "call_type") {
     const typeColorMap = {
       inbound: "info",
-      outbound: "secondary",
+      outbound: "discovery",
     };
     const palette = typeColorMap[(value || "").toLowerCase()];
     content = value ? (
-      <Box
+      <Typography
         sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          px: 1,
-          py: 0.25,
-          borderRadius: "4px",
-          bgcolor: (theme) =>
-            palette
-              ? alpha(theme.palette[palette].main, 0.08)
-              : theme.palette.action.hover,
-          border: "1px solid",
-          borderColor: (theme) =>
-            palette ? alpha(theme.palette[palette].main, 0.24) : "divider",
+          fontSize: 13,
+          fontWeight: 400,
+          color: palette ? `status.${palette}.fg` : "text.secondary",
+          textTransform: "capitalize",
         }}
       >
-        <Typography
-          sx={{
-            fontSize: 12,
-            fontWeight: 500,
-            color: palette ? `${palette}.main` : "text.secondary",
-            textTransform: "capitalize",
-          }}
-        >
-          {value}
-        </Typography>
-      </Box>
+        {value}
+      </Typography>
     ) : (
       "-"
     );
@@ -129,9 +108,9 @@ const CallLogsCellRenderer = (props) => {
       "customer-ended-call": "success",
       "customer-did-not-answer": "warning",
       "assistant-ended-call": "info",
-      "silence-timed-out": "error",
+      "silence-timed-out": "danger",
       "max-duration-reached": "warning",
-      error: "error",
+      error: "danger",
     };
     const key = (value || "").toLowerCase();
     const reasonPalette =
@@ -144,45 +123,18 @@ const CallLogsCellRenderer = (props) => {
       : "-";
     content = value ? (
       <CustomTooltip show={value.length > 20} arrow title={value}>
-        <Box
+        <Typography
           sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            px: 1,
-            py: 0.25,
-            borderRadius: "4px",
-            bgcolor: (theme) =>
-              reasonPalette
-                ? alpha(theme.palette[reasonPalette].main, 0.08)
-                : theme.palette.action.hover,
-            border: "1px solid",
-            borderColor: (theme) =>
-              reasonPalette
-                ? alpha(theme.palette[reasonPalette].main, 0.24)
-                : "divider",
+            fontSize: 13,
+            fontWeight: 400,
+            color: reasonPalette
+              ? `status.${reasonPalette}.fg`
+              : "text.secondary",
+            whiteSpace: "nowrap",
           }}
         >
-          <Typography
-            sx={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: (theme) => {
-                if (!reasonPalette) return theme.palette.text.secondary;
-                // warning.main is a pale yellow that is unreadable on light bg
-                if (
-                  reasonPalette === "warning" &&
-                  theme.palette.mode === "light"
-                ) {
-                  return theme.palette.warning.darker;
-                }
-                return theme.palette[reasonPalette].main;
-              },
-              whiteSpace: "nowrap",
-            }}
-          >
-            {shortLabel}
-          </Typography>
-        </Box>
+          {shortLabel}
+        </Typography>
       </CustomTooltip>
     ) : (
       "-"
@@ -195,21 +147,30 @@ const CallLogsCellRenderer = (props) => {
         : `${(ms / 1000).toFixed(1)}s`
       : "-";
     content = (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+      >
         {formatted}
       </Typography>
     );
   } else if (columnId === "turn_count") {
     const n = value != null && value !== "" ? Number(value) : NaN;
     content = (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+      >
         {Number.isFinite(n) ? String(n) : "-"}
       </Typography>
     );
   } else if (columnId === "agent_talk_percentage") {
     const n = value != null && value !== "" ? Number(value) : NaN;
     content = (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+      >
         {Number.isFinite(n) ? `${n}%` : "-"}
       </Typography>
     );
@@ -221,14 +182,20 @@ const CallLogsCellRenderer = (props) => {
         : `${(ms / 1000).toFixed(2)}s`
       : "-";
     content = (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+      >
         {formatted}
       </Typography>
     );
   } else if (columnId === "user_wpm" || columnId === "bot_wpm") {
     const n = value != null && value !== "" ? Number(value) : NaN;
     content = (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+      >
         {Number.isFinite(n) ? String(Math.round(n)) : "-"}
       </Typography>
     );
@@ -243,13 +210,9 @@ const CallLogsCellRenderer = (props) => {
         variant="body2"
         sx={{
           fontSize: 13,
-          color: (theme) => {
-            if (!hasInterrupts) return theme.palette.text.primary;
-            return theme.palette.mode === "dark"
-              ? theme.palette.warning.main
-              : theme.palette.warning.darker;
-          },
+          color: hasInterrupts ? "status.warning.fg" : "text.primary",
           fontWeight: hasInterrupts ? 600 : 400,
+          fontVariantNumeric: "tabular-nums",
         }}
       >
         {Number.isFinite(n) ? String(n) : "-"}

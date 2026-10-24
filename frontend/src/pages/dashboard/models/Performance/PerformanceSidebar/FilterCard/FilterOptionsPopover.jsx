@@ -217,9 +217,6 @@ const FilterOptionsPopover = ({ open, onClose, ancElem, onSelect, filter }) => {
                 label={getTabLabel(tag)}
                 clickable
                 size="small"
-                sx={{
-                  fontSize: "11px",
-                }}
                 onClick={handleChange}
               />
             </FilterListItemButton>
@@ -263,7 +260,8 @@ const FilterOptionsPopover = ({ open, onClose, ancElem, onSelect, filter }) => {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>

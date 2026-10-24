@@ -28,7 +28,7 @@ const Legend = ({ series = [] }) => {
             sx={{
               width: "16px",
               height: "16px",
-              borderRadius: "2px",
+              borderRadius: "4px",
               backgroundColor: item.color,
               flexShrink: 0,
             }}

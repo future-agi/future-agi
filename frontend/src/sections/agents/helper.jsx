@@ -526,7 +526,7 @@ const LoadingSkeleton = () => {
       width="80%"
       sx={{
         mx: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       height={15}
     />
@@ -1067,8 +1067,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };

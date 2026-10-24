@@ -88,10 +88,11 @@ const NavItem = forwardRef(
         {icon && (
           <Box className="icon">
             {React.cloneElement(icon, {
+              // Same 14px monochrome icon as the expanded sidebar.
               sx: {
-                height: "20px",
-                width: "20px",
-                color: active ? "primary.main" : "text.secondary",
+                height: "14px",
+                width: "14px",
+                color: active ? "text.primary" : "text.secondary",
               },
             })}
           </Box>
@@ -105,7 +106,11 @@ const NavItem = forwardRef(
 
         {caption && (
           <Tooltip title={caption} arrow placement="right">
-            <Iconify width={16} icon="eva:info-outline" className="caption" />
+            <Iconify
+              width={16}
+              icon="solar:info-circle-linear"
+              className="caption"
+            />
           </Tooltip>
         )}
 
@@ -119,7 +124,7 @@ const NavItem = forwardRef(
           <Iconify
             width={16}
             className="arrow"
-            icon="eva:arrow-ios-forward-fill"
+            icon="solar:alt-arrow-right-linear"
           />
         )}
       </StyledNavItem>
@@ -238,8 +243,8 @@ const StyledNavItem = styled(ListItemButton, {
     },
     icon: {
       flexShrink: 0,
-      height: "16px",
-      width: "16px",
+      height: "14px",
+      width: "14px",
     },
     label: {
       textTransform: "capitalize",
@@ -253,7 +258,7 @@ const StyledNavItem = styled(ListItemButton, {
     // Root item
     ...(!subItem && {
       ...baseStyles.item,
-      fontSize: 10,
+      fontSize: 11,
       lineHeight: "16px",
       textAlign: "center",
       padding: theme.spacing(1, 2),

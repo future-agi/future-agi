@@ -1,9 +1,24 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import {
-  Box, Stack, Typography, Button, Tooltip, Tab, IconButton, Menu, MenuItem, useMediaQuery,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Tooltip,
+  Tab,
+  IconButton,
+  Menu,
+  MenuItem,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -12,8 +27,15 @@ import { protoRunId } from "../_mock/executionAdapter";
 import { runListCount } from "../_mock/runList";
 import { scenariosFromDescription } from "../_mock/scenarios";
 import { scenarioPoolFor } from "../_mock/scenarioPool";
-import { detectAddScenariosIntent, describedAsk } from "../_mock/addScenariosIntent";
-import { stampNewBatch, unanswerableNote, rejectedNote } from "../_mock/addScenarios";
+import {
+  detectAddScenariosIntent,
+  describedAsk,
+} from "../_mock/addScenariosIntent";
+import {
+  stampNewBatch,
+  unanswerableNote,
+  rejectedNote,
+} from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
 import { currentUser } from "../_mock/scenarioProvenance";
 import { getEnvironment } from "../_mock/environments";
@@ -22,7 +44,12 @@ import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-import { setupGaps, runReadiness, gapMeter, gapCoverage } from "../_mock/setupGaps";
+import {
+  setupGaps,
+  runReadiness,
+  gapMeter,
+  gapCoverage,
+} from "../_mock/setupGaps";
 import { subscribeGapsInbox, openGapsInbox } from "../_mock/gapsInboxBus";
 import { scenarioStepOf, versionCardOf } from "../_mock/versionCard";
 import SideDrawer from "../components/SideDrawer";
@@ -30,17 +57,41 @@ import SetupGapsPanel from "./SetupGapsPanel";
 import { runPlan } from "../_mock/proofs";
 import { runScopeOf } from "../_mock/runScope";
 import { resolveEval } from "../_mock/evals";
-import { estimateRun, checkUsage, meterLine, limitMessage, budgetNotice } from "../_mock/metering";
+import {
+  estimateRun,
+  checkUsage,
+  meterLine,
+  limitMessage,
+  budgetNotice,
+} from "../_mock/metering";
 import { runSizeOf, parallelOf } from "../_mock/runStream";
 import RunUsageBanner from "./RunUsageBanner";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
-import { subscribeBuilderPrompt, subscribeBuilderSend, subscribeOpenBuilderChat } from "../_mock/builderPromptBus";
+import {
+  subscribeBuilderPrompt,
+  subscribeBuilderSend,
+  subscribeOpenBuilderChat,
+} from "../_mock/builderPromptBus";
 import { subscribeComposerScaffold } from "../_mock/composerScaffoldBus";
-import { subscribeScenarioSelection, clearScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
+import {
+  subscribeScenarioSelection,
+  clearScenarioSelection,
+  getScenarioSelection,
+} from "../_mock/scenarioSelectionBus";
 import { subscribeBuilderMode } from "../_mock/builderModeBus";
-import { currentAgentVersion, currentEnvVersion, environmentVersions, scenariosInSet } from "../_mock/versions";
+import {
+  currentAgentVersion,
+  currentEnvVersion,
+  environmentVersions,
+  scenariosInSet,
+} from "../_mock/versions";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
-import { proofKindOf, isComingSoon, COMING_SOON_NOTE, runDefaultsOf } from "../_mock/rsiModel";
+import {
+  proofKindOf,
+  isComingSoon,
+  COMING_SOON_NOTE,
+  runDefaultsOf,
+} from "../_mock/rsiModel";
 import { finishBuildPatch } from "../_mock/quickBuild";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { isConnectOnly } from "../_mock/envModel";
@@ -87,13 +138,28 @@ import { clickable, focusRing } from "../components/clickable";
   in Agents.
 */
 const TABS = [
-  { id: "overview",  label: "Overview",          icon: "solar:widget-5-linear" },
-  { id: "world",     label: "World",             icon: "solar:globe-linear" },
-  { id: "contract",  label: "Contract",          icon: "solar:document-text-linear" },
-  { id: "scenarios", label: "Scenarios",         icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
-  { id: "evals",     label: "Evaluations",       icon: "solar:shield-check-linear", badge: "evals" },
-  { id: "runs",      label: "Runs",              icon: "solar:play-circle-linear", badge: "runs" },
-  { id: "settings",  label: "Settings",          icon: "solar:settings-linear" },
+  { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
+  { id: "world", label: "World", icon: "solar:globe-linear" },
+  { id: "contract", label: "Contract", icon: "solar:document-text-linear" },
+  {
+    id: "scenarios",
+    label: "Scenarios",
+    icon: "solar:layers-minimalistic-linear",
+    badge: "scenarios",
+  },
+  {
+    id: "evals",
+    label: "Evaluations",
+    icon: "solar:shield-check-linear",
+    badge: "evals",
+  },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
+  { id: "settings", label: "Settings", icon: "solar:settings-linear" },
 ];
 
 /*
@@ -101,16 +167,20 @@ const TABS = [
   name was spent height. What that heading used to say is the tab's hover
   hint instead. Overview has none: its description is content.
 */
-const tabHintOf = (id, env) => ({
-  world: isConnectOnly(env)
-    ? "What a run of this environment stands on. The environment version is the contract alone."
-    : "What your agent talks to during a run — the data, and the tool handlers that answer every call. It learns a new tool whenever a later agent version brings one.",
-  contract: "The rules the agent holds to and what it's for, then how a conversation runs — when it ends, who else is in it, and how it's scored. Editing it makes a new environment version; the scenarios that depend on the change are marked Re-check.",
-  scenarios: "Each scenario is one task your agent has to complete, with its own caller. Every agent version runs the same suite; comparisons run over the scenarios both runs share.",
-  evals: "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
-  runs: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
-  settings: "How this environment is built and how runs behave inside it.",
-}[id] || "");
+const tabHintOf = (id, env) =>
+  ({
+    world: isConnectOnly(env)
+      ? "What a run of this environment stands on. The environment version is the contract alone."
+      : "What your agent talks to during a run — the data, and the tool handlers that answer every call. It learns a new tool whenever a later agent version brings one.",
+    contract:
+      "The rules the agent holds to and what it's for, then how a conversation runs — when it ends, who else is in it, and how it's scored. Editing it makes a new environment version; the scenarios that depend on the change are marked Re-check.",
+    scenarios:
+      "Each scenario is one task your agent has to complete, with its own caller. Every agent version runs the same suite; comparisons run over the scenarios both runs share.",
+    evals:
+      "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
+    runs: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
+    settings: "How this environment is built and how runs behave inside it.",
+  })[id] || "";
 
 const PANEL_IDS = TABS.map((t) => t.id);
 
@@ -136,14 +206,8 @@ const CHIPS_BY_TAB = {
     "Tighten the hand-off quality bar",
     "Explain what each grader measures",
   ],
-  build: [
-    "Why was this tool included?",
-    "What did we infer vs read directly?",
-  ],
-  runs: [
-    "Summarise the last run",
-    "Which scenarios fail most often?",
-  ],
+  build: ["Why was this tool included?", "What did we infer vs read directly?"],
+  runs: ["Summarise the last run", "Which scenarios fail most often?"],
   settings: [
     "Rotate my OpenAI key",
     "Which environment variables is the grader reading?",
@@ -199,7 +263,12 @@ export default function EnvironmentWorkspace() {
     [env, envState.envVersions, envState.activeEnvVersion],
   );
   /* Every new run asks first when the agent calls a tool the world can't answer. */
-  const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(env, envState, patch, { locked: isSeededTemplate });
+  const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(
+    env,
+    envState,
+    patch,
+    { locked: isSeededTemplate },
+  );
 
   // Opening an environment goes straight to it — a boot sequence on every entry
   // is a delay the user did not ask for. The sequence is kept for "Reset state",
@@ -212,7 +281,8 @@ export default function EnvironmentWorkspace() {
   const [chatRunning, setChatRunning] = useState(false);
   /* Builder pane can fold down to a rail so the panels get the full width.
      Remembered per browser — a viewer convenience, not shared state. */
-  const [builderCollapsed, setBuilderCollapsed] = useState(readBuilderCollapsed);
+  const [builderCollapsed, setBuilderCollapsed] =
+    useState(readBuilderCollapsed);
   const [unseenTurns, setUnseenTurns] = useState(0);
   const setCollapsed = (v) => {
     setBuilderCollapsed(v);
@@ -225,7 +295,12 @@ export default function EnvironmentWorkspace() {
   useEffect(() => {
     const added = turns.length - lastTurnCount.current;
     lastTurnCount.current = turns.length;
-    if (builderCollapsed && added > 0 && turns[turns.length - 1]?.role === "assistant") setUnseenTurns((n) => n + 1);
+    if (
+      builderCollapsed &&
+      added > 0 &&
+      turns[turns.length - 1]?.role === "assistant"
+    )
+      setUnseenTurns((n) => n + 1);
   }, [turns, builderCollapsed]);
   /* "Edit with builder" pins a chip in the composer — that's a request to
      use the builder, so it opens. */
@@ -251,9 +326,20 @@ export default function EnvironmentWorkspace() {
      version, minus what can't stage. The same plan the live run uses, so the
      count here is the count there. */
   const plan = useMemo(
-    () => (env ? runPlan(env, envState, { only: scenarioSelection?.ids?.length ? scenarioSelection.ids : null }) : null),
+    () =>
+      env
+        ? runPlan(env, envState, {
+            only: scenarioSelection?.ids?.length ? scenarioSelection.ids : null,
+          })
+        : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [env, envState.scenarios, envState.envVersions, envState.activeEnvVersion, scenarioSelection],
+    [
+      env,
+      envState.scenarios,
+      envState.envVersions,
+      envState.activeEnvVersion,
+      scenarioSelection,
+    ],
   );
   /* Header trials picker — how many times each scenario runs when the
      user clicks the top-of-page "Run simulation" button (no selection).
@@ -262,7 +348,9 @@ export default function EnvironmentWorkspace() {
   /* Three samples by default — the fewest where a scenario can be flaky
      ("passed twice, failed once") rather than a coin flip read as a verdict. */
   /* …or the environment's own default, set in Settings → Simulation defaults. */
-  const [headerTrials, setHeaderTrials] = useState(() => runDefaultsOf(envState).repeats || 3);
+  const [headerTrials, setHeaderTrials] = useState(
+    () => runDefaultsOf(envState).repeats || 3,
+  );
   /* Other environments the next run also starts in — one run each, same
      agent version, read together as a group. Empty is a plain run. */
   const [alsoRunIn, setAlsoRunIn] = useState([]);
@@ -285,12 +373,19 @@ export default function EnvironmentWorkspace() {
      the header count, or from the Overview tab's blocking list (via the bus). */
   const [inbox, setInbox] = useState({ open: false, focus: null });
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
-  useEffect(() => subscribeGapsInbox((focus) => setInbox({ open: true, focus })), []);
+  useEffect(
+    () => subscribeGapsInbox((focus) => setInbox({ open: true, focus })),
+    [],
+  );
 
   // Adopt on direct navigation so a deep link works from a cold start.
   useEffect(() => {
     if (env && !state.myEnvironments.some((e) => e.id === env.id)) {
-      dispatch({ type: "adoptEnvironment", env, now: new Date().toISOString() });
+      dispatch({
+        type: "adoptEnvironment",
+        env,
+        now: new Date().toISOString(),
+      });
     }
   }, [env, state.myEnvironments, dispatch]);
 
@@ -299,18 +394,28 @@ export default function EnvironmentWorkspace() {
   const turnsEnvRef = useRef(null);
   useEffect(() => {
     if (!env) return;
-    const switched = turnsEnvRef.current !== null && turnsEnvRef.current !== env.id;
+    const switched =
+      turnsEnvRef.current !== null && turnsEnvRef.current !== env.id;
     turnsEnvRef.current = env.id;
-    setTurns((prev) => (prev.length && !switched ? prev : [{
-      id: "ws-greet",
-      role: "assistant",
-      steps: [{
-        kind: "note",
-        text: env.buildStatus === "building"
-          ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
-          : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
-      }],
-    }]));
+    setTurns((prev) =>
+      prev.length && !switched
+        ? prev
+        : [
+            {
+              id: "ws-greet",
+              role: "assistant",
+              steps: [
+                {
+                  kind: "note",
+                  text:
+                    env.buildStatus === "building"
+                      ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
+                      : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                },
+              ],
+            },
+          ],
+    );
   }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Module-level pub/sub for builder-prompt suggestions. The Edit-scenario
@@ -321,19 +426,32 @@ export default function EnvironmentWorkspace() {
      tools") — sent as if typed, with the chat unfolded to show it. The
      send itself is defined further down; the ref reaches it. */
   const sendChatRef = useRef(null);
-  useEffect(() => subscribeBuilderSend((text) => { setCollapsed(false); sendChatRef.current?.(text); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(
+    () =>
+      subscribeBuilderSend((text) => {
+        setCollapsed(false);
+        sendChatRef.current?.(text);
+      }),
+    [],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return subscribeBuilderPrompt((text) => {
-      setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+      setTurns((prev) => [
+        ...prev,
+        { id: `u-${Date.now()}`, role: "user", text },
+      ]);
       setChatRunning(true);
       setTimeout(() => {
         setChatRunning(false);
-        setTurns((prev) => [...prev, {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          steps: [{ kind: "note", text: workspaceReply(text) }],
-        }]);
+        setTurns((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: "assistant",
+            steps: [{ kind: "note", text: workspaceReply(text) }],
+          },
+        ]);
       }, 900);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -348,7 +466,10 @@ export default function EnvironmentWorkspace() {
     clearing them stays cleared and Run says it needs one. */
   useEffect(() => {
     if (!env?.id || envState?.evalsSeeded) return;
-    if ((envState?.evals?.length || 0) > 0) { patch({ evalsSeeded: true }); return; }
+    if ((envState?.evals?.length || 0) > 0) {
+      patch({ evalsSeeded: true });
+      return;
+    }
     const preset = env?.evalPreset || [];
     if (!preset.length) return;
     patch({ evals: preset, evalsSeeded: true });
@@ -372,7 +493,17 @@ export default function EnvironmentWorkspace() {
        myEnvironments, which is empty until hydrate runs. Showing
        "not found" here would flash on every cold load / HMR reload. */
     if (!state.hydrated) {
-      return <Box sx={{ p: 2, height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
+      return (
+        <Box
+          sx={{
+            p: 2,
+            height: "100%",
+            minHeight: 420,
+            display: "grid",
+            placeItems: "center",
+          }}
+        />
+      );
     }
     return (
       <Box sx={{ p: 2 }}>
@@ -381,7 +512,12 @@ export default function EnvironmentWorkspace() {
           title="Environment not found"
           body="It may have been removed from your workspace."
           action={
-            <Button variant="contained" color="primary" size="small" onClick={() => navigate(paths.dashboard.simulate.environments)}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => navigate(paths.dashboard.simulate.environments)}
+            >
               Back to environments
             </Button>
           }
@@ -403,11 +539,28 @@ export default function EnvironmentWorkspace() {
   // Booting the environment is a real thing we do, so we show it happening.
   if (booting) {
     return (
-      <Box sx={{ p: 2, height: "100%", minHeight: 420, display: "grid", placeItems: "center" }}>
-        <Box sx={{ width: "100%", maxWidth: 520, border: "1px solid", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+      <Box
+        sx={{
+          p: 2,
+          height: "100%",
+          minHeight: 420,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <Box
+          sx={{
+            width: "100%",
+            maxWidth: 520,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
+          }}
+        >
           <ProvisioningPanel
             icon={surface.icon}
-              title={`Starting ${env.name}`}
+            title={`Starting ${env.name}`}
             subtitle="Restoring a clean copy of the environment for this session."
             steps={BOOT_STEPS[surface.stage] || BOOT_STEPS.voice}
             onDone={() => setBooting(false)}
@@ -417,7 +570,8 @@ export default function EnvironmentWorkspace() {
     );
   }
 
-  const go = (s) => navigate(paths.dashboard.simulate.environmentStep(envId, s));
+  const go = (s) =>
+    navigate(paths.dashboard.simulate.environmentStep(envId, s));
 
   /*
     Straight into the run.
@@ -459,12 +613,14 @@ export default function EnvironmentWorkspace() {
   /* `also` — other environments to start alongside, as a run group. A
      group runs each environment's own full scenario set, so it never
      carries a selection. */
-  const runNow = (scenarioIds, trials, { also } = {}) => checkRunFit(() => (
-    also?.length && !scenarioIds?.length
-      ? runGroup.start(also, { trials: Number(trials) || 3 })
-      : launchRun(scenarioIds, trials)
-  ));
-  const startRun = (scenarioIds, trials, opts = {}) => runNow(scenarioIds, trials, opts);
+  const runNow = (scenarioIds, trials, { also } = {}) =>
+    checkRunFit(() =>
+      also?.length && !scenarioIds?.length
+        ? runGroup.start(also, { trials: Number(trials) || 3 })
+        : launchRun(scenarioIds, trials),
+    );
+  const startRun = (scenarioIds, trials, opts = {}) =>
+    runNow(scenarioIds, trials, opts);
 
   // Unknown steps render Overview, and the rail highlights it, so the URL and
   // the highlighted item never disagree.
@@ -482,11 +638,15 @@ export default function EnvironmentWorkspace() {
   const panel = PANEL_IDS.includes(step) ? step : "overview";
   /* Which horizontal tab is highlighted — `agent` (no tab of its own) keeps
      Overview lit. */
-  const activeTab = visibleTabs.some((t) => t.id === panel) ? panel : "overview";
+  const activeTab = visibleTabs.some((t) => t.id === panel)
+    ? panel
+    : "overview";
 
   const counts = {
     /* Scenarios in the set — the same count Overview and the version bar show. */
-    scenarios: scenariosInSet(envState, currentEnvVersion(env, envState)?.label).length || null,
+    scenarios:
+      scenariosInSet(envState, currentEnvVersion(env, envState)?.label)
+        .length || null,
     evals: envState.evals.length || null,
     /* Every row the Runs list shows — manual runs, self-improvement trials and
        the queued one — counted by the same rules the list uses. Counting only
@@ -535,7 +695,8 @@ export default function EnvironmentWorkspace() {
     }
     return "";
   })();
-  const runEnabled = canRun && runnable > 0 && !firstBlockingGap && !viewingOlder;
+  const runEnabled =
+    canRun && runnable > 0 && !firstBlockingGap && !viewingOlder;
 
   /*
     What the next Run meters, and the pre-check at that paid boundary
@@ -545,15 +706,19 @@ export default function EnvironmentWorkspace() {
     message; a budget warning lets it go and says so quietly.
   */
   const headerSelCount = scenarioSelection?.ids?.length || 0;
-  const headerGrouped = headerSelCount === 0
-    && alsoRunIn.some((id) => runGroup.candidates.some((c) => c.envId === id && c.ready));
+  const headerGrouped =
+    headerSelCount === 0 &&
+    alsoRunIn.some((id) =>
+      runGroup.candidates.some((c) => c.envId === id && c.ready),
+    );
   /* One count of what Run takes, everywhere it's said (button, Repeats,
      tooltip, the Evaluations cost): runScopeOf — the plan minus what sits
      out on an open optional question. A selection or a group is its own run. */
   const scope = runScopeOf(worldEnv, envState, { plan, gaps: allGaps });
-  const meteredScenarios = runEnabled && gapTally.blocking === 0 && !headerSelCount && !headerGrouped
-    ? scope.count
-    : runnable;
+  const meteredScenarios =
+    runEnabled && gapTally.blocking === 0 && !headerSelCount && !headerGrouped
+      ? scope.count
+      : runnable;
   const sitOut = Math.max(0, runnable - meteredScenarios);
   /* How many open questions those wait on — counted, never named by gap id. */
   const sitOutGaps = scope.sitOutGaps;
@@ -565,8 +730,10 @@ export default function EnvironmentWorkspace() {
     runLocation: envState?.agent?.values?.runLocation || null,
   });
   const usageCheck = checkUsage(runEstimate);
-  const usageRefusal = runnable > 0 ? limitMessage(usageCheck, runEstimate) : null;
-  const usageNotice = runnable > 0 ? budgetNotice(usageCheck, runEstimate) : null;
+  const usageRefusal =
+    runnable > 0 ? limitMessage(usageCheck, runEstimate) : null;
+  const usageNotice =
+    runnable > 0 ? budgetNotice(usageCheck, runEstimate) : null;
 
   /* Leave first, then drop it: while this page is mounted, the adopt-on-open
      effect would put a missing environment straight back. */
@@ -597,7 +764,13 @@ export default function EnvironmentWorkspace() {
     dispatch({ type: "adoptEnvironment", env: forked, now });
     /* History stays behind; everything else comes along. */
     const {
-      runs, releases, optimizations, previousAgents, unsavedEnvChanges, envVersions, activeEnvVersion,
+      runs,
+      releases,
+      optimizations,
+      previousAgents,
+      unsavedEnvChanges,
+      envVersions,
+      activeEnvVersion,
       ...carried
     } = envState;
     const twin = envState.twinBacking;
@@ -607,33 +780,49 @@ export default function EnvironmentWorkspace() {
       envId: forkedId,
       patch: {
         ...carried,
-        twinBacking: twin ? {
-          ...twin,
-          endpoints: Object.fromEntries((twin.services || []).map((sId) => [
-            sId, `https://${sId}.sandbox.futureagi.com/e/${forkedId.slice(-6)}`,
-          ])),
-          activity: Object.fromEntries((twin.services || []).map((sId) => [sId, { requests: 0, failures: 0 }])),
-          provisionedAt: now,
-        } : null,
-        agentVersions: envState.agentVersions ? envState.agentVersions.map((v) => ({ ...v })) : undefined,
+        twinBacking: twin
+          ? {
+              ...twin,
+              endpoints: Object.fromEntries(
+                (twin.services || []).map((sId) => [
+                  sId,
+                  `https://${sId}.sandbox.futureagi.com/e/${forkedId.slice(-6)}`,
+                ]),
+              ),
+              activity: Object.fromEntries(
+                (twin.services || []).map((sId) => [
+                  sId,
+                  { requests: 0, failures: 0 },
+                ]),
+              ),
+              provisionedAt: now,
+            }
+          : null,
+        agentVersions: envState.agentVersions
+          ? envState.agentVersions.map((v) => ({ ...v }))
+          : undefined,
         /* The fork starts from the world as it stands — including tools a
            rebuild taught it — not from the first build's. */
-        envVersions: [{
-          id: `${forkedId}-v1`,
-          label: "v1",
-          createdAt: now,
-          note: `Forked from ${env.name} at environment ${currentEnvSnapshot(env, envState)?.label || currentEnvVersion(env, envState).label}.`,
-          scenarios: (envState.scenarios || []).length,
-          changed: [],
-          tools: worldToolsFor(env, envState),
-          ...(agentLabel && { builtFor: agentLabel }),
-        }],
+        envVersions: [
+          {
+            id: `${forkedId}-v1`,
+            label: "v1",
+            createdAt: now,
+            note: `Forked from ${env.name} at environment ${currentEnvSnapshot(env, envState)?.label || currentEnvVersion(env, envState).label}.`,
+            scenarios: (envState.scenarios || []).length,
+            changed: [],
+            tools: worldToolsFor(env, envState),
+            ...(agentLabel && { builtFor: agentLabel }),
+          },
+        ],
         activeEnvVersion: "v1",
         activeAgentVersion: agentLabel || null,
         /* A fork tests what its source tested — pinned only if that was. */
         agentVersionPinned: !!envState.agentVersionPinned,
         /* Scenarios a rebuild added are part of this world now. */
-        scenarios: (envState.scenarios || []).map((sc) => (sc.addedInEnv ? { ...sc, addedInEnv: "v1", provedAgainst: "v1" } : sc)),
+        scenarios: (envState.scenarios || []).map((sc) =>
+          sc.addedInEnv ? { ...sc, addedInEnv: "v1", provedAgainst: "v1" } : sc,
+        ),
         seededFromTemplate: false,
       },
     });
@@ -656,7 +845,10 @@ export default function EnvironmentWorkspace() {
     */
     const sel = scenarioSelection;
     const hasSelection = (sel?.ids?.length || 0) > 0;
-    setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
+    setTurns((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: "user", text: trimmed },
+    ]);
     setChatRunning(true);
     if (hasSelection) clearScenarioSelection();
 
@@ -667,57 +859,107 @@ export default function EnvironmentWorkspace() {
       then asks; confirmed, it lands the same way the Contract tab's Edit
       does. Asked for Live on a tool that writes, it says no.
     */
-    const contractIntent = !hasSelection ? parseContractIntent(trimmed, { env, envState }) : null;
+    const contractIntent = !hasSelection
+      ? parseContractIntent(trimmed, { env, envState })
+      : null;
     if (contractIntent) {
-      const say = (text) => setTurns((cur) => [...cur, { id: `a-${Date.now()}-${cur.length}`, role: "assistant", steps: [{ kind: "note", text }] }]);
+      const say = (text) =>
+        setTurns((cur) => [
+          ...cur,
+          {
+            id: `a-${Date.now()}-${cur.length}`,
+            role: "assistant",
+            steps: [{ kind: "note", text }],
+          },
+        ]);
       setTimeout(() => {
         setChatRunning(false);
         if (contractIntent.kind === "liveRefused") {
-          say(`${contractIntent.tool} writes data, so it can't run Live — Live is only for read-only tools, once you allow it for that tool. It stays simulated against the world, recorded or fixed; change it on the World tab.`);
+          say(
+            `${contractIntent.tool} writes data, so it can't run Live — Live is only for read-only tools, once you allow it for that tool. It stays simulated against the world, recorded or fixed; change it on the World tab.`,
+          );
           return;
         }
         if (isSeededTemplate) {
-          say("This is a catalogue template, so its contract is read-only. Fork it from the header, then ask again.");
+          say(
+            "This is a catalogue template, so its contract is read-only. Fork it from the header, then ask again.",
+          );
           return;
         }
-        const plan = contractEditPlan(env, latestEnvState.current, contractIntent.edit);
-        if (!plan.ok) { say(plan.error); return; }
-        setTurns((prev) => [...prev, {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          steps: [
-            { kind: "note", text: plan.costLine },
-            {
-              kind: "ask",
-              question: {
-                step: 1,
-                total: 1,
-                prompt: `${plan.title}?`,
-                multiSelect: false,
-                options: [
-                  { label: `Save as environment ${plan.next}`, description: plan.detail },
-                  { label: "Leave the contract as it is", description: "Nothing changes and no version is made." },
-                ],
+        const plan = contractEditPlan(
+          env,
+          latestEnvState.current,
+          contractIntent.edit,
+        );
+        if (!plan.ok) {
+          say(plan.error);
+          return;
+        }
+        setTurns((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: "assistant",
+            steps: [
+              { kind: "note", text: plan.costLine },
+              {
+                kind: "ask",
+                question: {
+                  step: 1,
+                  total: 1,
+                  prompt: `${plan.title}?`,
+                  multiSelect: false,
+                  options: [
+                    {
+                      label: `Save as environment ${plan.next}`,
+                      description: plan.detail,
+                    },
+                    {
+                      label: "Leave the contract as it is",
+                      description: "Nothing changes and no version is made.",
+                    },
+                  ],
+                },
+                onSubmit: (answer) => {
+                  if (answer.pick !== 0 || answer.other?.trim()) {
+                    say("Left the contract as it is.");
+                    return;
+                  }
+                  /* Re-planned against the newest state — something may have moved. */
+                  const latest = latestEnvState.current;
+                  const again = contractEditPlan(
+                    env,
+                    latest,
+                    contractIntent.edit,
+                  );
+                  if (!again.ok) {
+                    say(again.error);
+                    return;
+                  }
+                  patch(again.patch(latest));
+                  const n = again.affected.length;
+                  say(
+                    `Saved as environment ${again.next} — ${again.detail}. ${n ? `${n} scenario${n === 1 ? " is" : "s are"} marked Re-check on the Scenarios tab.` : "No scenario needed a re-check."} The Contract tab shows the change.`,
+                  );
+                },
+                onSkip: () => say("Left the contract as it is."),
               },
-              onSubmit: (answer) => {
-                if (answer.pick !== 0 || answer.other?.trim()) { say("Left the contract as it is."); return; }
-                /* Re-planned against the newest state — something may have moved. */
-                const latest = latestEnvState.current;
-                const again = contractEditPlan(env, latest, contractIntent.edit);
-                if (!again.ok) { say(again.error); return; }
-                patch(again.patch(latest));
-                const n = again.affected.length;
-                say(`Saved as environment ${again.next} — ${again.detail}. ${n ? `${n} scenario${n === 1 ? " is" : "s are"} marked Re-check on the Scenarios tab.` : "No scenario needed a re-check."} The Contract tab shows the change.`);
-              },
-              onSkip: () => say("Left the contract as it is."),
-            },
-          ],
-        }]);
+            ],
+          },
+        ]);
       }, 700);
       return;
     }
 
-    const say = (text) => setTurns((cur) => [...cur, { id: `a-${Date.now()}-${cur.length}`, role: "assistant", steps: [{ kind: "note", text }] }]);
+    const say = (text) =>
+      setTurns((cur) => [
+        ...cur,
+        {
+          id: `a-${Date.now()}-${cur.length}`,
+          role: "assistant",
+          steps: [{ kind: "note", text }],
+        },
+      ]);
 
     /* "Add 10 more scenarios" / "add scenarios for callers disputing a double
        charge" really appends them — as proposals, reviewed on the Scenarios
@@ -727,31 +969,46 @@ export default function EnvironmentWorkspace() {
       const latest = latestEnvState.current;
       const existing = new Set((latest.scenarios || []).map((sc) => sc.id));
       const fresh = described
-        ? scenariosFromDescription(env, described, intent.asked ? intent.count : 3)
-        : scenarioPoolFor(env, latest).filter((sc) => !existing.has(sc.id)).slice(0, intent.count);
+        ? scenariosFromDescription(
+            env,
+            described,
+            intent.asked ? intent.count : 3,
+          )
+        : scenarioPoolFor(env, latest)
+            .filter((sc) => !existing.has(sc.id))
+            .slice(0, intent.count);
       if (fresh.length === 0) {
-        say("Every scenario this environment would derive is already in. Tell me what's missing — e.g. “callers disputing a double charge” — and I'll write those.");
+        say(
+          "Every scenario this environment would derive is already in. Tell me what's missing — e.g. “callers disputing a double charge” — and I'll write those.",
+        );
         return;
       }
       /* Stamped like every other add route — tools, proof, the environment
          version it was added under — so the tool check runs here too. */
-      const batch = stampNewBatch(fresh.map((r) => ({ ...r, chatAsk: described || trimmed })), { env, envState: latest, source: "chat", actor: currentUser() });
+      const batch = stampNewBatch(
+        fresh.map((r) => ({ ...r, chatAsk: described || trimmed })),
+        { env, envState: latest, source: "chat", actor: currentUser() },
+      );
       /* Chat-written scenarios get the same review every other source does:
          they land proposed, and join the environment only once someone
          adds them on the Scenarios tab. */
       const stamped = batch.rows.map((r) => asProposal(r, "chat"));
-      const warn = [unanswerableNote(batch), rejectedNote(batch)].filter(Boolean).join(" ");
+      const warn = [unanswerableNote(batch), rejectedNote(batch)]
+        .filter(Boolean)
+        .join(" ");
       patch({ scenarios: [...(latest.scenarios || []), ...stamped] });
       const added = stamped.length;
       /* A described ask only asked for a number if it named one. */
       const requested = described && !intent.asked ? added : intent.count;
       const shortfall = added < requested;
       const review = `${added} proposed — review and add them on the Scenarios tab.`;
-      say((described
-        ? `Wrote ${added} scenario${added === 1 ? "" : "s"} for “${described}” — ${stamped.map((sc) => sc.summary.toLowerCase()).join("; ")}. ${review}${shortfall ? ` That's every distinct way I could see it playing out; describe another angle for more.` : ""}`
-        : shortfall
-          ? `${review} (The derivation pool only had ${added} unused rows left.)`
-          : review) + (warn ? ` ${warn}` : ""));
+      say(
+        (described
+          ? `Wrote ${added} scenario${added === 1 ? "" : "s"} for “${described}” — ${stamped.map((sc) => sc.summary.toLowerCase()).join("; ")}. ${review}${shortfall ? ` That's every distinct way I could see it playing out; describe another angle for more.` : ""}`
+          : shortfall
+            ? `${review} (The derivation pool only had ${added} unused rows left.)`
+            : review) + (warn ? ` ${warn}` : ""),
+      );
     };
 
     /*
@@ -764,23 +1021,27 @@ export default function EnvironmentWorkspace() {
       setTimeout(() => {
         setChatRunning(false);
         const q = guidedScenarioQuestion();
-        setTurns((prev) => [...prev, {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          steps: [
-            { kind: "note", text: "Before I write them, one decision:" },
-            {
-              kind: "ask",
-              question: q,
-              onSubmit: (answer) => {
-                const picked = q.options[answer.pick];
-                const described = answer.other?.trim() || picked?.description || null;
-                proposeScenarios(described, addIntent);
+        setTurns((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: "assistant",
+            steps: [
+              { kind: "note", text: "Before I write them, one decision:" },
+              {
+                kind: "ask",
+                question: q,
+                onSubmit: (answer) => {
+                  const picked = q.options[answer.pick];
+                  const described =
+                    answer.other?.trim() || picked?.description || null;
+                  proposeScenarios(described, addIntent);
+                },
+                onSkip: () => proposeScenarios(null, addIntent),
               },
-              onSkip: () => proposeScenarios(null, addIntent),
-            },
-          ],
-        }]);
+            ],
+          },
+        ]);
       }, 900);
       return;
     }
@@ -795,8 +1056,15 @@ export default function EnvironmentWorkspace() {
          selection is done — archive, restore, must-pass — as the next set
          version. Everything else is said plainly. */
       if (hasSelection) {
-        if (isSeededTemplate) { say("This is a catalogue template, so its scenarios are read-only. Fork it from the header, then ask again."); return; }
-        const out = selectionEditOf(trimmed, sel.rows, latestEnvState.current, { by: currentUser().name });
+        if (isSeededTemplate) {
+          say(
+            "This is a catalogue template, so its scenarios are read-only. Fork it from the header, then ask again.",
+          );
+          return;
+        }
+        const out = selectionEditOf(trimmed, sel.rows, latestEnvState.current, {
+          by: currentUser().name,
+        });
         if (out.patch) patch(out.patch);
         say(out.reply);
         return;
@@ -807,21 +1075,35 @@ export default function EnvironmentWorkspace() {
   sendChatRef.current = sendChat;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       {/* ── environment header ── */}
       <Stack
         direction="row"
         alignItems="center"
         spacing={2}
-        sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        sx={{
+          px: 3,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Tooltip title="Back" arrow>
-          <Button
+          <IconButton
+            aria-label="Back"
             onClick={goBack}
-            sx={{ minWidth: 32, width: 32, height: 32, p: 0, color: "text.subtitle" }}
+            sx={{ color: "text.tertiary" }}
           >
-            <Iconify icon="solar:alt-arrow-left-linear" width={18} />
-          </Button>
+            <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+          </IconButton>
         </Tooltip>
 
         <SurfaceIcon surface={env.surface} size={36} />
@@ -829,8 +1111,23 @@ export default function EnvironmentWorkspace() {
         <Box minWidth={0} flex={1}>
           {/* One line at any width: the name truncates but never disappears,
               chips keep their shape, and the quieter ones step out first. */}
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flexWrap: "nowrap" }}>
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700, minWidth: 72, flexShrink: 1 }}>{env.name}</Typography>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ minWidth: 0, flexWrap: "nowrap" }}
+          >
+            <Typography
+              noWrap
+              sx={{
+                typography: "m1",
+                fontWeight: 600,
+                minWidth: 72,
+                flexShrink: 1,
+              }}
+            >
+              {env.name}
+            </Typography>
             {/*
               Env status pill. `Ready` = fully booted and accepting
               edits from the builder console + inline. When the env is
@@ -842,26 +1139,44 @@ export default function EnvironmentWorkspace() {
             */}
             <Tooltip
               arrow
-              title={envLive
-                ? "Environment is ready. You can edit via the builder or inline."
-                : "Environment is still being built. Editing resumes when it's ready."}
+              title={
+                envLive
+                  ? "Environment is ready. You can edit via the builder or inline."
+                  : "Environment is still being built. Editing resumes when it's ready."
+              }
             >
               <Stack
-                direction="row" alignItems="center" spacing={0.5}
+                direction="row"
+                alignItems="center"
+                spacing={0.5}
                 sx={{
-                  px: 0.75, height: 22, borderRadius: 0.75, cursor: "default", flexShrink: 0, whiteSpace: "nowrap",
+                  px: 0.75,
+                  height: 22,
+                  borderRadius: "4px",
+                  cursor: "default",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
                   /* Ready is the quiet default — it steps out on narrow screens. */
                   display: envLive ? { xs: "none", lg: "flex" } : "flex",
-                  color: envLive ? "#16A34A" : "#7857FC",
-                  bgcolor: (t) => alpha(envLive ? "#16A34A" : "#7857FC", t.palette.mode === "dark" ? 0.16 : 0.1),
-                  border: () => `1px solid ${alpha(envLive ? "#16A34A" : "#7857FC", 0.24)}`,
+                  color: envLive ? "status.success.fg" : "primary.main",
+                  bgcolor: envLive
+                    ? "status.success.bg"
+                    : "status.discovery.bg",
+                  border: "1px solid",
+                  borderColor: envLive
+                    ? "status.success.border"
+                    : "status.discovery.border",
                 }}
               >
                 <Box
                   sx={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    bgcolor: envLive ? "#16A34A" : "#7857FC",
-                    animation: envLive ? undefined : "env-pulse 1.4s ease-in-out infinite",
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: envLive ? "status.success.solid" : "primary.main",
+                    animation: envLive
+                      ? undefined
+                      : "env-pulse 1.4s ease-in-out infinite",
                     "@keyframes env-pulse": {
                       "0%,100%": { opacity: 0.4 },
                       "50%": { opacity: 1 },
@@ -869,7 +1184,9 @@ export default function EnvironmentWorkspace() {
                   }}
                 />
                 {/* "Ready", not "Live" — Live now names how a run reaches the agent (the chip beside it). */}
-                <Typography sx={{ typography: "s3", fontWeight: 600 }}>{envLive ? "Ready" : "Building"}</Typography>
+                <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                  {envLive ? "Ready" : "Building"}
+                </Typography>
               </Stack>
             </Tooltip>
             {/*
@@ -885,34 +1202,73 @@ export default function EnvironmentWorkspace() {
                    reset between runs — nothing reaches the real apps — so it
                    reads Sealed whatever kind of agent it tests. */
                 const sandboxed = !!envState?.twinBacking?.services?.length;
-                const pk = sandboxed ? { kind: "sealed", label: "Sealed" } : proofKindOf(envState.agent);
+                const pk = sandboxed
+                  ? { kind: "sealed", label: "Sealed" }
+                  : proofKindOf(envState.agent);
                 chips.push({
                   key: "proof",
                   /* "Runs:" says what the chip describes, so it doesn't read as a second status beside Ready. */
                   prefix: "Runs:",
-                  icon: pk.kind === "sealed" ? "solar:lock-keyhole-minimalistic-linear" : pk.kind === "live" ? "solar:plug-circle-linear" : "solar:document-text-linear",
+                  icon:
+                    pk.kind === "sealed"
+                      ? "solar:lock-keyhole-minimalistic-linear"
+                      : pk.kind === "live"
+                        ? "solar:plug-circle-linear"
+                        : "solar:document-text-linear",
                   label: pk.label,
-                  tip: pk.kind === "prompt-only"
-                    ? "Prompt only — checked by running the prompt without your tools."
-                    : pk.kind === "live"
-                      ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
-                      : sandboxed
-                        ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
-                        : env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local"
-                          ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
-                          : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                  tip:
+                    pk.kind === "prompt-only"
+                      ? "Prompt only — checked by running the prompt without your tools."
+                      : pk.kind === "live"
+                        ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
+                        : sandboxed
+                          ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
+                          : env?.runsOn === "local" ||
+                              env?.builtFrom?.worldSource?.runsOn === "local"
+                            ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
+                            : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
                 });
               }
-              if (isComingSoon(env)) chips.push({ key: "soon", icon: "solar:clock-circle-linear", label: "Coming soon", tip: COMING_SOON_NOTE });
+              if (isComingSoon(env))
+                chips.push({
+                  key: "soon",
+                  icon: "solar:clock-circle-linear",
+                  label: "Coming soon",
+                  tip: COMING_SOON_NOTE,
+                });
               return chips.map((c) => (
                 <Tooltip key={c.key} arrow title={c.tip}>
                   <Stack
-                    direction="row" alignItems="center" spacing={0.5}
-                    sx={{ px: 0.75, height: 22, borderRadius: 0.75, cursor: "default", border: "1px solid", borderColor: "divider", color: "text.secondary", flexShrink: 0, whiteSpace: "nowrap", display: { xs: "none", md: "flex" } }}
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{
+                      px: 0.75,
+                      height: 22,
+                      borderRadius: "4px",
+                      cursor: "default",
+                      border: "1px solid",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
+                      display: { xs: "none", md: "flex" },
+                    }}
                   >
-                    <Iconify icon={c.icon} width={11} />
+                    <Iconify icon={c.icon} width={12} />
                     <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-                      {c.prefix && <Box component="span" sx={{ fontWeight: 500, color: "text.subtitle", mr: 0.5 }}>{c.prefix}</Box>}
+                      {c.prefix && (
+                        <Box
+                          component="span"
+                          sx={{
+                            fontWeight: 500,
+                            color: "text.tertiary",
+                            mr: 0.5,
+                          }}
+                        >
+                          {c.prefix}
+                        </Box>
+                      )}
                       {c.label}
                     </Typography>
                   </Stack>
@@ -931,30 +1287,49 @@ export default function EnvironmentWorkspace() {
               const step = scenarioStepOf(envState);
               const open = card?.status === "open" || step?.status === "open";
               if (!card && !step) return null;
-              const label = card?.status === "open" ? `Agent ${card.newest} changed`
-                : step?.status === "open" ? "Update scenarios"
-                  : "Changes skipped";
+              const label =
+                card?.status === "open"
+                  ? `Agent ${card.newest} changed`
+                  : step?.status === "open"
+                    ? "Update scenarios"
+                    : "Changes skipped";
               return (
                 <Tooltip
                   arrow
-                  title={card?.status === "open"
-                    ? `Agent ${card.newest} changed. The environment and scenarios stay as they are until you rebuild them.`
-                    : step?.status === "open"
-                      ? "The environment was rebuilt; its scenarios are the next step."
-                      : "The agent's changes were skipped — the environment and scenarios stayed as they are. Review them again any time."}
+                  title={
+                    card?.status === "open"
+                      ? `Agent ${card.newest} changed. The environment and scenarios stay as they are until you rebuild them.`
+                      : step?.status === "open"
+                        ? "The environment was rebuilt; its scenarios are the next step."
+                        : "The agent's changes were skipped — the environment and scenarios stayed as they are. Review them again any time."
+                  }
                 >
                   <Stack
-                    direction="row" alignItems="center" spacing={0.5}
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
                     {...clickable(() => openGapsInbox("nudges"))}
-                    sx={{ ...focusRing,
-                      px: 0.75, height: 22, borderRadius: 0.75, cursor: "pointer", border: "1px solid", flexShrink: 0, whiteSpace: "nowrap",
+                    sx={{
+                      ...focusRing,
+                      px: 0.75,
+                      height: 22,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      border: "1px solid",
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
                       borderColor: open ? "text.secondary" : "divider",
                       color: open ? "text.primary" : "text.secondary",
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
-                    <Iconify icon="solar:branching-paths-up-linear" width={11} />
-                    <Typography sx={{ typography: "s3", fontWeight: 600 }}>{label}</Typography>
+                    <Iconify
+                      icon="solar:branching-paths-up-linear"
+                      width={12}
+                    />
+                    <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                      {label}
+                    </Typography>
                   </Stack>
                 </Tooltip>
               );
@@ -973,36 +1348,63 @@ export default function EnvironmentWorkspace() {
                 arrow
                 title={
                   <Box>
-                    <Typography sx={{ typography: "s3", fontWeight: 700, color: "common.white", mb: 0.5 }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "common.white",
+                        mb: 0.5,
+                      }}
+                    >
                       Sandboxed apps
                     </Typography>
-                    <Typography sx={{ typography: "s3", color: "common.white" }}>
-                      Sandboxed copies of {envState.twinBacking.services.join(", ")} — reset between runs.
+                    <Typography
+                      sx={{ typography: "s3", color: "common.white" }}
+                    >
+                      Sandboxed copies of{" "}
+                      {envState.twinBacking.services.join(", ")} — reset between
+                      runs.
                     </Typography>
                   </Box>
                 }
               >
                 <Stack
-                  direction="row" alignItems="center" spacing={0.5}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
                   sx={{
-                    px: 0.75, height: 22, borderRadius: 0.75,
-                    color: "#7857FC",
-                    bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.09),
-                    border: (t) => `1px solid ${alpha("#7857FC", t.palette.mode === "dark" ? 0.35 : 0.28)}`,
+                    px: 0.75,
+                    height: 22,
+                    borderRadius: "4px",
+                    color: "primary.main",
+                    bgcolor: "status.discovery.bg",
+                    border: (t) =>
+                      `1px solid ${t.palette.status.discovery.border}`,
                     cursor: "default",
                   }}
                 >
-                  <Iconify icon="solar:server-square-linear" width={11} sx={{ color: "#7857FC" }} />
-                  <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.3 }}>
+                  <Iconify
+                    icon="solar:server-square-linear"
+                    width={12}
+                    sx={{ color: "primary.main" }}
+                  />
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      letterSpacing: 0.3,
+                    }}
+                  >
                     {`${envState.twinBacking.services.length} sandboxed app${envState.twinBacking.services.length === 1 ? "" : "s"}`}
                   </Typography>
                 </Stack>
               </Tooltip>
             )}
           </Stack>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>{env.tagline}</Typography>
+          <Typography noWrap sx={{ typography: "s2", color: "text.tertiary" }}>
+            {env.tagline}
+          </Typography>
         </Box>
-
 
         {/*
           Reset state only makes sense for a clone/twin-backed env, where it
@@ -1023,12 +1425,14 @@ export default function EnvironmentWorkspace() {
                 twinBacking: {
                   ...envState.twinBacking,
                   provisionedAt: now,
-                  activity: Object.fromEntries(services.map((s) => [s, { requests: 0, failures: 0 }])),
+                  activity: Object.fromEntries(
+                    services.map((s) => [s, { requests: 0, failures: 0 }]),
+                  ),
                 },
               });
               setBooting(true);
             }}
-            sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+            sx={{ color: "text.primary", borderColor: "divider" }}
           >
             Reset state
           </Button>
@@ -1041,9 +1445,12 @@ export default function EnvironmentWorkspace() {
         {(() => {
           const selectedCount = scenarioSelection?.ids?.length || 0;
           /* Only environments that can still run join the group. */
-          const groupWith = selectedCount > 0
-            ? []
-            : alsoRunIn.filter((id) => runGroup.candidates.some((c) => c.envId === id && c.ready));
+          const groupWith =
+            selectedCount > 0
+              ? []
+              : alsoRunIn.filter((id) =>
+                  runGroup.candidates.some((c) => c.envId === id && c.ready),
+                );
           /* Optional gaps still open: the run goes ahead without what rests on
              them, and says how much of the suite that leaves (AC-3.7). */
           const partial = runEnabled && gapTally.blocking === 0 && sitOut > 0;
@@ -1052,14 +1459,17 @@ export default function EnvironmentWorkspace() {
              selection is its own run. */
           const groupable = runGroup.candidates.length > 0;
           const showRunMenu = !selectedCount && groupable;
-          const runLabel = selectedCount > 0
-            ? `Run simulation (${selectedCount})`
-            : groupWith.length
-              ? `Run in ${groupWith.length + 1} environments`
-              : partial
-                /* The action, with the real count; who sits out is the caption beside it. */
-                ? (wide ? `Run ${meteredScenarios} scenario${meteredScenarios === 1 ? "" : "s"}` : `Run ${meteredScenarios}`)
-                : "Run simulation";
+          const runLabel =
+            selectedCount > 0
+              ? `Run simulation (${selectedCount})`
+              : groupWith.length
+                ? `Run in ${groupWith.length + 1} environments`
+                : partial
+                  ? /* The action, with the real count; who sits out is the caption beside it. */
+                    wide
+                    ? `Run ${meteredScenarios} scenario${meteredScenarios === 1 ? "" : "s"}`
+                    : `Run ${meteredScenarios}`
+                  : "Run simulation";
           const gapTip = !runEnabled
             ? runBlockedReason
             : partial && !selectedCount && !groupWith.length
@@ -1067,42 +1477,107 @@ export default function EnvironmentWorkspace() {
               : "";
           /* The estimate rides on the tooltip; a refusal replaces it. */
           const estimateLine = `≈ ${meterLine(runEstimate)}${groupWith.length ? " here, plus each other environment" : ""}`;
-          const runTip = !runEnabled
-            ? gapTip
-            : usageRefusal
-              ? `${usageRefusal.title} — ${usageRefusal.line}`
-              : (
-                <Stack spacing={0.25} sx={{ py: 0.25 }}>
-                  <Typography sx={{ typography: "s3", fontWeight: 700, color: "inherit" }}>{estimateLine}</Typography>
-                  {(() => { const sz = runSizeOf({ scenarios: meteredScenarios, repeats: headerTrials, surface: env.surface, parallel: parallelOf(envState) }); return <Typography sx={{ typography: "s3", color: "inherit" }}>{sz.over ? `${sz.reason}.` : `${sz.conversations} of ${sz.cap} conversations a run allows · up to ${sz.parallel} at once${sz.voice ? ` · voice runs in real time: ${sz.voice.line}` : ""}`}</Typography>; })()}
-                  {usageNotice && <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}>{usageNotice.line}</Typography>}
-                  {gapTip && <Typography sx={{ typography: "s3", color: "inherit" }}>{gapTip}</Typography>}
-                  {isComingSoon(env) && <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}>Coming soon — runs work here, but improvements don&apos;t run on browser or computer-use agents yet.</Typography>}
-                </Stack>
-              );
+          const runTip = !runEnabled ? (
+            gapTip
+          ) : usageRefusal ? (
+            `${usageRefusal.title} — ${usageRefusal.line}`
+          ) : (
+            <Stack spacing={0.25} sx={{ py: 0.25 }}>
+              <Typography
+                sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+              >
+                {estimateLine}
+              </Typography>
+              {(() => {
+                const sz = runSizeOf({
+                  scenarios: meteredScenarios,
+                  repeats: headerTrials,
+                  surface: env.surface,
+                  parallel: parallelOf(envState),
+                });
+                return (
+                  <Typography sx={{ typography: "s3", color: "inherit" }}>
+                    {sz.over
+                      ? `${sz.reason}.`
+                      : `${sz.conversations} of ${sz.cap} conversations a run allows · up to ${sz.parallel} at once${sz.voice ? ` · voice runs in real time: ${sz.voice.line}` : ""}`}
+                  </Typography>
+                );
+              })()}
+              {usageNotice && (
+                <Typography
+                  sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}
+                >
+                  {usageNotice.line}
+                </Typography>
+              )}
+              {gapTip && (
+                <Typography sx={{ typography: "s3", color: "inherit" }}>
+                  {gapTip}
+                </Typography>
+              )}
+              {isComingSoon(env) && (
+                <Typography
+                  sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}
+                >
+                  Coming soon — runs work here, but improvements don&apos;t run
+                  on browser or computer-use agents yet.
+                </Typography>
+              )}
+            </Stack>
+          );
           /* An agent change is one card here (and its scenario step one
              more) — counted as such, never as the changes inside it. */
           const agentCard = versionCardOf(envState);
           const agentStep = scenarioStepOf(envState);
-          const openSuggestions = (agentCard?.status === "open" ? 1 : 0) + (agentStep?.status === "open" ? 1 : 0);
-          const openGaps = gapTally.blocking + gapTally.optional + openSuggestions;
+          const openSuggestions =
+            (agentCard?.status === "open" ? 1 : 0) +
+            (agentStep?.status === "open" ? 1 : 0);
+          const openGaps =
+            gapTally.blocking + gapTally.optional + openSuggestions;
           /* With rows checked on Scenarios, the selection bar carries Repeats
              and Run simulation (N) — the header steps aside so there's one. */
-          const runInSelectionBar = activeTab === "scenarios" && selectedCount > 0;
+          const runInSelectionBar =
+            activeTab === "scenarios" && selectedCount > 0;
           return (
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ flexShrink: 0 }}
+            >
               {/* Needs input — the count of what's open; red only when
                   something blocks the run. */}
-              <Tooltip arrow title={openGaps ? [gapTally.line, agentCard?.status === "open" ? `Agent ${agentCard.newest} changed` : agentStep?.status === "open" ? "Scenarios to update" : null].filter(Boolean).join(" · ") : `Needs input · ${gapTally.resolved} resolved, nothing open`}>
+              <Tooltip
+                arrow
+                title={
+                  openGaps
+                    ? [
+                        gapTally.line,
+                        agentCard?.status === "open"
+                          ? `Agent ${agentCard.newest} changed`
+                          : agentStep?.status === "open"
+                            ? "Scenarios to update"
+                            : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : `Needs input · ${gapTally.resolved} resolved, nothing open`
+                }
+              >
                 <Button
                   size="small"
                   variant="outlined"
                   onClick={() => setInbox({ open: true, focus: null })}
-                  startIcon={<Iconify icon="solar:inbox-linear" width={15} />}
+                  startIcon={<Iconify icon="solar:inbox-linear" width={16} />}
                   sx={{
-                    typography: "s2", fontWeight: 600, whiteSpace: "nowrap", color: "text.primary", borderColor: "divider",
-                    minWidth: 0, px: openGaps ? 1.25 : 0.875,
-                    "& .MuiButton-startIcon": { mr: openGaps ? 0.75 : 0, ml: 0 },
+                    whiteSpace: "nowrap",
+                    color: "text.primary",
+                    borderColor: "divider",
+                    minWidth: 0,
+                    "& .MuiButton-startIcon": {
+                      mr: openGaps ? 0.75 : 0,
+                      ml: 0,
+                    },
                   }}
                 >
                   {openGaps > 0 && (
@@ -1111,11 +1586,24 @@ export default function EnvironmentWorkspace() {
                       <Box
                         component="span"
                         sx={{
-                          ml: 0.75, px: 0.625, minWidth: 18, height: 18, borderRadius: 0.75,
-                          display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
-                          color: gapTally.blocking ? "#DC2626" : "text.secondary",
-                          bgcolor: (t) => (gapTally.blocking ? alpha("#DC2626", t.palette.mode === "dark" ? 0.18 : 0.1) : t.palette.action.hover),
+                          ml: 0.75,
+                          px: 0.625,
+                          minWidth: 18,
+                          height: 18,
+                          borderRadius: "4px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          typography: "s3",
+                          fontWeight: 600,
+                          fontVariantNumeric: "tabular-nums",
+                          color: gapTally.blocking
+                            ? "status.danger.fg"
+                            : "text.secondary",
+                          bgcolor: (t) =>
+                            gapTally.blocking
+                              ? t.palette.status.danger.bg
+                              : t.palette.action.hover,
                         }}
                       >
                         {openGaps}
@@ -1125,125 +1613,221 @@ export default function EnvironmentWorkspace() {
                 </Button>
               </Tooltip>
               {!runInSelectionBar && (
-              <>
-              <TrialsPicker
-                trials={headerTrials}
-                onChange={setHeaderTrials}
-                scenarioCount={meteredScenarios}
-                unit={env.surface === "voice" ? "call" : "conversation"}
-              />
-              {/* Who the run leaves out — secondary to the action, and the way to them. */}
-              {partial && !selectedCount && !groupWith.length && !usageRefusal && (
-                <Tooltip arrow title={gapTip}>
-                  <Typography
-                    {...clickable(() => setInbox({ open: true, focus: null }), { role: "link" })}
-                    sx={{ ...focusRing, typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", cursor: "pointer", "&:hover": { color: "text.primary", textDecoration: "underline" } }}
-                  >
-                    {`${sitOut} sit${sitOut === 1 ? "s" : ""} out`}
-                  </Typography>
-                </Tooltip>
-              )}
-              {/* Refused at the pre-check: the standard limit message, at the button. */}
-              {runEnabled && usageRefusal && (
-                <Typography sx={{ typography: "s3", color: "#DC2626", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                  {`${usageRefusal.short} · `}
-                  <Box
-                    component="a"
-                    href={paths.dashboard.settings.billing}
-                    sx={{ color: "text.primary", fontWeight: 700, textDecoration: "none", "&:hover": { textDecoration: "underline" } }}
-                  >
-                    Upgrade
-                  </Box>
-                </Typography>
-              )}
-              {/* One button: Run, with its menu as the end of the same shape. */}
-              <Box sx={{ display: "inline-flex", alignItems: "stretch", flexShrink: 0 }}>
-              <Tooltip title={runTip} arrow>
-                <span style={{ display: "inline-flex" }}>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    size="small"
-                    disabled={!runEnabled || !!usageRefusal}
-                    onClick={() => {
-                      const sel = scenarioSelection?.ids || [];
-                      /* Run anyway: the scenarios resting on an open or skipped
-                         optional gap sit out (gapCover.attribution says which gap). */
-                      const covered = partial && !sel.length && !groupWith.length
-                        ? (plan?.run || []).map((sc) => sc.id).filter((id) => !gapCover.attribution[id])
-                        : null;
-                      startRun(sel.length > 0 ? sel : covered?.length ? covered : undefined, headerTrials, { also: groupWith });
-                    }}
-                    startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                    sx={{
-                      typography: "s2", fontWeight: 700, whiteSpace: "nowrap",
-                      ...(showRunMenu && { borderTopRightRadius: 0, borderBottomRightRadius: 0 }),
-                    }}
-                  >
-                    {runLabel}
-                  </Button>
-                </span>
-              </Tooltip>
-              {showRunMenu && (
                 <>
-                  <Tooltip arrow title={groupWith.length ? `Running in ${groupWith.length + 1} environments — change` : "More ways to run"}>
-                    <span style={{ display: "inline-flex" }}>
-                      <Button
-                        variant="contained"
-                        color="primary"
-                        size="small"
-                        aria-label="More ways to run"
-                        disabled={!runEnabled || !!usageRefusal}
-                        onClick={(e) => setRunMenu(e.currentTarget)}
+                  <TrialsPicker
+                    trials={headerTrials}
+                    onChange={setHeaderTrials}
+                    scenarioCount={meteredScenarios}
+                    unit={env.surface === "voice" ? "call" : "conversation"}
+                  />
+                  {/* Who the run leaves out — secondary to the action, and the way to them. */}
+                  {partial &&
+                    !selectedCount &&
+                    !groupWith.length &&
+                    !usageRefusal && (
+                      <Tooltip arrow title={gapTip}>
+                        <Typography
+                          {...clickable(
+                            () => setInbox({ open: true, focus: null }),
+                            { role: "link" },
+                          )}
+                          sx={{
+                            ...focusRing,
+                            typography: "s3",
+                            color: "text.tertiary",
+                            whiteSpace: "nowrap",
+                            fontVariantNumeric: "tabular-nums",
+                            cursor: "pointer",
+                            "&:hover": {
+                              color: "text.primary",
+                              textDecoration: "underline",
+                            },
+                          }}
+                        >
+                          {`${sitOut} sit${sitOut === 1 ? "s" : ""} out`}
+                        </Typography>
+                      </Tooltip>
+                    )}
+                  {/* Refused at the pre-check: the standard limit message, at the button. */}
+                  {runEnabled && usageRefusal && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "status.danger.fg",
+                        whiteSpace: "nowrap",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {`${usageRefusal.short} · `}
+                      <Box
+                        component="a"
+                        href={paths.dashboard.settings.billing}
                         sx={{
-                          minWidth: 0, px: 0.875, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, boxShadow: "none",
-                          /* A hairline inside the button, not a gap between two. */
-                          borderLeft: (t) => `1px solid ${alpha(t.palette.primary.contrastText, 0.16)}`,
+                          color: "text.primary",
+                          fontWeight: 600,
+                          textDecoration: "none",
+                          "&:hover": { textDecoration: "underline" },
                         }}
                       >
-                        <Iconify icon="solar:alt-arrow-down-linear" width={14} />
-                      </Button>
-                    </span>
-                  </Tooltip>
-                </>
-              )}
-              </Box>
-              {showRunMenu && (
-                <>
-                  <Menu
-                    anchorEl={runMenu}
-                    open={!!runMenu}
-                    onClose={() => setRunMenu(null)}
-                    anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                    transformOrigin={{ vertical: "top", horizontal: "right" }}
-                    slotProps={{ paper: { sx: { width: 360, mt: 0.5 } } }}
-                  >
-                    {/* Also run in — picked environments join the next Run as a group. */}
-                    {groupable && (
-                      /* The menu items' own inset, so the two icons line up. */
-                      <Box sx={{ px: 1, py: 1.25 }} onKeyDown={(e) => e.stopPropagation()}>
-                        <Stack direction="row" alignItems="flex-start" spacing={1.25}>
-                          <Iconify icon="solar:layers-linear" width={16} sx={{ mt: "2px", color: "text.secondary", flexShrink: 0 }} />
-                          <Box sx={{ minWidth: 0, flex: 1 }}>
-                            <Typography sx={{ typography: "s2", fontWeight: 600 }}>Run in more environments</Typography>
-                            <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal", mb: 1 }}>
-                              {`Agent ${currentAgentVersion(envState)?.label || ""} in each — one run per environment, started together and read side by side. Picked ones join the next Run.`}
-                            </Typography>
-                            <AlsoRunIn
-                              variant="inline"
-                              hideLabel
-                              candidates={runGroup.candidates}
-                              value={alsoRunIn}
-                              onChange={setAlsoRunIn}
-                            />
-                          </Box>
-                        </Stack>
+                        Upgrade
                       </Box>
+                    </Typography>
+                  )}
+                  {/* One button: Run, with its menu as the end of the same shape. */}
+                  <Box
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "stretch",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Tooltip title={runTip} arrow>
+                      <span style={{ display: "inline-flex" }}>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="small"
+                          disabled={!runEnabled || !!usageRefusal}
+                          onClick={() => {
+                            const sel = scenarioSelection?.ids || [];
+                            /* Run anyway: the scenarios resting on an open or skipped
+                         optional gap sit out (gapCover.attribution says which gap). */
+                            const covered =
+                              partial && !sel.length && !groupWith.length
+                                ? (plan?.run || [])
+                                    .map((sc) => sc.id)
+                                    .filter((id) => !gapCover.attribution[id])
+                                : null;
+                            startRun(
+                              sel.length > 0
+                                ? sel
+                                : covered?.length
+                                  ? covered
+                                  : undefined,
+                              headerTrials,
+                              { also: groupWith },
+                            );
+                          }}
+                          startIcon={
+                            <Iconify icon="solar:play-bold" width={16} />
+                          }
+                          sx={{
+                            whiteSpace: "nowrap",
+                            ...(showRunMenu && {
+                              borderTopRightRadius: 0,
+                              borderBottomRightRadius: 0,
+                            }),
+                          }}
+                        >
+                          {runLabel}
+                        </Button>
+                      </span>
+                    </Tooltip>
+                    {showRunMenu && (
+                      <>
+                        <Tooltip
+                          arrow
+                          title={
+                            groupWith.length
+                              ? `Running in ${groupWith.length + 1} environments — change`
+                              : "More ways to run"
+                          }
+                        >
+                          <span style={{ display: "inline-flex" }}>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              aria-label="More ways to run"
+                              disabled={!runEnabled || !!usageRefusal}
+                              onClick={(e) => setRunMenu(e.currentTarget)}
+                              sx={{
+                                minWidth: 0,
+                                borderTopLeftRadius: 0,
+                                borderBottomLeftRadius: 0,
+                                /* A hairline inside the button, not a gap between two. */
+                                borderLeft: (t) =>
+                                  `1px solid ${alpha(t.palette.primary.contrastText, 0.16)}`,
+                              }}
+                            >
+                              <Iconify
+                                icon="solar:alt-arrow-down-linear"
+                                width={14}
+                              />
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      </>
                     )}
-                  </Menu>
+                  </Box>
+                  {showRunMenu && (
+                    <>
+                      <Menu
+                        anchorEl={runMenu}
+                        open={!!runMenu}
+                        onClose={() => setRunMenu(null)}
+                        anchorOrigin={{
+                          vertical: "bottom",
+                          horizontal: "right",
+                        }}
+                        transformOrigin={{
+                          vertical: "top",
+                          horizontal: "right",
+                        }}
+                        slotProps={{ paper: { sx: { width: 360, mt: 0.5 } } }}
+                      >
+                        {/* Also run in — picked environments join the next Run as a group. */}
+                        {groupable && (
+                          /* The menu items' own inset, so the two icons line up. */
+                          <Box
+                            sx={{ px: 1, py: 1.25 }}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="flex-start"
+                              spacing={1.25}
+                            >
+                              <Iconify
+                                icon="solar:layers-linear"
+                                width={16}
+                                sx={{
+                                  mt: "2px",
+                                  color: "text.secondary",
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <Box sx={{ minWidth: 0, flex: 1 }}>
+                                <Typography
+                                  sx={{ typography: "s2", fontWeight: 600 }}
+                                >
+                                  Run in more environments
+                                </Typography>
+                                <Typography
+                                  sx={{
+                                    typography: "s3",
+                                    color: "text.tertiary",
+                                    whiteSpace: "normal",
+                                    mb: 1,
+                                  }}
+                                >
+                                  {`Agent ${currentAgentVersion(envState)?.label || ""} in each — one run per environment, started together and read side by side. Picked ones join the next Run.`}
+                                </Typography>
+                                <AlsoRunIn
+                                  variant="inline"
+                                  hideLabel
+                                  candidates={runGroup.candidates}
+                                  value={alsoRunIn}
+                                  onChange={setAlsoRunIn}
+                                />
+                              </Box>
+                            </Stack>
+                          </Box>
+                        )}
+                      </Menu>
+                    </>
+                  )}
                 </>
-              )}
-              </>
               )}
             </Stack>
           );
@@ -1258,9 +1842,9 @@ export default function EnvironmentWorkspace() {
                 size="small"
                 aria-label="More actions"
                 onClick={(e) => setActionsAnchor(e.currentTarget)}
-                sx={{ color: "text.subtitle" }}
+                sx={{ color: "text.tertiary" }}
               >
-                <Iconify icon="solar:menu-dots-bold" width={18} />
+                <Iconify icon="solar:menu-dots-bold" width={20} />
               </IconButton>
             </Tooltip>
             <Menu
@@ -1269,14 +1853,24 @@ export default function EnvironmentWorkspace() {
               onClose={() => setActionsAnchor(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { minWidth: 180, mt: 0.5 } } }}
+              slotProps={{ paper: { sx: { minWidth: 200, mt: 0.5 } } }}
             >
               <MenuItem
-                onClick={() => { setConfirmDelete(env); setActionsAnchor(null); }}
-                sx={{ gap: 1, py: 1, color: "#DC2626" }}
+                onClick={() => {
+                  setConfirmDelete(env);
+                  setActionsAnchor(null);
+                }}
+                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+                sx={{ gap: 1, py: 1, color: "status.danger.fg" }}
               >
-                <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ flexShrink: 0 }} />
-                <Typography sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}>
+                <Iconify
+                  icon="solar:trash-bin-trash-linear"
+                  width={16}
+                  sx={{ flexShrink: 0 }}
+                />
+                <Typography
+                  sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
+                >
                   Delete environment
                 </Typography>
               </MenuItem>
@@ -1288,7 +1882,11 @@ export default function EnvironmentWorkspace() {
           onCancel={() => setConfirmDelete(null)}
           onConfirm={deleteEnvironment}
         />
-        <SideDrawer open={inbox.open} onClose={() => setInbox({ open: false, focus: null })} width={{ xs: "100%", md: 560 }}>
+        <SideDrawer
+          open={inbox.open}
+          onClose={() => setInbox({ open: false, focus: null })}
+          width={{ xs: "100%", md: 640 }}
+        >
           {inbox.open && (
             <SetupGapsPanel
               env={worldEnv}
@@ -1311,21 +1909,41 @@ export default function EnvironmentWorkspace() {
       {isSeededTemplate && (
         <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
           <Stack
-            direction="row" alignItems="center" spacing={1.5}
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
             sx={{
-              px: 2, py: 1.25, borderRadius: 1.5,
-              border: "1px solid", borderColor: "divider",
+              px: 2,
+              py: 1.25,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
               bgcolor: "background.paper",
             }}
           >
-            <Iconify icon="solar:lock-keyhole-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+            <Iconify
+              icon="solar:lock-keyhole-linear"
+              width={16}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
 
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary", mb: 0.25 }}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  color: "text.primary",
+                  mb: 0.25,
+                }}
+              >
                 You&apos;re viewing a template
               </Typography>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                Scenarios, evaluations, contract and agent are read-only. Run as-is, or fork to make changes.
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                Scenarios, evaluations, contract and agent are read-only. Run
+                as-is, or fork to make changes.
               </Typography>
             </Box>
 
@@ -1333,8 +1951,12 @@ export default function EnvironmentWorkspace() {
               variant="outlined"
               size="small"
               onClick={forkEnvironment}
-              startIcon={<Iconify icon="solar:copy-linear" width={13} />}
-              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+              startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
             >
               Fork to edit
             </Button>
@@ -1359,18 +1981,32 @@ export default function EnvironmentWorkspace() {
 
       {/* ── body: rail + panel ── */}
       {/* A run is a pairing — this environment version × that agent version. */}
-      <VersionBar env={env} envState={envState} patch={patch} locked={isSeededTemplate} />
+      <VersionBar
+        env={env}
+        envState={envState}
+        patch={patch}
+        locked={isSeededTemplate}
+      />
 
       {/* ── body: builder console (left) + tabbed panels (right) — one
             surface split by a single rule, the same as the build screen ── */}
       <Box
         sx={{
-          flex: 1, minHeight: 0, display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: builderCollapsed ? "48px 1fr" : "minmax(340px, 400px) 1fr" },
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "1fr",
+            lg: builderCollapsed ? "48px 1fr" : "minmax(340px, 400px) 1fr",
+          },
         }}
       >
         {builderCollapsed && (
-          <BuilderRail running={chatRunning} unseen={unseenTurns} onExpand={() => setCollapsed(false)} />
+          <BuilderRail
+            running={chatRunning}
+            unseen={unseenTurns}
+            onExpand={() => setCollapsed(false)}
+          />
         )}
         {/* The chat acts on the Scenarios selection ("Archive these"), so
             clicking or typing in it keeps the selection (ScenariosStep's
@@ -1378,11 +2014,18 @@ export default function EnvironmentWorkspace() {
         <Box
           data-scenarios-safe="builder-chat"
           sx={{
-            height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
             /* Widths and colour set separately: a responsive "1px solid"
                shorthand resets the colour to the text colour (bright white). */
-            borderStyle: "solid", borderWidth: 0, borderColor: "divider",
-            borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
+            borderStyle: "solid",
+            borderWidth: 0,
+            borderColor: "divider",
+            borderRightWidth: { xs: 0, lg: 1 },
+            borderBottomWidth: { xs: 1, lg: 0 },
             ...(builderCollapsed && { display: "none" }),
           }}
         >
@@ -1409,35 +2052,63 @@ export default function EnvironmentWorkspace() {
 
         <Box
           sx={{
-            height: "100%", minHeight: 0, display: "flex", flexDirection: "column",
-            bgcolor: "background.paper", overflow: "hidden",
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            bgcolor: "background.paper",
+            overflow: "hidden",
           }}
         >
-          <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
-            <CustomTabs
-              value={activeTab}
-              onChange={(_, v) => go(v)}
-              variant="scrollable"
-              scrollButtons={false}
-              sx={{ minHeight: 42, px: 2.5, "& .MuiTab-root": { typography: "s2", minHeight: 42 } }}
-            >
-              {/* The Tooltip forwards the props Tabs clones onto its child
+          <Box
+            sx={{
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Box sx={{ px: 2.5 }}>
+              <CustomTabs
+                value={activeTab}
+                onChange={(_, v) => go(v)}
+                variant="scrollable"
+                scrollButtons={false}
+              >
+                {/* The Tooltip forwards the props Tabs clones onto its child
                   (value, selected, onChange…) to the Tab inside it. */}
-              {visibleTabs.map((t) => (
-                <Tooltip
-                  key={t.id}
-                  value={t.id}
-                  arrow
-                  placement="bottom"
-                  enterDelay={400}
-                  enterNextDelay={200}
-                  title={tabHintOf(t.id, worldEnv) || gapsByStep[t.id]?.length ? <TabHint hint={tabHintOf(t.id, worldEnv)} gaps={gapsByStep[t.id]} /> : ""}
-                  slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
-                >
-                  <Tab sx={{ minHeight: 42 }} label={<TabLabel tab={t} counts={counts} gaps={gapsByStep[t.id]} />} />
-                </Tooltip>
-              ))}
-            </CustomTabs>
+                {visibleTabs.map((t) => (
+                  <Tooltip
+                    key={t.id}
+                    value={t.id}
+                    arrow
+                    placement="bottom"
+                    enterDelay={400}
+                    enterNextDelay={200}
+                    title={
+                      tabHintOf(t.id, worldEnv) || gapsByStep[t.id]?.length ? (
+                        <TabHint
+                          hint={tabHintOf(t.id, worldEnv)}
+                          gaps={gapsByStep[t.id]}
+                        />
+                      ) : (
+                        ""
+                      )
+                    }
+                    slotProps={{ tooltip: { sx: { maxWidth: 320 } } }}
+                  >
+                    <Tab
+                      label={
+                        <TabLabel
+                          tab={t}
+                          counts={counts}
+                          gaps={gapsByStep[t.id]}
+                        />
+                      }
+                    />
+                  </Tooltip>
+                ))}
+              </CustomTabs>
+            </Box>
           </Box>
 
           {/*
@@ -1447,29 +2118,82 @@ export default function EnvironmentWorkspace() {
           <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
             {panel === "scenarios" ? (
               <ScenariosStep
-                env={worldEnv} envState={envState} patch={patch} onGo={go} onBuilderPrompt={sendChat} onStartRun={startRun}
-                groupCandidates={runGroup.candidates} locked={isSeededTemplate} onFork={forkEnvironment}
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                onGo={go}
+                onBuilderPrompt={sendChat}
+                onStartRun={startRun}
+                groupCandidates={runGroup.candidates}
+                locked={isSeededTemplate}
+                onFork={forkEnvironment}
                 selectionRun={{
                   repeats: headerTrials,
                   onRepeats: setHeaderTrials,
                   unit: env.surface === "voice" ? "call" : "conversation",
-                  disabledReason: !runEnabled ? (runBlockedReason || "Not ready to run") : usageRefusal ? `${usageRefusal.title} — ${usageRefusal.line}` : null,
+                  disabledReason: !runEnabled
+                    ? runBlockedReason || "Not ready to run"
+                    : usageRefusal
+                      ? `${usageRefusal.title} — ${usageRefusal.line}`
+                      : null,
                 }}
               />
             ) : panel === "evals" ? (
-              <EvalsStep env={worldEnv} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} repeats={Number(headerTrials) || 3} />
+              <EvalsStep
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                onGo={go}
+                locked={isSeededTemplate}
+                onFork={forkEnvironment}
+                repeats={Number(headerTrials) || 3}
+              />
             ) : panel === "runs" ? (
               <RunsPanel env={worldEnv} envState={envState} onGo={go} />
             ) : panel === "world" ? (
-              <WorldPanel env={worldEnv} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate || !!viewingOlder} />
+              <WorldPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                onGo={go}
+                locked={isSeededTemplate || !!viewingOlder}
+              />
             ) : panel === "contract" ? (
-              <RlContractPanel env={worldEnv} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate || !!viewingOlder} onFork={forkEnvironment} />
+              <RlContractPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                onGo={go}
+                locked={isSeededTemplate || !!viewingOlder}
+                onFork={forkEnvironment}
+              />
             ) : panel === "settings" ? (
-              <SettingsPanel env={worldEnv} envState={envState} patch={patch} locked={isSeededTemplate} onFork={forkEnvironment} onDelete={isSeededTemplate ? undefined : () => setConfirmDelete(env)} />
+              <SettingsPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                locked={isSeededTemplate}
+                onFork={forkEnvironment}
+                onDelete={
+                  isSeededTemplate ? undefined : () => setConfirmDelete(env)
+                }
+              />
             ) : panel === "build" ? (
-              <BuildRecordPanel env={worldEnv} envState={envState} patch={patch} />
+              <BuildRecordPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+              />
             ) : (
-              <OverviewPanel env={worldEnv} envState={envState} patch={patch} onGo={go} agentConnected={!!envState.agent} locked={isSeededTemplate} onFork={forkEnvironment} />
+              <OverviewPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                onGo={go}
+                agentConnected={!!envState.agent}
+                locked={isSeededTemplate}
+                onFork={forkEnvironment}
+              />
             )}
           </Box>
         </Box>
@@ -1485,9 +2209,18 @@ function TabLabel({ tab, counts, gaps }) {
   const count = tab.badge ? counts[tab.id] : null;
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
-      <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>{tab.label}</Typography>
+      <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>
+        {tab.label}
+      </Typography>
       {count != null && count > 0 && (
-        <Typography component="span" sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          component="span"
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {count}
         </Typography>
       )}
@@ -1495,11 +2228,20 @@ function TabLabel({ tab, counts, gaps }) {
       {gaps?.length > 0 && (
         <Box
           sx={{
-            display: "grid", placeItems: "center", flexShrink: 0,
-            minWidth: 16, height: 16, px: "5px", borderRadius: "8px",
-            bgcolor: (th) => alpha("#DC2626", th.palette.mode === "dark" ? 0.2 : 0.12),
-            color: "#DC2626", typography: "s3", fontWeight: 700, lineHeight: 1,
-            fontVariantNumeric: "tabular-nums", fontSize: 10,
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            minWidth: 16,
+            height: 16,
+            px: "5px",
+            borderRadius: "8px",
+            bgcolor: "status.danger.bg",
+            color: "status.danger.fg",
+            typography: "s3",
+            fontWeight: 600,
+            lineHeight: 1,
+            fontVariantNumeric: "tabular-nums",
+            fontSize: 12,
           }}
         >
           {gaps.length}
@@ -1508,7 +2250,11 @@ function TabLabel({ tab, counts, gaps }) {
     </Stack>
   );
 }
-TabLabel.propTypes = { tab: PropTypes.object, counts: PropTypes.object, gaps: PropTypes.array };
+TabLabel.propTypes = {
+  tab: PropTypes.object,
+  counts: PropTypes.object,
+  gaps: PropTypes.array,
+};
 
 /* A tab's hover hint — what the page is for, and what still needs input
    on it before a run. Empty (no tooltip) when there's neither. */
@@ -1516,14 +2262,20 @@ function TabHint({ hint, gaps }) {
   if (!hint && !gaps?.length) return null;
   return (
     <Box>
-      {hint && <Typography sx={{ typography: "s3", color: "inherit" }}>{hint}</Typography>}
+      {hint && (
+        <Typography sx={{ typography: "s3", color: "inherit" }}>
+          {hint}
+        </Typography>
+      )}
       {gaps?.length > 0 && (
         <Box sx={{ mt: hint ? 0.75 : 0 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.375 }}>
+          <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.375 }}>
             Answer these before you can run:
           </Typography>
           {gaps.map((g) => (
-            <Typography key={g.id} sx={{ typography: "s3", opacity: 0.9 }}>· {g.title}</Typography>
+            <Typography key={g.id} sx={{ typography: "s3", opacity: 0.9 }}>
+              · {g.title}
+            </Typography>
           ))}
         </Box>
       )}
@@ -1577,31 +2329,52 @@ function workspaceReply(userText) {
  * status so the next send doesn't feel like it came from nowhere.
  */
 function SelectionContextChip({ count, rows, onClear }) {
-  const preview = (rows || []).slice(0, 2).map((r) => r.title || r.name || "scenario").join(", ");
+  const preview = (rows || [])
+    .slice(0, 2)
+    .map((r) => r.title || r.name || "scenario")
+    .join(", ");
   const rest = count > 2 ? ` +${count - 2}` : "";
   return (
     <Stack
-      direction="row" alignItems="center" spacing={1}
+      direction="row"
+      alignItems="center"
+      spacing={1}
       sx={{
-        px: 1.5, py: 1,
-        borderBottom: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
+        px: 1.5,
+        py: 1,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        bgcolor: "action.hover",
       }}
     >
-      <Iconify icon="solar:layers-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
-        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"} — {preview}{rest}
+      <Iconify
+        icon="solar:layers-minimalistic-linear"
+        width={14}
+        sx={{ color: "text.tertiary", flexShrink: 0 }}
+      />
+      <Typography
+        sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }}
+        noWrap
+      >
+        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"} — {preview}
+        {rest}
       </Typography>
       <Tooltip arrow title="Clear selection">
-        <IconButton size="small" onClick={onClear} sx={{ p: 0.25 }}>
-          <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+        <IconButton size="small" onClick={onClear}>
+          <Iconify
+            icon="solar:close-circle-linear"
+            width={14}
+            sx={{ color: "text.tertiary" }}
+          />
         </IconButton>
       </Tooltip>
     </Stack>
   );
 }
 SelectionContextChip.propTypes = {
-  count: PropTypes.number, rows: PropTypes.array, onClear: PropTypes.func,
+  count: PropTypes.number,
+  rows: PropTypes.array,
+  onClear: PropTypes.func,
 };
 
 /*
@@ -1610,13 +2383,24 @@ SelectionContextChip.propTypes = {
 */
 function guidedScenarioQuestion() {
   return {
-    step: 1, total: 1,
+    step: 1,
+    total: 1,
     prompt: "What kind of scenarios should I write?",
     multiSelect: false,
     options: [
-      { label: "Happy path", description: "Standard requests with no edge cases" },
-      { label: "Adversarial", description: "Rushed callers, off-topic tangents and skepticism" },
-      { label: "Tool-fault cases", description: "A tool returns unexpected results and the agent has to cope" },
+      {
+        label: "Happy path",
+        description: "Standard requests with no edge cases",
+      },
+      {
+        label: "Adversarial",
+        description: "Rushed callers, off-topic tangents and skepticism",
+      },
+      {
+        label: "Tool-fault cases",
+        description:
+          "A tool returns unexpected results and the agent has to cope",
+      },
     ],
   };
 }
@@ -1636,17 +2420,23 @@ function SystemBanners({ env, envState, patch }) {
     <Stack spacing={0}>
       {buildStatus === "building" && (
         <Stack
-          direction="row" alignItems="center" spacing={1.25}
+          direction="row"
+          alignItems="center"
+          spacing={1.25}
           sx={{
-            px: 3, py: 1.25,
-            bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.12 : 0.06),
+            px: 3,
+            py: 1.25,
+            bgcolor: "status.discovery.bg",
             borderBottom: "1px solid",
-            borderColor: (t) => alpha("#7857FC", 0.24),
+            borderColor: "status.discovery.border",
           }}
         >
           <Box
             sx={{
-              width: 8, height: 8, borderRadius: "50%", bgcolor: "#7857FC",
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              bgcolor: "primary.main",
               animation: "wb-pulse 1.4s ease-in-out infinite",
               "@keyframes wb-pulse": {
                 "0%,100%": { opacity: 0.4 },
@@ -1655,39 +2445,71 @@ function SystemBanners({ env, envState, patch }) {
               flexShrink: 0,
             }}
           />
-          <Typography sx={{ typography: "s2", fontWeight: 700, color: "#7857FC", flexShrink: 0 }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              color: "primary.main",
+              flexShrink: 0,
+            }}
+          >
             Environment is still being built
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {buildProgress?.done != null && buildProgress?.total != null
               ? `${buildProgress.done} of ${buildProgress.total} steps done.`
               : "Scenarios and personas are still deriving."}{" "}
-            You can leave and come back — this page will fill in as each stage lands.
+            You can leave and come back — this page will fill in as each stage
+            lands.
           </Typography>
         </Stack>
       )}
 
       {offLatest && (
         <Stack
-          direction="row" alignItems="center" spacing={1.25}
+          direction="row"
+          alignItems="center"
+          spacing={1.25}
           sx={{
-            px: 3, py: 1.25,
+            px: 3,
+            py: 1.25,
             bgcolor: "background.neutral",
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
         >
-          <Iconify icon="solar:history-linear" width={14} sx={{ color: "text.secondary", flexShrink: 0 }} />
-          <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary", flexShrink: 0 }}>
+          <Iconify
+            icon="solar:history-linear"
+            width={14}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
+          />
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              color: "text.primary",
+              flexShrink: 0,
+            }}
+          >
             Editing off {envLabelOf(env, envState, active.label)}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-            Latest is <b>{envLabelOf(env, envState, newest.label)}</b>. Runs from here will stamp against {envLabelOf(env, envState, active.label)}, and any edits sit on {envLabelOf(env, envState, active.label)}, not on the latest world.
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            Latest is <b>{envLabelOf(env, envState, newest.label)}</b>. Runs
+            from here will stamp against{" "}
+            {envLabelOf(env, envState, active.label)}, and any edits sit on{" "}
+            {envLabelOf(env, envState, active.label)}, not on the latest world.
           </Typography>
           <Button
             size="small"
             onClick={() => patch({ activeEnvVersion: newest.label })}
-            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", flexShrink: 0 }}
+            sx={{ color: "text.primary", flexShrink: 0 }}
           >
             Switch to {envLabelOf(env, envState, newest.label)}
           </Button>
@@ -1702,7 +2524,3 @@ SystemBanners.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
 };
-
-
-
-

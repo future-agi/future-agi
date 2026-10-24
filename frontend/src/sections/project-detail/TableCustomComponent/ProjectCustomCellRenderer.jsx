@@ -1,4 +1,4 @@
-import { Box, Chip } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import QuickFilter from "src/components/ComplexFilter/QuickFilterComponents/QuickFilter";
@@ -41,15 +41,7 @@ const ProjectCustomCellRenderer = (params) => {
             alignItems: "center",
           }}
         >
-          {val.map((each) => (
-            <Chip
-              size="small"
-              key={each}
-              label={each}
-              variant="outlined"
-              color="primary"
-            />
-          ))}
+          {val.join(" · ")}
         </Box>
       );
     }
@@ -126,7 +118,10 @@ const ProjectCustomCellRenderer = (params) => {
         {column.id === "rank" &&
         params?.data?.rank === 1 &&
         params?.node?.rowPinned !== "bottom" ? (
-          <Iconify icon="mdi:crown" sx={{ color: "yellow.main" }} />
+          <Iconify
+            icon="solar:crown-bold"
+            sx={{ color: "status.warning.solid" }}
+          />
         ) : (
           <></>
         )}

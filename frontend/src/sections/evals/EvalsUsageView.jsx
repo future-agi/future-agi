@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvalsWrapper from "./EvalsWrapper";
 import ApexCharts from "apexcharts";
@@ -287,10 +288,6 @@ const EvalsUsageView = () => {
               disabled={firstLoading}
               onClick={() => {
                 navigate("/dashboard/evaluations");
-              }}
-              sx={{
-                px: "24px",
-                typography: "s1",
               }}
             >
               Create Evaluation

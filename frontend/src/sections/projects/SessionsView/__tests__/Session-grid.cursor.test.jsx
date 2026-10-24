@@ -203,7 +203,7 @@ describe("SessionGrid cursor continuation", () => {
     expect(gridState.props.cacheBlockSize).toBe(25);
     expect(gridState.props.maxBlocksInCache).toBe(5);
     expect(gridState.props.maxConcurrentDatasourceRequests).toBe(1);
-    expect(screen.getByLabelText("Results per page")).toHaveTextContent("25");
+    expect(screen.getByLabelText("Rows per page")).toHaveValue("25");
   });
 
   it("refreshes visible session rows without purging them", async () => {
@@ -317,12 +317,12 @@ describe("SessionGrid cursor continuation", () => {
 
     const firstPage = makeParams();
     await getRows(firstPage);
-    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
     firstPage.api.refreshServerSide.mockClear();
     act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
     expect(firstPage.api.refreshServerSide).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 
     const secondPage = makeParams({ startRow: 25 });
     gridState.api = secondPage.api;
@@ -336,7 +336,7 @@ describe("SessionGrid cursor continuation", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(gridState.props.loading).toBe(false);
     });
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
 
     secondPage.success.mockImplementation(() => {});
     secondPage.api.setPaintedRows(false);

@@ -66,9 +66,6 @@ const PerformanceTagSelect = ({
                 key={value}
                 label={getTabLabel(value)}
                 size="small"
-                sx={{
-                  fontSize: "11px",
-                }}
               />
             ))}
             {Boolean(selected.length - 1) && (
@@ -120,9 +117,6 @@ const PerformanceTagSelect = ({
                   key={label}
                   label={getTabLabel(label)}
                   size="small"
-                  sx={{
-                    fontSize: "11px",
-                  }}
                 />
               </MenuItem>
             );

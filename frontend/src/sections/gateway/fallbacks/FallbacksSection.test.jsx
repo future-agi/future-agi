@@ -124,18 +124,18 @@ describe("FallbacksSection", () => {
         screen.getByText(/Failed to load config: Network error/),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /try again/i }),
+        screen.getByRole("button", { name: /retry/i }),
       ).toBeInTheDocument();
     });
 
-    it("calls refetch when Try Again is clicked", async () => {
+    it("calls refetch when Retry is clicked", async () => {
       hookReturn = {
         ...hookReturn,
         routing: {},
         error: { message: "Oops" },
       };
       render(<FallbacksSection />);
-      await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+      await userEvent.click(screen.getByRole("button", { name: /retry/i }));
       expect(mockRefetch).toHaveBeenCalledTimes(1);
     });
   });

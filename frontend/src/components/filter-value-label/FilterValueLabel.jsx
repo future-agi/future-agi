@@ -91,7 +91,7 @@ export default function FilterValueLabel({
             flexShrink: 0,
             px: 0.625,
             py: "1px",
-            borderRadius: 0.75,
+            borderRadius: "4px",
             bgcolor: "action.selected",
             color: "text.secondary",
             whiteSpace: "nowrap",

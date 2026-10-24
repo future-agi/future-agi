@@ -6,6 +6,7 @@ import {
   Tooltip,
   Typography,
   useTheme,
+  Button,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
@@ -41,7 +42,11 @@ const useColumns = () =>
         cell: ({ getValue }) => {
           const v = getValue();
           const color =
-            v === "passed" ? "#22c55e" : v === "failed" ? "#ef4444" : "#94a3b8";
+            v === "passed"
+              ? "status.success.solid"
+              : v === "failed"
+                ? "status.danger.solid"
+                : "status.neutral.solid";
           return (
             <Box
               sx={{
@@ -74,27 +79,33 @@ const useColumns = () =>
               <Iconify
                 icon={
                   isPassed
-                    ? "mingcute:thumb-up-2-fill"
+                    ? "solar:like-bold"
                     : isFailed
-                      ? "mingcute:thumb-down-2-fill"
-                      : "mingcute:chat-3-line"
+                      ? "solar:dislike-bold"
+                      : "solar:chat-round-line-linear"
                 }
                 width={14}
                 sx={{
                   color: isPassed
-                    ? "success.main"
+                    ? "status.success.fg"
                     : isFailed
-                      ? "error.main"
+                      ? "status.danger.fg"
                       : "text.secondary",
                 }}
               />
-              <Chip
-                label={label}
-                size="small"
-                color={isPassed ? "success" : isFailed ? "error" : "default"}
-                variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
-              />
+              <Typography
+                variant="body2"
+                sx={{
+                  fontSize: "13px",
+                  color: isPassed
+                    ? "status.success.fg"
+                    : isFailed
+                      ? "status.danger.fg"
+                      : "text.secondary",
+                }}
+              >
+                {label}
+              </Typography>
             </Box>
           );
         },
@@ -128,18 +139,17 @@ const useColumns = () =>
           const v = getValue();
           if (!v) return null;
           return (
-            <Chip
-              label={
-                v === "retune"
-                  ? "Re-tune"
-                  : v === "recalculate"
-                    ? "Re-calculate"
-                    : v
-              }
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
-            />
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: "13px", color: "text.tertiary" }}
+            >
+              {v === "retune"
+                ? "Re-tune"
+                : v === "recalculate"
+                  ? "Re-calculate"
+                  : v}
+            </Typography>
           );
         },
       },
@@ -158,12 +168,13 @@ const useColumns = () =>
                 ? "Dataset"
                 : v;
           return (
-            <Chip
-              label={label}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
-            />
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: "13px", color: "text.tertiary" }}
+            >
+              {label}
+            </Typography>
           );
         },
       },
@@ -195,7 +206,7 @@ const useColumns = () =>
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "11px", color: "text.disabled" }}
+              sx={{ fontSize: "12px", color: "text.disabled" }}
             >
               {d.toLocaleDateString(undefined, {
                 month: "short",
@@ -392,7 +403,7 @@ const EvalFeedbackTab = ({ templateId }) => {
                       setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
                     }
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -407,7 +418,7 @@ const EvalFeedbackTab = ({ templateId }) => {
                       )
                     }
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -425,8 +436,8 @@ const EvalFeedbackTab = ({ templateId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -440,8 +451,8 @@ const EvalFeedbackTab = ({ templateId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -454,7 +465,7 @@ const EvalFeedbackTab = ({ templateId }) => {
               </Box>
             </Box>
             <IconButton size="small" onClick={() => setDetailIndex(null)}>
-              <Iconify icon="mingcute:close-line" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Box>
 
@@ -473,231 +484,222 @@ const EvalFeedbackTab = ({ templateId }) => {
                   ? "Incorrect"
                   : displayFeedbackValue(detailRow.value);
               return (
-            <Box
-              sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 1.5, py: 1 }}
-            >
-              {/* Feedback value */}
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}
-              >
-                <Iconify
-                  icon={
-                    detailIsPassed
-                      ? "mingcute:thumb-up-2-fill"
-                      : detailIsFailed
-                        ? "mingcute:thumb-down-2-fill"
-                        : "mingcute:chat-3-line"
-                  }
-                  width={20}
-                  sx={{
-                    color: detailIsPassed
-                      ? "success.main"
-                      : detailIsFailed
-                        ? "error.main"
-                        : "text.secondary",
-                  }}
-                />
-                <Chip
-                  label={detailLabel}
-                  size="small"
-                  color={
-                    detailIsPassed
-                      ? "success"
-                      : detailIsFailed
-                        ? "error"
-                        : "default"
-                  }
-                  variant={detailIsPassed || detailIsFailed ? "filled" : "outlined"}
-                  sx={{ fontSize: "12px", height: 24, fontWeight: 600 }}
-                />
-                {detailRow.action_type && (
-                  <Chip
-                    label={
-                      detailRow.action_type === "retune"
-                        ? "Re-tune"
-                        : "Re-calculate"
-                    }
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: "10px", height: 18 }}
-                  />
-                )}
-              </Box>
-
-              {/* Improvement note */}
-              {detailRow.explanation && (
-                <Box sx={{ mb: 2 }}>
-                  <Typography
-                    variant="caption"
-                    fontWeight={600}
-                    sx={{ mb: 0.5, display: "block" }}
-                  >
-                    Improvement Note
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontSize: "12px",
-                      color: "text.secondary",
-                      lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {detailRow.explanation}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* Meta */}
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 0.5,
-                  mb: 2,
-                }}
-              >
-                {detailRow.user_name && (
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ width: 60 }}
-                    >
-                      By
-                    </Typography>
-                    <Typography variant="caption">
-                      {detailRow.user_name}
-                    </Typography>
-                  </Box>
-                )}
-                {detailRow.source && (
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ width: 60 }}
-                    >
-                      Source
-                    </Typography>
-                    <Typography variant="caption">
-                      {detailRow.source === "eval_playground"
-                        ? "Playground"
-                        : detailRow.source}
-                    </Typography>
-                  </Box>
-                )}
-                {detailRow.created_at && (
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ width: 60 }}
-                    >
-                      Date
-                    </Typography>
-                    <Typography variant="caption">
-                      {new Date(detailRow.created_at).toLocaleString()}
-                    </Typography>
-                  </Box>
-                )}
-                {detailRow.source_id && (
-                  <Box sx={{ display: "flex", gap: 1 }}>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ width: 60 }}
-                    >
-                      Log ID
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      sx={{ fontFamily: "monospace", fontSize: "10px" }}
-                    >
-                      {detailRow.source_id}
-                    </Typography>
-                  </Box>
-                )}
-              </Box>
-
-              {/* Edit button */}
-              <Box
-                component="button"
-                onClick={() => setFeedbackEditOpen(true)}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  px: 2,
-                  py: 0.75,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "8px",
-                  backgroundColor: "transparent",
-                  color: "text.primary",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  width: "100%",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    backgroundColor: (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.06)"
-                        : "rgba(124,77,255,0.04)",
-                  },
-                }}
-              >
-                <Iconify
-                  icon="mingcute:edit-line"
-                  width={14}
-                  sx={{ color: "primary.main" }}
-                />
-                Edit Feedback
-              </Box>
-
-              {/* Raw JSON */}
-              <Box sx={{ mt: 2 }}>
-                <Typography
-                  variant="caption"
-                  fontWeight={600}
-                  sx={{ mb: 0.5, display: "block" }}
-                >
-                  Raw Data
-                </Typography>
                 <Box
                   sx={{
-                    height: 200,
-                    borderRadius: "6px",
-                    overflow: "hidden",
-                    border: "1px solid",
-                    borderColor: "divider",
+                    flex: 1,
+                    minHeight: 0,
+                    overflow: "auto",
+                    px: 1.5,
+                    py: 1,
                   }}
                 >
-                  <Editor
-                    key={detailRow.id}
-                    height="100%"
-                    language="json"
-                    value={JSON.stringify(detailRow, null, 2)}
-                    theme={isDark ? "vs-dark" : "vs"}
-                    options={{
-                      readOnly: true,
-                      minimap: { enabled: false },
-                      fontSize: 11,
-                      fontFamily: "'Fira Code', Menlo, monospace",
-                      lineNumbers: "off",
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      wordWrap: "on",
-                      folding: true,
-                      padding: { top: 4 },
-                      renderLineHighlight: "none",
-                      domReadOnly: true,
+                  {/* Feedback value */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      mb: 2,
                     }}
-                  />
+                  >
+                    <Iconify
+                      icon={
+                        detailIsPassed
+                          ? "solar:like-bold"
+                          : detailIsFailed
+                            ? "solar:dislike-bold"
+                            : "solar:chat-round-line-linear"
+                      }
+                      width={20}
+                      sx={{
+                        color: detailIsPassed
+                          ? "status.success.fg"
+                          : detailIsFailed
+                            ? "status.danger.fg"
+                            : "text.secondary",
+                      }}
+                    />
+                    <Chip
+                      label={detailLabel}
+                      size="small"
+                      color={
+                        detailIsPassed
+                          ? "success"
+                          : detailIsFailed
+                            ? "error"
+                            : "default"
+                      }
+                      variant={
+                        detailIsPassed || detailIsFailed ? "filled" : "outlined"
+                      }
+                    />
+                    {detailRow.action_type && (
+                      <Chip
+                        label={
+                          detailRow.action_type === "retune"
+                            ? "Re-tune"
+                            : "Re-calculate"
+                        }
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                  </Box>
+
+                  {/* Improvement note */}
+                  {detailRow.explanation && (
+                    <Box sx={{ mb: 2 }}>
+                      <Typography
+                        variant="caption"
+                        fontWeight={600}
+                        sx={{ mb: 0.5, display: "block" }}
+                      >
+                        Improvement Note
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: "12px",
+                          color: "text.secondary",
+                          lineHeight: 1.6,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {detailRow.explanation}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Meta */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 0.5,
+                      mb: 2,
+                    }}
+                  >
+                    {detailRow.user_name && (
+                      <Box sx={{ display: "flex", gap: 1 }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ width: 60 }}
+                        >
+                          By
+                        </Typography>
+                        <Typography variant="caption">
+                          {detailRow.user_name}
+                        </Typography>
+                      </Box>
+                    )}
+                    {detailRow.source && (
+                      <Box sx={{ display: "flex", gap: 1 }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ width: 60 }}
+                        >
+                          Source
+                        </Typography>
+                        <Typography variant="caption">
+                          {detailRow.source === "eval_playground"
+                            ? "Playground"
+                            : detailRow.source}
+                        </Typography>
+                      </Box>
+                    )}
+                    {detailRow.created_at && (
+                      <Box sx={{ display: "flex", gap: 1 }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ width: 60 }}
+                        >
+                          Date
+                        </Typography>
+                        <Typography variant="caption">
+                          {new Date(detailRow.created_at).toLocaleString()}
+                        </Typography>
+                      </Box>
+                    )}
+                    {detailRow.source_id && (
+                      <Box sx={{ display: "flex", gap: 1 }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ width: 60 }}
+                        >
+                          Log ID
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ fontFamily: "monospace", fontSize: "12px" }}
+                        >
+                          {detailRow.source_id}
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
+
+                  {/* Edit button */}
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    fullWidth
+                    onClick={() => setFeedbackEditOpen(true)}
+                    sx={{ gap: 1, color: "text.primary" }}
+                  >
+                    <Iconify
+                      icon="solar:pen-linear"
+                      width={14}
+                      sx={{ color: "primary.main" }}
+                    />
+                    Edit Feedback
+                  </Button>
+
+                  {/* Raw JSON */}
+                  <Box sx={{ mt: 2 }}>
+                    <Typography
+                      variant="caption"
+                      fontWeight={600}
+                      sx={{ mb: 0.5, display: "block" }}
+                    >
+                      Raw Data
+                    </Typography>
+                    <Box
+                      sx={{
+                        height: 200,
+                        borderRadius: "6px",
+                        overflow: "hidden",
+                        border: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      <Editor
+                        key={detailRow.id}
+                        height="100%"
+                        language="json"
+                        value={JSON.stringify(detailRow, null, 2)}
+                        theme={isDark ? "vs-dark" : "vs"}
+                        options={{
+                          readOnly: true,
+                          minimap: { enabled: false },
+                          fontSize: 12,
+                          fontFamily: "'Fira Code', Menlo, monospace",
+                          lineNumbers: "off",
+                          scrollBeyondLastLine: false,
+                          automaticLayout: true,
+                          wordWrap: "on",
+                          folding: true,
+                          padding: { top: 4 },
+                          renderLineHighlight: "none",
+                          domReadOnly: true,
+                        }}
+                      />
+                    </Box>
+                  </Box>
                 </Box>
-              </Box>
-            </Box>
               );
             })()}
 

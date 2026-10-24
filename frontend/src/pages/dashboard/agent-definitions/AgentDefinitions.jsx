@@ -1,5 +1,6 @@
+import SelectionBar from "src/components/selection-bar";
 /* eslint-disable react/prop-types */
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import {
 } from "src/utils/Mixpanel";
 import { camelCaseToTitleCase } from "src/utils/utils";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-
+import PageHeader from "src/components/page-header";
 // ── Cell renderers (inlined, MUI-native) ──
 
 function AgentNameCell({ row }) {
@@ -58,7 +59,7 @@ function AgentTypeCell({ row }) {
         gap: 0.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.25,
+        borderRadius: "4px",
         px: 1.5,
         py: 0.25,
       }}
@@ -254,73 +255,46 @@ function AgentDefinitions() {
           <SimulationAgentEmptyScreen />
         ) : (
           <>
-            {/* Header */}
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 2,
-              }}
-            >
-              <Stack spacing={0.25}>
-                <Typography
-                  color="text.primary"
-                  typography="m2"
-                  fontWeight="fontWeightSemiBold"
-                >
-                  Agent Definitions
-                </Typography>
-                <Typography
-                  typography="s1"
-                  color="text.primary"
-                  fontWeight="fontWeightRegular"
-                >
-                  Specifies how your AI agent behaves during voice conversations
-                </Typography>
-              </Stack>
-              <Box sx={{ display: "flex", gap: 2 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  sx={{ borderRadius: "4px", height: 38, px: 1 }}
-                  onClick={() => {
-                    handleOnDocsClicked("agent-definition");
-                    window.open(
-                      "https://docs.futureagi.com/docs/simulation/concepts/agent-definition",
-                      "_blank",
-                    );
-                  }}
-                >
-                  <SvgColor
-                    src="/assets/icons/agent/docs.svg"
-                    sx={{ height: 20, width: 20, mr: 1 }}
-                  />
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    View Docs
-                  </Typography>
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  sx={{ px: 3, borderRadius: "4px", height: 38 }}
-                  startIcon={
-                    <Iconify
-                      icon="octicon:plus-24"
-                      sx={{ width: 20, height: 20 }}
+            <PageHeader
+              title="Agent definitions"
+              description="Specifies how your AI agent behaves during voice conversations"
+              actions={
+                <>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      handleOnDocsClicked("agent-definition");
+                      window.open(
+                        "https://docs.futureagi.com/docs/simulation/concepts/agent-definition",
+                        "_blank",
+                      );
+                    }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/agent/docs.svg"
+                      sx={{ height: 20, width: 20, mr: 1 }}
                     />
-                  }
-                  disabled={
-                    !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
-                  }
-                  onClick={handleAddAgent}
-                >
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    Create agent definition
-                  </Typography>
-                </Button>
-              </Box>
-            </Box>
+                    <Typography typography="s1" fontWeight="fontWeightMedium">
+                      View Docs
+                    </Typography>
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<Iconify icon="solar:add-linear" width={20} />}
+                    disabled={
+                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                    }
+                    onClick={handleAddAgent}
+                  >
+                    <Typography typography="s1" fontWeight="fontWeightMedium">
+                      Create agent definition
+                    </Typography>
+                  </Button>
+                </>
+              }
+            />
 
             {/* Search + bulk bar */}
             <Box
@@ -345,70 +319,21 @@ function AgentDefinitions() {
                 }}
               />
               {selectedItems.length > 0 ? (
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 2,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    px: 2,
-                    py: 0.5,
-                  }}
-                >
-                  <Typography
-                    typography="s1"
-                    fontWeight="fontWeightMedium"
-                    color="primary.main"
-                  >
-                    {selectedItems.length} Selected
-                  </Typography>
-                  <Divider
-                    orientation="vertical"
-                    flexItem
-                    sx={{ borderRightWidth: 0.25 }}
-                  />
-                  <Button
-                    size="small"
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/ic_delete.svg"
-                        sx={{
-                          width: 20,
-                          height: 20,
-                          color: "text.disabled",
-                        }}
-                      />
-                    }
-                    sx={{ color: "text.secondary" }}
-                    onClick={() => setDeleteDialogOpen(true)}
-                    disabled={
-                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.DELETE][role]
-                    }
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight="fontWeightRegular"
-                      color="text.primary"
-                    >
-                      Delete
-                    </Typography>
-                  </Button>
-                  <Button
-                    size="small"
-                    sx={{ color: "text.secondary" }}
-                    onClick={handleCancelSelection}
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight="fontWeightRegular"
-                      color="text.primary"
-                    >
-                      Cancel
-                    </Typography>
-                  </Button>
-                </Box>
+                <SelectionBar
+                  count={selectedItems.length}
+                  onCancel={handleCancelSelection}
+                  actions={[
+                    {
+                      label: "Delete",
+                      icon: "solar:trash-bin-trash-linear",
+                      onClick: () => setDeleteDialogOpen(true),
+                      disabled:
+                        !RolePermission.SIMULATION_AGENT[PERMISSIONS.DELETE][
+                          role
+                        ],
+                    },
+                  ]}
+                />
               ) : null}
             </Box>
 

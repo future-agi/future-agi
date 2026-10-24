@@ -322,7 +322,6 @@ export default function PreviewScreen() {
       sx={{
         width: "100%",
         bgcolor: "background.paper",
-        boxShadow: 24,
         height: "100%",
         overflow: "auto",
         marginTop: "10px",
@@ -408,8 +407,8 @@ export default function PreviewScreen() {
                     mb: 1,
                     cursor: "pointer",
                   }}
-                  fontSize={14}
-                  fontWeight={700}
+                  fontSize={13}
+                  fontWeight={600}
                 >
                   Annotations
                 </Typography>
@@ -532,7 +531,7 @@ export default function PreviewScreen() {
                 >
                   <Iconify
                     color="text.primary"
-                    icon="ri:skip-left-line"
+                    icon="solar:skip-previous-linear"
                     height={14}
                     width={14}
                   />
@@ -544,9 +543,9 @@ export default function PreviewScreen() {
                 >
                   <Iconify
                     color="text.primary"
-                    icon="mdi:chevron-left"
-                    height={18}
-                    width={18}
+                    icon="solar:alt-arrow-left-linear"
+                    height={20}
+                    width={20}
                   />
                 </IconButton>
                 <Typography
@@ -554,7 +553,7 @@ export default function PreviewScreen() {
                     color: "text.primary",
                   }}
                   fontSize={13}
-                  fontWeight={700}
+                  fontWeight={600}
                 >
                   Row {currentRowNumber} of {totalRows}
                 </Typography>
@@ -565,9 +564,9 @@ export default function PreviewScreen() {
                 >
                   <Iconify
                     color="text.primary"
-                    icon="mdi:chevron-right"
-                    height={18}
-                    width={18}
+                    icon="solar:alt-arrow-right-linear"
+                    height={20}
+                    width={20}
                   />
                 </IconButton>
                 <IconButton
@@ -577,7 +576,7 @@ export default function PreviewScreen() {
                 >
                   <Iconify
                     color="text.primary"
-                    icon="ri:skip-right-line"
+                    icon="solar:skip-next-linear"
                     height={14}
                     width={14}
                   />

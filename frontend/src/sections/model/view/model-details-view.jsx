@@ -59,7 +59,7 @@ const TABS = [
   {
     value: "config",
     label: "Config",
-    icon: <Iconify icon="ic:round-vpn-key" width={24} />,
+    icon: <Iconify icon="solar:key-linear" width={24} />,
   },
 ];
 
@@ -83,7 +83,7 @@ export default function ProductDetailsView() {
         <Button
           component={RouterLink}
           href={paths.dashboard.models.root}
-          startIcon={<Iconify icon="eva:arrow-ios-back-fill" width={16} />}
+          startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={16} />}
           sx={{ mt: 3 }}
         >
           Back to List

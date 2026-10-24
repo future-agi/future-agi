@@ -54,7 +54,9 @@ const StepsTracker = () => {
                 justifyContent: "center",
                 fontWeight: "fontWeightMedium",
                 transition: "all 0.2s ease",
-                backgroundColor: isValidated ? "green.600" : "transparent",
+                backgroundColor: isValidated
+                  ? "status.success.solid"
+                  : "transparent",
               }}
             >
               {isValidated ? (

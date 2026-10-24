@@ -124,22 +124,9 @@ const RunInsights = ({ setSelectedTraceIds }) => {
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             sx={{
-              minHeight: 0,
               "& .MuiTab-root": {
                 margin: "0 !important",
-                fontWeight: "600",
-                typography: "s1",
-                color: "primary.main",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: "500",
-                },
               },
             }}
           >
@@ -147,14 +134,12 @@ const RunInsights = ({ setSelectedTraceIds }) => {
               label="Actions"
               sx={{
                 margin: theme.spacing(0),
-                px: theme.spacing(1.875),
               }}
             />
             <Tab
               label="Evals"
               sx={{
                 margin: theme.spacing(0),
-                px: theme.spacing(1.875),
               }}
             />
           </Tabs>

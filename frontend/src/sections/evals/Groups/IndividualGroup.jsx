@@ -91,7 +91,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           justifyContent="center"
         >
           <Typography
-            sx={{ fontSize: "14px", fontWeight: 500, color: "text.primary" }}
+            sx={{ fontSize: "13px", fontWeight: 500, color: "text.primary" }}
           >
             {data?.name}
           </Typography>
@@ -123,9 +123,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
               sx={{
                 width: (theme) => theme.spacing(3),
                 height: (theme) => theme.spacing(3),
-                fontSize: "11px",
-                color: "pink.500",
-                backgroundColor: "background.neutral",
+                fontSize: "12px",
               }}
             />
             <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -163,11 +161,10 @@ const IndividualGroup = ({ groupId, onReset }) => {
           >
             <span style={{ display: "inline-block" }}>
               <IconButton
+                className="row-hover-action"
                 sx={{
                   border: "1px solid",
-                  borderRadius: "2px",
                   borderColor: "divider",
-                  padding: 0.5,
                 }}
                 disabled={evalGroupBasicData?.evalGroup?.is_sample}
                 onClick={() => {
@@ -363,7 +360,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           </NavLink>
 
           <Iconify
-            icon="fluent:chevron-right-12-regular"
+            icon="solar:alt-arrow-right-linear"
             style={{ display: "flex", alignItems: "center" }}
           />
           {isLoadingBasicData ? (
@@ -371,7 +368,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           ) : (
             <Typography
               sx={{
-                fontSize: "14px",
+                fontSize: "13px",
                 fontWeight: 500,
                 display: "flex",
                 alignItems: "center",
@@ -385,7 +382,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           <Skeleton width={"200px"} height={"16px"} />
         ) : (
           <Typography
-            sx={{ fontSize: "11px", fontWeight: 400, color: "text.primary" }}
+            sx={{ fontSize: "12px", fontWeight: 400, color: "text.primary" }}
           >
             {formatted}
           </Typography>
@@ -394,7 +391,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
 
       <Stack display={"flex"} gap={1} paddingY={0.5}>
         <Box sx={{ display: "flex", gap: 1 }}>
-          <Typography sx={{ fontSize: "16px", fontWeight: "700" }}>
+          <Typography sx={{ fontSize: "16px", fontWeight: "600" }}>
             {isLoadingBasicData ? (
               <Skeleton width={200} />
             ) : (
@@ -411,9 +408,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 disabled={
                   isLoadingBasicData || evalGroupBasicData?.evalGroup?.is_sample
                 }
-                sx={{
-                  padding: 0.5,
-                }}
+                size="small"
                 onClick={() => {
                   setSelectedDrawerType({
                     type: "edit",
@@ -479,20 +474,11 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 disabled={
                   isLoadingBasicData || evalGroupBasicData?.evalGroup?.is_sample
                 }
-                sx={{
-                  px: "24px",
-                  borderRadius: "8px",
-                  height: "38px",
-                  // border: "1px solid",
-                }}
                 startIcon={
                   <SvgColor
                     src="/assets/icons/ic_edit_pencil.svg"
-                    sx={{
-                      width: 20,
-                      height: 20,
-                      color: "primary.main",
-                    }}
+                    width={20}
+                    sx={{ color: "primary.main" }}
                   />
                 }
                 onClick={handleEditGroupList}
@@ -505,14 +491,10 @@ const IndividualGroup = ({ groupId, onReset }) => {
           </CustomTooltip>
           <ShowComponent condition={!!groupId}>
             <Button
-              variant="outline"
+              variant="outlined"
               color="secondary"
               disabled={isLoadingBasicData}
               sx={{
-                px: "24px",
-                borderRadius: "8px",
-                height: "38px",
-                border: "1px solid",
                 borderColor: "primary.main",
                 color: "primary.main",
               }}
@@ -520,10 +502,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 <SvgColor
                   src="/assets/icons/ic_create-and-run.svg"
                   color="primary.main"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
+                  width="20px"
                 />
               }
               onClick={handleeRunEvaluations}
@@ -568,7 +547,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           columnDefs={columnDefs}
           cacheBlockSize={10}
           serverSideInitialRowCount={10}
-          rowHeight={65}
+          rowHeight={44}
           rowModelType="serverSide"
           suppressContextMenu
           getRowId={(params) => {

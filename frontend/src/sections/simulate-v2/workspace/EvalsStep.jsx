@@ -1,10 +1,25 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tooltip,
+  Switch,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SectionCard, EmptyState } from "../components/primitives";
-import { getEval, EVAL_CATALOG, EVAL_CAP_NOTE, MAX_APPLIED_EVALS, REQUIRED_EVAL_NOTE, TOOL_CALL_JUDGE_ID, cappedEvalCount } from "../_mock/evals";
+import {
+  getEval,
+  EVAL_CATALOG,
+  EVAL_CAP_NOTE,
+  MAX_APPLIED_EVALS,
+  REQUIRED_EVAL_NOTE,
+  TOOL_CALL_JUDGE_ID,
+  cappedEvalCount,
+} from "../_mock/evals";
 import { EvalRow } from "./evals/appliedEvals";
 import { useAppliedEvals } from "./evals/useAppliedEvals";
 import AddEvalsDrawer from "./evals/AddEvalsDrawer";
@@ -30,7 +45,15 @@ const TOOL_CALL_EVAL_ID = TOOL_CALL_JUDGE_ID;
  * matter for it, so the fastest correct set is one click, and the drawer is
  * there for everything else.
  */
-export default function EvalsStep({ env, envState, patch, onGo, locked = false, onFork, repeats = 3 }) {
+export default function EvalsStep({
+  env,
+  envState,
+  patch,
+  onGo,
+  locked = false,
+  onFork,
+  repeats = 3,
+}) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [twinEditorOpen, setTwinEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -39,7 +62,15 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // this is the backstop if it is ever rendered directly.
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
 
-  const { appliedEvals, appliedIds, add, remove, update, setRequired, slotsLeft } = useAppliedEvals(envState, patch);
+  const {
+    appliedEvals,
+    appliedIds,
+    add,
+    remove,
+    update,
+    setRequired,
+    slotsLeft,
+  } = useAppliedEvals(envState, patch);
   /* Up to 8 catalogue evaluations plus the tool-call judge. */
   const atCap = slotsLeft <= 0;
   const cappedCount = cappedEvalCount(envState?.evals || []);
@@ -57,7 +88,11 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
     () => runScopeOf(env, envState).count,
     [env, envState],
   );
-  const creditsPerRun = evalCreditsPerRun({ evals: appliedEvals, scenarios: runnable, repeats });
+  const creditsPerRun = evalCreditsPerRun({
+    evals: appliedEvals,
+    scenarios: runnable,
+    repeats,
+  });
   const meteredCount = appliedEvals.filter((e) => evalRailOf(e).metered).length;
   const toolCallEval = getEval(TOOL_CALL_EVAL_ID);
   const toolCallEvalOn = appliedIds.has(TOOL_CALL_EVAL_ID);
@@ -80,15 +115,19 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const suggested = useMemo(() => {
     const presetIds = env.evalPreset || [];
     const twinIds = envState?.twinBacking
-      ? EVAL_CATALOG.filter((e) => e.evalKind === "twin_end_state").map((e) => e.id)
+      ? EVAL_CATALOG.filter((e) => e.evalKind === "twin_end_state").map(
+          (e) => e.id,
+        )
       : [];
     const orderedIds = [...presetIds, ...twinIds];
-    return orderedIds
-      .map(getEval)
-      .filter(Boolean)
-      .filter((e) => !appliedIds.has(e.id))
-      /* De-duplicate — a twin id could theoretically also live in preset. */
-      .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
+    return (
+      orderedIds
+        .map(getEval)
+        .filter(Boolean)
+        .filter((e) => !appliedIds.has(e.id))
+        /* De-duplicate — a twin id could theoretically also live in preset. */
+        .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i)
+    );
   }, [env.evalPreset, envState?.twinBacking, appliedIds]);
 
   /*
@@ -105,14 +144,19 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   useEffect(() => {
     if (seededRef.current || envState?.evalsSeeded) return;
     if (needsScenarios) return;
-    if (appliedEvals.length > 0) { seededRef.current = true; return; }
-    if (suggested.length === 0) { seededRef.current = true; return; }
+    if (appliedEvals.length > 0) {
+      seededRef.current = true;
+      return;
+    }
+    if (suggested.length === 0) {
+      seededRef.current = true;
+      return;
+    }
     seededRef.current = true;
     add(suggested);
     patch({ evalsSeeded: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsScenarios, suggested.length, appliedEvals.length]);
-
 
   return (
     <Box sx={{ p: 2 }}>
@@ -124,23 +168,49 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
           applied list like any other, so the switch and the list below can
           never disagree. It needs tools for the world to answer, not an agent. */}
       <Stack
-        direction="row" alignItems="center" spacing={2}
-        sx={{ px: 2, py: 1.5, mb: 2, borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{
+          px: 2,
+          py: 1.5,
+          mb: 2,
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>Enable tool call evaluation</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+            Enable tool call evaluation
+          </Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+          >
             {hasTools
               ? "Tool calling that happens during the calls will be evaluated — the right tool, with the right arguments, at the right time."
               : "This environment has no tools yet — there are no tool calls to evaluate."}
           </Typography>
         </Box>
-        <Tooltip arrow title={locked ? "Fork this environment to edit." : !hasTools ? "Add tools to the world to evaluate tool calls." : ""}>
+        <Tooltip
+          arrow
+          title={
+            locked
+              ? "Fork this environment to edit."
+              : !hasTools
+                ? "Add tools to the world to evaluate tool calls."
+                : ""
+          }
+        >
           <span>
             <Switch
               checked={toolCallEvalOn}
               disabled={locked || !hasTools || !toolCallEval}
-              onChange={(e) => (e.target.checked ? add([toolCallEval]) : remove(TOOL_CALL_EVAL_ID))}
+              onChange={(e) =>
+                e.target.checked
+                  ? add([toolCallEval])
+                  : remove(TOOL_CALL_EVAL_ID)
+              }
               inputProps={{ "aria-label": "Enable tool call evaluation" }}
             />
           </span>
@@ -155,46 +225,68 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
           empty-state below already renders a prominent Add evaluations
           button — two CTAs for the same action read as noise.
         */
-        action={appliedEvals.length > 0 && (
-          <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-            {twinBacked && (
-              <Tooltip arrow title={locked ? "Fork this environment to author evals." : "Write a check against the world's end state — deterministic, not a judge prompt."}>
+        action={
+          appliedEvals.length > 0 && (
+            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+              {twinBacked && (
+                <Tooltip
+                  arrow
+                  title={
+                    locked
+                      ? "Fork this environment to author evals."
+                      : "Write a check against the world's end state — deterministic, not a judge prompt."
+                  }
+                >
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      disabled={needsScenarios || locked}
+                      onClick={() => setTwinEditorOpen(true)}
+                      startIcon={
+                        <Iconify icon="solar:server-square-linear" width={14} />
+                      }
+                      sx={{
+                        color: "text.primary",
+                        borderColor: "divider",
+                        "&:hover": { borderColor: "text.disabled" },
+                      }}
+                    >
+                      Author sandbox eval
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
+              <Tooltip
+                arrow
+                title={
+                  locked
+                    ? "Fork this environment to add evaluations."
+                    : needsScenarios
+                      ? "Add scenarios first"
+                      : atCap
+                        ? EVAL_CAP_NOTE
+                        : ""
+                }
+              >
                 <span>
                   <Button
-                    variant="outlined"
+                    variant="contained"
+                    color="primary"
                     size="small"
-                    disabled={needsScenarios || locked}
-                    onClick={() => setTwinEditorOpen(true)}
-                    startIcon={<Iconify icon="solar:server-square-linear" width={14} />}
-                    sx={{
-                      typography: "s2", fontWeight: 700,
-                      color: "text.primary",
-                      borderColor: "divider",
-                      "&:hover": { borderColor: "text.disabled" },
-                    }}
+                    disabled={needsScenarios || locked || atCap}
+                    onClick={() => setPickerOpen(true)}
+                    startIcon={
+                      <Iconify icon="solar:add-circle-linear" width={16} />
+                    }
                   >
-                    Author sandbox eval
+                    Add evaluations
                   </Button>
                 </span>
               </Tooltip>
-            )}
-            <Tooltip arrow title={locked ? "Fork this environment to add evaluations." : needsScenarios ? "Add scenarios first" : atCap ? EVAL_CAP_NOTE : ""}>
-              <span>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  size="small"
-                  disabled={needsScenarios || locked || atCap}
-                  onClick={() => setPickerOpen(true)}
-                  startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-                  sx={{ typography: "s2", fontWeight: 700 }}
-                >
-                  Add evaluations
-                </Button>
-              </span>
-            </Tooltip>
-          </Stack>
-        )}
+            </Stack>
+          )
+        }
         subtitle={
           appliedEvals.length
             ? `Every task is scored against these · ${cappedCount} of ${MAX_APPLIED_EVALS}${toolCallEvalOn ? " plus the tool-call judge" : ""}${requiredCount ? ` · ${requiredCount} required` : ""}. Sub-goals decide pass or fail; a required one also fails the conversation when it fails, the rest score it.`
@@ -203,8 +295,16 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
       >
         {appliedEvals.length === 0 ? (
           <EmptyState
-            icon={needsScenarios ? "solar:lock-keyhole-minimalistic-linear" : "solar:shield-check-linear"}
-            title={needsScenarios ? "Add scenarios first" : "No evaluations added yet"}
+            icon={
+              needsScenarios
+                ? "solar:lock-keyhole-minimalistic-linear"
+                : "solar:shield-check-linear"
+            }
+            title={
+              needsScenarios
+                ? "Add scenarios first"
+                : "No evaluations added yet"
+            }
             body={
               needsScenarios
                 ? "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks."
@@ -217,9 +317,10 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
                     variant="outlined"
                     size="small"
                     onClick={() => setTwinEditorOpen(true)}
-                    startIcon={<Iconify icon="solar:server-square-linear" width={14} />}
+                    startIcon={
+                      <Iconify icon="solar:server-square-linear" width={14} />
+                    }
                     sx={{
-                      typography: "s2", fontWeight: 700,
                       color: "text.primary",
                       borderColor: "divider",
                       "&:hover": { borderColor: "text.disabled" },
@@ -232,9 +333,14 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
                   variant="contained"
                   color="primary"
                   size="small"
-                  onClick={() => (needsScenarios ? onGo("scenarios") : setPickerOpen(true))}
-                  endIcon={needsScenarios ? <Iconify icon="solar:arrow-right-linear" width={15} /> : null}
-                  sx={{ typography: "s2", fontWeight: 700 }}
+                  onClick={() =>
+                    needsScenarios ? onGo("scenarios") : setPickerOpen(true)
+                  }
+                  endIcon={
+                    needsScenarios ? (
+                      <Iconify icon="solar:arrow-right-linear" width={16} />
+                    ) : null
+                  }
                 >
                   {needsScenarios ? "Add scenarios" : "Add evaluations"}
                 </Button>
@@ -242,12 +348,16 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
             }
           />
         ) : (
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
             {appliedEvals.map((e) => (
               <EvalRow
                 key={e.id}
                 item={e}
-                action={(
+                action={
                   /* No always-on evals. Every added row is editable and
                      removable — except on a locked template, where every
                      edit is gated behind a fork. */
@@ -255,44 +365,93 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
                     {/* Required — a failing score fails the conversation. Stored
                         on the applied eval, so runs and an improvement's goal
                         picker read it from envState.evals. */}
-                    <Tooltip arrow title={locked ? "Fork this environment to edit." : `Required — ${REQUIRED_EVAL_NOTE}`}>
+                    <Tooltip
+                      arrow
+                      title={
+                        locked
+                          ? "Fork this environment to edit."
+                          : `Required — ${REQUIRED_EVAL_NOTE}`
+                      }
+                    >
                       <Stack
                         component="label"
-                        direction="row" alignItems="center" spacing={0.25}
-                        sx={{ mr: 0.75, cursor: locked ? "default" : "pointer" }}
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.25}
+                        sx={{
+                          mr: 0.75,
+                          cursor: locked ? "default" : "pointer",
+                        }}
                       >
                         <Switch
                           size="small"
                           checked={!!e.required}
                           disabled={locked}
-                          onChange={(ev) => setRequired(e.id, ev.target.checked)}
+                          onChange={(ev) =>
+                            setRequired(e.id, ev.target.checked)
+                          }
                           inputProps={{ "aria-label": `Required: ${e.name}` }}
                         />
-                        <Typography sx={{ typography: "s3", fontWeight: 600, color: e.required ? "text.primary" : "text.subtitle" }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            fontWeight: 600,
+                            color: e.required
+                              ? "text.primary"
+                              : "text.tertiary",
+                          }}
+                        >
                           Required
                         </Typography>
                       </Stack>
                     </Tooltip>
                     <Tooltip
                       arrow
-                      title={canEditEval(e) ? "View mapping" : "An authored assertion — it has no mapping to view."}
+                      title={
+                        canEditEval(e)
+                          ? "View mapping"
+                          : "An authored assertion — it has no mapping to view."
+                      }
                     >
                       <span>
                         {/* Viewing is never gated: a mapping is read-only, and removing it is the only change. */}
-                        <IconButton size="small" disabled={!canEditEval(e)} onClick={() => setEditingId(e.id)} aria-label={`View mapping for ${e.name}`}>
-                          <Iconify icon="solar:eye-linear" width={16} sx={{ color: "text.subtitle" }} />
+                        <IconButton
+                          size="small"
+                          disabled={!canEditEval(e)}
+                          onClick={() => setEditingId(e.id)}
+                          aria-label={`View mapping for ${e.name}`}
+                        >
+                          <Iconify
+                            icon="solar:eye-linear"
+                            width={16}
+                            sx={{ color: "text.tertiary" }}
+                          />
                         </IconButton>
                       </span>
                     </Tooltip>
-                    <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove"}>
+                    <Tooltip
+                      arrow
+                      title={
+                        locked ? "Fork this environment to edit." : "Remove"
+                      }
+                    >
                       <span>
-                        <IconButton size="small" disabled={locked} onClick={() => remove(e.id)} aria-label={`Remove ${e.name}`}>
-                          <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
+                        <IconButton
+                          size="small"
+                          disabled={locked}
+                          onClick={() => remove(e.id)}
+                          aria-label={`Remove ${e.name}`}
+                        >
+                          <Iconify
+                            icon="solar:trash-bin-trash-linear"
+                            width={16}
+                            sx={{ color: "text.tertiary" }}
+                          />
                         </IconButton>
                       </span>
                     </Tooltip>
                   </Stack>
-                )}
+                }
               />
             ))}
           </Stack>
@@ -300,18 +459,28 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
       </SectionCard>
 
       {atCap && !locked && (
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1.25, px: 0.5 }}>
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", mt: 1.25, px: 0.5 }}
+        >
           {EVAL_CAP_NOTE}
         </Typography>
       )}
 
       {appliedEvals.length > 0 && (
-        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1.25, px: 0.5, fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            mt: 1.25,
+            px: 0.5,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {meteredCount > 0
             ? `This environment's evals cost about ${creditsPerRun.toLocaleString()} credits per run (${runnable} scenario${runnable === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"}).`
             : "This environment's evals are free — each one is rule-based or judged by your own model key."}
           {meteredCount > 0 && meteredCount < appliedEvals.length && (
-            <Box component="span" sx={{ color: "text.subtitle" }}>
+            <Box component="span" sx={{ color: "text.tertiary" }}>
               {` ${appliedEvals.length - meteredCount} of ${appliedEvals.length} are free.`}
             </Box>
           )}
@@ -345,7 +514,10 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
           open={twinEditorOpen}
           envState={envState}
           onClose={() => setTwinEditorOpen(false)}
-          onSave={(evalItem) => { add([evalItem]); setTwinEditorOpen(false); }}
+          onSave={(evalItem) => {
+            add([evalItem]);
+            setTwinEditorOpen(false);
+          }}
         />
       )}
     </Box>

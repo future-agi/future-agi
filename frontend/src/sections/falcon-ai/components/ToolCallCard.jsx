@@ -1,10 +1,10 @@
 import React, { useState } from "react";
+import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Collapse from "@mui/material/Collapse";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import TextBlock from "./TextBlock";
 
@@ -20,11 +20,21 @@ function StatusIcon({ status }) {
   }
   if (status === "completed") {
     return (
-      <Iconify icon="mdi:check" width={14} sx={{ color: "success.main" }} />
+      <Iconify
+        icon="solar:check-linear"
+        width={14}
+        sx={{ color: "success.main" }}
+      />
     );
   }
   if (status === "error") {
-    return <Iconify icon="mdi:close" width={14} sx={{ color: "error.main" }} />;
+    return (
+      <Iconify
+        icon="solar:close-linear"
+        width={14}
+        sx={{ color: "error.main" }}
+      />
+    );
   }
   return null;
 }
@@ -34,10 +44,8 @@ StatusIcon.propTypes = {
 };
 
 export default function ToolCallCard({ toolCall }) {
-  const theme = useTheme();
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
-  const isDark = theme.palette.mode === "dark";
 
   // Support both snake_case (WebSocket streaming) and camelCase (API history)
   const call_id = toolCall.call_id;
@@ -57,23 +65,22 @@ export default function ToolCallCard({ toolCall }) {
     <Box
       sx={{
         border: 1,
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.08)
-          : alpha(theme.palette.common.black, 0.08),
-        borderRadius: "10px",
+        borderColor: "divider",
+        borderRadius: "8px",
         overflow: "hidden",
         mb: 1,
         transition: "border-color 0.2s ease",
         "&:hover": {
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.16)
-            : alpha(theme.palette.common.black, 0.16),
+          borderColor: "border.default",
         },
       }}
     >
       {/* Header row */}
-      <Box
+      <ButtonBase
+        component="div"
         sx={{
+          justifyContent: "flex-start",
+          textAlign: "left",
           display: "flex",
           alignItems: "center",
           gap: 1,
@@ -96,7 +103,7 @@ export default function ToolCallCard({ toolCall }) {
             fontFamily:
               "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace",
             fontWeight: 500,
-            fontSize: 12.5,
+            fontSize: 13,
             flex: 1,
             color: "text.secondary",
           }}
@@ -108,7 +115,7 @@ export default function ToolCallCard({ toolCall }) {
           <Typography
             variant="caption"
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
             }}
@@ -119,12 +126,16 @@ export default function ToolCallCard({ toolCall }) {
 
         {(isCompleted || isError) && (
           <Iconify
-            icon={detailsExpanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              detailsExpanded
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
             width={16}
             sx={{ color: "text.disabled" }}
           />
         )}
-      </Box>
+      </ButtonBase>
 
       {/* Summary line */}
       {(isCompleted || isError) && result_summary && !detailsExpanded && (
@@ -152,9 +163,7 @@ export default function ToolCallCard({ toolCall }) {
             px: 1.5,
             pb: 1.5,
             borderTop: 1,
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.06)
-              : alpha(theme.palette.common.black, 0.06),
+            borderColor: "divider",
           }}
         >
           {/* Tool description */}
@@ -177,12 +186,15 @@ export default function ToolCallCard({ toolCall }) {
           {/* Params section */}
           {params && Object.keys(params).length > 0 && (
             <Box sx={{ mt: 1 }}>
-              <Box
+              <ButtonBase
+                component="div"
                 onClick={(e) => {
                   e.stopPropagation();
                   setParamsExpanded((prev) => !prev);
                 }}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 0.5,
@@ -193,7 +205,9 @@ export default function ToolCallCard({ toolCall }) {
               >
                 <Iconify
                   icon={
-                    paramsExpanded ? "mdi:chevron-down" : "mdi:chevron-right"
+                    paramsExpanded
+                      ? "solar:alt-arrow-down-linear"
+                      : "solar:alt-arrow-right-linear"
                   }
                   width={14}
                   sx={{ color: "text.disabled" }}
@@ -201,16 +215,16 @@ export default function ToolCallCard({ toolCall }) {
                 <Typography
                   variant="caption"
                   sx={{
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.disabled",
                     fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                   }}
                 >
                   Parameters
                 </Typography>
-              </Box>
+              </ButtonBase>
               <Collapse in={paramsExpanded}>
                 <Box
                   component="pre"
@@ -218,9 +232,7 @@ export default function ToolCallCard({ toolCall }) {
                     fontSize: 12,
                     fontFamily:
                       "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
-                    bgcolor: isDark
-                      ? alpha(theme.palette.common.white, 0.04)
-                      : "grey.50",
+                    bgcolor: "background.neutral",
                     color: "text.secondary",
                     borderRadius: "8px",
                     p: 1.5,
@@ -228,9 +240,7 @@ export default function ToolCallCard({ toolCall }) {
                     maxHeight: 200,
                     m: 0,
                     border: 1,
-                    borderColor: isDark
-                      ? alpha(theme.palette.common.white, 0.06)
-                      : alpha(theme.palette.common.black, 0.06),
+                    borderColor: "divider",
                   }}
                 >
                   {JSON.stringify(params, null, 2)}
@@ -245,11 +255,11 @@ export default function ToolCallCard({ toolCall }) {
               <Typography
                 variant="caption"
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   color: "text.disabled",
                   fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   display: "block",
                   mb: 0.5,
                 }}
@@ -278,11 +288,11 @@ export default function ToolCallCard({ toolCall }) {
               <Typography
                 variant="caption"
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   color: "text.disabled",
                   fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   display: "block",
                   mb: 0.5,
                 }}
@@ -294,14 +304,10 @@ export default function ToolCallCard({ toolCall }) {
                   maxHeight: 300,
                   overflow: "auto",
                   borderRadius: "8px",
-                  bgcolor: isDark
-                    ? alpha(theme.palette.common.white, 0.04)
-                    : "grey.50",
+                  bgcolor: "background.neutral",
                   p: 1.5,
                   border: 1,
-                  borderColor: isDark
-                    ? alpha(theme.palette.common.white, 0.06)
-                    : alpha(theme.palette.common.black, 0.06),
+                  borderColor: "divider",
                 }}
               >
                 <TextBlock content={result_full} />

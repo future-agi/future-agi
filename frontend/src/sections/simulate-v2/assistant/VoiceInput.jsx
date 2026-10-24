@@ -46,17 +46,27 @@ export default function VoiceInput({ onTranscript, disabled }) {
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
       {live && (
-        <Stack direction="row" alignItems="center" spacing={0.375} sx={{ height: 20 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.375}
+          sx={{ height: 20 }}
+        >
           {[0, 1, 2, 3, 4].map((i) => (
             <Box
               key={i}
               sx={{
-                width: 2.5, height: 16, borderRadius: 1, bgcolor: "primary.main",
+                width: 2.5,
+                height: 16,
+                borderRadius: 1,
+                bgcolor: "primary.main",
                 animation: `${pulse} 0.9s ease-in-out ${i * 0.11}s infinite`,
               }}
             />
           ))}
-          <Typography sx={{ typography: "s3", color: "primary.main", ml: 0.75 }}>
+          <Typography
+            sx={{ typography: "s3", color: "primary.main", ml: 0.75 }}
+          >
             listening
           </Typography>
         </Stack>
@@ -69,10 +79,16 @@ export default function VoiceInput({ onTranscript, disabled }) {
             onClick={live ? stop : start}
             sx={{
               color: live ? "primary.main" : "text.subtitle",
-              bgcolor: (t) => live ? alpha(t.palette.primary.main, 0.1) : "transparent",
+              bgcolor: (t) =>
+                live ? alpha(t.palette.primary.main, 0.1) : "transparent",
             }}
           >
-            <Iconify icon={live ? "solar:stop-circle-bold" : "solar:microphone-3-linear"} width={18} />
+            <Iconify
+              icon={
+                live ? "solar:stop-circle-bold" : "solar:microphone-3-linear"
+              }
+              width={20}
+            />
           </IconButton>
         </span>
       </Tooltip>
@@ -80,4 +96,7 @@ export default function VoiceInput({ onTranscript, disabled }) {
   );
 }
 
-VoiceInput.propTypes = { onTranscript: PropTypes.func, disabled: PropTypes.bool };
+VoiceInput.propTypes = {
+  onTranscript: PropTypes.func,
+  disabled: PropTypes.bool,
+};

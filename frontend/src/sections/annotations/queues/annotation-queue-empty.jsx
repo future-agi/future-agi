@@ -46,7 +46,7 @@ export default function AnnotationQueueEmpty({ onCreateClick }) {
         <Button
           variant="outlined"
           color="primary"
-          startIcon={<Iconify icon="mingcute:add-line" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={onCreateClick}
         >
           Create Queue

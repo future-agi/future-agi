@@ -36,7 +36,7 @@ const FileUploader = ({ setValue }) => {
       <Box sx={{ display: "flex", alignItems: "center", gap: "8px" }}>
         <Typography
           sx={{
-            fontWeight: 900,
+            fontWeight: 600,
             fontSize: "12px",
             lineHeight: "24px",
             alignItems: "center",
@@ -48,10 +48,7 @@ const FileUploader = ({ setValue }) => {
           {fileName}
         </Typography>
       </Box>
-      <Button
-        variant="text"
-        sx={{ color: "rgba(120, 87, 252, 1)", fontWeight: "500" }}
-      >
+      <Button variant="text" sx={{ color: "primary.main" }}>
         Update new file
         <input
           type="file"

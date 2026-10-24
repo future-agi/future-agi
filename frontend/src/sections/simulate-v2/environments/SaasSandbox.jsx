@@ -23,16 +23,31 @@ function ServiceTile({ service, size = 26 }) {
       <Box
         aria-label={service.name}
         sx={{
-          width: size, height: size, borderRadius: 0.75, display: "grid", placeItems: "center", flexShrink: 0,
+          width: size,
+          height: size,
+          borderRadius: "4px",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
           bgcolor: (t) => alpha(t.palette.text.primary, 0.05),
         }}
       >
-        <Iconify icon={theme.palette.mode === "dark" && service.iconDark ? service.iconDark : service.icon} width={Math.round(size * 0.58)} />
+        <Iconify
+          icon={
+            theme.palette.mode === "dark" && service.iconDark
+              ? service.iconDark
+              : service.icon
+          }
+          width={Math.round(size * 0.58)}
+        />
       </Box>
     </Tooltip>
   );
 }
-ServiceTile.propTypes = { service: PropTypes.object.isRequired, size: PropTypes.number };
+ServiceTile.propTypes = {
+  service: PropTypes.object.isRequired,
+  size: PropTypes.number,
+};
 
 /*
   One compact row under the featured worlds in Build environment — visible
@@ -47,7 +62,14 @@ export default function SaasSandboxRow() {
     <ButtonBase
       onClick={open}
       sx={{
-        ...PANEL_SX, width: "100%", px: 2.25, py: 1.5, display: "flex", alignItems: "center", gap: 2, textAlign: "left",
+        ...PANEL_SX,
+        width: "100%",
+        px: 1.5,
+        py: 1,
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        textAlign: "left",
         transition: "border-color .12s ease",
         "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.3) },
         "&:hover .sandbox-go": { color: "text.primary" },
@@ -55,19 +77,39 @@ export default function SaasSandboxRow() {
       }}
     >
       {/* The apps first: they say what this is before the words do. */}
-      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
-        {shown.map((sv) => <ServiceTile key={sv.id} service={sv} size={24} />)}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{ flexShrink: 0 }}
+      >
+        {shown.map((sv) => (
+          <ServiceTile key={sv.id} service={sv} size={24} />
+        ))}
       </Stack>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "s1", fontWeight: 700 }}>SaaS sandbox</Typography>
+          <Typography noWrap sx={{ typography: "s2_1", fontWeight: 600 }}>
+            SaaS sandbox
+          </Typography>
           <QuietTag>Any agent</QuietTag>
         </Stack>
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           {`Your own agent on the real apps it calls — ${services.length} apps, answered by a sandbox that resets between runs.`}
         </Typography>
       </Box>
-      <Stack className="sandbox-go" direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0, color: "text.secondary", typography: "s2", fontWeight: 700 }}>
+      <Stack
+        className="sandbox-go"
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{
+          flexShrink: 0,
+          color: "text.secondary",
+          typography: "s2",
+          fontWeight: 600,
+        }}
+      >
         <span>Set up sandbox</span>
         <Iconify icon="solar:arrow-right-linear" width={14} />
       </Stack>
@@ -84,23 +126,64 @@ export function SaasSandboxCard() {
     <ButtonBase
       onClick={() => navigate(paths.dashboard.simulate.environmentNewTwin)}
       sx={{
-        ...PANEL_SX, p: 2.25, display: "flex", flexDirection: "column", alignItems: "stretch", textAlign: "left",
+        ...PANEL_SX,
+        p: 1.5,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        textAlign: "left",
         transition: "border-color .12s ease",
         "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.3) },
         "&.Mui-focusVisible": focusRing,
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-        <Typography noWrap sx={{ typography: "s1", fontWeight: 700, flex: 1, minWidth: 0 }}>SaaS sandbox</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ minWidth: 0 }}
+      >
+        <Typography
+          noWrap
+          sx={{ typography: "s2_1", fontWeight: 600, flex: 1, minWidth: 0 }}
+        >
+          SaaS sandbox
+        </Typography>
         <QuietTag>Any agent</QuietTag>
       </Stack>
-      <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5, mb: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-        Your agent calls the real apps — the sandbox answers and resets between runs
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          mt: 0.5,
+          mb: 1.5,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        Your agent calls the real apps — the sandbox answers and resets between
+        runs
       </Typography>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: "auto", pt: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
-        {shown.map((sv) => <ServiceTile key={sv.id} service={sv} size={22} />)}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{
+          mt: "auto",
+          pt: 1.25,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        {shown.map((sv) => (
+          <ServiceTile key={sv.id} service={sv} size={22} />
+        ))}
         {services.length > shown.length && (
-          <Typography sx={{ typography: "s2", color: "text.secondary", pl: 0.25 }}>{`+${services.length - shown.length}`}</Typography>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", pl: 0.25 }}
+          >{`+${services.length - shown.length}`}</Typography>
         )}
       </Stack>
     </ButtonBase>

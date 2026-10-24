@@ -43,8 +43,8 @@ export const StyledIntervalMenuItem = styled(MenuItem)(({ theme }) => ({
 }));
 
 export const ObserveIconButton = styled(IconButton)(({ theme }) => ({
-  borderRadius: theme.spacing(0.5),
-  border: `1px solid ${theme.palette.divider}`,
+  borderRadius: 6,
+  border: `1px solid ${theme.palette.border?.default || theme.palette.divider}`,
   padding: theme.spacing(0.625),
   color: "text.primary",
 }));

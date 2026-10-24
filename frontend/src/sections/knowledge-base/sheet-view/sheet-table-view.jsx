@@ -292,7 +292,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={54}
+        rowHeight={44}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}

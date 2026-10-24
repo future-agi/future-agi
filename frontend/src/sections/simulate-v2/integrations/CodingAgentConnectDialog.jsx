@@ -1,14 +1,32 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import { Box, Button, Dialog, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Dialog,
+  IconButton,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { IMPROVER_TOOLS, connectCodingAgent, improverTokenLabel, useIntegrations } from "../_mock/integrations";
+import {
+  IMPROVER_TOOLS,
+  connectCodingAgent,
+  improverTokenLabel,
+  useIntegrations,
+} from "../_mock/integrations";
 import BrandMark from "./BrandMark";
 import { Returning } from "./ExternalPage";
 import { clickable, focusRing } from "../components/clickable";
 import {
-  INSTRUCTIONS, PLUGIN_INSTALL, IMPROVE_MCP_URL, WAYS, instructionsFileFor, mcpConfigFor,
+  INSTRUCTIONS,
+  PLUGIN_INSTALL,
+  IMPROVE_MCP_URL,
+  WAYS,
+  instructionsFileFor,
+  mcpConfigFor,
 } from "./codingAgentSetup";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -38,7 +56,10 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
      agent's first authenticated call. */
   useEffect(() => {
     if (phase !== "waiting") return undefined;
-    const t = setTimeout(() => { connectCodingAgent(agent.id, via); setPhase("done"); }, 1400);
+    const t = setTimeout(() => {
+      connectCodingAgent(agent.id, via);
+      setPhase("done");
+    }, 1400);
     return () => clearTimeout(t);
   }, [phase, agent, via]);
 
@@ -52,42 +73,113 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
 
   return (
     <Dialog
-      open={open} onClose={onClose}
-      PaperProps={{ sx: { borderRadius: 2, maxWidth: 560, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: 560,
+          width: "100%",
+          bgcolor: "background.paper",
+          backgroundImage: "none",
+          border: "1px solid",
+          borderColor: "divider",
+        },
+      }}
     >
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 3, pt: 2.5, pb: 2 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ px: 3, pt: 2.5, pb: 2 }}
+      >
         <BrandMark brand={agent.id} size={36} />
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "m3", fontWeight: 700 }}>{`Connect ${agent.label}`}</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>For you only — it runs where you code. Future AGI checks every change it proposes.</Typography>
+          <Typography
+            sx={{ typography: "m3", fontWeight: 600 }}
+          >{`Connect ${agent.label}`}</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            For you only — it runs where you code. Future AGI checks every
+            change it proposes.
+          </Typography>
         </Box>
-        <IconButton size="small" onClick={onClose}><Iconify icon="eva:close-fill" width={18} /></IconButton>
+        <IconButton size="small" onClick={onClose}>
+          <Iconify icon="solar:close-linear" width={20} />
+        </IconButton>
       </Stack>
 
       <Box sx={{ px: 3, pb: 2.5 }}>
         {phase === "setup" && (
           <Stack spacing={2.25}>
             {agent.ways.length > 1 && (
-              <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                }}
+              >
                 {agent.ways.map((w, i) => {
                   const on = via === w;
                   return (
                     <Stack
-                      key={w} direction="row" spacing={1.25} alignItems="flex-start" {...clickable(() => setVia(w), { role: "radio", checked: on })}
+                      key={w}
+                      direction="row"
+                      spacing={1.25}
+                      alignItems="flex-start"
+                      {...clickable(() => setVia(w), {
+                        role: "radio",
+                        checked: on,
+                      })}
                       sx={{
                         ...focusRing,
-                        px: 1.5, py: 1.125, cursor: "pointer", borderTop: i ? "1px solid" : "none", borderColor: "divider",
-                        bgcolor: (t) => (on ? alpha(t.palette.text.primary, 0.04) : "transparent"),
+                        px: 1.5,
+                        py: 1.125,
+                        cursor: "pointer",
+                        borderTop: i ? "1px solid" : "none",
+                        borderColor: "divider",
+                        bgcolor: (t) =>
+                          on
+                            ? alpha(t.palette.text.primary, 0.04)
+                            : "transparent",
                         "&:hover": { bgcolor: "action.hover" },
                       }}
                     >
-                      <Iconify icon={on ? "solar:check-circle-bold" : "solar:circle-linear"} width={16} sx={{ mt: 0.25, flexShrink: 0, color: on ? "text.primary" : "text.disabled" }} />
+                      <Iconify
+                        icon={
+                          on ? "solar:check-circle-bold" : "solar:circle-linear"
+                        }
+                        width={16}
+                        sx={{
+                          mt: 0.25,
+                          flexShrink: 0,
+                          color: on ? "text.primary" : "text.disabled",
+                        }}
+                      />
                       <Box flex={1} minWidth={0}>
-                        <Stack direction="row" alignItems="baseline" spacing={1}>
-                          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{WAYS[w].label}</Typography>
-                          {i === 0 && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Recommended</Typography>}
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={1}
+                        >
+                          <Typography
+                            sx={{ typography: "s2", fontWeight: 600 }}
+                          >
+                            {WAYS[w].label}
+                          </Typography>
+                          {i === 0 && (
+                            <Typography
+                              sx={{ typography: "s3", color: "text.subtitle" }}
+                            >
+                              Recommended
+                            </Typography>
+                          )}
                         </Stack>
-                        <Typography sx={{ typography: "s3", color: "text.secondary" }}>{WAYS[w].blurb}</Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {WAYS[w].blurb}
+                        </Typography>
                       </Box>
                     </Stack>
                   );
@@ -99,7 +191,9 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
               <Stack spacing={2}>
                 <Step n={1} title="Install the plugin in Claude Code">
                   <Code text={PLUGIN_INSTALL} />
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}
+                  >
                     {`Bundles the Future AGI skills and the MCP server — ${IMPROVER_TOOLS.map((t) => t.name).join(", ")}.`}
                   </Typography>
                 </Step>
@@ -109,17 +203,36 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
               <Stack spacing={2}>
                 <Step n={1} title="Add the MCP server">
                   <Code text={IMPROVE_MCP_URL} />
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1, mb: 0.5 }}>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.subtitle",
+                      mt: 1,
+                      mb: 0.5,
+                    }}
+                  >
                     {"Or add it to "}
-                    <Box component="span" sx={{ fontFamily: MONO, color: "text.secondary" }}>{mcp.file}</Box>
+                    <Box
+                      component="span"
+                      sx={{ fontFamily: MONO, color: "text.secondary" }}
+                    >
+                      {mcp.file}
+                    </Box>
                   </Typography>
                   <Code text={mcp.snippet} block />
                 </Step>
                 <Step n={2} title="Add the instructions file">
-                  <Typography sx={{ typography: "s3", color: "text.secondary", mb: 0.75 }}>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary", mb: 0.75 }}
+                  >
                     {`Without the plugin's skills, ${agent.label} learns the loop from your repo — get the brief, change the agent, submit, read the verdict.`}
                   </Typography>
-                  <Code text={INSTRUCTIONS} label={instructionsFileFor(agent.id)} block maxHeight={120} />
+                  <Code
+                    text={INSTRUCTIONS}
+                    label={instructionsFileFor(agent.id)}
+                    block
+                    maxHeight={120}
+                  />
                 </Step>
                 {signIn}
               </Stack>
@@ -127,21 +240,58 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
           </Stack>
         )}
 
-        {phase === "waiting" && <Returning label={`Waiting for ${agent.label} to sign in…`} />}
+        {phase === "waiting" && (
+          <Returning label={`Waiting for ${agent.label} to sign in…`} />
+        )}
 
         {phase === "done" && (
           <Stack spacing={1.5}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-              <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "text.primary", flexShrink: 0 }} />
-              <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>{`${agent.label} connected`}</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`via ${WAYS[via].short} · by you`}</Typography>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Iconify
+                icon="solar:check-circle-bold"
+                width={16}
+                sx={{ color: "text.primary", flexShrink: 0 }}
+              />
+              <Typography
+                sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
+              >{`${agent.label} connected`}</Typography>
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle" }}
+              >{`via ${WAYS[via].short} · by you`}</Typography>
             </Stack>
             {codingAgents[agent.id]?.token && (
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5 }}>
-                <Iconify icon="solar:key-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                sx={{ px: 1.5 }}
+              >
+                <Iconify
+                  icon="solar:key-minimalistic-linear"
+                  width={14}
+                  sx={{ color: "text.subtitle", flexShrink: 0 }}
+                />
                 <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  <Box component="span" sx={{ fontFamily: MONO, color: "text.secondary" }}>{improverTokenLabel(codingAgents[agent.id].token)}</Box>
-                  {" · scoped to briefs, visible scenarios, submit and verdicts · held-back scenarios hidden"}
+                  <Box
+                    component="span"
+                    sx={{ fontFamily: MONO, color: "text.secondary" }}
+                  >
+                    {improverTokenLabel(codingAgents[agent.id].token)}
+                  </Box>
+                  {
+                    " · scoped to briefs, visible scenarios, submit and verdicts · held-back scenarios hidden"
+                  }
                 </Typography>
               </Stack>
             )}
@@ -153,17 +303,45 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
       </Box>
 
       {phase !== "waiting" && (
-        <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 3, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}>
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{
+            px: 3,
+            py: 1.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
           {phase === "setup" && (
             <>
-              <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
-              <Button size="small" variant="contained" color="primary" onClick={() => setPhase("waiting")} sx={{ typography: "s2", fontWeight: 700 }}>
+              <Button
+                size="small"
+                onClick={onClose}
+                sx={{ color: "text.secondary" }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => setPhase("waiting")}
+              >
                 {via === "plugin" ? "I've installed it" : "I've added it"}
               </Button>
             </>
           )}
           {phase === "done" && (
-            <Button size="small" variant="contained" color="primary" onClick={onClose} sx={{ typography: "s2", fontWeight: 700 }}>Done</Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={onClose}
+            >
+              Done
+            </Button>
           )}
         </Stack>
       )}
@@ -171,22 +349,50 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
   );
 }
 
-CodingAgentConnectDialog.propTypes = { open: PropTypes.bool, onClose: PropTypes.func, agent: PropTypes.object };
+CodingAgentConnectDialog.propTypes = {
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  agent: PropTypes.object,
+};
 
 function Step({ n, title, children }) {
   return (
     <Stack direction="row" spacing={1.25} alignItems="flex-start">
-      <Box sx={{ width: 18, height: 18, mt: 0.125, borderRadius: "50%", display: "grid", placeItems: "center", flexShrink: 0, border: "1px solid", borderColor: "text.primary" }}>
-        <Typography sx={{ fontSize: 10, fontWeight: 700 }}>{n}</Typography>
+      <Box
+        sx={{
+          width: 18,
+          height: 18,
+          mt: 0.125,
+          borderRadius: "50%",
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+          border: "1px solid",
+          borderColor: "text.primary",
+        }}
+      >
+        <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{n}</Typography>
       </Box>
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.75 }}>{title}</Typography>
-        {typeof children === "string" ? <Typography sx={{ typography: "s3", color: "text.secondary" }}>{children}</Typography> : children}
+        <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+          {title}
+        </Typography>
+        {typeof children === "string" ? (
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {children}
+          </Typography>
+        ) : (
+          children
+        )}
       </Box>
     </Stack>
   );
 }
-Step.propTypes = { n: PropTypes.number, title: PropTypes.string, children: PropTypes.node };
+Step.propTypes = {
+  n: PropTypes.number,
+  title: PropTypes.string,
+  children: PropTypes.node,
+};
 
 /* A command, URL or file to copy. `label` names the file it belongs in. */
 function Code({ text, label, block = false, maxHeight }) {
@@ -194,30 +400,83 @@ function Code({ text, label, block = false, maxHeight }) {
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   const copy = () => {
-    try { navigator.clipboard?.writeText(text); } catch { /* clipboard unavailable */ }
+    try {
+      navigator.clipboard?.writeText(text);
+    } catch {
+      /* clipboard unavailable */
+    }
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 1400);
   };
   const button = (
     <Tooltip title={copied ? "Copied" : "Copy"} placement="top">
-      <IconButton size="small" onClick={copy} sx={{ color: "text.secondary", flexShrink: 0 }}>
-        <Iconify icon={copied ? "solar:check-circle-bold" : "solar:copy-linear"} width={14} />
+      <IconButton
+        size="small"
+        onClick={copy}
+        sx={{ color: "text.secondary", flexShrink: 0 }}
+      >
+        <Iconify
+          icon={copied ? "solar:check-circle-bold" : "solar:copy-linear"}
+          width={14}
+        />
       </IconButton>
     </Tooltip>
   );
   return (
-    <Box sx={{ borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral", overflow: "hidden" }}>
+    <Box
+      sx={{
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.neutral",
+        overflow: "hidden",
+      }}
+    >
       {label && (
-        <Stack direction="row" alignItems="center" sx={{ pl: 1.25, pr: 0.5, py: 0.25, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary", flex: 1 }}>{label}</Typography>
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{
+            pl: 1.25,
+            pr: 0.5,
+            py: 0.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              fontFamily: MONO,
+              color: "text.secondary",
+              flex: 1,
+            }}
+          >
+            {label}
+          </Typography>
           {button}
         </Stack>
       )}
-      <Stack direction="row" alignItems={block ? "flex-start" : "center"} sx={{ pl: 1.25, pr: 0.5, py: block ? 1 : 0.25 }}>
+      <Stack
+        direction="row"
+        alignItems={block ? "flex-start" : "center"}
+        sx={{ pl: 1.25, pr: 0.5, py: block ? 1 : 0.25 }}
+      >
         <Box
           component={block ? "pre" : "span"}
-          sx={{ m: 0, flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 12.5, lineHeight: 1.6, whiteSpace: block ? "pre-wrap" : "nowrap", overflow: "auto", maxHeight, color: "text.primary" }}
+          sx={{
+            m: 0,
+            flex: 1,
+            minWidth: 0,
+            fontFamily: MONO,
+            fontSize: 13,
+            lineHeight: 1.6,
+            whiteSpace: block ? "pre-wrap" : "nowrap",
+            overflow: "auto",
+            maxHeight,
+            color: "text.primary",
+          }}
         >
           {text}
         </Box>
@@ -226,4 +485,9 @@ function Code({ text, label, block = false, maxHeight }) {
     </Box>
   );
 }
-Code.propTypes = { text: PropTypes.string, label: PropTypes.string, block: PropTypes.bool, maxHeight: PropTypes.number };
+Code.propTypes = {
+  text: PropTypes.string,
+  label: PropTypes.string,
+  block: PropTypes.bool,
+  maxHeight: PropTypes.number,
+};

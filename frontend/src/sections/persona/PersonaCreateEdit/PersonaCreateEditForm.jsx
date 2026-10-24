@@ -133,7 +133,7 @@ const PersonaCreateEditForm = ({
             <Link
               href="https://docs.futureagi.com/docs/simulation/concepts/personas"
               underline="always"
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"

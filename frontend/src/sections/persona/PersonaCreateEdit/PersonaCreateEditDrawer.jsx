@@ -29,7 +29,7 @@ const PersonaCreateEditDrawer = ({
     onClose();
   };
   return (
-    <SideDrawer open={open} onClose={onClose} width={700}>
+    <SideDrawer open={open} onClose={onClose} width={640}>
       <PersonaDrawerScale>
         <Box sx={{ width: "100%", height: "100%", position: "relative" }}>
           <IconButton
@@ -41,7 +41,7 @@ const PersonaCreateEditDrawer = ({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
           <ShowComponent condition={!personaCreateEditType}>
             <Stack padding={2} spacing={2}>
@@ -87,7 +87,7 @@ const PersonaCreateEditDrawer = ({
                     >
                       <Iconify
                         icon={e?.icon}
-                        width={18}
+                        width={20}
                         sx={{ color: "text.primary", flexShrink: 0, mt: 0.25 }}
                       />
                       <Stack spacing={0.25}>

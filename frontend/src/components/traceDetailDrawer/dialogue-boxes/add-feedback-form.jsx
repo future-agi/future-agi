@@ -340,7 +340,7 @@ const AddFeedbackForm = (props) => {
         onClose={handleClose}
         PaperProps={{
           sx: {
-            width: "616px",
+            width: "720px",
             maxWidth: "70%",
             maxHeight: "85vh",
             overflow: "auto",
@@ -358,7 +358,11 @@ const AddFeedbackForm = (props) => {
               zIndex: 1,
             }}
           >
-            <Iconify icon="eva:close-fill" width={24} color="text.primary" />
+            <Iconify
+              icon="solar:close-linear"
+              width={24}
+              color="text.primary"
+            />
           </IconButton>
           <DialogTitle
             sx={{
@@ -390,7 +394,7 @@ const AddFeedbackForm = (props) => {
                 fontWeight: 500,
                 mb: 1,
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "13px",
               }}
             >
               Explanation
@@ -418,7 +422,7 @@ const AddFeedbackForm = (props) => {
                 fontWeight: 500,
                 mb: 1,
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "13px",
               }}
             >
               {outputType === OUTPUT_TYPES.BOOL ||
@@ -437,7 +441,7 @@ const AddFeedbackForm = (props) => {
                 mb: 1,
                 mt: 1,
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "13px",
               }}
             >
               What would you like to improve
@@ -465,24 +469,22 @@ const AddFeedbackForm = (props) => {
             }}
           >
             <Button
+              size="small"
               fullWidth
-              sx={{ height: "30px", fontSize: "12px", fontWeight: 500 }}
               variant="outlined"
               onClick={handleClose}
             >
               Cancel
             </Button>
             <LoadingButton
+              size="small"
               fullWidth
               color="primary"
               variant="contained"
               loading={isLoading}
               disabled={!isSubmitEnabled}
               sx={{
-                height: "30px",
                 backgroundColor: "primary.main",
-                fontSize: "12px",
-                fontWeight: 500,
               }}
               onClick={handleSubmit(handleFormSubmit)}
             >

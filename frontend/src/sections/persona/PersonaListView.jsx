@@ -2,9 +2,12 @@ import {
   Avatar,
   Box,
   Button,
-  Chip,
   IconButton,
+  MenuItem,
   Radio,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -13,9 +16,10 @@ import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
+import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   useBulkDeletePersonas,
@@ -31,25 +35,6 @@ import PersonasBulkActionsBar from "./components/PersonasBulkActionsBar";
 import PersonasBulkDeleteDialog from "./components/PersonasBulkDeleteDialog";
 import PersonasColumnsPopover from "./components/PersonasColumnsPopover";
 import { extractTagsFromPersona } from "./common";
-
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-const getAvatarColor = (name) => {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
 
 const getInitials = (name) => {
   if (!name) return "?";
@@ -94,6 +79,9 @@ const PersonaListView = ({
      When given, the list shows a "Used in" column and deleting says what
      uses the personas. */
   usage = null,
+  /* Sits under a page header + tabs (Environments → Personas): the toolbar
+     takes the shared 12px top padding so it lines up with its sibling tab. */
+  framed = false,
 }) => {
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
@@ -109,7 +97,8 @@ const PersonaListView = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [typeFilter, setTypeFilter] = useState(lockedType);
-  const [simulationFilter, setSimulationFilter] = useState(lockedSimulationType);
+  const [simulationFilter, setSimulationFilter] =
+    useState(lockedSimulationType);
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -245,7 +234,9 @@ const PersonaListView = ({
         minSize: 220,
         enableSorting: false,
         cell: ({ row }) => (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
+          <Box
+            sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
+          >
             <Typography
               variant="body2"
               noWrap
@@ -253,14 +244,19 @@ const PersonaListView = ({
             >
               {row.original?.name}
             </Typography>
-            {currentId != null && String(row.original?.id) === String(currentId) && (
-              <Chip
-                size="small"
-                label="Current"
-                variant="outlined"
-                sx={{ fontSize: "11px", height: 20, flexShrink: 0 }}
-              />
-            )}
+            {currentId != null &&
+              String(row.original?.id) === String(currentId) && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.tertiary",
+                    fontSize: "12px",
+                    flexShrink: 0,
+                  }}
+                >
+                  Current
+                </Typography>
+              )}
           </Box>
         ),
       },
@@ -293,26 +289,26 @@ const PersonaListView = ({
           const type = getValue();
           const isVoice = type === AGENT_TYPES.VOICE;
           return (
-            <Chip
-              size="small"
-              icon={
-                <Iconify
-                  icon={
-                    isVoice
-                      ? "solar:microphone-3-bold"
-                      : "solar:chat-round-line-bold"
-                  }
-                  width={12}
-                />
-              }
-              label={isVoice ? "Voice" : "Chat"}
-              variant="outlined"
+            <Box
               sx={{
-                fontSize: "11px",
-                height: 22,
-                borderColor: "divider",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.75,
+                color: "text.secondary",
               }}
-            />
+            >
+              <Iconify
+                icon={
+                  isVoice
+                    ? "solar:microphone-3-bold"
+                    : "solar:chat-round-line-bold"
+                }
+                width={12}
+              />
+              <Typography variant="body2" sx={{ fontSize: "13px" }}>
+                {isVoice ? "Voice" : "Chat"}
+              </Typography>
+            </Box>
           );
         },
       },
@@ -337,22 +333,25 @@ const PersonaListView = ({
                 overflow: "hidden",
               }}
             >
-              {displayed.map((tag) => (
-                <Chip
-                  key={tag}
-                  label={tag}
-                  size="small"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 22, maxWidth: 120 }}
-                />
-              ))}
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontSize: "13px", color: "text.primary" }}
+              >
+                {displayed.join(" · ")}
+              </Typography>
               {remaining > 0 && (
-                <Chip
-                  label={`+${remaining}`}
-                  size="small"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 22 }}
-                />
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontSize: "13px",
+                    color: "text.tertiary",
+                    flexShrink: 0,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {`+${remaining}`}
+                </Typography>
               )}
             </Box>
           );
@@ -380,12 +379,8 @@ const PersonaListView = ({
                   sx={{
                     width: 24,
                     height: 24,
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    bgcolor: isSystem
-                      ? "action.selected"
-                      : getAvatarColor(name),
-                    color: isSystem ? "text.secondary" : "common.white",
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {isSystem ? (
@@ -434,14 +429,22 @@ const PersonaListView = ({
                 const u = usage[String(row.original?.id)];
                 if (!u?.scenarios) {
                   return (
-                    <Typography variant="body2" noWrap sx={{ fontSize: "13px", color: "text.disabled" }}>
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{ fontSize: "13px", color: "text.disabled" }}
+                    >
                       Not used yet
                     </Typography>
                   );
                 }
                 return (
                   <Tooltip title={u.envs.join(", ")} placement="top" arrow>
-                    <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{ fontSize: "13px" }}
+                    >
                       {`${u.scenarios} scenario${u.scenarios === 1 ? "" : "s"} · ${u.envs.length} env${u.envs.length === 1 ? "" : "s"}`}
                     </Typography>
                   </Tooltip>
@@ -468,7 +471,10 @@ const PersonaListView = ({
                     sx={{ display: "flex", alignItems: "center", gap: 0.25 }}
                   >
                     {onUseInEnvironment && (
-                      <Tooltip title="Write scenarios for this persona in an environment" arrow>
+                      <Tooltip
+                        title="Write scenarios for this persona in an environment"
+                        arrow
+                      >
                         <Button
                           size="small"
                           variant="outlined"
@@ -477,14 +483,12 @@ const PersonaListView = ({
                             e.stopPropagation();
                             onUseInEnvironment([persona]);
                           }}
-                          startIcon={<Iconify icon="mingcute:add-line" width={13} />}
+                          startIcon={
+                            <Iconify icon="solar:add-linear" width={14} />
+                          }
                           sx={{
                             mr: 0.5,
                             minWidth: 0,
-                            height: 26,
-                            px: 1,
-                            fontSize: "12px",
-                            textTransform: "none",
                             color: "text.primary",
                             borderColor: "divider",
                             "& .MuiButton-startIcon": { mr: 0.5 },
@@ -495,17 +499,17 @@ const PersonaListView = ({
                       </Tooltip>
                     )}
                     {canCreate && (
-                    <IconButton
-                      size="small"
-                      aria-label={`Duplicate persona ${persona?.name || ""}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDuplicateDialog({ open: true, persona });
-                      }}
-                      sx={{ color: "text.secondary" }}
-                    >
-                      <Iconify icon="solar:copy-linear" width={16} />
-                    </IconButton>
+                      <IconButton
+                        size="small"
+                        aria-label={`Duplicate persona ${persona?.name || ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDuplicateDialog({ open: true, persona });
+                        }}
+                        sx={{ color: "text.secondary" }}
+                      >
+                        <Iconify icon="solar:copy-linear" width={16} />
+                      </IconButton>
                     )}
                     {canEdit && (
                       <IconButton
@@ -530,7 +534,16 @@ const PersonaListView = ({
             },
           ]),
     ],
-    [canCreate, isSelectable, onUseInEnvironment, singleSelect, selectedId, currentId, onToggleSelect, usage],
+    [
+      canCreate,
+      isSelectable,
+      onUseInEnvironment,
+      singleSelect,
+      selectedId,
+      currentId,
+      onToggleSelect,
+      usage,
+    ],
   );
 
   const hiddenColumns = useMemo(
@@ -626,175 +639,130 @@ const PersonaListView = ({
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        gap: 1.5,
         overflow: "hidden",
         minHeight: 0,
       }}
     >
-      {/* Top Controls */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 1.5,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <FormSearchField
+      {/* Toolbar: search, segmented toggle, filter selects, spacer, actions */}
+      <ListToolbar sx={framed ? undefined : { pt: 0 }}>
+        <FormSearchField
+          size="small"
+          placeholder="Search personas"
+          sx={{ width: 280 }}
+          searchQuery={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            setPage(0);
+          }}
+        />
+        {!lockedType && (
+          <ToggleButtonGroup
+            exclusive
             size="small"
-            placeholder="Search personas"
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-            searchQuery={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
+            value={typeFilter ?? "all"}
+            onChange={(_, v) => {
+              if (!v) return;
+              setTypeFilter(v === "all" ? null : v);
               setPage(0);
             }}
-          />
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={16} />}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
-            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-            sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
-              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
-            }}
           >
-            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-          </Button>
-          <Button
+            {QUICK_FILTERS.map((f) => (
+              <ToggleButton key={f.label} value={f.value ?? "all"}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        )}
+        {!lockedSimulationType && (
+          <TextField
+            select
             size="small"
-            variant="outlined"
-            startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
-            onClick={(e) => setColumnsAnchorEl(e.currentTarget)}
-            sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
-              borderColor:
-                hiddenColumns.length > 0 ? "primary.main" : "divider",
-              color:
-                hiddenColumns.length > 0 ? "primary.main" : "text.secondary",
+            value={simulationFilter ?? "all"}
+            onChange={(e) => {
+              setSimulationFilter(
+                e.target.value === "all" ? null : e.target.value,
+              );
+              setPage(0);
             }}
+            inputProps={{ "aria-label": "Agent type" }}
+            sx={{ minWidth: 140 }}
           >
-            Columns
-          </Button>
-        </Box>
+            {SIMULATION_FILTERS.map((f) => (
+              <MenuItem key={f.label} value={f.value ?? "all"}>
+                {f.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Iconify icon="solar:filter-linear" width={16} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+          onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+          sx={{
+            borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+            color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+          }}
+        >
+          Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
+          onClick={(e) => setColumnsAnchorEl(e.currentTarget)}
+          sx={{
+            borderColor: hiddenColumns.length > 0 ? "primary.main" : "divider",
+            color: hiddenColumns.length > 0 ? "primary.main" : "text.secondary",
+          }}
+        >
+          Columns
+        </Button>
 
-        <Box>
-          {!isSelectable && selectedItems.length > 0 ? (
-            <PersonasBulkActionsBar
-              selectedCount={selectedItems.length}
-              deletableCount={deletableSelected.length}
-              onUse={onUseInEnvironment ? () => onUseInEnvironment(selectedItems) : undefined}
-              onDelete={() => setDeleteDialogOpen(true)}
-              onCancel={handleCancelSelection}
-            />
-          ) : (
-            /* Outlined like Filter and Columns: the screens this list sits
+        <Box sx={{ flex: 1 }} />
+
+        {!isSelectable && selectedItems.length > 0 ? (
+          <PersonasBulkActionsBar
+            selectedCount={selectedItems.length}
+            deletableCount={deletableSelected.length}
+            onUse={
+              onUseInEnvironment
+                ? () => onUseInEnvironment(selectedItems)
+                : undefined
+            }
+            onDelete={() => setDeleteDialogOpen(true)}
+            onCancel={handleCancelSelection}
+          />
+        ) : (
+          /* Outlined like Filter and Columns: the screens this list sits
                on already carry a primary action (Build environment, Add
                scenarios), so creating a persona is the secondary one. */
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={!canCreate}
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-              onClick={() => {
-                if (onCreatePersona) {
-                  onCreatePersona();
-                  return;
-                }
-                setEditDrawer({
-                  mode: "create",
-                  persona: null,
-                  personaCreateEditType: null,
-                });
-              }}
-              sx={{
-                px: 1.5,
-                textTransform: "none",
-                fontSize: "13px",
-                height: "32px",
-                borderColor: "divider",
-                color: "text.primary",
-              }}
-            >
-              Create persona
-            </Button>
-          )}
-        </Box>
-      </Box>
-
-      {/* Quick filter chips */}
-      <Box
-        sx={{
-          display: "flex",
-          gap: 0.75,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        {!lockedType &&
-          QUICK_FILTERS.map((f) => {
-            const isActive = typeFilter === f.value;
-            return (
-              <Chip
-                key={f.label}
-                icon={<Iconify icon={f.icon} width={14} />}
-                label={f.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  setTypeFilter(f.value);
-                  setPage(0);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-
-        {!lockedSimulationType && (
-          <>
-            <Box
-              sx={{
-                width: "1px",
-                height: 18,
-                bgcolor: "divider",
-                mx: 0.5,
-              }}
-            />
-            {SIMULATION_FILTERS.map((f) => {
-              const isActive = simulationFilter === f.value;
-              return (
-                <Chip
-                  key={f.label}
-                  icon={
-                    f.icon ? <Iconify icon={f.icon} width={14} /> : undefined
-                  }
-                  label={f.label}
-                  size="small"
-                  variant={isActive ? "filled" : "outlined"}
-                  color={isActive ? "primary" : "default"}
-                  onClick={() => {
-                    setSimulationFilter(f.value);
-                    setPage(0);
-                  }}
-                  sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-                />
-              );
-            })}
-          </>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!canCreate}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
+            onClick={() => {
+              if (onCreatePersona) {
+                onCreatePersona();
+                return;
+              }
+              setEditDrawer({
+                mode: "create",
+                persona: null,
+                personaCreateEditType: null,
+              });
+            }}
+            sx={{
+              borderColor: "divider",
+              color: "text.primary",
+            }}
+          >
+            Create persona
+          </Button>
         )}
-      </Box>
+      </ListToolbar>
 
       {/* Table */}
       <DataTable
@@ -846,7 +814,7 @@ const PersonaListView = ({
       />
 
       {/* Filter panel */}
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterAnchorEl}
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
@@ -872,7 +840,9 @@ const PersonaListView = ({
         skippedCount={selectedItems.length - deletableSelected.length}
         usageNote={(() => {
           if (!usage) return null;
-          const used = deletableSelected.map((p) => usage[String(p.id)]).filter((u) => u?.scenarios);
+          const used = deletableSelected
+            .map((p) => usage[String(p.id)])
+            .filter((u) => u?.scenarios);
           if (!used.length) return null;
           const scenarios = used.reduce((n, u) => n + u.scenarios, 0);
           const envs = new Set(used.flatMap((u) => u.envs));
@@ -905,7 +875,8 @@ const PersonaListView = ({
         /* In a picker, a persona you just created is the one you meant to
            pick — select it rather than leaving you to find it. */
         onSaved={(saved) => {
-          if (isSelectable && editDrawer.mode === "create") onToggleSelect?.(saved, true);
+          if (isSelectable && editDrawer.mode === "create")
+            onToggleSelect?.(saved, true);
         }}
       />
       <DuplicatePersonas
@@ -919,28 +890,52 @@ const PersonaListView = ({
         open={infoDrawer.open}
         persona={infoDrawer.persona || {}}
         onClose={() => setInfoDrawer({ open: false, persona: null })}
-        usage={usage ? usage[String(infoDrawer.persona?.id)] || { scenarios: 0, envs: [] } : undefined}
-        onUse={onUseInEnvironment && !isSelectable ? () => {
-          const p = infoDrawer.persona;
-          setInfoDrawer({ open: false, persona: null });
-          onUseInEnvironment([p]);
-        } : undefined}
-        onDuplicate={canCreate && !isSelectable ? () => {
-          const p = infoDrawer.persona;
-          setInfoDrawer({ open: false, persona: null });
-          setDuplicateDialog({ open: true, persona: p });
-        } : undefined}
-        onEdit={canCreate && !isSelectable && !infoDrawer.persona?.isDefault ? () => {
-          const p = infoDrawer.persona;
-          setInfoDrawer({ open: false, persona: null });
-          setEditDrawer({ mode: "edit", persona: p, personaCreateEditType: p?.simulationType });
-        } : undefined}
+        usage={
+          usage
+            ? usage[String(infoDrawer.persona?.id)] || {
+                scenarios: 0,
+                envs: [],
+              }
+            : undefined
+        }
+        onUse={
+          onUseInEnvironment && !isSelectable
+            ? () => {
+                const p = infoDrawer.persona;
+                setInfoDrawer({ open: false, persona: null });
+                onUseInEnvironment([p]);
+              }
+            : undefined
+        }
+        onDuplicate={
+          canCreate && !isSelectable
+            ? () => {
+                const p = infoDrawer.persona;
+                setInfoDrawer({ open: false, persona: null });
+                setDuplicateDialog({ open: true, persona: p });
+              }
+            : undefined
+        }
+        onEdit={
+          canCreate && !isSelectable && !infoDrawer.persona?.isDefault
+            ? () => {
+                const p = infoDrawer.persona;
+                setInfoDrawer({ open: false, persona: null });
+                setEditDrawer({
+                  mode: "edit",
+                  persona: p,
+                  personaCreateEditType: p?.simulationType,
+                });
+              }
+            : undefined
+        }
       />
     </Box>
   );
 };
 
 PersonaListView.propTypes = {
+  framed: PropTypes.bool,
   isSelectable: PropTypes.bool,
   lockedFilters: PropTypes.object,
   selectedPersonas: PropTypes.array,

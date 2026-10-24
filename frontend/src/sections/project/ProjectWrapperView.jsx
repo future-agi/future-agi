@@ -1,13 +1,6 @@
-import {
-  Alert,
-  Badge,
-  Box,
-  Button,
-  Divider,
-  LinearProgress,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import ErrorState from "src/components/error-state";
+import { Badge, Box, Button, LinearProgress, Typography } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,7 +11,6 @@ import { Helmet } from "react-helmet-async";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import axiosInstance from "src/utils/axios";
 import { useSnackbar } from "notistack";
-import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { readObserveProjectPage } from "src/api/project/observe-project-list";
@@ -74,8 +66,6 @@ const ProjectWrapperView = () => {
     retry: currentTab === "observe" ? false : 1,
     select: (response) => (currentTab === "observe" ? response : response.data),
   });
-
-  const theme = useTheme();
 
   const isProjectCount =
     currentTab === "observe"
@@ -169,18 +159,11 @@ const ProjectWrapperView = () => {
 
   if (isError) {
     return (
-      <Box sx={{ p: 2 }}>
-        <Alert
-          severity="error"
-          action={
-            <Button color="inherit" size="small" onClick={() => refetch()}>
-              Retry
-            </Button>
-          }
-        >
-          {getRequestErrorMessage(error, "Could not load projects")}
-        </Alert>
-      </Box>
+      <ErrorState
+        title="Could not load projects"
+        detail={getRequestErrorMessage(error, "Could not load projects")}
+        onRetry={() => refetch()}
+      />
     );
   }
 
@@ -213,7 +196,7 @@ const ProjectWrapperView = () => {
           >
             <Typography
               color="text.primary"
-              variant="m2"
+              variant="m1"
               fontWeight={"fontWeightSemiBold"}
             >
               {currentTab === "observe" ? "Tracing" : "Prototype"}
@@ -226,8 +209,8 @@ const ProjectWrapperView = () => {
               }}
             >
               <Typography
-                variant="s1"
-                color="text.primary"
+                variant="s2_1"
+                color="text.tertiary"
                 fontWeight={"fontWeightRegular"}
               >
                 Create a project to experiment on your model
@@ -260,17 +243,14 @@ const ProjectWrapperView = () => {
                   startIcon={
                     observeFilters?.length > 0 ? (
                       <Badge variant="dot" color="error" overlap="circular">
-                        <Iconify icon="mage:filter" width={14} />
+                        <Iconify icon="solar:filter-linear" width={14} />
                       </Badge>
                     ) : (
-                      <Iconify icon="mage:filter" width={14} />
+                      <Iconify icon="solar:filter-linear" width={14} />
                     )
                   }
                   onClick={(e) => setFilterAnchorEl(e.currentTarget)}
                   sx={{
-                    textTransform: "none",
-                    fontSize: 12,
-                    height: 36,
                     borderColor: "divider",
                     color: "text.secondary",
                   }}
@@ -280,63 +260,17 @@ const ProjectWrapperView = () => {
               )}
             </Box>
             {selectedRowsData.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  paddingX: theme.spacing(2),
-                  paddingY: theme.spacing(0.5),
-                  alignItems: "center",
-                  gap: theme.spacing(2),
-                }}
-              >
-                <Typography
-                  fontWeight="fontWeightMedium"
-                  variant="s1"
-                  color="primary.main"
-                >
-                  {selectedRowsData.length} Selected
-                </Typography>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ borderRightWidth: theme.spacing(0.25) }}
-                />
-                <Button
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_delete.svg"
-                      sx={{ width: 20, height: 20, color: "text.disabled" }}
-                    />
-                  }
-                  size="small"
-                  sx={{ color: "text.secondary" }}
-                  onClick={handleDelete}
-                >
-                  <Typography
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    color="text.primary"
-                  >
-                    Delete
-                  </Typography>
-                </Button>
-                <Button
-                  size="small"
-                  sx={{ color: "text.secondary" }}
-                  onClick={clearSelection}
-                >
-                  <Typography
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    color="text.primary"
-                  >
-                    Cancel
-                  </Typography>
-                </Button>
-              </Box>
+              <SelectionBar
+                count={selectedRowsData.length}
+                onCancel={clearSelection}
+                actions={[
+                  {
+                    label: "Delete",
+                    icon: "solar:trash-bin-trash-linear",
+                    onClick: handleDelete,
+                  },
+                ]}
+              />
             ) : (
               <ProjectRightSection isObserve={currentTab === "observe"} />
             )}

@@ -1,13 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import {
-  Box,
-  Button,
-  Grid,
-  Paper,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Grid, Stack, Typography, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import EvaluationCard from "./EvaluationCard";
 import PropTypes from "prop-types";
 import { useEvaluationContext } from "./context/EvaluationContext";
@@ -68,13 +61,11 @@ const SpecialEvaluationCard = () => {
         }
       }}
     >
-      <Paper
-        elevation={0}
+      <Section
+        variant="panel"
         sx={{
           height: "100%",
           width: "100%",
-          borderRadius: "4px",
-          backgroundColor: "background.paper",
           display: "flex",
           flexDirection: "column",
           px: "16px",
@@ -85,7 +76,7 @@ const SpecialEvaluationCard = () => {
           <Typography
             sx={{
               fontWeight: 500,
-              fontSize: "14px",
+              fontSize: "13px",
               lineHeight: "22px",
               color: "text.primary",
             }}
@@ -103,7 +94,7 @@ const SpecialEvaluationCard = () => {
             Configure your own evaluation to suit your specific use case.
           </Typography>
         </Box>
-      </Paper>
+      </Section>
     </Box>
   );
 };

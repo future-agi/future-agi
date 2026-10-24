@@ -116,7 +116,13 @@ const SetBudgetDialog = ({ open, onClose, gatewayId, budget }) => {
   const selectedLevel = BUDGET_LEVELS.find((b) => b.value === level);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{isEditMode ? "Edit Budget" : "Set Budget"}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} mt={1}>

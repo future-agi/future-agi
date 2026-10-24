@@ -37,7 +37,7 @@ const StartEndNode = ({ data }) => {
         {isStart && (
           <SvgColor
             src="/assets/icons/ic_start_agent.svg"
-            sx={{ width: 16, height: 16, bgcolor: "blue.500" }}
+            sx={{ width: 16, height: 16, bgcolor: "status.info.solid" }}
           />
         )}
         <Typography

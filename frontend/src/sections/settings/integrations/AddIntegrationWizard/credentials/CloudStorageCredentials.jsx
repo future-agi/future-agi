@@ -4,14 +4,13 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
   IconButton,
   MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import { useValidateCredentials } from "src/api/integrations";
@@ -168,30 +167,24 @@ export default function CloudStorageCredentials({
       {/* Sub-platform selector */}
       <Stack direction="row" spacing={1.5}>
         {SUB_PLATFORMS.map((sp) => (
-          <Card
+          <Section
             key={sp.id}
-            variant="outlined"
+            variant="panel"
+            onClick={() => {
+              setSubPlatform(sp.id);
+              setFieldErrors({});
+            }}
             sx={{
               flex: 1,
-              border: "2px solid",
-              borderColor:
-                subPlatform === sp.id ? "primary.main" : "action.hover",
-              transition: "border-color 0.2s",
+              textAlign: "center",
+              borderColor: subPlatform === sp.id ? "text.primary" : "divider",
             }}
           >
-            <CardActionArea
-              onClick={() => {
-                setSubPlatform(sp.id);
-                setFieldErrors({});
-              }}
-              sx={{ p: 1.5, textAlign: "center" }}
-            >
-              <Iconify icon={sp.icon} width={28} sx={{ mb: 0.5 }} />
-              <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                {sp.label}
-              </Typography>
-            </CardActionArea>
-          </Card>
+            <Iconify icon={sp.icon} width={28} sx={{ mb: 0.5 }} />
+            <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+              {sp.label}
+            </Typography>
+          </Section>
         ))}
       </Stack>
 
@@ -383,7 +376,9 @@ export default function CloudStorageCredentials({
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -394,7 +389,6 @@ export default function CloudStorageCredentials({
           size="small"
           loading={isPending}
           onClick={handleValidate}
-          sx={{ fontWeight: 500 }}
         >
           Validate & Continue
         </LoadingButton>

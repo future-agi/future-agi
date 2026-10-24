@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { IconButton } from "@mui/material";
 import React from "react";
 import SvgColor from "../../svg-color";
 import PropTypes from "prop-types";
@@ -6,39 +6,21 @@ import CellActionToolTip from "src/components/CellActionToolTip/CellActionToolTi
 
 const FilterButtonContent = ({ onClick }) => {
   return (
-    <Box
+    <IconButton
+      size="small"
       onClick={onClick}
+      aria-label="Filter by this value"
       sx={{
-        boxSizing: "border-box",
-        flexShrink: 0,
-        width: "24px",
-        minWidth: "24px",
-        maxWidth: "24px",
-        height: "24px",
-        minHeight: "24px",
-        maxHeight: "24px",
-        p: 0,
-        m: 0,
+        border: "1px solid",
+        borderColor: "divider",
         bgcolor: "background.paper",
-        borderRadius: "6px",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        cursor: "pointer",
-        boxShadow: (theme) =>
-          theme.palette.mode === "dark"
-            ? "0 0 0 1px rgba(255,255,255,0.08)"
-            : "0 1px 2px rgba(0,0,0,0.08)",
-        "&:hover": {
-          bgcolor: "action.hover",
-        },
       }}
     >
       <SvgColor
         src={`/assets/icons/components/ic_filter.svg`}
         sx={{ color: "text.primary", width: "12px", height: "12px" }}
       />
-    </Box>
+    </IconButton>
   );
 };
 

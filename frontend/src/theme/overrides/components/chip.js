@@ -5,132 +5,112 @@ import { chipClasses } from "@mui/material/Chip";
 
 const COLORS = ["primary", "secondary", "info", "success", "warning", "error"];
 
+// Future AGI Design System badges and tags: 20px (small) / 24px (medium),
+// 12px at 500, radius.sm. Status colours are a tint with darker text, never a
+// solid fill or a coloured outline. Purple is kept for the main action, so
+// primary/secondary chips render neutral.
+const STATUS = {
+  info: "info",
+  success: "success",
+  warning: "warning",
+  error: "danger",
+};
+
 // ----------------------------------------------------------------------
 
+// Themes built without the design-system palette (tests, isolated previews)
+// fall back to MUI's own status colours.
+function statusPalette(theme) {
+  if (theme.palette.status) return theme.palette.status;
+  const pick = (c) => ({ fg: c.dark, bg: alpha(c.main, 0.12), solid: c.main });
+  return {
+    info: pick(theme.palette.info),
+    success: pick(theme.palette.success),
+    warning: pick(theme.palette.warning),
+    danger: pick(theme.palette.error),
+    neutral: {
+      fg: theme.palette.text.secondary,
+      bg: theme.palette.action.selected,
+      solid: theme.palette.grey[500],
+    },
+  };
+}
+
 export function chip(theme) {
-  const lightMode = theme.palette.mode === "light";
+  const palette = statusPalette(theme);
+  const borderDefault = theme.palette.border?.default || theme.palette.divider;
+  const muted = theme.palette.background.muted || theme.palette.action.selected;
 
   const rootStyles = (ownerState) => {
-    const defaultColor = ownerState.color === "default";
-
-    const filledVariant = ownerState.variant === "filled";
-
     const outlinedVariant = ownerState.variant === "outlined";
+    const role = STATUS[ownerState.color];
+    const status = role ? palette[role] : palette.neutral;
+    const isNeutral = !role;
 
-    const softVariant = ownerState.variant === "soft";
-
-    const defaultStyle = {
-      [`& .${chipClasses.deleteIcon}`]: {
-        opacity: 0.48,
-        color: "currentColor",
+    const tone = {
+      color: isNeutral ? theme.palette.text.secondary : status.fg,
+      backgroundColor: outlinedVariant && isNeutral ? "transparent" : status.bg,
+      border:
+        outlinedVariant && isNeutral
+          ? `1px solid ${borderDefault}`
+          : "1px solid transparent",
+      ...(ownerState.clickable && {
         "&:hover": {
-          opacity: 1,
-          color: "currentColor",
+          backgroundColor: isNeutral
+            ? theme.palette.action.selected
+            : alpha(status.solid, 0.18),
         },
+      }),
+      [`& .${chipClasses.icon}`]: {
+        color: isNeutral ? theme.palette.action.active : status.fg,
       },
-
-      ...(defaultColor && {
-        [`& .${chipClasses.avatar}`]: {
-          color: theme.palette.text.primary,
-        },
-        // FILLED
-        ...(filledVariant && {
-          color: lightMode
-            ? theme.palette.common.white
-            : theme.palette.grey[800],
-          backgroundColor: theme.palette.text.primary,
-          // Gated in JS, not via a class selector: the emitted rule must stay
-          // a plain `&:hover` or it outranks per-chip `sx` hover overrides.
-          ...(ownerState.clickable && {
-            "&:hover": {
-              backgroundColor: lightMode
-                ? theme.palette.grey[700]
-                : theme.palette.grey[100],
-            },
-          }),
-          [`& .${chipClasses.icon}`]: {
-            color: lightMode
-              ? theme.palette.common.white
-              : theme.palette.grey[800],
-          },
-        }),
-        // OUTLINED
-        ...(outlinedVariant && {
-          border: `solid 1px ${alpha(theme.palette.grey[500], 0.32)}`,
-        }),
-        // SOFT
-        ...(softVariant && {
-          color: theme.palette.text.primary,
-          backgroundColor: alpha(theme.palette.grey[500], 0.16),
-          ...(ownerState.clickable && {
-            "&:hover": {
-              backgroundColor: alpha(theme.palette.grey[500], 0.32),
-            },
-          }),
-        }),
-      }),
-    };
-
-    const colorStyle = COLORS.map((color) => ({
-      ...(ownerState.color === color && {
-        [`& .${chipClasses.avatar}`]: {
-          color: theme.palette[color].lighter,
-          backgroundColor: theme.palette[color].dark,
-        },
-        // FILLED
-        ...(filledVariant && {
-          ...(ownerState.clickable && {
-            "&:hover": {
-              backgroundColor: theme.palette[color].dark,
-            },
-          }),
-        }),
-        // SOFT
-        ...(softVariant && {
-          color: theme.palette[color][lightMode ? "dark" : "light"],
-          backgroundColor: alpha(theme.palette[color].main, 0.16),
-          ...(ownerState.clickable && {
-            "&:hover": {
-              backgroundColor: alpha(theme.palette[color].main, 0.32),
-            },
-          }),
-        }),
-      }),
-    }));
-
-    const disabledState = {
-      [`&.${chipClasses.disabled}`]: {
-        opacity: 1,
-        color: theme.palette.action.disabled,
-        [`& .${chipClasses.icon}`]: {
-          color: theme.palette.action.disabled,
-        },
-        [`& .${chipClasses.avatar}`]: {
-          color: theme.palette.action.disabled,
-          backgroundColor: theme.palette.action.disabledBackground,
-        },
-        // FILLED
-        ...(filledVariant && {
-          backgroundColor: theme.palette.action.disabledBackground,
-        }),
-        // OUTLINED
-        ...(outlinedVariant && {
-          borderColor: theme.palette.action.disabledBackground,
-        }),
-        // SOFT
-        ...(softVariant && {
-          backgroundColor: theme.palette.action.disabledBackground,
-        }),
+      [`& .${chipClasses.avatar}`]: {
+        color: theme.palette.text.secondary,
+        backgroundColor: muted,
       },
     };
+
+    const size =
+      ownerState.size === "small"
+        ? {
+            height: 20,
+            [`& .${chipClasses.label}`]: { paddingLeft: 6, paddingRight: 6 },
+          }
+        : {
+            height: 24,
+            [`& .${chipClasses.label}`]: { paddingLeft: 8, paddingRight: 8 },
+          };
 
     return [
-      defaultStyle,
-      ...colorStyle,
-      disabledState,
       {
+        fontSize: 12,
+        lineHeight: "16px",
         fontWeight: 500,
-        borderRadius: theme.shape.borderRadius,
+        borderRadius: 4,
+        [`& .${chipClasses.icon}`]: {
+          width: 12,
+          height: 12,
+          marginLeft: 6,
+          marginRight: -2,
+        },
+        [`& .${chipClasses.deleteIcon}`]: {
+          width: 14,
+          height: 14,
+          marginRight: 4,
+          opacity: 0.6,
+          color: "currentColor",
+          "&:hover": { opacity: 1, color: "currentColor" },
+        },
+      },
+      tone,
+      size,
+      {
+        [`&.${chipClasses.disabled}`]: {
+          opacity: 1,
+          color: theme.palette.text.disabled,
+          backgroundColor: theme.palette.action.disabledBackground,
+          borderColor: "transparent",
+        },
       },
     ];
   };
@@ -143,3 +123,5 @@ export function chip(theme) {
     },
   };
 }
+
+export { COLORS };

@@ -1,3 +1,4 @@
+import ErrorState from "src/components/error-state";
 import {
   Box,
   Divider,
@@ -457,20 +458,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   }
 
   if (isError) {
-    return (
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Typography typography="s2" color="error.main">
-          Failed to load node details
-        </Typography>
-      </Box>
-    );
+    return <ErrorState title="Failed to load node details" sx={{ flex: 1 }} />;
   }
 
   if (!nodeDetail) {

@@ -43,25 +43,6 @@ import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
 
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-function getAvatarColor(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 function getInitials(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
@@ -90,7 +71,7 @@ const LabeledValue = ({ label, value }) => (
     <Typography
       variant="caption"
       color="text.disabled"
-      sx={{ fontSize: "10px" }}
+      sx={{ fontSize: "12px" }}
     >
       {label}
     </Typography>
@@ -108,24 +89,21 @@ const SectionLabel = ({ children }) => (
   <Typography
     variant="caption"
     color="text.disabled"
-    sx={{ fontSize: "10px", mb: 0.5, display: "block" }}
+    sx={{ fontSize: "12px", mb: 0.5, display: "block" }}
   >
     {children}
   </Typography>
 );
 SectionLabel.propTypes = { children: PropTypes.node };
 
-const CodeBlock = ({ content, theme }) => (
+const CodeBlock = ({ content }) => (
   <Box
     sx={{
       p: 1,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       maxHeight: 160,
       overflow: "auto",
-      bgcolor:
-        theme.palette.mode === "dark"
-          ? "rgba(255,255,255,0.04)"
-          : "rgba(0,0,0,0.03)",
+      bgcolor: "background.neutral",
       border: "1px solid",
       borderColor: "divider",
     }}
@@ -133,7 +111,7 @@ const CodeBlock = ({ content, theme }) => (
     <Typography
       variant="body2"
       sx={{
-        fontSize: "11px",
+        fontSize: "12px",
         fontFamily: "monospace",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
@@ -160,8 +138,6 @@ const VariablesList = ({ variables }) => {
             label={`{{${v}}}`}
             size="small"
             sx={{
-              fontSize: "10px",
-              height: 20,
               fontFamily: "monospace",
               bgcolor: "action.hover",
               color: "primary.main",
@@ -254,10 +230,7 @@ const EvalDetailPanel = ({ evalData }) => {
 
   const panelSx = {
     p: 2,
-    bgcolor:
-      theme.palette.mode === "dark"
-        ? "rgba(255,255,255,0.02)"
-        : "rgba(0,0,0,0.015)",
+    bgcolor: "background.neutral",
     display: "flex",
     flexDirection: "column",
     gap: 1.5,
@@ -285,7 +258,7 @@ const EvalDetailPanel = ({ evalData }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "11px" }}
+            sx={{ fontSize: "12px" }}
           >
             {description}
           </Typography>
@@ -300,7 +273,7 @@ const EvalDetailPanel = ({ evalData }) => {
               gap: 0.5,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               p: 1,
               maxHeight: 200,
               overflow: "auto",
@@ -328,15 +301,16 @@ const EvalDetailPanel = ({ evalData }) => {
                   >
                     {c.name || c.child_name || c.child_id}
                   </Typography>
-                  <Chip
-                    label={`weight ${c.weight ?? 1}`}
-                    size="small"
+                  <Typography
+                    variant="caption"
                     sx={{
-                      fontSize: "10px",
-                      height: 18,
-                      "& .MuiChip-label": { px: 0.75 },
+                      fontSize: "12px",
+                      color: "text.tertiary",
+                      fontVariantNumeric: "tabular-nums",
                     }}
-                  />
+                  >
+                    {`weight ${c.weight ?? 1}`}
+                  </Typography>
                 </Box>
               ))
             )}
@@ -370,7 +344,7 @@ const EvalDetailPanel = ({ evalData }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "11px" }}
+            sx={{ fontSize: "12px" }}
           >
             {description}
           </Typography>
@@ -407,7 +381,7 @@ const EvalDetailPanel = ({ evalData }) => {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {description}
         </Typography>
@@ -426,8 +400,6 @@ const EvalDetailPanel = ({ evalData }) => {
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "10px",
-                  height: 20,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -495,7 +467,9 @@ const AddedEvalsSection = ({ addedEvals, searchQuery }) => {
   const [open, setOpen] = useState(false);
   const q = (searchQuery || "").trim().toLowerCase();
   const shown = q
-    ? addedEvals.filter((e) => `${e.name} ${e.meta || ""}`.toLowerCase().includes(q))
+    ? addedEvals.filter((e) =>
+        `${e.name} ${e.meta || ""}`.toLowerCase().includes(q),
+      )
     : addedEvals;
   const matching = q && shown.length > 0;
   const expanded = open || matching;
@@ -535,56 +509,87 @@ const AddedEvalsSection = ({ addedEvals, searchQuery }) => {
             transform: expanded ? "rotate(90deg)" : "none",
           }}
         />
-        <Iconify icon="solar:check-circle-linear" width={16} sx={{ color: "text.secondary" }} />
-        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>Added evaluations</Typography>
-        <Box
+        <Iconify
+          icon="solar:check-circle-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+          Added evaluations
+        </Typography>
+        <Typography
           sx={{
-            px: 0.75,
-            height: 18,
-            minWidth: 18,
-            borderRadius: 0.75,
-            display: "grid",
-            placeItems: "center",
-            bgcolor: "action.selected",
+            fontSize: "12px",
+            fontWeight: 400,
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
           }}
         >
-          <Typography sx={{ fontSize: "11px", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-            {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
-          </Typography>
-        </Box>
+          {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
+        </Typography>
       </ButtonBase>
 
       <Collapse in={expanded} timeout={150} unmountOnExit>
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider", maxHeight: 188, overflowY: "auto" }}>
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            maxHeight: 188,
+            overflowY: "auto",
+          }}
+        >
           {shown.length === 0 ? (
-            <Typography sx={{ px: 1.5, py: 1.25, fontSize: "12px", color: "text.secondary" }}>
-              None of the added evaluations match your search.
-            </Typography>
-          ) : shown.map((e, i) => (
-            <Box
-              key={e.id}
+            <Typography
               sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
                 px: 1.5,
-                py: 0.875,
-                borderTop: i ? "1px solid" : "none",
-                borderColor: "divider",
+                py: 1.25,
+                fontSize: "12px",
+                color: "text.secondary",
               }}
             >
-              <Iconify icon="solar:check-read-linear" width={14} sx={{ color: "success.main", flexShrink: 0 }} />
-              <Typography noWrap sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}>
-                {e.name}
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              {e.meta && (
-                <Typography noWrap sx={{ fontSize: "12px", color: "text.secondary", flexShrink: 0 }}>
-                  {e.meta}
+              None of the added evaluations match your search.
+            </Typography>
+          ) : (
+            shown.map((e, i) => (
+              <Box
+                key={e.id}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                  borderTop: i ? "1px solid" : "none",
+                  borderColor: "border.subtle",
+                }}
+              >
+                <Iconify
+                  icon="solar:check-read-linear"
+                  width={14}
+                  sx={{ color: "success.main", flexShrink: 0 }}
+                />
+                <Typography
+                  noWrap
+                  sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}
+                >
+                  {e.name}
                 </Typography>
-              )}
-            </Box>
-          ))}
+                <Box sx={{ flex: 1 }} />
+                {e.meta && (
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontSize: "12px",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {e.meta}
+                  </Typography>
+                )}
+              </Box>
+            ))
+          )}
         </Box>
       </Collapse>
     </Box>
@@ -600,8 +605,14 @@ AddedEvalsSection.propTypes = {
 
 const EvalPickerList = ({ onSelectEval }) => {
   const {
-    existingEvals, source, sourceId, lockedFilters,
-    multiSelect, selectedIds, onToggleSelect, addedEvals,
+    existingEvals,
+    source,
+    sourceId,
+    lockedFilters,
+    multiSelect,
+    selectedIds,
+    onToggleSelect,
+    addedEvals,
   } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
@@ -644,13 +655,21 @@ const EvalPickerList = ({ onSelectEval }) => {
      out of the list — matched by id, or by name for library evals the caller
      only knows by name. */
   const addedNames = useMemo(
-    () => new Set((addedEvals || []).map((e) => String(e.name || "").toLowerCase())),
+    () =>
+      new Set(
+        (addedEvals || []).map((e) => String(e.name || "").toLowerCase()),
+      ),
     [addedEvals],
   );
   const listItems = useMemo(
-    () => (Array.isArray(addedEvals)
-      ? items.filter((e) => !isAlreadyAdded(e.id) && !addedNames.has(String(e.name || "").toLowerCase()))
-      : items),
+    () =>
+      Array.isArray(addedEvals)
+        ? items.filter(
+            (e) =>
+              !isAlreadyAdded(e.id) &&
+              !addedNames.has(String(e.name || "").toLowerCase()),
+          )
+        : items,
     [items, addedEvals, addedNames, isAlreadyAdded],
   );
 
@@ -749,12 +768,9 @@ const EvalPickerList = ({ onSelectEval }) => {
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={14} />}
+            startIcon={<Iconify icon="solar:filter-linear" width={14} />}
             onClick={(e) => setFilterAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              height: "32px",
               borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
               color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
             }}
@@ -813,7 +829,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              sx={{ cursor: "pointer" }}
             />
           );
         })}
@@ -832,7 +848,6 @@ const EvalPickerList = ({ onSelectEval }) => {
               setPage(0);
               setExpandedEvalId(null);
             }}
-            sx={{ fontSize: "11px", height: 26 }}
           />
         ) : null}
       </Box>
@@ -846,9 +861,7 @@ const EvalPickerList = ({ onSelectEval }) => {
         <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
-              {multiSelect && (
-                <TableCell sx={{ ...headerCellSx, width: 44 }} />
-              )}
+              {multiSelect && <TableCell sx={{ ...headerCellSx, width: 44 }} />}
               <TableCell sx={{ ...headerCellSx, width: 36 }} />
               <TableCell sx={{ ...headerCellSx, width: 72 }} />
               <TableCell sx={{ ...headerCellSx }}>
@@ -958,10 +971,6 @@ const EvalPickerList = ({ onSelectEval }) => {
                         }}
                         sx={{
                           minWidth: 50,
-                          height: 24,
-                          fontSize: "11px",
-                          textTransform: "none",
-                          px: 1,
                         }}
                       >
                         {added ? "Added" : "Add"}
@@ -1028,20 +1037,14 @@ const EvalPickerList = ({ onSelectEval }) => {
                             sx={{
                               width: 20,
                               height: 20,
-                              fontSize: "8px",
-                              fontWeight: 700,
-                              bgcolor: isSystem
-                                ? "action.selected"
-                                : getAvatarColor(createdBy),
-                              color: isSystem
-                                ? "text.secondary"
-                                : "common.white",
+                              fontSize: "12px",
+                              fontWeight: 600,
                             }}
                           >
                             {isSystem ? (
                               <Iconify
                                 icon="solar:shield-check-bold"
-                                width={10}
+                                width={12}
                               />
                             ) : (
                               getInitials(createdBy)
@@ -1050,7 +1053,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                           <Typography
                             variant="body2"
                             noWrap
-                            sx={{ fontSize: "11px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {createdBy}
                           </Typography>

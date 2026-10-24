@@ -34,8 +34,8 @@ function CustomTabPanel(props) {
           width: "6px",
         },
         "&::-webkit-scrollbar-thumb": {
-          backgroundColor: "rgba(0, 0, 0, 0.3)",
-          borderRadius: "3px",
+          backgroundColor: "border.strong",
+          borderRadius: "4px",
         },
         "&::-webkit-scrollbar-track": {
           backgroundColor: "transparent",
@@ -285,22 +285,9 @@ const DrawerBottom = ({
           indicatorColor="primary"
           sx={{
             marginLeft: "2%",
-            "& .Mui-selected": {
-              color: "primary.main",
-            },
-            "& .MuiTabs-indicator": {
-              backgroundColor: "primary.main",
-            },
             marginRight: 1,
-            minHeight: 0,
             "& .MuiTab-root": {
               margin: "0 !important",
-              fontWeight: "600",
-              typography: "s1",
-              "&:not(.Mui-selected)": {
-                color: "text.secondary",
-                fontWeight: "500",
-              },
             },
           }}
         >
@@ -342,15 +329,6 @@ const DrawerBottom = ({
                 {...a11yProps(index)}
                 sx={{
                   margin: theme.spacing(0),
-                  px: theme.spacing(1.875),
-                  "&.MuiTab-root": {
-                    color: "text.secondary",
-                    fontWeight: 500,
-                  },
-                  "&.Mui-selected": {
-                    color: "primary.main",
-                    fontWeight: 600,
-                  },
                 }}
               />
             );

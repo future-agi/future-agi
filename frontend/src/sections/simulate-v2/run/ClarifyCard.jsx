@@ -26,7 +26,8 @@ export default function ClarifyCard({ blocked, scenario, onAnswer, onOpen }) {
      thing to notice on a long run. */
   useEffect(() => {
     if (!blocked?.askedAt) return undefined;
-    const tick = () => setSince(Math.max(0, Math.round((Date.now() - blocked.askedAt) / 1000)));
+    const tick = () =>
+      setSince(Math.max(0, Math.round((Date.now() - blocked.askedAt) / 1000)));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -37,69 +38,131 @@ export default function ClarifyCard({ blocked, scenario, onAnswer, onOpen }) {
   const name = scenario?.name || scenario?.title || "A scenario";
 
   return (
-    <Box sx={{ px: 3, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+    <Box
+      sx={{
+        px: 3,
+        py: 1.25,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+      }}
+    >
       <Box
         role="region"
         aria-label="Clarifying question"
         sx={{
           border: "1px solid",
-          borderColor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.4 : 0.3),
-          borderRadius: 1.5,
-          bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.04),
-          px: 2, py: 1.5,
+          borderColor: "status.discovery.border",
+          borderRadius: "8px",
+          bgcolor: "status.discovery.bg",
+          px: 2,
+          py: 1.5,
         }}
       >
         <Stack direction="row" spacing={1.5} alignItems="flex-start">
           <Box
             sx={{
-              width: 28, height: 28, borderRadius: 0.75, flexShrink: 0, display: "grid", placeItems: "center",
-              bgcolor: "background.paper", border: "1px solid", borderColor: "divider", color: "text.secondary",
+              width: 28,
+              height: 28,
+              borderRadius: "4px",
+              flexShrink: 0,
+              display: "grid",
+              placeItems: "center",
+              bgcolor: "background.paper",
+              border: "1px solid",
+              borderColor: "divider",
+              color: "text.secondary",
             }}
           >
-            <Iconify icon="solar:chat-round-dots-linear" width={15} />
+            <Iconify icon="solar:chat-round-dots-linear" width={16} />
           </Box>
 
           <Box flex={1} minWidth={0}>
-            <Stack direction="row" alignItems="baseline" spacing={1} flexWrap="wrap" rowGap={0.25}>
-              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+            <Stack
+              direction="row"
+              alignItems="baseline"
+              spacing={1}
+              flexWrap="wrap"
+              rowGap={0.25}
+            >
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.tertiary",
+                  textTransform: "none",
+                  letterSpacing: 0.4,
+                }}
+              >
                 Paused · needs your answer
               </Typography>
               <Typography
-                role="button" tabIndex={0}
+                role="button"
+                tabIndex={0}
                 onClick={onOpen}
-                onKeyDown={(e) => { if (e.key === "Enter") onOpen?.(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onOpen?.();
+                }}
                 sx={{
-                  typography: "s3", fontWeight: 600, color: "text.secondary", cursor: "pointer",
-                  textDecoration: "underline", textDecorationColor: (t) => alpha(t.palette.text.primary, 0.3), textUnderlineOffset: "3px",
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.secondary",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  textDecorationColor: (t) =>
+                    alpha(t.palette.text.primary, 0.3),
+                  textUnderlineOffset: "3px",
                   "&:hover": { color: "text.primary" },
                 }}
               >
                 {name}
               </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 {`· waiting ${formatWait(since)} · the other scenarios keep running`}
               </Typography>
             </Stack>
 
-            <Typography sx={{ typography: "s1", fontWeight: 600, mt: 0.5 }}>{blocked.question}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 600, mt: 0.5 }}>
+              {blocked.question}
+            </Typography>
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+            >
               {`${blocked.why} The scenario holds at turn ${blocked.step + 1} rather than guess — a guess would grade the agent on our assumption.`}
             </Typography>
 
-            <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.75} sx={{ mt: 1.25 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              flexWrap="wrap"
+              rowGap={0.75}
+              sx={{ mt: 1.25 }}
+            >
               {blocked.options.map((o) => {
                 const on = pick === o && !text.trim();
                 return (
                   <Button
                     key={o}
-                    size="small" variant="outlined"
-                    onClick={() => { setPick(o); setText(""); }}
-                    startIcon={on ? <Iconify icon="solar:check-circle-linear" width={14} /> : null}
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      setPick(o);
+                      setText("");
+                    }}
+                    startIcon={
+                      on ? (
+                        <Iconify icon="solar:check-circle-linear" width={14} />
+                      ) : null
+                    }
                     sx={{
-                      height: 30, typography: "s2", fontWeight: 600, textTransform: "none",
-                      color: "text.primary", bgcolor: "background.paper",
+                      color: "text.primary",
+                      bgcolor: "background.paper",
                       borderColor: on ? "text.primary" : "divider",
-                      "&:hover": { borderColor: "text.disabled", bgcolor: "background.paper" },
+                      "&:hover": {
+                        borderColor: "text.disabled",
+                        bgcolor: "background.paper",
+                      },
                     }}
                   >
                     {o}
@@ -111,16 +174,25 @@ export default function ClarifyCard({ blocked, scenario, onAnswer, onOpen }) {
                 placeholder="Or type the answer"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && answer) onAnswer(answer); }}
-                InputProps={{ sx: { typography: "s2", height: 30, bgcolor: "background.paper" } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && answer) onAnswer(answer);
+                }}
+                InputProps={{
+                  sx: {
+                    typography: "s2",
+                    height: 30,
+                    bgcolor: "background.paper",
+                  },
+                }}
                 sx={{ width: 240 }}
               />
               <Button
-                size="small" variant="contained" color="primary"
+                size="small"
+                variant="contained"
+                color="primary"
                 disabled={!answer}
                 onClick={() => onAnswer(answer)}
                 startIcon={<Iconify icon="solar:play-linear" width={14} />}
-                sx={{ height: 30, typography: "s2", fontWeight: 700 }}
               >
                 Answer and resume
               </Button>

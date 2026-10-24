@@ -156,6 +156,7 @@ const EvalCard = ({ setCurrentTab, datasetId = null }) => {
     chart: {
       type: "bar",
       background: "transparent",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       foreColor: isDark ? "#a1a1aa" : undefined,
       toolbar: {
         show: false,
@@ -180,11 +181,13 @@ const EvalCard = ({ setCurrentTab, datasetId = null }) => {
       enabled: true,
     },
     grid: {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       borderColor: isDark ? "#27272a" : undefined,
     },
     dataLabels: {
       enabled: false,
     },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     colors: ["#A792FD"],
     plotOptions: {
       bar: {
@@ -245,7 +248,7 @@ const EvalCard = ({ setCurrentTab, datasetId = null }) => {
               <span
                 style={{
                   fontSize: "20px",
-                  fontWeight: "700",
+                  fontWeight: "600",
                   color: theme.palette.success.main,
                 }}
               >

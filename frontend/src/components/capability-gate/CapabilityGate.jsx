@@ -41,7 +41,7 @@ export default function CapabilityGate({ feature, children }) {
         sx={{ height: 1, minHeight: 240, px: 3, textAlign: "center" }}
       >
         <Iconify
-          icon="mdi:cloud-alert-outline"
+          icon="solar:cloud-cross-linear"
           sx={{ width: 48, height: 48, color: "text.secondary" }}
         />
         <Typography variant="body1">
@@ -79,7 +79,7 @@ export default function CapabilityGate({ feature, children }) {
       sx={{ height: 1, minHeight: 480, px: 3, textAlign: "center" }}
     >
       <Iconify
-        icon="mdi:rocket-launch-outline"
+        icon="solar:rocket-linear"
         sx={{ width: 64, height: 64, color: "primary.main" }}
       />
       <Typography variant="h5">This feature requires an upgrade.</Typography>

@@ -28,10 +28,10 @@ const LeftSection = () => {
       <Box sx={{ paddingTop: "120px", paddingLeft: "90px" }}>
         <Logo width={185} height={43} sx={{ width: "185px", height: "43px" }} />
         <Box height="15px" />
-        <Typography fontWeight={600} fontSize="32px">
+        <Typography fontWeight={600} fontSize="24px">
           Sign-up to get world&apos;s most advanced
         </Typography>
-        <Typography fontWeight={600} fontSize="32px">
+        <Typography fontWeight={600} fontSize="24px">
           <Box
             component="span"
             sx={{
@@ -80,11 +80,7 @@ const LeftSection = () => {
               sx={{ mb: 2, paddingLeft: 0 }}
             >
               <ListItemIcon sx={{}}>
-                <Avatar
-                  sx={{ bgcolor: "background.paper", color: "primary.main" }}
-                >
-                  {item.icon}
-                </Avatar>
+                <Avatar>{item.icon}</Avatar>
               </ListItemIcon>
               <ListItemText
                 primary={
@@ -93,7 +89,7 @@ const LeftSection = () => {
                   </Typography>
                 }
                 secondary={
-                  <Typography fontSize="14px">{item.secondary}</Typography>
+                  <Typography fontSize="13px">{item.secondary}</Typography>
                 }
               />
             </ListItem>

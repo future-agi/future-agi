@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Alert, AlertTitle, Button, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { currentAgentVersion } from "../_mock/versions";
 import { latestEnvVersion, toolFit } from "../_mock/toolFit";
@@ -21,76 +21,100 @@ import { versionCardOf } from "../_mock/versionCard";
  * edit or an approved suggestion, never by a second button beside it.
  */
 
-
-export default function ToolFitBanner({ env, envState, patch, sx, locked = false, deferToCard = false }) {
+export default function ToolFitBanner({
+  env,
+  envState,
+  patch,
+  sx,
+  locked = false,
+  deferToCard = false,
+}) {
   const rebuild = useRebuildForAgent(env, envState, patch);
   const agentV = currentAgentVersion(envState);
   if (!agentV) return null;
 
   const fit = toolFit(env, envState);
   const latest = latestEnvVersion(env, envState);
-  const latestFits = latest && latest.label !== fit.envVersion
-    && toolFit(env, envState, { envVersion: latest.label }).fits;
+  const latestFits =
+    latest &&
+    latest.label !== fit.envVersion &&
+    toolFit(env, envState, { envVersion: latest.label }).fits;
   if (fit.fits) return null;
   /* `deferToCard`: where the agent's change card shows (Overview), a card
      that already adds every missing tool is the one place to rebuild. */
   const card = deferToCard ? versionCardOf(envState) : null;
-  const covered = new Set((card?.status === "open" ? card.capabilities : []).filter((c) => c.kind === "add").map((c) => c.capability));
-  if (covered.size && fit.missing.every((t) => covered.has(t.name))) return null;
+  const covered = new Set(
+    (card?.status === "open" ? card.capabilities : [])
+      .filter((c) => c.kind === "add")
+      .map((c) => c.capability),
+  );
+  if (covered.size && fit.missing.every((t) => covered.has(t.name)))
+    return null;
 
   const n = fit.missing.length;
 
   return (
-    <Stack
-      direction={{ xs: "column", sm: "row" }}
-      alignItems={{ sm: "center" }}
-      spacing={1.5}
-      sx={{
-        p: 1.75, borderRadius: 1.5, border: "1px solid", borderColor: "text.disabled",
-        bgcolor: "background.neutral",
-        ...sx,
-      }}
+    <Alert
+      severity="warning"
+      icon={<Iconify icon="solar:plug-circle-linear" width={16} />}
+      sx={sx}
+      /* A template preview's world is read-only — fork it to rebuild. */
+      action={
+        !locked && (
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() =>
+              latestFits
+                ? patch({ activeEnvVersion: latest.label })
+                : rebuild(agentV.label)
+            }
+            startIcon={
+              <Iconify
+                icon={
+                  latestFits
+                    ? "solar:transfer-horizontal-linear"
+                    : "solar:refresh-linear"
+                }
+                width={14}
+              />
+            }
+            sx={{ flexShrink: 0 }}
+          >
+            {latestFits
+              ? `Use environment ${envLabelOf(env, envState, latest.label)}`
+              : "Rebuild environment"}
+          </Button>
+        )
+      }
     >
-      <Iconify
-        icon="solar:plug-circle-linear"
-        width={20}
-        sx={{ color: "text.primary", flexShrink: 0 }}
-      />
-      <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {`Agent ${agentV.label} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${envLabelOf(env, envState, fit.envVersion)} can't answer`}
-        </Typography>
-        <Typography component="div" sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-          {latestFits ? (
-            <>
-              <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in {agentV.label}. Environment {envLabelOf(env, envState, latest.label)} already
-              answers {n === 1 ? "it" : "them"} — switch to it for a clean run of {agentV.label}.
-            </>
-          ) : (
-            <>
-              <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in {agentV.label}. Rebuild so the world learns{" "}
-              {n === 1 ? "it" : "them"} — until then, scenarios where {agentV.label} calls {n === 1 ? "it" : "them"} here
-              get no answer and come back not measured.
-            </>
-          )}
-        </Typography>
-      </Box>
-      {/* A template preview's world is read-only — fork it to rebuild. */}
-      {!locked && (
-      <Button
-        variant="contained"
-        color="primary"
-        size="small"
-        onClick={() => (latestFits ? patch({ activeEnvVersion: latest.label }) : rebuild(agentV.label))}
-        startIcon={<Iconify icon={latestFits ? "solar:transfer-horizontal-linear" : "solar:refresh-linear"} width={14} />}
-        sx={{
-          flexShrink: 0, typography: "s2", fontWeight: 700,
-        }}
+      <AlertTitle>
+        {`Agent ${agentV.label} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${envLabelOf(env, envState, fit.envVersion)} can't answer`}
+      </AlertTitle>
+      <Typography
+        component="div"
+        sx={{ typography: "s2", color: "text.secondary" }}
       >
-        {latestFits ? `Use environment ${envLabelOf(env, envState, latest.label)}` : "Rebuild environment"}
-      </Button>
-      )}
-    </Stack>
+        {latestFits ? (
+          <>
+            <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in{" "}
+            {agentV.label}. Environment{" "}
+            {envLabelOf(env, envState, latest.label)} already answers{" "}
+            {n === 1 ? "it" : "them"} — switch to it for a clean run of{" "}
+            {agentV.label}.
+          </>
+        ) : (
+          <>
+            <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in{" "}
+            {agentV.label}. Rebuild so the world learns{" "}
+            {n === 1 ? "it" : "them"} — until then, scenarios where{" "}
+            {agentV.label} calls {n === 1 ? "it" : "them"} here get no answer
+            and come back not measured.
+          </>
+        )}
+      </Typography>
+    </Alert>
   );
 }
 

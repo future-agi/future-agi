@@ -31,7 +31,6 @@ export default function LanguagePopover() {
         onClick={popover.onOpen}
         sx={{
           width: 40,
-          height: 40,
           ...(popover.open && {
             bgcolor: "action.selected",
           }),

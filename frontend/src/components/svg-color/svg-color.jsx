@@ -3,7 +3,7 @@ import { forwardRef, useEffect, useRef } from "react";
 import { mergeRefs } from "src/utils/utils";
 import PropTypes from "prop-types";
 
-const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
+const SvgColor = forwardRef(({ src, width = 24, sx, ...other }, ref) => {
   const nodeRef = useRef(null);
 
   useEffect(() => {
@@ -29,8 +29,8 @@ const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
       className="svg-color"
       ref={mergeRefs(ref, nodeRef)}
       sx={{
-        width: 24,
-        height: 24,
+        width,
+        height: width,
         display: "inline-block",
         bgcolor: "currentColor",
         mask: `url(${src}) no-repeat center / contain`,
@@ -44,6 +44,7 @@ const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
 SvgColor.displayName = "SvgColor";
 SvgColor.propTypes = {
   src: PropTypes.string,
+  width: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   sx: PropTypes.object,
 };
 

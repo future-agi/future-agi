@@ -20,7 +20,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
   return (
     <Box
       sx={{
-        borderRadius: 1.5,
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
         overflow: "hidden",
@@ -60,7 +60,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
         divider={<Divider orientation="vertical" flexItem />}
       >
         {/* Production panel */}
-        <Box sx={{ flex: 1, bgcolor: "#EFF6FF08" }}>
+        <Box sx={{ flex: 1 }}>
           <Stack
             direction="row"
             spacing={1}
@@ -109,7 +109,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
         </Box>
 
         {/* Shadow panel */}
-        <Box sx={{ flex: 1, bgcolor: "#F5F3FF08" }}>
+        <Box sx={{ flex: 1 }}>
           <Stack
             direction="row"
             spacing={1}
@@ -176,11 +176,8 @@ const StatusChip = ({ code, error }) => {
       label={code || "N/A"}
       size="small"
       sx={{
-        height: 18,
-        fontSize: "0.7rem",
-        bgcolor: ok ? "#22C55E20" : "#EF444420",
-        color: ok ? "#22C55E" : "#EF4444",
-        fontWeight: 600,
+        bgcolor: ok ? "status.success.bg" : "status.danger.bg",
+        color: ok ? "status.success.fg" : "status.danger.fg",
       }}
     />
   );

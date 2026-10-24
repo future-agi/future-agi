@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (category encodings) */
 import React from "react";
 import ScenarioActionMenu from "./ScenariosActionMenu";
 import ScenarioNameCellRenderer from "./CustomCellRenderers/ScenarioNameCellRenderer";

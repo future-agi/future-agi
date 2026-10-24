@@ -7,7 +7,6 @@ import ListSubheader from "@mui/material/ListSubheader";
 import Box from "@mui/material/Box";
 
 import NavList from "./nav-list";
-import { Divider, Typography } from "@mui/material";
 
 // ----------------------------------------------------------------------
 
@@ -56,8 +55,10 @@ function Group({ subheader, items, slotProps }) {
       ),
   );
 
+  // Design system sidebar: sentence-case 12px/500 label in fg.tertiary, no
+  // divider rule, 12px between groups, rows 1px apart.
   return (
-    <Stack>
+    <Stack sx={{ mt: subheader ? 1.5 : 0 }}>
       {subheader ? (
         <>
           <ListSubheader
@@ -65,62 +66,49 @@ function Group({ subheader, items, slotProps }) {
             disableSticky
             onClick={handleToggle}
             sx={{
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 0.5,
-              cursor: "pointer",
-              typography: "overline",
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
-              color: "text.secondary",
-              mt: 1,
-              p: (theme) => theme.spacing(0.25, 0),
-              textTransform: "uppercase",
+              height: 24,
+              px: 1,
+              mx: 0.5,
+              bgcolor: "transparent",
+              cursor: "pointer",
+              fontSize: 12,
+              lineHeight: "16px",
+              fontWeight: 500,
+              color: "text.subtitle",
               transition: (theme) =>
                 theme.transitions.create(["color"], {
                   duration: theme.transitions.duration.shortest,
                 }),
               "&:hover": {
-                color: "text.primary",
+                color: "text.secondary",
               },
               ...slotProps?.subheader,
             }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                paddingX: 1.5,
-                width: "100%", // Take full width
-              }}
-            >
-              <Typography
-                fontSize="12px"
-                textTransform={"capitalize"}
-                fontWeight={500}
-                color={"text.secondary"}
-              >
-                {subheader
-                  .toLowerCase()
-                  .replace(/\b\w/g, (char) => char.toUpperCase())}
-              </Typography>
-              <Divider
-                sx={{
-                  borderColor: "divider",
-                  borderBottomWidth: "1px",
-                  flexGrow: 1,
-                  mt: 0.2,
-                }}
-              />
-            </Box>
+            {subheader.charAt(0).toUpperCase() +
+              subheader.slice(1).toLowerCase()}
           </ListSubheader>
 
-          <Box sx={{ px: 0.5, mb: "10px", width: "100%" }}>{renderContent}</Box>
+          <Box
+            sx={{
+              px: 0.5,
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1px",
+            }}
+          >
+            {renderContent}
+          </Box>
         </>
       ) : (
-        <Box sx={{ px: 0.5, mb: "10px" }}>{renderContent}</Box>
+        <Box
+          sx={{ px: 0.5, display: "flex", flexDirection: "column", gap: "1px" }}
+        >
+          {renderContent}
+        </Box>
       )}
     </Stack>
   );

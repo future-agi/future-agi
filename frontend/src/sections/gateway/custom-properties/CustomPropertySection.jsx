@@ -1,3 +1,4 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo } from "react";
 import {
   Box,
@@ -13,15 +14,14 @@ import {
   TableRow,
   TextField,
   Skeleton,
-  Card,
   InputAdornment,
   IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  CardContent,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -37,11 +37,21 @@ import {
 } from "./hooks/useCustomProperties";
 import CreateEditPropertyDialog from "./CreateEditPropertyDialog";
 
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
+
 const TYPE_ICONS = {
-  string: "mdi:format-text",
+  string: "solar:notes-linear",
   number: "mdi:numeric",
   boolean: "mdi:toggle-switch-outline",
-  enum: "mdi:format-list-bulleted-type",
+  enum: "solar:list-linear",
 };
 
 const CustomPropertySection = () => {
@@ -116,7 +126,7 @@ const CustomPropertySection = () => {
           <Skeleton width={250} height={40} />
           <Skeleton width={140} height={36} variant="rounded" />
         </Stack>
-        <Card>
+        <Section variant="panel">
           {[...Array(4)].map((_, i) => (
             <Stack
               key={i}
@@ -135,7 +145,7 @@ const CustomPropertySection = () => {
               <Skeleton width="25%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -162,7 +172,7 @@ const CustomPropertySection = () => {
             label: "Add Property",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setCreateOpen(true),
           },
         ]}
@@ -177,7 +187,7 @@ const CustomPropertySection = () => {
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
-              <Iconify icon="eva:search-outline" width={18} />
+              <Iconify icon="solar:magnifier-linear" width={16} />
             </InputAdornment>
           ),
         }}
@@ -186,7 +196,7 @@ const CustomPropertySection = () => {
       {filteredProperties.length === 0 ? (
         <Box display="flex" flexDirection="column" alignItems="center" py={8}>
           <Iconify
-            icon="mdi:form-textbox"
+            icon="solar:text-field-linear"
             width={48}
             sx={{ color: "text.disabled", mb: 2 }}
           />
@@ -208,7 +218,7 @@ const CustomPropertySection = () => {
               </Typography>
               <Button
                 variant="outlined"
-                startIcon={<Iconify icon="mdi:plus" width={20} />}
+                startIcon={<Iconify icon="solar:add-linear" width={20} />}
                 onClick={() => setCreateOpen(true)}
               >
                 Define Your First Property
@@ -227,7 +237,12 @@ const CustomPropertySection = () => {
                   <TableCell>Required</TableCell>
                   <TableCell>Allowed Values</TableCell>
                   <TableCell>Default</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Actions
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -238,9 +253,9 @@ const CustomPropertySection = () => {
                         <Iconify
                           icon={
                             TYPE_ICONS[prop.property_type] ||
-                            "mdi:help-circle-outline"
+                            "solar:question-circle-linear"
                           }
-                          width={18}
+                          width={20}
                           sx={{ color: "text.secondary" }}
                         />
                         <Box>
@@ -259,18 +274,15 @@ const CustomPropertySection = () => {
                       </Stack>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={prop.property_type}
-                        size="small"
-                        variant="outlined"
-                      />
+                      <Typography variant="body2" color="text.secondary">
+                        {prop.property_type}
+                      </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={prop.required ? "Required" : "Optional"}
-                        color={prop.required ? "warning" : "default"}
-                        size="small"
-                        variant="outlined"
+                      <StatusBadge
+                        status={prop.required ? "Required" : "Optional"}
+                        label={String(prop.required ? "Required" : "Optional")}
+                        role={CHIP_ROLE[prop.required ? "warning" : "default"]}
                       />
                     </TableCell>
                     <TableCell>
@@ -282,12 +294,7 @@ const CustomPropertySection = () => {
                           useFlexGap
                         >
                           {prop.allowed_values.slice(0, 3).map((v) => (
-                            <Chip
-                              key={v}
-                              label={v}
-                              size="small"
-                              sx={{ fontSize: "0.7rem" }}
-                            />
+                            <Chip key={v} label={v} size="small" />
                           ))}
                           {prop.allowed_values.length > 3 && (
                             <Chip
@@ -314,26 +321,34 @@ const CustomPropertySection = () => {
                           : "\u2014"}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       <Stack
                         direction="row"
                         spacing={0.5}
                         justifyContent="flex-end"
                       >
                         <IconButton
+                          className="row-hover-action"
                           size="small"
                           title="Edit"
                           onClick={() => setEditProperty(prop)}
                         >
-                          <Iconify icon="mdi:pencil-outline" width={20} />
+                          <Iconify icon="solar:pen-linear" width={20} />
                         </IconButton>
                         <IconButton
+                          className="row-hover-action"
                           size="small"
                           title="Delete"
                           color="error"
                           onClick={() => setDeleteTarget(prop)}
                         >
-                          <Iconify icon="mdi:delete-outline" width={20} />
+                          <Iconify
+                            icon="solar:trash-bin-trash-linear"
+                            width={20}
+                          />
                         </IconButton>
                       </Stack>
                     </TableCell>
@@ -351,45 +366,43 @@ const CustomPropertySection = () => {
 
       {/* Preview card */}
       {filteredProperties.length > 0 && (
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Typography variant="subtitle2" mb={1}>
-              Log Preview
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              display="block"
-              mb={1.5}
-            >
-              This is how custom properties would appear in a request log entry:
-            </Typography>
-            <Box
-              sx={{
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                p: 2,
-                fontFamily: "monospace",
-                fontSize: "0.8rem",
-              }}
-            >
-              <pre style={{ margin: 0 }}>
-                {JSON.stringify(
-                  Object.fromEntries(
-                    filteredProperties.map((p) => [
-                      p.name,
-                      p.default_value != null
-                        ? p.default_value
-                        : `<${p.property_type}>`,
-                    ]),
-                  ),
-                  null,
-                  2,
-                )}
-              </pre>
-            </Box>
-          </CardContent>
-        </Card>
+        <Section variant="panel" sx={{ mt: 3 }}>
+          <Typography variant="subtitle2" mb={1}>
+            Log Preview
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            mb={1.5}
+          >
+            This is how custom properties would appear in a request log entry:
+          </Typography>
+          <Box
+            sx={{
+              bgcolor: "action.hover",
+              borderRadius: 1,
+              p: 2,
+              fontFamily: "monospace",
+              fontSize: "13px",
+            }}
+          >
+            <pre style={{ margin: 0 }}>
+              {JSON.stringify(
+                Object.fromEntries(
+                  filteredProperties.map((p) => [
+                    p.name,
+                    p.default_value != null
+                      ? p.default_value
+                      : `<${p.property_type}>`,
+                  ]),
+                ),
+                null,
+                2,
+              )}
+            </pre>
+          </Box>
+        </Section>
       )}
 
       <CreateEditPropertyDialog
@@ -410,7 +423,8 @@ const CustomPropertySection = () => {
       <Dialog
         open={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
       >
         <DialogTitle>Delete Property Schema</DialogTitle>
         <DialogContent>

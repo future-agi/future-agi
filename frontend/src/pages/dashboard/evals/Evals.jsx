@@ -1,8 +1,8 @@
 import React from "react";
-import { Box, Tooltip, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import EvalsListView from "src/sections/evals/components/EvalsListView";
-import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 
 const Evals = () => {
   return (
@@ -21,24 +21,11 @@ const Evals = () => {
           overflow: "hidden",
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography variant="h6" fontWeight={600}>
-            Evaluations
-          </Typography>
-          <Tooltip
-            title="Create and manage evaluations to measure your AI agent's performance — bias, toxicity, accuracy, and response quality."
-            arrow
-            placement="right"
-          >
-            <Box sx={{ display: "flex", cursor: "help" }}>
-              <Iconify
-                icon="solar:info-circle-line-duotone"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </Box>
-          </Tooltip>
-        </Box>
+        <PageHeader
+          title="Evaluations"
+          info="Create and manage evaluations to measure your AI agent's performance — bias, toxicity, accuracy, and response quality."
+          sx={{ mb: 0 }}
+        />
         <EvalsListView />
       </Box>
     </>

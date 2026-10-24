@@ -38,7 +38,8 @@
     "re:build-npm": "npm run rm:all && npm install && npm run build",
     "dev:host": "vite --host",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "node --max-old-space-size=4096 ./node_modules/.bin/storybook build"
+    "build-storybook": "node --max-old-space-size=4096 ./node_modules/.bin/storybook build",
+    "lint:ds": "eslint --no-eslintrc -c .eslintrc.ds.cjs \"src/**/*.{js,jsx}\""
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.5",

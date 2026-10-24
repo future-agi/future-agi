@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Button,
+  Chip,
   CircularProgress,
   Collapse,
   IconButton,
@@ -10,6 +12,7 @@ import {
   Tooltip,
   Typography,
   alpha,
+  useTheme,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -20,6 +23,8 @@ import {
 } from "@xyflow/react";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import useKpis from "src/hooks/useKpis";
@@ -175,21 +180,18 @@ const getStatus = (score, confirmed) => {
 const STATUS_META = {
   pass: {
     label: "Addressed",
-    color: "success.main",
-    bgAlpha: 0.08,
-    icon: "mdi:check-circle",
+    role: "success",
+    icon: "solar:check-circle-bold",
   },
   partial: {
     label: "Partially",
-    color: "warning.main",
-    bgAlpha: 0.08,
-    icon: "mdi:alert-circle-outline",
+    role: "warning",
+    icon: "solar:danger-circle-linear",
   },
   miss: {
     label: "Missed",
-    color: "error.main",
-    bgAlpha: 0.08,
-    icon: "mdi:close-circle-outline",
+    role: "danger",
+    icon: "solar:close-circle-linear",
   },
 };
 
@@ -458,8 +460,10 @@ const PathAnalysisView = ({
         // A flow passed in with the call data labels only the edges it has
         // something to say about; the rest show no label.
         const quiet = providedAnalysis ? { hideEmptyLabel: true } : {};
-        if (greenNodes.includes(e.to)) return { highlightColor: "success", ...quiet };
-        if (redNodes.includes(e.to)) return { highlightColor: "error", ...quiet };
+        if (greenNodes.includes(e.to))
+          return { highlightColor: "success", ...quiet };
+        if (redNodes.includes(e.to))
+          return { highlightColor: "error", ...quiet };
         return providedAnalysis ? quiet : undefined;
       },
       // Compact sizes for path analysis — full-size 400×200 nodes make
@@ -526,7 +530,7 @@ const PathAnalysisView = ({
         }}
       >
         <Iconify
-          icon="mdi:graph-outline"
+          icon="solar:graph-linear"
           width={28}
           sx={{ color: "text.disabled" }}
         />
@@ -552,7 +556,7 @@ const PathAnalysisView = ({
         }}
       >
         <Iconify
-          icon="mdi:graph-outline"
+          icon="solar:graph-linear"
           width={28}
           sx={{ color: "text.disabled" }}
         />
@@ -633,14 +637,11 @@ const PathAnalysisView = ({
               size="small"
               onClick={() => setFullscreen(true)}
               sx={{
-                width: 24,
-                height: 24,
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "3px",
               }}
             >
-              <Iconify icon="mdi:fullscreen" width={14} />
+              <Iconify icon="solar:full-screen-linear" width={14} />
             </IconButton>
           </Tooltip>
         )}
@@ -667,7 +668,7 @@ const PathAnalysisView = ({
                 textAlign: "center",
               }}
             >
-              <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+              <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                 No steps match the current filter
               </Typography>
             </Box>
@@ -736,7 +737,7 @@ const PathAnalysisView = ({
           >
             <Stack direction="row" alignItems="center" gap={1}>
               <Iconify
-                icon="mdi:graph-outline"
+                icon="solar:graph-linear"
                 width={14}
                 sx={{ color: "primary.main" }}
               />
@@ -757,12 +758,8 @@ const PathAnalysisView = ({
                 </Box>
               )}
             </Stack>
-            <IconButton
-              size="small"
-              onClick={() => setFullscreen(false)}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:close" width={14} />
+            <IconButton size="small" onClick={() => setFullscreen(false)}>
+              <Iconify icon="solar:close-linear" width={14} />
             </IconButton>
           </Stack>
           <Box sx={{ flex: 1, minHeight: 0, p: 1 }}>
@@ -789,17 +786,17 @@ const PathAnalysisView = ({
             sx={{ mb: 0.25 }}
           >
             <Iconify
-              icon="mdi:creation"
+              icon="solar:stars-minimalistic-linear"
               width={12}
               sx={{ color: "primary.main" }}
             />
             <Typography
               sx={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.secondary",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
+                textTransform: "none",
+                letterSpacing: 0,
               }}
             >
               Falcon analysis
@@ -807,7 +804,7 @@ const PathAnalysisView = ({
           </Stack>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
@@ -845,51 +842,15 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
       gap={0.75}
       sx={{ flexWrap: "wrap" }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={0.5}
-        sx={{
-          border: "1px solid",
-          borderColor:
-            pct >= 80
-              ? "success.main"
-              : pct >= 50
-                ? "warning.main"
-                : "error.main",
-          borderRadius: "12px",
-          px: 0.75,
-          py: 0.25,
-          bgcolor: (t) =>
-            alpha(
-              (pct >= 80
-                ? t.palette.success
-                : pct >= 50
-                  ? t.palette.warning
-                  : t.palette.error
-              ).main,
-              0.08,
-            ),
-        }}
-      >
+      <Stack direction="row" alignItems="center" gap={0.75}>
+        <StatusBadge
+          label={`${pct}%`}
+          role={pct >= 80 ? "success" : pct >= 50 ? "warning" : "danger"}
+          dot={false}
+        />
         <Typography
           sx={{
-            fontSize: 11,
-            fontWeight: 700,
-            color:
-              pct >= 80
-                ? "success.main"
-                : pct >= 50
-                  ? "warning.main"
-                  : "error.main",
-            fontFamily: "monospace",
-          }}
-        >
-          {pct}%
-        </Typography>
-        <Typography
-          sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             fontFamily: "monospace",
           }}
@@ -899,19 +860,19 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
       </Stack>
       <FilterPill
         label={`${pass} pass`}
-        color="success.main"
+        role="success"
         active={activeFilter === "pass"}
         onClick={() => onFilter("pass")}
       />
       <FilterPill
         label={`${partial} partial`}
-        color="warning.main"
+        role="warning"
         active={activeFilter === "partial"}
         onClick={() => onFilter("partial")}
       />
       <FilterPill
         label={`${miss} missed`}
-        color="error.main"
+        role="danger"
         active={activeFilter === "miss"}
         onClick={() => onFilter("miss")}
       />
@@ -925,90 +886,55 @@ CoverageStrip.propTypes = {
   onFilter: PropTypes.func,
 };
 
-const FilterPill = ({ label, color, active, onClick }) => (
-  <Box
-    onClick={onClick}
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      px: 0.75,
-      py: 0.25,
-      borderRadius: "12px",
-      border: "1px solid",
-      borderColor: active ? color : "divider",
-      bgcolor: active
-        ? (t) => alpha(t.palette.primary.main, 0.04)
-        : "transparent",
-      cursor: "pointer",
-      "&:hover": { borderColor: color },
-    }}
-  >
-    <Box
-      sx={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        bgcolor: color,
-      }}
+const FilterPill = ({ label, role, active, onClick }) => {
+  const theme = useTheme();
+  const colors = statusColors(theme, role);
+  return (
+    <Chip
+      size="small"
+      clickable
+      onClick={onClick}
+      variant={active ? "filled" : "outlined"}
+      icon={
+        <Box
+          component="span"
+          sx={{
+            width: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            height: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            borderRadius: "50%",
+            bgcolor: colors.solid,
+          }}
+        />
+      }
+      label={label}
+      sx={{ fontFamily: "monospace" }}
     />
-    <Typography
-      sx={{
-        fontSize: 10,
-        fontWeight: active ? 700 : 500,
-        color: active ? color : "text.secondary",
-        fontFamily: "monospace",
-      }}
-    >
-      {label}
-    </Typography>
-  </Box>
-);
+  );
+};
 
 FilterPill.propTypes = {
   label: PropTypes.string,
-  color: PropTypes.string,
+  role: PropTypes.string,
   active: PropTypes.bool,
   onClick: PropTypes.func,
 };
 
 const ViewToggleButton = ({ active, icon, label, onClick }) => (
-  <Box
+  <Button
+    size="small"
+    variant="outlined"
+    color="inherit"
     onClick={onClick}
+    startIcon={<Iconify icon={icon} width={12} />}
     sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.4,
-      px: 0.75,
-      py: 0.25,
-      borderRadius: "3px",
-      border: "1px solid",
-      borderColor: active ? "primary.main" : "divider",
-      bgcolor: active
-        ? (t) => alpha(t.palette.primary.main, 0.08)
-        : "transparent",
-      cursor: "pointer",
-      "&:hover": {
-        bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
-        borderColor: "primary.main",
-      },
+      color: active ? "text.primary" : "text.secondary",
+      bgcolor: active ? "action.selected" : "transparent",
     }}
   >
-    <Iconify
-      icon={icon}
-      width={12}
-      sx={{ color: active ? "primary.main" : "text.secondary" }}
-    />
-    <Typography
-      sx={{
-        fontSize: 10.5,
-        fontWeight: active ? 600 : 500,
-        color: active ? "primary.main" : "text.secondary",
-      }}
-    >
-      {label}
-    </Typography>
-  </Box>
+    {label}
+  </Button>
 );
 
 ViewToggleButton.propTypes = {
@@ -1050,8 +976,6 @@ const StepCard = ({
       sx={{
         border: "1px solid",
         borderColor: isSelected ? "primary.main" : "divider",
-        borderLeft: "3px solid",
-        borderLeftColor: meta.color,
         borderRadius: "4px",
         bgcolor: "background.paper",
         overflow: "hidden",
@@ -1079,8 +1003,12 @@ const StepCard = ({
       >
         <Iconify
           icon={meta.icon}
-          width={15}
-          sx={{ color: meta.color, flexShrink: 0, mt: "2px" }}
+          width={16}
+          sx={{
+            color: (t) => statusColors(t, meta.role).fg,
+            flexShrink: 0,
+            mt: "2px",
+          }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack
@@ -1091,8 +1019,8 @@ const StepCard = ({
           >
             <Typography
               sx={{
-                fontSize: 9.5,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 color: "text.disabled",
                 fontFamily: "monospace",
                 flexShrink: 0,
@@ -1113,48 +1041,20 @@ const StepCard = ({
               {step.name}
             </Typography>
             <Box sx={{ flex: 1 }} />
-            <Box
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                px: 0.5,
-                borderRadius: "3px",
-                border: "1px solid",
-                borderColor: meta.color,
-                bgcolor: (t) =>
-                  alpha(
-                    t.palette[
-                      status === "pass"
-                        ? "success"
-                        : status === "partial"
-                          ? "warning"
-                          : "error"
-                    ].main,
-                    meta.bgAlpha,
-                  ),
-                flexShrink: 0,
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: 9,
-                  fontWeight: 700,
-                  color: meta.color,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  lineHeight: "16px",
-                }}
-              >
-                {meta.label}
-              </Typography>
-            </Box>
+            <StatusBadge
+              status={status}
+              label={meta.label}
+              role={meta.role}
+              size="sm"
+              dot={false}
+            />
           </Stack>
 
           {/* Expected opener — inline, one line */}
           {step?.messagePlan?.firstMessage && (
             <Typography
               sx={{
-                fontSize: 10.5,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.4,
                 whiteSpace: isExpanded ? "normal" : "nowrap",
@@ -1168,7 +1068,7 @@ const StepCard = ({
           )}
         </Box>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{
             color: "text.disabled",
@@ -1190,53 +1090,36 @@ const StepCard = ({
             py: 0.5,
             borderTop: "1px dashed",
             borderColor: "divider",
-            bgcolor: (t) =>
-              alpha(
-                t.palette[
-                  status === "miss"
-                    ? "error"
-                    : status === "partial"
-                      ? "warning"
-                      : "success"
-                ].main,
-                0.03,
-              ),
+            bgcolor: (t) => statusColors(t, meta.role).bg,
           }}
         >
-          <Box
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={bestTurn.start == null}
             onClick={(e) => {
               e.stopPropagation();
               if (bestTurn.start != null) onSeek?.(bestTurn.start);
             }}
+            startIcon={<Iconify icon="solar:play-linear" width={12} />}
             sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.25,
-              px: 0.5,
-              py: 0.15,
-              borderRadius: "3px",
-              border: "1px solid",
-              borderColor: "primary.main",
-              color: "primary.main",
-              cursor: bestTurn.start != null ? "pointer" : "default",
-              fontSize: 10,
-              fontFamily: "monospace",
               flexShrink: 0,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
-              },
+              fontFamily: "monospace",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
-            <Iconify icon="mdi:play" width={10} />
             {bestTurn.start != null ? formatClock(bestTurn.start) : "—"}
-          </Box>
+          </Button>
           <Typography
             sx={{
-              fontSize: 9.5,
-              fontWeight: 700,
-              color: bestTurn.role === "assistant" ? "primary.main" : "#E9690C",
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
+              fontSize: 12,
+              fontWeight: 600,
+              color:
+                bestTurn.role === "assistant"
+                  ? "primary.main"
+                  : "status.warning.fg",
+              textTransform: "none",
+              letterSpacing: 0,
               flexShrink: 0,
               mt: "2px",
               width: 18,
@@ -1248,7 +1131,7 @@ const StepCard = ({
             sx={{
               flex: 1,
               minWidth: 0,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               lineHeight: 1.4,
               whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
@@ -1261,7 +1144,7 @@ const StepCard = ({
           </Typography>
           <Typography
             sx={{
-              fontSize: 9.5,
+              fontSize: 12,
               color: "text.disabled",
               fontFamily: "monospace",
               flexShrink: 0,
@@ -1285,7 +1168,7 @@ const StepCard = ({
         >
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
             }}
@@ -1315,11 +1198,11 @@ const StepCard = ({
             >
               <Typography
                 sx={{
-                  fontSize: 9,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                 }}
               >
                 Shared keywords
@@ -1330,10 +1213,10 @@ const StepCard = ({
                   sx={{
                     px: 0.5,
                     py: "1px",
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                     bgcolor: (t) => alpha(t.palette.primary.main, 0.1),
                     color: "primary.main",
-                    fontSize: 9.5,
+                    fontSize: 12,
                     fontWeight: 600,
                     fontFamily: "monospace",
                   }}
@@ -1347,11 +1230,11 @@ const StepCard = ({
             <Box>
               <Typography
                 sx={{
-                  fontSize: 9,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   mb: 0.25,
                 }}
               >
@@ -1359,7 +1242,7 @@ const StepCard = ({
               </Typography>
               <Typography
                 sx={{
-                  fontSize: 10.5,
+                  fontSize: 12,
                   color: "text.secondary",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
@@ -1482,15 +1365,15 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
       }}
     >
       <Iconify
-        icon="mdi:alert-circle"
+        icon="solar:danger-circle-linear"
         width={14}
         sx={{ color: "error.main", flexShrink: 0, mt: "2px" }}
       />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography
-          sx={{ fontSize: 11, color: "text.primary", lineHeight: 1.4 }}
+          sx={{ fontSize: 12, color: "text.primary", lineHeight: 1.4 }}
         >
-          <Box component="span" sx={{ fontWeight: 700 }}>
+          <Box component="span" sx={{ fontWeight: 600 }}>
             Diverged at step {index + 1}
           </Box>
           {expected && (
@@ -1527,7 +1410,7 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
         {gotLine && !inline && (
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.secondary",
               fontStyle: "italic",
               mt: 0.25,
@@ -1542,7 +1425,7 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
       </Box>
       {expected && !inline && (
         <Iconify
-          icon="mdi:arrow-right-thick"
+          icon="solar:arrow-right-linear"
           width={12}
           sx={{ color: "text.disabled", flexShrink: 0, mt: "2px" }}
         />
@@ -1566,12 +1449,15 @@ DivergenceBreadcrumb.propTypes = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PathStepNode = React.memo(({ data }) => {
-  const color =
+  const theme = useTheme();
+  const color = statusColors(
+    theme,
     data?.highlightColor === "success"
-      ? "#22c55e"
+      ? "success"
       : data?.highlightColor === "error"
-        ? "#ef4444"
-        : "#64748b";
+        ? "danger"
+        : "neutral",
+  ).solid;
   const opener = data?.messagePlan?.firstMessage;
   const prompt = data?.prompt;
 
@@ -1622,20 +1508,16 @@ const PathStepNode = React.memo(({ data }) => {
           maxWidth: 200,
           px: 1.25,
           py: 0.5,
-          borderRadius: "16px",
+          borderRadius: "8px",
           border: "2px solid",
           borderColor: color,
           bgcolor: data?.isSelected ? alpha(color, 0.28) : alpha(color, 0.14),
           cursor: "pointer",
-          transition: "transform 120ms, box-shadow 120ms",
+          transition: "background-color 120ms, box-shadow 120ms",
           boxShadow: data?.isSelected
             ? `0 0 0 3px ${alpha(color, 0.35)}`
             : "none",
           "&:hover": {
-            transform: "scale(1.04)",
-            boxShadow: data?.isSelected
-              ? `0 0 0 3px ${alpha(color, 0.45)}, 0 2px 10px ${alpha(color, 0.4)}`
-              : `0 2px 10px ${alpha(color, 0.4)}`,
             bgcolor: alpha(color, 0.22),
           },
         }}

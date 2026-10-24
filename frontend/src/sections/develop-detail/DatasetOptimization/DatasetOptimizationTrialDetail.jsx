@@ -1,5 +1,13 @@
 import React, { useState, useMemo } from "react";
-import { Box, Typography, Breadcrumbs, Button, Switch } from "@mui/material";
+import {
+  Box,
+  CircularProgress,
+  Typography,
+  Breadcrumbs,
+  Button,
+  Switch,
+  Tab,
+} from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
 import axios, { endpoints } from "src/utils/axios";
@@ -15,11 +23,7 @@ import PromptTooltip from "src/sections/test-detail/FixMyAgentDrawer/Optimizatio
 import Growth from "src/sections/test-detail/FixMyAgentDrawer/OptimizationResults/Growth";
 import PromptPanel from "src/sections/test-detail/FixMyAgentDrawer/OptimizationDetail/PrompDetails/PromptPanel";
 import PromptDiffView from "src/sections/test-detail/FixMyAgentDrawer/OptimizationDetail/PrompDetails/PromptDiffView";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/test-detail/FixMyAgentDrawer/OptimizationDetail/SharedComponents";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 
 /**
  * Column configuration function matching simulation's getTrialItemsColumnConfig.
@@ -171,8 +175,8 @@ const DatasetOptimizationTrialDetail = ({
 
   if (isLoading) {
     return (
-      <Box sx={{ p: 3, textAlign: "center" }}>
-        <Typography>Loading...</Typography>
+      <Box sx={{ p: 3, display: "flex", justifyContent: "center" }}>
+        <CircularProgress size={20} />
       </Box>
     );
   }
@@ -212,34 +216,22 @@ const DatasetOptimizationTrialDetail = ({
           />
         }
       >
-        <Typography
-          component={Button}
+        <Button
           size="small"
-          typography="s1"
-          fontWeight="fontWeightMedium"
-          color="text.secondary"
+          variant="text"
           onClick={onBackToList}
-          sx={{
-            px: "10px",
-            "&:hover": { backgroundColor: "transparent" },
-          }}
+          sx={{ color: "text.secondary" }}
         >
           Optimization Runs
-        </Typography>
-        <Typography
-          component={Button}
+        </Button>
+        <Button
           size="small"
-          typography="s1"
-          fontWeight="fontWeightMedium"
-          color="text.secondary"
+          variant="text"
           onClick={onBack}
-          sx={{
-            px: "10px",
-            "&:hover": { backgroundColor: "transparent" },
-          }}
+          sx={{ color: "text.secondary" }}
         >
           {optimizationName ?? "..."}
-        </Typography>
+        </Button>
         <Typography
           typography="s1"
           fontWeight="fontWeightMedium"
@@ -282,13 +274,13 @@ const DatasetOptimizationTrialDetail = ({
           alignItems: "center",
         }}
       >
-        <TabWrapper>
-          <CustomTabs value={activeTab} onChange={handleTabChange}>
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs value={activeTab} onChange={handleTabChange}>
             {tabs.map((tab) => (
-              <CustomTab key={tab.value} label={tab.label} value={tab.value} />
+              <Tab key={tab.value} label={tab.label} value={tab.value} />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
         <ShowComponent condition={activeTab === "prompt"}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Switch
@@ -357,7 +349,7 @@ const DatasetOptimizationTrialDetail = ({
                 display: "flex",
                 alignItems: "center",
                 gap: 1,
-                backgroundColor: "blue.o5",
+                backgroundColor: "status.info.bg",
                 paddingX: "12px",
                 paddingY: "4px",
                 borderRadius: "4px",
@@ -365,7 +357,7 @@ const DatasetOptimizationTrialDetail = ({
             >
               <SvgColor
                 src="/assets/icons/ic_info.svg"
-                sx={{ width: 16, height: 16, color: "blue.500" }}
+                sx={{ width: 16, height: 16, color: "status.info.fg" }}
               />
               <Typography typography="s2">
                 Iterations ran to optimize the prompt

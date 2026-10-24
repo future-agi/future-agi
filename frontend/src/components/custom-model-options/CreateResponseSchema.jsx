@@ -1,14 +1,17 @@
 import React, { useMemo } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PromptModalWrapper from "./PromptModalWrapper";
-import { Box, DialogContent, Stack, Typography, useTheme } from "@mui/material";
+import {
+  Box,
+  DialogContent,
+  Stack,
+  Typography,
+  useTheme,
+  Tab,
+} from "@mui/material";
 import { useForm, useWatch } from "react-hook-form";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import PropTypes from "prop-types";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import { ShowComponent } from "src/components/show";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -237,30 +240,21 @@ export default function CreateResponseSchema({ open, onClose, setValue }) {
               Schema definition
             </Typography>
             <Box sx={{ width: "fit-content" }}>
-              <TabWrapper sx={{ marginBottom: "0" }}>
-                <CustomTabs
-                  textColor="primary"
+              <Box sx={{ mb: 1.5 }}>
+                <SegmentedTabs
                   value={schemaType}
                   onChange={(e, value) => setFormValue("schema_type", value)}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
-                      opacity: 0.08,
-                      height: "100%",
-                      borderRadius: "8px",
-                    },
-                  }}
                 >
                   {tabOptions.map((tab) => (
-                    <CustomTab
+                    <Tab
                       key={tab.value}
                       label={tab.label}
                       value={tab.value}
                       disabled={tab.disabled}
                     />
                   ))}
-                </CustomTabs>
-              </TabWrapper>
+                </SegmentedTabs>
+              </Box>
             </Box>
             <ShowComponent condition={schemaType === "json"}>
               <Box

@@ -1,4 +1,6 @@
-import { Box, Button, Divider, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import ListToolbar from "src/components/list-toolbar";
 import { AgGridReact } from "ag-grid-react";
 import { format } from "date-fns";
 import React, { useMemo, useRef, useState } from "react";
@@ -123,66 +125,40 @@ const ApiKeysLandingPage = () => {
 
   return (
     <Box sx={{ height: "100%" }}>
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Typography
-          typography={"s3"}
-          fontWeight={"fontWeightRegular"}
-          color="text.primary"
+      <PageHeader
+        title="API Keys"
+        description="Your secret API keys are listed below. These keys are encrypted"
+        sx={{ mb: 0 }}
+      />
+      <ListToolbar>
+        <FormSearchField
+          size="small"
+          placeholder="Search"
+          sx={{ width: 280 }}
+          autoFocus
+          searchQuery={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <Box sx={{ flex: 1 }} />
+        <Button
+          onClick={handleCreateClick}
+          variant="contained"
+          color="primary"
+          startIcon={
+            <Iconify
+              width={20}
+              icon="solar:add-linear"
+              color="background.paper"
+            />
+          }
         >
-          Your secret API keys are listed below. These keys are encrypted
-        </Typography>
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 1.5,
-          }}
-        >
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-            autoFocus
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <Divider orientation="vertical" variant="middle" flexItem />
-          <Box>
-            <Button
-              onClick={handleCreateClick}
-              variant="contained"
-              color="primary"
-              startIcon={
-                <Iconify
-                  icon="octicon:plus-24"
-                  color="background.paper"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
-                />
-              }
-              sx={{ px: "24px", typography: "s1" }}
-            >
-              Add API Key
-            </Button>
-          </Box>
-        </Box>
-      </Box>
+          Add API Key
+        </Button>
+      </ListToolbar>
       <ShowComponent condition={hasData}>
         <Box
           className="ag-theme-quartz"
-          style={{ height: "calc(100% - 40px)", paddingTop: "12px" }}
+          style={{ height: "calc(100% - 96px)" }}
         >
           <AgGridReact
             ref={gridRef}

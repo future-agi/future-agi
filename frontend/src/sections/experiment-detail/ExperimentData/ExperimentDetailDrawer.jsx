@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import { enqueueSnackbar } from "notistack";
 import { readLegacyExperimentRow } from "./legacy_experiment_row_read";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // const ExperimentDetailSection = ({ col, individualCols, row, columnConfigs, index, refreshGrid }) => {
 //   const evalsData = useMemo(() => {
@@ -67,7 +68,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //           padding: 2,
 //           textAlign: "center",
 //           color: "text.primary",
-//           fontSize: 14,
+//           fontSize: 13,
 //           fontWeight:400
 //         }}
 //       >
@@ -157,7 +158,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //           {String.fromCharCode(65 + index)}
 //           {/* E{index} */}
 //         </Box>
-//         <Typography fontWeight={600} fontSize={14} color="text.primary">
+//         <Typography fontWeight={600} fontSize={13} color="text.primary">
 //           {col?.group?.name}
 //         </Typography>
 //       </Box>
@@ -194,7 +195,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //                   width: "0px",
 //                 },
 //                 headerBackgroundColor: "background.paper",
-//                 fontSize:"14px"
+//                 fontSize:"13px"
 //               })}
 //               columnDefs={TabColumnDefs(setOpenDetailRow)}
 //               defaultColDef={defaultColDef}
@@ -229,7 +230,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //               component={"img"}
 //               src="/assets/icons/ic_dragger.svg"
 //             />
-//             {/* <Iconify icon="oui:grab" width={16} sx={{ color: "text.disabled" }} /> */}
+//             {/* <Iconify icon="solar:grip-vertical-linear" width={16} sx={{ color: "text.disabled" }} /> */}
 //           </Box>
 //         </Box>
 //         <Box
@@ -388,7 +389,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //             Prev
 //             <Iconify
 //               sx={{ marginLeft: theme.spacing(1.25) }}
-//               icon="material-symbols:expand-less-rounded"
+//               icon="solar:alt-arrow-up-linear"
 //             />
 //           </LoadingButton>
 //           <LoadingButton
@@ -408,11 +409,11 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //             Next
 //             <Iconify
 //               sx={{ marginLeft: theme.spacing(1.25) }}
-//               icon="material-symbols:expand-more-rounded"
+//               icon="solar:alt-arrow-down-linear"
 //             />
 //           </LoadingButton>
 //           <IconButton aria-label="close-experiment-detail" onClick={onClose} size="small">
-//             <Iconify icon="mingcute:close-line" color="text.primary" />
+//             <Iconify icon="solar:close-linear" color="text.primary" />
 //           </IconButton>
 //         </Box>
 //     </Box>
@@ -788,17 +789,19 @@ const ExperimentDetailDrawer = ({
   const nextRowId = row?.index >= totalCount - 1;
   const prevRowId = row?.index <= 0;
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflowX: "hidden",
         },

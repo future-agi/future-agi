@@ -9,10 +9,10 @@ import {
   Link,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -59,40 +59,48 @@ const EVAL_TAGS = [
   {
     value: "red_teaming",
     label: "Red Teaming",
-    icon: "mdi:shield-alert-outline",
+    icon: "solar:shield-warning-linear",
   },
   {
     value: "retrieval_systems",
     label: "Retrieval Systems",
-    icon: "mdi:database-search-outline",
+    icon: "solar:database-linear",
   },
   {
     value: "harmful_objects",
     label: "Harmful Objects",
-    icon: "mdi:alert-octagon-outline",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "chatbot_behaviors",
     label: "Chatbot behaviors",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
   },
   {
     value: "output_format",
     label: "Output Format",
-    icon: "mdi:format-list-bulleted",
+    icon: "solar:list-linear",
   },
-  { value: "nlp_metrics", label: "NLP Metrics", icon: "mdi:chart-bar" },
-  { value: "data_leakage", label: "Data Leakage", icon: "mdi:leak" },
+  { value: "nlp_metrics", label: "NLP Metrics", icon: "solar:chart-2-linear" },
+  {
+    value: "data_leakage",
+    label: "Data Leakage",
+    icon: "solar:waterdrop-linear",
+  },
   {
     value: "output_validation",
     label: "Output Validation",
-    icon: "mdi:check-decagram-outline",
+    icon: "solar:check-circle-linear",
   },
-  { value: "image", label: "Image", icon: "mdi:image-outline" },
-  { value: "audio", label: "Audio", icon: "mdi:volume-high" },
-  { value: "medical", label: "Medical", icon: "mdi:medical-bag" },
-  { value: "finance", label: "Finance", icon: "mdi:currency-usd" },
-  { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
+  { value: "image", label: "Image", icon: "solar:gallery-linear" },
+  { value: "audio", label: "Audio", icon: "solar:volume-loud-linear" },
+  { value: "medical", label: "Medical", icon: "solar:medical-kit-linear" },
+  {
+    value: "finance",
+    label: "Finance",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  { value: "agents", label: "Agents", icon: "solar:bot-linear" },
 ];
 
 const extractSelectedTools = (tools) => {
@@ -723,12 +731,9 @@ const EvalCreatePage = () => {
               variant="caption"
               sx={{
                 fontFamily: "monospace",
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "text.disabled",
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.05)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
                 px: 0.75,
                 py: 0.25,
                 borderRadius: "4px",
@@ -770,80 +775,10 @@ const EvalCreatePage = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
-                  value={mode}
-                  onChange={handleModeChange}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
-                >
-                  <Tab
-                    value="single"
-                    label="Single"
-                    sx={{
-                      bgcolor:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "single" ? 600 : 400,
-                      color:
-                        mode === "single" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                  <Tab
-                    value="composite"
-                    label="Composite"
-                    sx={{
-                      bgcolor:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "composite" ? 600 : 400,
-                      color:
-                        mode === "composite" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                </Tabs>
+                <SegmentedTabs value={mode} onChange={handleModeChange}>
+                  <Tab value="single" label="Single" />
+                  <Tab value="composite" label="Composite" />
+                </SegmentedTabs>
               </Box>
 
               {mode === "single" ? (
@@ -859,7 +794,7 @@ const EvalCreatePage = () => {
                       Eval Name
                       <Box
                         component="span"
-                        sx={{ color: "error.main", ml: 0.25 }}
+                        sx={{ color: "status.danger.fg", ml: 0.25 }}
                       >
                         *
                       </Box>
@@ -881,7 +816,7 @@ const EvalCreatePage = () => {
                   </Box>
 
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
-                  <Tabs
+                  <SegmentedTabs
                     value={evalType}
                     onChange={(_, val) => {
                       if (agentEvalLocked && val === "agent") {
@@ -893,31 +828,7 @@ const EvalCreatePage = () => {
                       }
                       setEvalType(val);
                     }}
-                    variant="standard"
-                    scrollButtons={false}
-                    TabIndicatorProps={{ style: { display: "none" } }}
-                    sx={{
-                      minHeight: 28,
-                      "& .MuiTabs-scroller": { overflow: "visible !important" },
-                      "& .MuiTab-root": {
-                        minHeight: 28,
-                        px: 1.5,
-                        py: 0,
-                        mr: "0px !important",
-                        textTransform: "none",
-                        fontSize: "13px",
-                        borderRadius: "6px",
-                      },
-                      border: "1px solid",
-                      borderColor: "divider",
-                      p: "2px",
-                      borderRadius: "8px",
-                      width: "fit-content",
-                      bgcolor: (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.04)"
-                          : "background.neutral",
-                    }}
+                    sx={{ width: "fit-content" }}
                   >
                     {EVAL_TYPE_TABS.map((tab) => {
                       const locked = agentEvalLocked && tab.value === "agent";
@@ -941,40 +852,20 @@ const EvalCreatePage = () => {
                                   }}
                                 >
                                   {tab.label}
-                                  <Iconify icon="mdi:lock-outline" width={14} />
+                                  <Iconify
+                                    icon="solar:lock-linear"
+                                    width={14}
+                                  />
                                 </Box>
                               </CustomTooltip>
                             ) : (
                               tab.label
                             )
                           }
-                          sx={{
-                            bgcolor:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "rgba(255,255,255,0.12)"
-                                      : "background.paper"
-                                : "transparent",
-                            boxShadow:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "none"
-                                      : "0 1px 3px rgba(0,0,0,0.08)"
-                                : "none",
-                            borderRadius: "6px",
-                            fontWeight: evalType === tab.value ? 600 : 400,
-                            opacity: locked ? 0.6 : 1,
-                            color:
-                              evalType === tab.value
-                                ? "text.primary"
-                                : "text.disabled",
-                          }}
                         />
                       );
                     })}
-                  </Tabs>
+                  </SegmentedTabs>
 
                   {/* ═══ Tab-specific content ═══ */}
 
@@ -1211,11 +1102,7 @@ const EvalCreatePage = () => {
                                   : [...prev, tag.value],
                               )
                             }
-                            sx={{
-                              fontSize: "12px",
-                              cursor: "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
-                            }}
+                            sx={{ cursor: "pointer" }}
                           />
                         );
                       })}
@@ -1329,7 +1216,7 @@ const EvalCreatePage = () => {
                 {testError && (
                   <Typography
                     variant="caption"
-                    color="error.main"
+                    color="status.danger.fg"
                     sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                     noWrap
                   >
@@ -1346,13 +1233,13 @@ const EvalCreatePage = () => {
                     }}
                   >
                     <Iconify
-                      icon="mdi:check-circle"
+                      icon="solar:check-circle-bold"
                       width={16}
-                      sx={{ color: "success.main" }}
+                      sx={{ color: "status.success.fg" }}
                     />
                     <Typography
                       variant="caption"
-                      color="success.main"
+                      color="status.success.fg"
                       sx={{ fontSize: "12px" }}
                     >
                       Test completed
@@ -1448,12 +1335,11 @@ const EvalCreatePage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:play-circle-outline"
+                                icon="solar:play-circle-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isTesting ? "Testing..." : "Test Evaluation"}
                         </Button>
@@ -1520,12 +1406,8 @@ const EvalCreatePage = () => {
                           }
                           disabled={saveDisabled}
                           startIcon={
-                            <Iconify
-                              icon="mdi:content-save-outline"
-                              width={16}
-                            />
+                            <Iconify icon="solar:diskette-linear" width={16} />
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isLoading ? "Saving..." : "Save Evaluation"}
                         </Button>

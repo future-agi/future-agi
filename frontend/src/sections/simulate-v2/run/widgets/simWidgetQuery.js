@@ -18,16 +18,28 @@
  */
 import { csatOf, latencyOf, deriveUseCaseLabel } from "../traceTableHelpers";
 
-const fmtMs = (v) => (v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
+const fmtMs = (v) =>
+  v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`;
 import { deriveToolCalls, isToolFailure } from "../toolCalls";
 import { COST_STAGES, costSplitOf } from "../costSplit";
 import { VOICE_SEGMENTS, voiceSegmentsOf } from "../voiceSegments";
 import {
-  OUTCOME_LABELS, attributionOf, endReasonOf, isMeasured, outcomeOf, passShareOf, samplesOf, sentimentOf,
+  OUTCOME_LABELS,
+  attributionOf,
+  endReasonOf,
+  isMeasured,
+  outcomeOf,
+  passShareOf,
+  samplesOf,
+  sentimentOf,
 } from "../taskOutcome";
 import { groupKey } from "../layout/customWidgetRenderer";
 import { ALL_AGGREGATIONS } from "src/sections/dashboards/constants";
-import { runSummaries, trialSummaries, buildComparison } from "../../_mock/comparison";
+import {
+  runSummaries,
+  trialSummaries,
+  buildComparison,
+} from "../../_mock/comparison";
 import { creditsForUsd } from "../../_mock/metering";
 
 const CREDITS_PER_USD = creditsForUsd(1);
@@ -50,7 +62,11 @@ export function simRunsWithTasks(env, envState) {
     .sort((a, b) => new Date(a.finishedAt || 0) - new Date(b.finishedAt || 0))
     .slice(0, TRIAL_CAP);
   const hydrated = trials.length
-    ? buildComparison(env, envState, trials.map((t) => t.id)).runs || []
+    ? buildComparison(
+        env,
+        envState,
+        trials.map((t) => t.id),
+      ).runs || []
     : [];
   const byId = new Map(hydrated.map((r) => [r.id, r]));
   /* A trial ran a candidate prompt on top of its source run's agent, so it
@@ -62,7 +78,8 @@ export function simRunsWithTasks(env, envState) {
     return {
       ...full,
       kind: "trial",
-      agentVersion: `${full.agentVersion || "change"} · ${full.selfImprovementName ? `${full.selfImprovementName} · ` : ""}Run ${full.trialN ?? ""}`.trim(),
+      agentVersion:
+        `${full.agentVersion || "change"} · ${full.selfImprovementName ? `${full.selfImprovementName} · ` : ""}Run ${full.trialN ?? ""}`.trim(),
       tasks: (full.tasks || []).map((task) => ({ ...task, __trialCopy: true })),
     };
   });
@@ -96,44 +113,68 @@ export const attributeAxisValue = (id) => `attr:${id}`;
 
 /* Left column of the picker — same role as the dashboards' METRIC_CATEGORIES. */
 export const SIM_METRIC_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "outcome", label: "Outcome", icon: "mdi:flag-checkered" },
-  { key: "evals", label: "Evals", icon: "mdi:check-circle-outline" },
-  { key: "latency", label: "Latency", icon: "mdi:timer-outline" },
-  { key: "cost", label: "Cost & usage", icon: "mdi:currency-usd" },
-  { key: "conversation", label: "Conversation", icon: "mdi:message-text-outline" },
-  { key: "tools", label: "Tools", icon: "mdi:tools" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "outcome", label: "Outcome", icon: "solar:flag-linear" },
+  { key: "evals", label: "Evals", icon: "solar:check-circle-linear" },
+  { key: "latency", label: "Latency", icon: "solar:clock-circle-linear" },
+  {
+    key: "cost",
+    label: "Cost & usage",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  {
+    key: "conversation",
+    label: "Conversation",
+    icon: "solar:chat-round-line-linear",
+  },
+  { key: "tools", label: "Tools", icon: "solar:toolbox-linear" },
 ];
 
 export const SIM_ATTRIBUTE_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "scenario", label: "Scenario", icon: "mdi:script-text-outline" },
-  { key: "outcome", label: "Outcome", icon: "mdi:flag-checkered" },
-  { key: "conversation", label: "Conversation", icon: "mdi:message-text-outline" },
-  { key: "run", label: "Run", icon: "mdi:play-circle-outline" },
-  { key: "tools", label: "Tools", icon: "mdi:tools" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "scenario", label: "Scenario", icon: "solar:document-text-linear" },
+  { key: "outcome", label: "Outcome", icon: "solar:flag-linear" },
+  {
+    key: "conversation",
+    label: "Conversation",
+    icon: "solar:chat-round-line-linear",
+  },
+  { key: "run", label: "Run", icon: "solar:play-circle-linear" },
+  { key: "tools", label: "Tools", icon: "solar:toolbox-linear" },
 ];
 
 const pct = (b) => (b ? 100 : 0);
 /* Each tool row carries its task, so task attributes (outcome, scenario,
    persona…) filter and break down tool metrics like any other. */
-const toolRowsOf = (task) => deriveToolCalls([task]).map((row) => ({ ...task, ...row }));
+const toolRowsOf = (task) =>
+  deriveToolCalls([task]).map((row) => ({ ...task, ...row }));
 /* One row per call attempt: a scenario ran `repeats` times and passed on a
    share of them. */
 const callRowsOf = (task) => {
   const n = samplesOf(task);
   const k = Math.round((passShareOf(task) ?? 0) * n);
-  return Array.from({ length: n }, (_, i) => ({ ...task, __callPassed: i < k }));
+  return Array.from({ length: n }, (_, i) => ({
+    ...task,
+    __callPassed: i < k,
+  }));
 };
 /* One row per voice-pipeline segment of a call. */
 const segmentRowsOf = (task) => {
   const seg = voiceSegmentsOf(task);
-  return VOICE_SEGMENTS.map((st) => ({ ...task, __segment: st.label, __segmentMs: seg[st.key] }));
+  return VOICE_SEGMENTS.map((st) => ({
+    ...task,
+    __segment: st.label,
+    __segmentMs: seg[st.key],
+  }));
 };
-const rowsOfTask = (task, grain) => (grain === "tool" ? toolRowsOf(task)
-  : grain === "call" ? callRowsOf(task)
-    : grain === "segment" ? segmentRowsOf(task)
-      : [task]);
+const rowsOfTask = (task, grain) =>
+  grain === "tool"
+    ? toolRowsOf(task)
+    : grain === "call"
+      ? callRowsOf(task)
+      : grain === "segment"
+        ? segmentRowsOf(task)
+        : [task];
 /* Trials read the same task values the run page shows for them. */
 const own = (t, v) => v;
 
@@ -145,47 +186,219 @@ const own = (t, v) => v;
   caller or grader broke) — those are never the agent's failures.
 */
 const BASE_METRICS = [
-  { id: "tasks", name: "Scenarios", category: "outcome", unit: "", aggregation: "count", allowed: ["count"], value: () => 1 },
-  { id: "calls", name: "Calls", category: "outcome", grain: "call", unit: "", aggregation: "count", allowed: ["count"], value: () => 1 },
-  { id: "pass_rate", name: "Pass rate", category: "outcome", unit: "%", aggregation: "avg", measured: true, value: (t) => (passShareOf(t) == null ? null : passShareOf(t) * 100) },
-  { id: "fail_rate", name: "Fail rate", category: "outcome", unit: "%", aggregation: "avg", measured: true, value: (t) => (passShareOf(t) == null ? null : (1 - passShareOf(t)) * 100) },
-  { id: "critical_failures", name: "Critical failures", category: "outcome", unit: "", aggregation: "sum", allowed: ["sum", "avg"], measured: true, value: (t) => (t.critical && outcomeOf(t) === "failed" ? 1 : 0) },
-  { id: "not_measured", name: "Not measured", category: "outcome", unit: "", aggregation: "sum", allowed: ["sum", "avg"], value: (t) => (isMeasured(t) ? 0 : 1) },
+  {
+    id: "tasks",
+    name: "Scenarios",
+    category: "outcome",
+    unit: "",
+    aggregation: "count",
+    allowed: ["count"],
+    value: () => 1,
+  },
+  {
+    id: "calls",
+    name: "Calls",
+    category: "outcome",
+    grain: "call",
+    unit: "",
+    aggregation: "count",
+    allowed: ["count"],
+    value: () => 1,
+  },
+  {
+    id: "pass_rate",
+    name: "Pass rate",
+    category: "outcome",
+    unit: "%",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => (passShareOf(t) == null ? null : passShareOf(t) * 100),
+  },
+  {
+    id: "fail_rate",
+    name: "Fail rate",
+    category: "outcome",
+    unit: "%",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => (passShareOf(t) == null ? null : (1 - passShareOf(t)) * 100),
+  },
+  {
+    id: "critical_failures",
+    name: "Critical failures",
+    category: "outcome",
+    unit: "",
+    aggregation: "sum",
+    allowed: ["sum", "avg"],
+    measured: true,
+    value: (t) => (t.critical && outcomeOf(t) === "failed" ? 1 : 0),
+  },
+  {
+    id: "not_measured",
+    name: "Not measured",
+    category: "outcome",
+    unit: "",
+    aggregation: "sum",
+    allowed: ["sum", "avg"],
+    value: (t) => (isMeasured(t) ? 0 : 1),
+  },
 
-  { id: "duration", name: "Call duration", category: "latency", unit: "ms", aggregation: "avg", measured: true, value: (t) => own(t, t.durationMs ?? null) },
-  { id: "duration_s", name: "Call duration (s)", category: "latency", unit: "s", aggregation: "avg", measured: true, value: (t) => (t.durationMs == null ? null : t.durationMs / 1000) },
-  { id: "segment_latency", name: "Voice segment latency", category: "latency", grain: "segment", unit: "ms", aggregation: "p50", measured: true, value: (r) => r.__segmentMs ?? null },
-  { id: "agent_latency", name: "Agent latency", category: "latency", unit: "ms", aggregation: "avg", measured: true, value: (t) => own(t, latencyOf(t)) },
+  {
+    id: "duration",
+    name: "Call duration",
+    category: "latency",
+    unit: "ms",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => own(t, t.durationMs ?? null),
+  },
+  {
+    id: "duration_s",
+    name: "Call duration (s)",
+    category: "latency",
+    unit: "s",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => (t.durationMs == null ? null : t.durationMs / 1000),
+  },
+  {
+    id: "segment_latency",
+    name: "Voice segment latency",
+    category: "latency",
+    grain: "segment",
+    unit: "ms",
+    aggregation: "p50",
+    measured: true,
+    value: (r) => r.__segmentMs ?? null,
+  },
+  {
+    id: "agent_latency",
+    name: "Agent latency",
+    category: "latency",
+    unit: "ms",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => own(t, latencyOf(t)),
+  },
 
   /* Spend in credits; a cost the agent's side didn't report is no value. */
-  { id: "cost", name: "Cost", category: "cost", unit: "credits", aggregation: "sum", value: (t) => own(t, t.costUnverified || t.cost == null ? null : t.cost * CREDITS_PER_USD) },
-  { id: "tokens", name: "Tokens", category: "cost", unit: "tokens", aggregation: "sum", value: (t) => own(t, t.tokens ?? null) },
+  {
+    id: "cost",
+    name: "Cost",
+    category: "cost",
+    unit: "credits",
+    aggregation: "sum",
+    value: (t) =>
+      own(
+        t,
+        t.costUnverified || t.cost == null ? null : t.cost * CREDITS_PER_USD,
+      ),
+  },
+  {
+    id: "tokens",
+    name: "Tokens",
+    category: "cost",
+    unit: "tokens",
+    aggregation: "sum",
+    value: (t) => own(t, t.tokens ?? null),
+  },
   /* Cost per pipeline stage — the same split as "Cost breakdown by pipeline stage". */
   ...COST_STAGES.map((st) => ({
-    id: `cost_${st.key}`, name: `${st.label} cost`, category: "cost", unit: "credits", aggregation: "sum",
-    value: (t) => (t.cost && !t.costUnverified ? costSplitOf(t)[st.key] * CREDITS_PER_USD : null),
+    id: `cost_${st.key}`,
+    name: `${st.label} cost`,
+    category: "cost",
+    unit: "credits",
+    aggregation: "sum",
+    value: (t) =>
+      t.cost && !t.costUnverified
+        ? costSplitOf(t)[st.key] * CREDITS_PER_USD
+        : null,
   })),
 
-  { id: "turns", name: "Turn count", category: "conversation", unit: "", aggregation: "avg", measured: true, value: (t) => own(t, t.steps?.length ?? null) },
-  { id: "csat", name: "CSAT", category: "conversation", unit: "", aggregation: "avg", measured: true, value: (t) => csatOf(t) },
+  {
+    id: "turns",
+    name: "Turn count",
+    category: "conversation",
+    unit: "",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => own(t, t.steps?.length ?? null),
+  },
+  {
+    id: "csat",
+    name: "CSAT",
+    category: "conversation",
+    unit: "",
+    aggregation: "avg",
+    measured: true,
+    value: (t) => csatOf(t),
+  },
 
-  { id: "tool_calls", name: "Tool calls", category: "tools", grain: "tool", unit: "", aggregation: "count", allowed: ["count"], value: (r) => own(r, r.toolStatus === "not_called" ? null : 1) },
+  {
+    id: "tool_calls",
+    name: "Tool calls",
+    category: "tools",
+    grain: "tool",
+    unit: "",
+    aggregation: "count",
+    allowed: ["count"],
+    value: (r) => own(r, r.toolStatus === "not_called" ? null : 1),
+  },
   /* Out of every time the tool was needed or used — the same denominator as
      "Required tool not called", so the two stack to the tool's total. */
-  { id: "tool_failure_rate", name: "Tool failure rate", category: "tools", grain: "tool", unit: "%", aggregation: "avg", value: (r) => own(r, pct(isToolFailure(r))) },
-  { id: "tool_not_called_rate", name: "Required tool not called", category: "tools", grain: "tool", unit: "%", aggregation: "avg", value: (r) => own(r, pct(r.toolStatus === "not_called")) },
-  { id: "tool_latency", name: "Tool latency", category: "tools", grain: "tool", unit: "ms", aggregation: "avg", value: (r) => own(r, r.durationMs ?? null) },
+  {
+    id: "tool_failure_rate",
+    name: "Tool failure rate",
+    category: "tools",
+    grain: "tool",
+    unit: "%",
+    aggregation: "avg",
+    value: (r) => own(r, pct(isToolFailure(r))),
+  },
+  {
+    id: "tool_not_called_rate",
+    name: "Required tool not called",
+    category: "tools",
+    grain: "tool",
+    unit: "%",
+    aggregation: "avg",
+    value: (r) => own(r, pct(r.toolStatus === "not_called")),
+  },
+  {
+    id: "tool_latency",
+    name: "Tool latency",
+    category: "tools",
+    grain: "tool",
+    unit: "ms",
+    aggregation: "avg",
+    value: (r) => own(r, r.durationMs ?? null),
+  },
 ];
 
 /* Pass/fail aggregations the dashboards offer on eval columns. */
-const EVAL_AGGREGATIONS = ["avg", "median", "min", "max", "pass_rate", "fail_rate", "pass_count", "fail_count", "p50", "p90"];
+const EVAL_AGGREGATIONS = [
+  "avg",
+  "median",
+  "min",
+  "max",
+  "pass_rate",
+  "fail_rate",
+  "pass_count",
+  "fail_count",
+  "p50",
+  "p90",
+];
 
 /** Metric catalogue for this environment: the base set plus one per eval the runs were graded with. */
 export function simMetricCatalog(runs = []) {
   const evals = new Map();
-  runs.forEach((run) => (run.tasks || []).forEach((t) => (t.evalResults || []).forEach((r) => {
-    if (!evals.has(r.id)) evals.set(r.id, r.name || r.id);
-  })));
+  runs.forEach((run) =>
+    (run.tasks || []).forEach((t) =>
+      (t.evalResults || []).forEach((r) => {
+        if (!evals.has(r.id)) evals.set(r.id, r.name || r.id);
+      }),
+    ),
+  );
   const evalMetrics = [...evals.entries()].map(([id, name]) => ({
     id: `eval:${id}`,
     name,
@@ -199,38 +412,119 @@ export function simMetricCatalog(runs = []) {
     allowed: EVAL_AGGREGATIONS,
     value: (t) => {
       const r = (t.evalResults || []).find((x) => x.id === id);
-      return r ? { score: Number(r.score ?? 0) * 100, passed: !!r.passed } : null;
+      return r
+        ? { score: Number(r.score ?? 0) * 100, passed: !!r.passed }
+        : null;
     },
   }));
-  return [...BASE_METRICS.map((m) => ({ type: "system", ...m })), ...evalMetrics];
+  return [
+    ...BASE_METRICS.map((m) => ({ type: "system", ...m })),
+    ...evalMetrics,
+  ];
 }
 
 /* ── attributes (filter + breakdown) ─────────────────────────────────── */
 
 export const SIM_ATTRIBUTES = [
-  { id: "persona", name: "Persona", category: "scenario", get: (r) => groupKey(r, "persona") },
-  /* Same labels as the Use case risk chart and the traces table. */
-  { id: "use_case", name: "Use case", category: "scenario", get: (r) => deriveUseCaseLabel(r) || groupKey(r, "use_case") },
-  { id: "scenario", name: "Scenario", category: "scenario", get: (r) => r.title || r.taskTitle || "—" },
-  { id: "critical", name: "Critical scenario", category: "scenario", get: (r) => (r.critical ? "Critical" : "Not critical") },
-  { id: "status", name: "Outcome", category: "outcome", get: (r) => OUTCOME_LABELS[outcomeOf(r)] },
-  { id: "outcome_binary", name: "Successful vs unsuccessful", category: "outcome", get: (r) => {
-    const o = outcomeOf(r);
-    return o === "unmeasured" ? "Not measured" : o === "passed" ? "Successful" : "Unsuccessful";
-  } },
-  { id: "attribution", name: "Failure attribution", category: "outcome", get: (r) => attributionOf(r)?.label || "Passed" },
-  { id: "sentiment", name: "Caller sentiment", category: "conversation", get: (r) => SENTIMENT_LABELS[sentimentOf(r)] || "—" },
-  { id: "disconnection", name: "Disconnection reason", category: "conversation", get: (r) => END_REASON_LABELS[endReasonOf(r)] || endReasonOf(r) },
-  { id: "call_outcome", name: "Call outcome", category: "outcome", grain: "call", get: (r) => (r.__callPassed ? "Successful" : "Unsuccessful"), categories: () => ["Successful", "Unsuccessful"] },
-  { id: "call_verdict", name: "Call verdict", category: "outcome", grain: "call", get: (r) => (r.__callPassed ? "Passed" : "Failed"), categories: () => ["Passed", "Failed"] },
-  { id: "segment", name: "Voice segment", category: "conversation", grain: "segment", get: (r) => r.__segment || "—", categories: () => VOICE_SEGMENTS.map((st) => st.label) },
   {
-    id: "response_bucket", name: "Agent response time (25ms buckets)", category: "conversation", numeric: true,
+    id: "persona",
+    name: "Persona",
+    category: "scenario",
+    get: (r) => groupKey(r, "persona"),
+  },
+  /* Same labels as the Use case risk chart and the traces table. */
+  {
+    id: "use_case",
+    name: "Use case",
+    category: "scenario",
+    get: (r) => deriveUseCaseLabel(r) || groupKey(r, "use_case"),
+  },
+  {
+    id: "scenario",
+    name: "Scenario",
+    category: "scenario",
+    get: (r) => r.title || r.taskTitle || "—",
+  },
+  {
+    id: "critical",
+    name: "Critical scenario",
+    category: "scenario",
+    get: (r) => (r.critical ? "Critical" : "Not critical"),
+  },
+  {
+    id: "status",
+    name: "Outcome",
+    category: "outcome",
+    get: (r) => OUTCOME_LABELS[outcomeOf(r)],
+  },
+  {
+    id: "outcome_binary",
+    name: "Successful vs unsuccessful",
+    category: "outcome",
+    get: (r) => {
+      const o = outcomeOf(r);
+      return o === "unmeasured"
+        ? "Not measured"
+        : o === "passed"
+          ? "Successful"
+          : "Unsuccessful";
+    },
+  },
+  {
+    id: "attribution",
+    name: "Failure attribution",
+    category: "outcome",
+    get: (r) => attributionOf(r)?.label || "Passed",
+  },
+  {
+    id: "sentiment",
+    name: "Caller sentiment",
+    category: "conversation",
+    get: (r) => SENTIMENT_LABELS[sentimentOf(r)] || "—",
+  },
+  {
+    id: "disconnection",
+    name: "Disconnection reason",
+    category: "conversation",
+    get: (r) => END_REASON_LABELS[endReasonOf(r)] || endReasonOf(r),
+  },
+  {
+    id: "call_outcome",
+    name: "Call outcome",
+    category: "outcome",
+    grain: "call",
+    get: (r) => (r.__callPassed ? "Successful" : "Unsuccessful"),
+    categories: () => ["Successful", "Unsuccessful"],
+  },
+  {
+    id: "call_verdict",
+    name: "Call verdict",
+    category: "outcome",
+    grain: "call",
+    get: (r) => (r.__callPassed ? "Passed" : "Failed"),
+    categories: () => ["Passed", "Failed"],
+  },
+  {
+    id: "segment",
+    name: "Voice segment",
+    category: "conversation",
+    grain: "segment",
+    get: (r) => r.__segment || "—",
+    categories: () => VOICE_SEGMENTS.map((st) => st.label),
+  },
+  {
+    id: "response_bucket",
+    name: "Agent response time (25ms buckets)",
+    category: "conversation",
+    numeric: true,
     get: (r) => fmtMs(Math.floor(latencyOf(r) / 25) * 25),
     /* Every bucket from just below the fastest call to just above the
        slowest, empty ones included, like the built-in histogram. */
     categories: (rows) => {
-      const v = rows.map((r) => latencyOf(r)).filter((x) => x > 0).sort((a, b) => a - b);
+      const v = rows
+        .map((r) => latencyOf(r))
+        .filter((x) => x > 0)
+        .sort((a, b) => a - b);
       if (!v.length) return [];
       const lo = Math.max(0, Math.floor(v[0] / 25) * 25 - 25);
       const hi = Math.ceil((v[v.length - 1] + 1) / 25) * 25 + 25;
@@ -239,20 +533,62 @@ export const SIM_ATTRIBUTES = [
       return out;
     },
   },
-  { id: "turn_bucket", name: "Turn count bucket", category: "conversation", get: (r) => groupKey(r, "turn_bucket") },
-  { id: "csat_score", name: "CSAT score", category: "conversation", numeric: true, get: (r) => (isMeasured(r) ? String(csatOf(r)) : "—"), categories: () => Array.from({ length: 11 }, (_, i) => String(i)) },
-  { id: "agent_version", name: "Agent version", category: "run", get: (r) => (r.__agentVersion ? `agent ${r.__agentVersion}` : "—") },
-  { id: "run_kind", name: "Run type", category: "run", get: (r) => (r.__trialCopy ? "Improvement run" : "Run") },
-  { id: "tool_name", name: "Tool name", category: "tools", grain: "tool", get: (r) => r.toolName || "—" },
-  { id: "tool_status", name: "Tool status", category: "tools", grain: "tool", get: (r) => r.toolStatus || "—" },
+  {
+    id: "turn_bucket",
+    name: "Turn count bucket",
+    category: "conversation",
+    get: (r) => groupKey(r, "turn_bucket"),
+  },
+  {
+    id: "csat_score",
+    name: "CSAT score",
+    category: "conversation",
+    numeric: true,
+    get: (r) => (isMeasured(r) ? String(csatOf(r)) : "—"),
+    categories: () => Array.from({ length: 11 }, (_, i) => String(i)),
+  },
+  {
+    id: "agent_version",
+    name: "Agent version",
+    category: "run",
+    get: (r) => (r.__agentVersion ? `agent ${r.__agentVersion}` : "—"),
+  },
+  {
+    id: "run_kind",
+    name: "Run type",
+    category: "run",
+    get: (r) => (r.__trialCopy ? "Improvement run" : "Run"),
+  },
+  {
+    id: "tool_name",
+    name: "Tool name",
+    category: "tools",
+    grain: "tool",
+    get: (r) => r.toolName || "—",
+  },
+  {
+    id: "tool_status",
+    name: "Tool status",
+    category: "tools",
+    grain: "tool",
+    get: (r) => r.toolStatus || "—",
+  },
 ];
 
 export const attributeById = (id) => SIM_ATTRIBUTES.find((a) => a.id === id);
 
-const SENTIMENT_LABELS = { positive: "Positive", neutral: "Neutral", negative: "Negative" };
+const SENTIMENT_LABELS = {
+  positive: "Positive",
+  neutral: "Neutral",
+  negative: "Negative",
+};
 const END_REASON_LABELS = {
-  complete: "Task complete", escalated: "Escalated", incomplete: "Incomplete",
-  timeout: "Timeout", dropped: "Dropped", error: "Error",
+  complete: "Task complete",
+  escalated: "Escalated",
+  incomplete: "Incomplete",
+  timeout: "Timeout",
+  dropped: "Dropped",
+  error: "Error",
 };
 
 export const SIM_FILTER_OPERATORS = [
@@ -265,22 +601,27 @@ export function distinctAttributeValues(attrId, runs) {
   const attr = attributeById(attrId);
   if (!attr) return [];
   const set = new Set();
-  runs.forEach((run) => (run.tasks || []).forEach((t) => {
-    const rows = rowsOfTask(t, attr.grain || "task");
-    rows.forEach((row) => set.add(String(attr.get({ ...row, __agentVersion: run.agentVersion }))));
-  }));
+  runs.forEach((run) =>
+    (run.tasks || []).forEach((t) => {
+      const rows = rowsOfTask(t, attr.grain || "task");
+      rows.forEach((row) =>
+        set.add(String(attr.get({ ...row, __agentVersion: run.agentVersion }))),
+      );
+    }),
+  );
   return [...set].sort();
 }
 
 /* ── evaluation ─────────────────────────────────────────────────────── */
 
-const passesFilters = (row, filters) => (filters || []).every((f) => {
-  const attr = attributeById(f.id);
-  const vals = Array.isArray(f.value) ? f.value.map(String) : [];
-  if (!attr || !vals.length) return true;
-  const hit = vals.includes(String(attr.get(row)));
-  return f.operator === "is_not" ? !hit : hit;
-});
+const passesFilters = (row, filters) =>
+  (filters || []).every((f) => {
+    const attr = attributeById(f.id);
+    const vals = Array.isArray(f.value) ? f.value.map(String) : [];
+    if (!attr || !vals.length) return true;
+    const hit = vals.includes(String(attr.get(row)));
+    return f.operator === "is_not" ? !hit : hit;
+  });
 
 /* Nearest rank — the rule every analytics panel uses, so a p90 read in a
    widget is the same number as the p90 on the tab. */
@@ -297,11 +638,14 @@ export function aggregate(values, aggregation) {
   if (isEval) {
     const passed = raw.filter((v) => v.passed).length;
     if (aggregation === "pass_rate") return (passed / raw.length) * 100;
-    if (aggregation === "fail_rate") return ((raw.length - passed) / raw.length) * 100;
+    if (aggregation === "fail_rate")
+      return ((raw.length - passed) / raw.length) * 100;
     if (aggregation === "pass_count") return passed;
     if (aggregation === "fail_count") return raw.length - passed;
   }
-  const nums = (isEval ? raw.map((v) => v.score) : raw).map(Number).filter(Number.isFinite);
+  const nums = (isEval ? raw.map((v) => v.score) : raw)
+    .map(Number)
+    .filter(Number.isFinite);
   if (!nums.length) return null;
   const sorted = [...nums].sort((a, b) => a - b);
   /* Same rule as the analytics panels: a tail percentile on too few values
@@ -310,33 +654,57 @@ export function aggregate(values, aggregation) {
   const MIN_N = { p90: 10, p95: 20, p99: 100 };
   if (MIN_N[aggregation] && sorted.length < MIN_N[aggregation]) return null;
   switch (aggregation) {
-    case "count": return nums.length;
-    case "count_distinct": return new Set(nums).size;
-    case "sum": return nums.reduce((a, b) => a + b, 0);
-    case "min": return sorted[0];
-    case "max": return sorted[sorted.length - 1];
-    case "median": return percentile(sorted, 0.5);
-    case "p25": return percentile(sorted, 0.25);
-    case "p50": return percentile(sorted, 0.5);
-    case "p75": return percentile(sorted, 0.75);
-    case "p90": return percentile(sorted, 0.9);
-    case "p95": return percentile(sorted, 0.95);
-    case "p99": return percentile(sorted, 0.99);
+    case "count":
+      return nums.length;
+    case "count_distinct":
+      return new Set(nums).size;
+    case "sum":
+      return nums.reduce((a, b) => a + b, 0);
+    case "min":
+      return sorted[0];
+    case "max":
+      return sorted[sorted.length - 1];
+    case "median":
+      return percentile(sorted, 0.5);
+    case "p25":
+      return percentile(sorted, 0.25);
+    case "p50":
+      return percentile(sorted, 0.5);
+    case "p75":
+      return percentile(sorted, 0.75);
+    case "p90":
+      return percentile(sorted, 0.9);
+    case "p95":
+      return percentile(sorted, 0.95);
+    case "p99":
+      return percentile(sorted, 0.99);
     case "avg":
-    default: return nums.reduce((a, b) => a + b, 0) / nums.length;
+    default:
+      return nums.reduce((a, b) => a + b, 0) / nums.length;
   }
 }
 
 /** Units that no longer apply once an aggregation turns values into counts. */
 export const unitFor = (metric) => {
-  if (["count", "count_distinct", "pass_count", "fail_count"].includes(metric.aggregation)) return "";
+  if (
+    ["count", "count_distinct", "pass_count", "fail_count"].includes(
+      metric.aggregation,
+    )
+  )
+    return "";
   if (["pass_rate", "fail_rate"].includes(metric.aggregation)) return "%";
   return metric.unit || "";
 };
 
-export const aggLabel = (value) => ALL_AGGREGATIONS.find((a) => a.value === value)?.label
-  || { pass_rate: "Pass Rate", fail_rate: "Fail Rate", pass_count: "Pass Count", fail_count: "Fail Count" }[value]
-  || value;
+export const aggLabel = (value) =>
+  ALL_AGGREGATIONS.find((a) => a.value === value)?.label ||
+  {
+    pass_rate: "Pass Rate",
+    fail_rate: "Fail Rate",
+    pass_count: "Pass Count",
+    fail_count: "Fail Count",
+  }[value] ||
+  value;
 
 /** Runs in scope for a range preset, oldest first, ending at the run being viewed. */
 export function runsInRange(runs, range, currentRunId) {
@@ -367,9 +735,10 @@ const naturalCompare = (a, b) => {
 
 /* p-th value of a sorted list by nearest rank — the same rule the analytics
    panels use, so a percentile read here matches the one on the tab. */
-const nearestRank = (sorted, p) => (sorted.length
-  ? sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]
-  : null);
+const nearestRank = (sorted, p) =>
+  sorted.length
+    ? sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]
+    : null;
 
 /* Wilson upper bound of a pass rate — how good a group could plausibly be. */
 const wilsonUpper = (good, total) => {
@@ -396,21 +765,35 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
   const cat = catalog || simMetricCatalog(runs);
   const scoped = runsInRange(runs, query?.range || "5", currentRunId);
   const xAxis = query?.xAxis || "run";
-  const breakdown = (query?.breakdowns || [])[0] ? attributeById(query.breakdowns[0].id) : null;
-  const attrAxis = xAxis.startsWith("attr:") ? attributeById(xAxis.slice(5)) : null;
+  const breakdown = (query?.breakdowns || [])[0]
+    ? attributeById(query.breakdowns[0].id)
+    : null;
+  const attrAxis = xAxis.startsWith("attr:")
+    ? attributeById(xAxis.slice(5))
+    : null;
 
-  const scopedTasks = scoped.flatMap((run) => (run.tasks || []).map((task) => ({ task, run })));
+  const scopedTasks = scoped.flatMap((run) =>
+    (run.tasks || []).map((task) => ({ task, run })),
+  );
 
   /* Rows per metric, carrying which run and call they came from. */
   const metricRows = (query?.metrics || []).map((m) => {
     const def = cat.find((c) => c.id === m.id);
     if (!def) return null;
-    const rows = scopedTasks.flatMap(({ task, run }) => {
-      if (def.measured && !isMeasured(task)) return [];
-      return rowsOfTask(task, def.grain || "task").map((row) => ({
-        ...row, __agentVersion: run.agentVersion, __runId: run.id, __callKey: `${run.id}::${task.id}`,
-      }));
-    }).filter((row) => passesFilters(row, query.filters) && passesFilters(row, m.filters));
+    const rows = scopedTasks
+      .flatMap(({ task, run }) => {
+        if (def.measured && !isMeasured(task)) return [];
+        return rowsOfTask(task, def.grain || "task").map((row) => ({
+          ...row,
+          __agentVersion: run.agentVersion,
+          __runId: run.id,
+          __callKey: `${run.id}::${task.id}`,
+        }));
+      })
+      .filter(
+        (row) =>
+          passesFilters(row, query.filters) && passesFilters(row, m.filters),
+      );
     return { m, def, rows };
   });
 
@@ -421,21 +804,34 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
     const byVersion = new Map();
     scoped.forEach((run) => {
       const key = run.agentVersion || "—";
-      if (!byVersion.has(key)) byVersion.set(key, { key, label: `agent ${key}`, runs: 0 });
+      if (!byVersion.has(key))
+        byVersion.set(key, { key, label: `agent ${key}`, runs: 0 });
       byVersion.get(key).runs += 1;
     });
-    buckets = [...byVersion.values()].map((b) => ({ key: b.key, label: b.label, sub: `${b.runs} run${b.runs === 1 ? "" : "s"}` }));
+    buckets = [...byVersion.values()].map((b) => ({
+      key: b.key,
+      label: b.label,
+      sub: `${b.runs} run${b.runs === 1 ? "" : "s"}`,
+    }));
     bucketOf = (row) => row.__agentVersion || "—";
   } else if (xAxis === "call") {
     /* Each call of the runs in range that passes the widget's filters, in
        the order it ran. */
-    const calls = scopedTasks.filter(({ task }) => passesFilters(task, query.filters));
+    const calls = scopedTasks.filter(({ task }) =>
+      passesFilters(task, query.filters),
+    );
     buckets = calls.map(({ task, run }, i) => ({
-      key: `${run.id}::${task.id}`, label: `T${i + 1}`, sub: task.title || task.task || "",
+      key: `${run.id}::${task.id}`,
+      label: `T${i + 1}`,
+      sub: task.title || task.task || "",
     }));
     bucketOf = (row) => row.__callKey;
   } else if (xAxis === "percentile") {
-    buckets = Array.from({ length: 101 }, (_, p) => ({ key: String(p), label: `p${p}`, sub: "" }));
+    buckets = Array.from({ length: 101 }, (_, p) => ({
+      key: String(p),
+      label: `p${p}`,
+      sub: "",
+    }));
     bucketOf = null;
   } else if (attrAxis) {
     const all = metricRows.filter(Boolean).flatMap((mr) => mr.rows);
@@ -443,12 +839,15 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
     const fixed = attrAxis.categories ? attrAxis.categories(all) : null;
     /* A ranked axis keeps first-appearance order for ties, like the built-in
        ranked charts; otherwise values sort naturally. */
-    const values = fixed || (query?.sort ? [...seen] : [...seen].sort(naturalCompare));
+    const values =
+      fixed || (query?.sort ? [...seen] : [...seen].sort(naturalCompare));
     buckets = values.map((v) => ({ key: v, label: v, sub: "" }));
     bucketOf = (row) => String(attrAxis.get(row));
   } else {
     buckets = scoped.map((run) => ({
-      key: run.id, label: `Run ${run.ordinal ?? ""}`.trim(), sub: `agent ${run.agentVersion || "—"}`,
+      key: run.id,
+      label: `Run ${run.ordinal ?? ""}`.trim(),
+      sub: `agent ${run.agentVersion || "—"}`,
     }));
     bucketOf = (row) => row.__runId;
   }
@@ -459,16 +858,28 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
     const { m, def, rows } = mr;
     const aggregation = m.aggregation || def.aggregation;
     const unit = unitFor({ ...def, aggregation });
-    const aggShort = xAxis === "percentile" ? "percentile" : (AGG_SHORT[aggregation] || aggregation);
+    const aggShort =
+      xAxis === "percentile"
+        ? "percentile"
+        : AGG_SHORT[aggregation] || aggregation;
     const reduce = (list) => {
       if (!list.length) return aggregation === "count" ? 0 : null;
       return round(aggregate(list.map(def.value), aggregation));
     };
     const pointsFor = (subset) => {
       if (xAxis === "percentile") {
-        const vals = subset.map(def.value).map((v) => (v && typeof v === "object" ? v.score : v))
-          .filter((v) => v != null && Number.isFinite(Number(v)) && Number(v) > 0).map(Number).sort((a, b) => a - b);
-        return buckets.map((b) => ({ x: b.label, y: vals.length ? round(nearestRank(vals, Number(b.key))) : null }));
+        const vals = subset
+          .map(def.value)
+          .map((v) => (v && typeof v === "object" ? v.score : v))
+          .filter(
+            (v) => v != null && Number.isFinite(Number(v)) && Number(v) > 0,
+          )
+          .map(Number)
+          .sort((a, b) => a - b);
+        return buckets.map((b) => ({
+          x: b.label,
+          y: vals.length ? round(nearestRank(vals, Number(b.key))) : null,
+        }));
       }
       const byBucket = new Map();
       subset.forEach((row) => {
@@ -476,18 +887,30 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
         if (!byBucket.has(k)) byBucket.set(k, []);
         byBucket.get(k).push(row);
       });
-      return buckets.map((b) => ({ x: b.label, y: reduce(byBucket.get(b.key) || []) }));
+      return buckets.map((b) => ({
+        x: b.label,
+        y: reduce(byBucket.get(b.key) || []),
+      }));
     };
     /* The single number for the whole range (Agg. column, pie slice, metric
        card) is aggregated once over every row in scope — not recombined from
        per-bucket values, which would make "p90" the mean of several p90s. */
-    const totalOf = (subset) => (xAxis === "percentile" ? null : (subset.length ? round(aggregate(subset.map(def.value), aggregation)) : null));
+    const totalOf = (subset) =>
+      xAxis === "percentile"
+        ? null
+        : subset.length
+          ? round(aggregate(subset.map(def.value), aggregation))
+          : null;
 
     if (!breakdown) {
       series.push({
         name: `${m.name || def.name} (${aggShort})`,
         key: `${m.id}|${aggregation}|`,
-        metricIndex, metricName: m.name || def.name, aggregation, unit, breakdownName: null,
+        metricIndex,
+        metricName: m.name || def.name,
+        aggregation,
+        unit,
+        breakdownName: null,
         total: totalOf(rows),
         data: pointsFor(rows),
       });
@@ -502,7 +925,11 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
       series.push({
         name: `${m.name || def.name} / ${val} (${aggShort})`,
         key: `${m.id}|${aggregation}|${val}`,
-        metricIndex, metricName: m.name || def.name, aggregation, unit, breakdownName: val,
+        metricIndex,
+        metricName: m.name || def.name,
+        aggregation,
+        unit,
+        breakdownName: val,
         total: totalOf(subset),
         data: pointsFor(subset),
       });
@@ -516,16 +943,29 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
     const score = (i) => series.reduce((a, s) => a + (s.data[i]?.y || 0), 0);
     order.sort((a, b) => score(b) - score(a));
   } else if (sort && sort.by === "weakest") {
-    const val = (i, name) => series.filter((s) => s.breakdownName === name).reduce((a, s) => a + (s.data[i]?.y || 0), 0);
-    const risk = (i) => wilsonUpper(val(i, sort.good), val(i, sort.good) + val(i, sort.bad));
+    const val = (i, name) =>
+      series
+        .filter((s) => s.breakdownName === name)
+        .reduce((a, s) => a + (s.data[i]?.y || 0), 0);
+    const risk = (i) =>
+      wilsonUpper(val(i, sort.good), val(i, sort.good) + val(i, sort.bad));
     const size = (i) => val(i, sort.good) + val(i, sort.bad);
     order.sort((a, b) => risk(a) - risk(b) || size(b) - size(a));
   }
   if (query?.limit) order = order.slice(0, query.limit);
   if (query?.reverse) order = [...order].reverse();
   if (sort || query?.limit || query?.reverse) {
-    buckets = order.map((i, rank) => ({ ...buckets[i], label: query?.rankLabels ? `#${rank + 1}` : buckets[i].label, name: buckets[i].label }));
-    series.forEach((s) => { s.data = order.map((i, rank) => ({ ...s.data[i], x: buckets[rank].label })); });
+    buckets = order.map((i, rank) => ({
+      ...buckets[i],
+      label: query?.rankLabels ? `#${rank + 1}` : buckets[i].label,
+      name: buckets[i].label,
+    }));
+    series.forEach((s) => {
+      s.data = order.map((i, rank) => ({
+        ...s.data[i],
+        x: buckets[rank].label,
+      }));
+    });
   }
 
   return { buckets, series, runsInScope: scoped };
@@ -536,7 +976,13 @@ export function runSimQuery(query, runs, currentRunId, catalog) {
 const round = (v) => (v == null ? null : Math.round(v * 10000) / 10000);
 
 /* Short aggregation names for series labels, dashboards-style "(p90)". */
-const AGG_SHORT = { pass_rate: "pass rate", fail_rate: "fail rate", pass_count: "passes", fail_count: "fails", count_distinct: "distinct" };
+const AGG_SHORT = {
+  pass_rate: "pass rate",
+  fail_rate: "fail rate",
+  pass_count: "passes",
+  fail_count: "fails",
+  count_distinct: "distinct",
+};
 
 /** The series' single value over the whole range. */
 export const seriesTotal = (s) => (s?.total !== undefined ? s.total : null);
@@ -546,7 +992,10 @@ export const seriesTotal = (s) => (s?.total !== undefined ? s.total : null);
 export const MAX_DEFAULT_SERIES = 10;
 export function topSeriesKeys(series, n = MAX_DEFAULT_SERIES) {
   const scalar = (s) => (s.total == null ? -Infinity : s.total);
-  return [...series].sort((a, b) => scalar(b) - scalar(a)).slice(0, n).map((s) => s.key);
+  return [...series]
+    .sort((a, b) => scalar(b) - scalar(a))
+    .slice(0, n)
+    .map((s) => s.key);
 }
 
 /* ── defaults ───────────────────────────────────────────────────────── */

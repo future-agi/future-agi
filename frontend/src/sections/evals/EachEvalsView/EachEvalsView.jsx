@@ -13,6 +13,7 @@ import SystemEvalsLoading from "./SystemEvalsLoading";
 import CustomEvalsLoading from "./CustomEvalsLoading";
 import SvgColor from "src/components/svg-color";
 import { Evals_Docs_mapping, evalsDoc } from "../constant";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const defaultValues = {
   templateType: "Futureagi",
@@ -141,7 +142,6 @@ export const EachSystemEvalsViewChild = ({ evaluation, onClose }) => {
               minWidth: "100px",
               maxWidth: "100px",
               marginLeft: "auto",
-              fontSize: "12px",
               whiteSpace: "nowrap",
               borderColor: "text.disabled",
             }}
@@ -154,15 +154,9 @@ export const EachSystemEvalsViewChild = ({ evaluation, onClose }) => {
             View Docs
           </Button>
         )}
-        <IconButton
-          onClick={onClose}
-          sx={{
-            width: "30px",
-            height: "30px",
-          }}
-        >
+        <IconButton onClick={onClose} size="small">
           <Iconify
-            icon="line-md:close"
+            icon="solar:close-linear"
             sx={{
               width: 20,
               height: 20,
@@ -264,20 +258,21 @@ EachCustomEvalsViewChild.propTypes = {
 
 const EachEvalsView = ({ evaluation, onClose, open }) => {
   const isUserBuild = evaluation?.eval_template_tags?.includes("USER_BUILT");
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "600px",
+          width: "640px",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

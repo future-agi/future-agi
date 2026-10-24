@@ -5,7 +5,6 @@ import React from "react";
 export const FilterChip = styled(Chip)(({ theme }) => ({
   backgroundColor: theme.palette.action.hover,
   color: theme.palette.primary.main,
-  borderRadius: "16px",
   "&:hover": {
     backgroundColor: theme.palette.action.selected,
   },

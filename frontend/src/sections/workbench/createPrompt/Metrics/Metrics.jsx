@@ -4,7 +4,6 @@ import WorkbenchMetricsProvider from "./context/WorkbenchMetricsProvider";
 import { useWorkbenchMetrics } from "./context/WorkbenchMetricsContext";
 import MetricsContent from "./MetricsContent/MetricsContent";
 import LinkedTracesContent from "./LinkedTracesContent/LinkedTracesContent";
-import MetricFilterDrawer from "./MetricFilterDrawer/MetricFilterDrawer";
 import { getMetricsTabSx } from "./common";
 import { METRIC_TAB_IDS } from "./constants";
 import SvgColor from "src/components/svg-color";
@@ -41,11 +40,6 @@ const MetricsTabs = () => {
         value={activeTab || metricsTabData[0].id}
         onChange={handleTabChange}
         textColor="primary"
-        TabIndicatorProps={{
-          style: {
-            backgroundColor: theme.palette.primary.main,
-          },
-        }}
         sx={tabSx}
       >
         {metricsTabData.map((tab) => (
@@ -79,7 +73,6 @@ const Metrics = () => {
         minHeight={0}
       >
         <MetricsTabs />
-        <MetricFilterDrawer />
       </Box>
     </WorkbenchMetricsProvider>
   );

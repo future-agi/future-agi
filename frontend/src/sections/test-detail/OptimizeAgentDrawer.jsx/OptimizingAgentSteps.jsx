@@ -58,9 +58,9 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
       <AccordionSummary
         expandIcon={
           <Iconify
-            icon="line-md:chevron-up"
-            width={22}
-            height={22}
+            icon="solar:alt-arrow-up-linear"
+            width={20}
+            height={20}
             color="text.primary"
           />
         }
@@ -86,7 +86,7 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
             sx={{ width: 16 }}
             src="/assets/icons/navbar/ic_optimize.svg"
           />
-          <Typography variant="body1" fontWeight={500} fontSize="14px">
+          <Typography variant="body1" fontWeight={500} fontSize="13px">
             Optimization Steps
           </Typography>
         </Box>
@@ -121,101 +121,106 @@ const OptimizingAgentSteps = ({ status, optimizationId }) => {
               },
             }}
           >
-            {steps?.map(({ status, name, description, updated_at: updatedAt }, index) => {
-              const isFailedStep =
-                steps
-                  .slice(0, index)
-                  .some((step) => step?.status === "failed") || //check if any previous step has failed or current step is failed then render failed status
-                status === "failed";
+            {steps?.map(
+              ({ status, name, description, updated_at: updatedAt }, index) => {
+                const isFailedStep =
+                  steps
+                    .slice(0, index)
+                    .some((step) => step?.status === "failed") || //check if any previous step has failed or current step is failed then render failed status
+                  status === "failed";
 
-              const updatedDate = updatedAt ? new Date(updatedAt) : null;
-              const formattedUpdatedAt =
-                updatedDate && isValid(updatedDate)
-                  ? format(updatedDate, "dd/MM/yyyy,HH:mm:ss")
-                  : null;
+                const updatedDate = updatedAt ? new Date(updatedAt) : null;
+                const formattedUpdatedAt =
+                  updatedDate && isValid(updatedDate)
+                    ? format(updatedDate, "dd/MM/yyyy,HH:mm:ss")
+                    : null;
 
-              return (
-                <Step key={index} completed={status === "completed"} expanded>
-                  <StepLabel
-                    StepIconComponent={() => (
-                      <CustomStepIcon
-                        step={{ status, name, description, updatedAt }}
-                        isFailedStep={isFailedStep}
-                      />
-                    )}
-                    sx={{
-                      marginBottom: 0,
-                      "& .MuiStepLabel-iconContainer": { paddingTop: 0 },
-                      "& .MuiStepLabel-labelContainer": {
-                        display: "flex",
-                        alignItems: "center",
-                      },
-                    }}
-                  >
-                    <Box display="flex" alignItems="center">
-                      <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                        {name}
-                      </Typography>
-                    </Box>
-                  </StepLabel>
-
-                  <StepContent
-                    sx={{
-                      marginLeft: "15px",
-                      borderLeft:
-                        index === steps.length - 1
-                          ? "none"
-                          : "1px solid var(--border-default)",
-                      borderImage:
-                        index === steps.length - 1
-                          ? "none"
-                          : "linear-gradient(to bottom, transparent 6px, var(--border-default) 6px) 1",
-                      paddingBottom: index === steps.length - 1 ? 0 : "16px",
-                      paddingTop: 0,
-                      marginTop: "-6px",
-                      paddingLeft: "22px",
-                    }}
-                  >
-                    <ShowComponent
-                      condition={
-                        Boolean(description) &&
-                        [
-                          AgentPromptOptimizerStatus.RUNNING,
-                          AgentPromptOptimizerStatus.COMPLETED,
-                          AgentPromptOptimizerStatus.FAILED,
-                        ].includes(status)
-                      }
+                return (
+                  <Step key={index} completed={status === "completed"} expanded>
+                    <StepLabel
+                      StepIconComponent={() => (
+                        <CustomStepIcon
+                          step={{ status, name, description, updatedAt }}
+                          isFailedStep={isFailedStep}
+                        />
+                      )}
+                      sx={{
+                        marginBottom: 0,
+                        "& .MuiStepLabel-iconContainer": { paddingTop: 0 },
+                        "& .MuiStepLabel-labelContainer": {
+                          display: "flex",
+                          alignItems: "center",
+                        },
+                      }}
                     >
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        fontSize="14px"
-                      >
-                        {description}
-                      </Typography>
-                    </ShowComponent>
+                      <Box display="flex" alignItems="center">
+                        <Typography
+                          variant="s1"
+                          fontWeight={"fontWeightMedium"}
+                        >
+                          {name}
+                        </Typography>
+                      </Box>
+                    </StepLabel>
 
-                    <ShowComponent
-                      condition={
-                        Boolean(formattedUpdatedAt) &&
-                        [
-                          AgentPromptOptimizerStatus.COMPLETED,
-                          AgentPromptOptimizerStatus.FAILED,
-                        ].includes(status)
-                      }
+                    <StepContent
+                      sx={{
+                        marginLeft: "15px",
+                        borderLeft:
+                          index === steps.length - 1
+                            ? "none"
+                            : "1px solid var(--border-default)",
+                        borderImage:
+                          index === steps.length - 1
+                            ? "none"
+                            : "linear-gradient(to bottom, transparent 6px, var(--border-default) 6px) 1",
+                        paddingBottom: index === steps.length - 1 ? 0 : "16px",
+                        paddingTop: 0,
+                        marginTop: "-6px",
+                        paddingLeft: "22px",
+                      }}
                     >
-                      <Typography
-                        variant="caption"
-                        color="text.disabled"
-                        fontSize="13px"
+                      <ShowComponent
+                        condition={
+                          Boolean(description) &&
+                          [
+                            AgentPromptOptimizerStatus.RUNNING,
+                            AgentPromptOptimizerStatus.COMPLETED,
+                            AgentPromptOptimizerStatus.FAILED,
+                          ].includes(status)
+                        }
                       >
-                        {formattedUpdatedAt}
-                      </Typography>
-                    </ShowComponent>
-                  </StepContent>
-                </Step>
-              );
-            })}
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          fontSize="13px"
+                        >
+                          {description}
+                        </Typography>
+                      </ShowComponent>
+
+                      <ShowComponent
+                        condition={
+                          Boolean(formattedUpdatedAt) &&
+                          [
+                            AgentPromptOptimizerStatus.COMPLETED,
+                            AgentPromptOptimizerStatus.FAILED,
+                          ].includes(status)
+                        }
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.disabled"
+                          fontSize="13px"
+                        >
+                          {formattedUpdatedAt}
+                        </Typography>
+                      </ShowComponent>
+                    </StepContent>
+                  </Step>
+                );
+              },
+            )}
           </Stepper>
         )}
       </AccordionDetails>

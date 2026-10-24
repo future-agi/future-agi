@@ -1,4 +1,4 @@
-import { Box, Chip, styled } from "@mui/material";
+import { Box, styled } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import _ from "lodash";
 import PropTypes from "prop-types";
@@ -8,30 +8,14 @@ import { ShowComponent } from "src/components/show";
 import { OutlinedButton } from "src/sections/project-detail/ProjectDetailComponents";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { black, green, orange, red } from "src/theme/palette";
-import { alpha } from "@mui/material";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
-const statusColorMap = {
-  pending: {
-    backgroundColor: orange[50],
-    color: orange[400],
-  },
-  running: {
-    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.1),
-    color: "primary.main",
-  },
-  completed: {
-    backgroundColor: green.o10,
-    color: green[500],
-  },
-  failed: {
-    backgroundColor: red.o10,
-    color: red[500],
-  },
-  paused: {
-    backgroundColor: black.o5,
-    color: black[400],
-  },
+const statusRole = {
+  pending: "neutral",
+  running: "info",
+  completed: "success",
+  failed: "danger",
+  paused: "warning",
 };
 
 const CustomIconButton = styled(OutlinedButton)(() => ({
@@ -98,7 +82,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
           onClick={onPause}
           startIcon={
             <Iconify
-              icon="material-symbols-light:pause-outline-rounded"
+              icon="solar:pause-linear"
               sx={{ color: "text.disabled" }}
               width={24}
             />
@@ -111,25 +95,17 @@ const RunningStatusRenderer = ({ value, data, api }) => {
           onClick={onResume}
           startIcon={
             <Iconify
-              icon="material-symbols-light:resume-outline-rounded"
+              icon="solar:play-linear"
               sx={{ color: "text.disabled" }}
               width={30}
             />
           }
         />
       </ShowComponent>
-      <Chip
-        sx={{
-          backgroundColor: statusColorMap[mainValue]?.backgroundColor,
-          color: statusColorMap[mainValue]?.color,
-          fontWeight: 400,
-          fontSize: 12,
-          height: 24,
-          "&:hover": {
-            backgroundColor: statusColorMap[mainValue]?.backgroundColor,
-          },
-        }}
+      <StatusBadge
+        status={mainValue}
         label={_.capitalize(mainValue)}
+        role={statusRole[mainValue]}
       />
     </Box>
   );

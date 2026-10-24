@@ -71,8 +71,7 @@ const AddLabelInput = ({ control, field, ...rest }) => {
       <Box>
         <Button
           color="primary"
-          sx={{ fontWeight: 400 }}
-          startIcon={<Iconify icon="mingcute:add-line" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           size="small"
           onClick={() => append({ id: getRandomId(), value: "" })}
         >

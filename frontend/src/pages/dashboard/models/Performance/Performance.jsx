@@ -494,11 +494,9 @@ const Performance = () => {
                     sx={{
                       // Adjust flex behavior
                       backgroundColor: selected ? "action.hover" : undefined,
-                      fontWeight: selected ? 600 : 400,
-
                       borderColor: "divider",
                       borderWidth: "1px",
-                      px: 1.5, // Slightly more padding
+                      // Slightly more padding
                       minWidth: 0,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
@@ -510,7 +508,6 @@ const Performance = () => {
                         transition:
                           "background-color 0.2s ease, font-weight 0.2s ease, color 0.2s ease, border-color 0.2s ease",
                       },
-                      height: "28px",
                     }}
                     ref={(ref) => {
                       if (option.title === "Custom")

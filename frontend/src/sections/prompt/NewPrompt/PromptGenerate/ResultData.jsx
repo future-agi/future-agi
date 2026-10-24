@@ -32,7 +32,6 @@ const RESULT_DATA_THEME_PARAMS = {
   checkboxBorderWidth: 1.5,
   rowBorder: true,
   headerFontSize: "13px",
-  borderColor: "#E6E6E6",
   headerColumnBorder: { width: "1px" },
   headerRowBorder: { width: "1px" },
   wrapperBorderRadius: 1,
@@ -197,7 +196,7 @@ const ResultData = ({ data, responseFormat, columnName = "output" }) => {
                 onClick={handleCopyClick}
               >
                 <Iconify
-                  icon="basil:copy-outline"
+                  icon="solar:copy-linear"
                   sx={{ color: "text.disabled" }}
                 />
               </IconButton>

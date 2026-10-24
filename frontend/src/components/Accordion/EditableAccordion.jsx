@@ -4,7 +4,7 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
-import { Box, TextField, useTheme } from "@mui/material";
+import { Box, ButtonBase, TextField, useTheme } from "@mui/material";
 import Iconify from "../iconify";
 import { grey } from "src/theme/palette";
 import PropTypes from "prop-types";
@@ -37,18 +37,18 @@ export default function EditableAccordion({
   return (
     <Box>
       {!isExpanded && (
-        <Typography
-          sx={{
-            color: theme.palette.text.disabled,
-            mb: 1,
-            cursor: "pointer",
-          }}
+        <ButtonBase
           onClick={() => setIsExpanded(true)}
-          fontSize={12}
-          fontWeight={600}
+          sx={{ display: "flex", mb: 1 }}
         >
-          {labelText}
-        </Typography>
+          <Typography
+            sx={{ color: theme.palette.text.disabled }}
+            fontSize={12}
+            fontWeight={600}
+          >
+            {labelText}
+          </Typography>
+        </ButtonBase>
       )}
 
       <Accordion
@@ -70,17 +70,17 @@ export default function EditableAccordion({
                   handleCopy();
                 }}
               >
-                <Iconify icon="material-symbols-light:content-copy-outline-rounded" />
+                <Iconify icon="solar:copy-linear" />
               </IconButton>
 
               <IconButton
                 size="medium"
                 sx={{
                   transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.3s ease",
+                  transition: "transform 0.2s ease",
                 }}
               >
-                <Iconify icon="material-symbols-light:keyboard-arrow-down" />
+                <Iconify icon="solar:alt-arrow-down-linear" />
               </IconButton>
             </Box>
           }
@@ -108,7 +108,7 @@ export default function EditableAccordion({
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
-            fontSize={14}
+            fontSize={13}
             fontWeight={400}
           >
             {/* {!isExpanded ? detailsText : labelText} */}
@@ -138,7 +138,7 @@ export default function EditableAccordion({
             color="primary"
             size="small"
             sx={{
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: theme.typography.fontWeightRegular,
               lineHeight: 1.6,
               height: "100%",

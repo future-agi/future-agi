@@ -9,8 +9,6 @@ import { issueFixNav, issueProjectLinkOf, useIssueFix } from "./issueFix";
 import ConnectAgentDialog from "./ConnectAgentDialog";
 import { clickable, focusRing } from "../components/clickable";
 
-const btnSx = { height: 30, fontSize: "12px", borderRadius: "6px", textTransform: "none" };
-
 /*
   What the button does at each point of the fix (RSI PRD, Flow 3 and Part 3
   "Improvement states"): an issue has at most one fix in flight. Once a fix
@@ -21,11 +19,26 @@ const btnSx = { height: 30, fontSize: "12px", borderRadius: "6px", textTransform
   Reopened issue offers Fix again.
 */
 const IN_FLIGHT = {
-  fixing: { label: "View fix", why: "A fix is running for this issue — open it to follow the search." },
-  ready: { label: "Review fix", why: "The fix finished — review the verdict and ship it as a draft." },
-  review: { label: "View fix", why: "The fix is shipped as a draft. Once it's deployed, mark it released on the fix — the Error Feed then watches for the issue." },
-  watching: { label: "View fix", why: "The fix is released and the Error Feed is watching for this issue. If it comes back, the issue reopens and Fix again starts a new fix." },
-  resolved: { label: "View fix", why: "The fix held through the watch window." },
+  fixing: {
+    label: "View fix",
+    why: "A fix is running for this issue — open it to follow the search.",
+  },
+  ready: {
+    label: "Review fix",
+    why: "The fix finished — review the verdict and ship it as a draft.",
+  },
+  review: {
+    label: "View fix",
+    why: "The fix is shipped as a draft. Once it's deployed, mark it released on the fix — the Error Feed then watches for the issue.",
+  },
+  watching: {
+    label: "View fix",
+    why: "The fix is released and the Error Feed is watching for this issue. If it comes back, the issue reopens and Fix again starts a new fix.",
+  },
+  resolved: {
+    label: "View fix",
+    why: "The fix held through the watch window.",
+  },
 };
 const AGAIN = new Set(["reopened", "no-fix", "not-reproduced", "over-budget"]);
 /* What Fix again would do differently, where there's something to say. */
@@ -56,9 +69,11 @@ export default function FixButton({ issue, onOpenSheet }) {
   const link = issueProjectLinkOf(issue, state, agents);
   if (!improving) return null;
 
-  const openFix = () => status?.optId && navigate(...issueFixNav(status, issue?.cluster_id));
+  const openFix = () =>
+    status?.optId && navigate(...issueFixNav(status, issue?.cluster_id));
   /* Where a gate is answered: Connections (consent, a disconnect) or Overview (Check what we found). */
-  const openConnections = (tab = "connections") => navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=${tab}`);
+  const openConnections = (tab = "connections") =>
+    navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=${tab}`);
 
   /* Reopened with the change it came back on: the banner under the header
      carries View fix and Fix again, so the header doesn't repeat them. */
@@ -68,11 +83,14 @@ export default function FixButton({ issue, onOpenSheet }) {
   const inFlight = status && IN_FLIGHT[status.key];
   if (agent && inFlight) {
     return (
-      <Tooltip arrow title={`${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${inFlight.why}`}>
+      <Tooltip
+        arrow
+        title={`${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${inFlight.why}`}
+      >
         <Button
-          variant="outlined" onClick={openFix}
-          startIcon={<Iconify icon="mdi:wrench-outline" width={13} />}
-          sx={{ ...btnSx, borderColor: "divider", color: "text.primary" }}
+          variant="outlined"
+          onClick={openFix}
+          startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
         >
           {inFlight.label}
         </Button>
@@ -89,56 +107,92 @@ export default function FixButton({ issue, onOpenSheet }) {
 
   const why = hardGate ? (
     <Box sx={{ py: 0.25 }}>
-      <Typography sx={{ typography: "s3", fontWeight: 700 }}>{hardGate.title}</Typography>
-      <Typography sx={{ typography: "s3", mt: 0.25 }}>{hardGate.body}</Typography>
-      {(hardGate.action === "connections" || hardGate.action === "overview") && (
+      <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+        {hardGate.title}
+      </Typography>
+      <Typography sx={{ typography: "s3", mt: 0.25 }}>
+        {hardGate.body}
+      </Typography>
+      {(hardGate.action === "connections" ||
+        hardGate.action === "overview") && (
         <Typography
-          {...clickable(() => { setTip(false); openConnections(hardGate.action); })}
-          sx={{ typography: "s3", fontWeight: 700, mt: 0.5, cursor: "pointer", textDecoration: "underline", ...focusRing }}
+          {...clickable(() => {
+            setTip(false);
+            openConnections(hardGate.action);
+          })}
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            mt: 0.5,
+            cursor: "pointer",
+            textDecoration: "underline",
+            ...focusRing,
+          }}
         >
-          {hardGate.action === "overview" ? "Open the agent's Overview" : "Open the agent's Connections tab"}
+          {hardGate.action === "overview"
+            ? "Open the agent's Overview"
+            : "Open the agent's Connections tab"}
         </Typography>
       )}
     </Box>
-  ) : !agent
-      ? `No agent in Agents is linked to ${link.name || "this issue's project"}. Connect it once — this project comes with it, and Fix works for every issue from it.`
-      : again
-        ? `${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${AGAIN_HOW[status.key] || "Fix again"} starts a new fix; the last one stays on its page.`
-        : gate?.key === "consent"
-          ? `${agent.name} runs live — Fix asks for your consent before its first test.`
-          : "";
+  ) : !agent ? (
+    `No agent in Agents is linked to ${link.name || "this issue's project"}. Connect it once — this project comes with it, and Fix works for every issue from it.`
+  ) : again ? (
+    `${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${AGAIN_HOW[status.key] || "Fix again"} starts a new fix; the last one stays on its page.`
+  ) : gate?.key === "consent" ? (
+    `${agent.name} runs live — Fix asks for your consent before its first test.`
+  ) : (
+    ""
+  );
 
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
       {again && (
-        <Button size="small" onClick={openFix} sx={{ ...btnSx, color: "text.secondary" }}>
+        <Button size="small" onClick={openFix}>
           Last fix
         </Button>
       )}
-      <Tooltip arrow title={why} open={tip && !!why} onOpen={() => setTip(true)} onClose={() => setTip(false)}>
+      <Tooltip
+        arrow
+        title={why}
+        open={tip && !!why}
+        onOpen={() => setTip(true)}
+        onClose={() => setTip(false)}
+      >
         <span>
           {agent ? (
             <Button
-              variant="contained" color="primary" disabled={blocked}
-              startIcon={<Iconify icon="mdi:wrench-outline" width={13} />}
+              variant="contained"
+              color="primary"
+              disabled={blocked}
+              startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
               onClick={onOpenSheet}
-              sx={{ ...btnSx, boxShadow: "none" }}
             >
               {again ? "Fix again" : "Fix"}
             </Button>
           ) : (
             <Button
-              variant="contained" color="primary"
-              startIcon={<Iconify icon="mdi:wrench-outline" width={13} />}
-              onClick={() => { setTip(false); setConnecting(true); }}
-              sx={{ ...btnSx, boxShadow: "none" }}
+              variant="contained"
+              color="primary"
+              startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
+              onClick={() => {
+                setTip(false);
+                setConnecting(true);
+              }}
             >
               Connect agent to fix
             </Button>
           )}
         </span>
       </Tooltip>
-      {!agent && <ConnectAgentDialog open={connecting} onClose={() => setConnecting(false)} issue={issue} project={link.project} />}
+      {!agent && (
+        <ConnectAgentDialog
+          open={connecting}
+          onClose={() => setConnecting(false)}
+          issue={issue}
+          project={link.project}
+        />
+      )}
     </Stack>
   );
 }

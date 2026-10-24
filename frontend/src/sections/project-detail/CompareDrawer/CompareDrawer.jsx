@@ -1,4 +1,5 @@
 import { Box, Drawer } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -159,16 +160,18 @@ const CompareExperimentDrawer = ({
   selectedRows,
   projectDetail,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "100vw",
         },

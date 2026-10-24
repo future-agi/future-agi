@@ -14,15 +14,17 @@ import { useTheme } from "@mui/material/styles";
  */
 function usePalette() {
   const theme = useTheme();
-  const dark = theme.palette.mode === "dark";
+  const { palette } = theme;
   return {
-    paper: dark ? "#18181B" : "#FFFFFF",
-    line: dark ? "#3F3F46" : "#E4E4E7",
-    solid: dark ? "#52525B" : "#D4D4D8",
-    text: dark ? "#E4E4E7" : "#27272A",
-    muted: dark ? "#A1A1AA" : "#9CA3AF",
-    accent: theme.palette.primary.main,
-    tint: dark ? "rgba(120,87,252,0.22)" : "rgba(120,87,252,0.12)",
+    paper: palette.background.paper,
+    line: palette.border.default,
+    solid: palette.border.strong,
+    text: palette.text.primary,
+    muted: palette.text.tertiary,
+    accent: palette.primary.main,
+    tint: palette.status.discovery.bg,
+    danger: palette.status.danger.solid,
+    warning: palette.status.warning.fg,
   };
 }
 
@@ -32,11 +34,26 @@ const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 /** The floating card every thumbnail sits on, plus the reference's stray dots. */
 function Card({ children, c }) {
   return (
-    <svg width="176" height="96" viewBox="0 0 176 96" fill="none" style={{ display: "block" }}>
+    <svg
+      width="176"
+      height="96"
+      viewBox="0 0 176 96"
+      fill="none"
+      style={{ display: "block" }}
+    >
       <circle cx="166" cy="30" r="1.6" fill={c.accent} opacity="0.35" />
       <circle cx="10" cy="66" r="1.6" fill={c.accent} opacity="0.25" />
       <circle cx="160" cy="74" r="1" fill={c.accent} opacity="0.45" />
-      <rect x="16" y="9" width="144" height="78" rx="7" fill={c.paper} stroke={c.line} strokeWidth="1" />
+      <rect
+        x="16"
+        y="9"
+        width="144"
+        height="78"
+        rx="7"
+        fill={c.paper}
+        stroke={c.line}
+        strokeWidth="1"
+      />
       {children}
     </svg>
   );
@@ -48,19 +65,54 @@ export function PackThumb() {
   const c = usePalette();
   return (
     <Card c={c}>
-      <text x="26" y="26" fontFamily={FONT} fontSize="7.5" fontWeight="700" fill={c.text}>Core tasks</text>
+      <text
+        x="26"
+        y="26"
+        fontFamily={FONT}
+        fontSize="7.5"
+        fontWeight="600"
+        fill={c.text}
+      >
+        Core tasks
+      </text>
       <rect x="128" y="19" width="22" height="10" rx="5" fill={c.line} />
-      <text x="134" y="26.5" fontFamily={FONT} fontSize="6" fill={c.muted}>3 tasks</text>
+      <text x="134" y="26.5" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        3 tasks
+      </text>
       <line x1="26" y1="33" x2="150" y2="33" stroke={c.line} strokeWidth="1" />
 
       <rect x="22" y="38" width="132" height="14" rx="3" fill={c.tint} />
       <circle cx="30" cy="45" r="3" fill={c.accent} />
-      <rect x="38" y="42" width="60" height="5" rx="2.5" fill={c.accent} opacity="0.55" />
-      <text x="128" y="47.5" fontFamily={FONT} fontSize="6" fill={c.accent}>~5</text>
+      <rect
+        x="38"
+        y="42"
+        width="60"
+        height="5"
+        rx="2.5"
+        fill={c.accent}
+        opacity="0.55"
+      />
+      <text x="128" y="47.5" fontFamily={FONT} fontSize="6" fill={c.accent}>
+        ~5
+      </text>
 
-      <circle cx="30" cy="61" r="3" fill="none" stroke={c.solid} strokeWidth="1" />
+      <circle
+        cx="30"
+        cy="61"
+        r="3"
+        fill="none"
+        stroke={c.solid}
+        strokeWidth="1"
+      />
       <rect x="38" y="58" width="72" height="5" rx="2.5" fill={c.line} />
-      <circle cx="30" cy="75" r="3" fill="none" stroke={c.solid} strokeWidth="1" />
+      <circle
+        cx="30"
+        cy="75"
+        r="3"
+        fill="none"
+        stroke={c.solid}
+        strokeWidth="1"
+      />
       <rect x="38" y="72" width="52" height="5" rx="2.5" fill={c.line} />
     </Card>
   );
@@ -73,15 +125,44 @@ export function ChatThumb() {
     <Card c={c}>
       <circle cx="30" cy="24" r="5" fill={c.tint} />
       <circle cx="30" cy="24" r="2" fill={c.accent} />
-      <text x="40" y="22" fontFamily={FONT} fontSize="7" fontWeight="700" fill={c.text}>Refund past window</text>
-      <text x="40" y="30.5" fontFamily={FONT} fontSize="6" fill={c.muted}>goal: full refund</text>
+      <text
+        x="40"
+        y="22"
+        fontFamily={FONT}
+        fontSize="7"
+        fontWeight="600"
+        fill={c.text}
+      >
+        Refund past window
+      </text>
+      <text x="40" y="30.5" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        goal: full refund
+      </text>
       <rect x="128" y="17" width="22" height="11" rx="5.5" fill={c.line} />
-      <text x="133" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>2 / 5</text>
+      <text x="133" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        2 / 5
+      </text>
 
       <rect x="26" y="40" width="72" height="16" rx="8" fill={c.line} />
       <rect x="34" y="46" width="46" height="4" rx="2" fill={c.solid} />
-      <rect x="62" y="62" width="88" height="16" rx="8" fill={c.accent} opacity="0.85" />
-      <rect x="70" y="68" width="60" height="4" rx="2" fill={c.paper} opacity="0.75" />
+      <rect
+        x="62"
+        y="62"
+        width="88"
+        height="16"
+        rx="8"
+        fill={c.accent}
+        opacity="0.85"
+      />
+      <rect
+        x="70"
+        y="68"
+        width="60"
+        height="4"
+        rx="2"
+        fill={c.paper}
+        opacity="0.75"
+      />
     </Card>
   );
 }
@@ -92,20 +173,55 @@ export function DatasetThumb() {
   return (
     <Card c={c}>
       <rect x="70" y="17" width="40" height="62" fill={c.tint} />
-      <text x="26" y="27" fontFamily={MONO} fontSize="6.5" fill={c.muted}>input</text>
-      <text x="74" y="27" fontFamily={MONO} fontSize="6.5" fill={c.accent}>expected</text>
-      <text x="118" y="27" fontFamily={MONO} fontSize="6.5" fill={c.muted}>label</text>
+      <text x="26" y="27" fontFamily={MONO} fontSize="6.5" fill={c.muted}>
+        input
+      </text>
+      <text x="74" y="27" fontFamily={MONO} fontSize="6.5" fill={c.accent}>
+        expected
+      </text>
+      <text x="118" y="27" fontFamily={MONO} fontSize="6.5" fill={c.muted}>
+        label
+      </text>
       <line x1="22" y1="32" x2="154" y2="32" stroke={c.solid} strokeWidth="1" />
 
       {[42, 56, 70].map((y, i) => (
         <g key={y}>
-          <rect x="26" y={y} width={i === 1 ? 32 : 38} height="5" rx="2.5" fill={c.line} />
-          <rect x="74" y={y} width={i === 2 ? 24 : 30} height="5" rx="2.5" fill={c.accent} opacity="0.45" />
+          <rect
+            x="26"
+            y={y}
+            width={i === 1 ? 32 : 38}
+            height="5"
+            rx="2.5"
+            fill={c.line}
+          />
+          <rect
+            x="74"
+            y={y}
+            width={i === 2 ? 24 : 30}
+            height="5"
+            rx="2.5"
+            fill={c.accent}
+            opacity="0.45"
+          />
           <rect x="118" y={y} width="22" height="5" rx="2.5" fill={c.line} />
         </g>
       ))}
-      <line x1="22" y1="51" x2="154" y2="51" stroke={c.line} strokeWidth="0.75" />
-      <line x1="22" y1="65" x2="154" y2="65" stroke={c.line} strokeWidth="0.75" />
+      <line
+        x1="22"
+        y1="51"
+        x2="154"
+        y2="51"
+        stroke={c.line}
+        strokeWidth="0.75"
+      />
+      <line
+        x1="22"
+        y1="65"
+        x2="154"
+        y2="65"
+        stroke={c.line}
+        strokeWidth="0.75"
+      />
     </Card>
   );
 }
@@ -115,21 +231,53 @@ export function ScriptThumb() {
   const c = usePalette();
   return (
     <Card c={c}>
-      <rect x="16" y="9" width="144" height="18" rx="7" fill={c.line} opacity="0.5" />
+      <rect
+        x="16"
+        y="9"
+        width="144"
+        height="18"
+        rx="7"
+        fill={c.line}
+        opacity="0.5"
+      />
       <circle cx="26" cy="18" r="2" fill={c.solid} />
       <circle cx="33" cy="18" r="2" fill={c.solid} />
-      <text x="96" y="20.5" fontFamily={MONO} fontSize="6.5" fill={c.muted}>returns-call.txt</text>
+      <text x="96" y="20.5" fontFamily={MONO} fontSize="6.5" fill={c.muted}>
+        returns-call.txt
+      </text>
 
-      <rect x="26" y="36" width="16" height="8" rx="4" fill={c.accent} opacity="0.85" />
-      <text x="30" y="42.5" fontFamily={FONT} fontSize="5.5" fill={c.paper}>1</text>
-      <rect x="48" y="37" width="76" height="5" rx="2.5" fill={c.accent} opacity="0.45" />
+      <rect
+        x="26"
+        y="36"
+        width="16"
+        height="8"
+        rx="4"
+        fill={c.accent}
+        opacity="0.85"
+      />
+      <text x="30" y="42.5" fontFamily={FONT} fontSize="5.5" fill={c.paper}>
+        1
+      </text>
+      <rect
+        x="48"
+        y="37"
+        width="76"
+        height="5"
+        rx="2.5"
+        fill={c.accent}
+        opacity="0.45"
+      />
 
       <rect x="26" y="52" width="16" height="8" rx="4" fill={c.line} />
-      <text x="30" y="58.5" fontFamily={FONT} fontSize="5.5" fill={c.muted}>2</text>
+      <text x="30" y="58.5" fontFamily={FONT} fontSize="5.5" fill={c.muted}>
+        2
+      </text>
       <rect x="48" y="53" width="94" height="5" rx="2.5" fill={c.line} />
 
       <rect x="26" y="68" width="16" height="8" rx="4" fill={c.line} />
-      <text x="30" y="74.5" fontFamily={FONT} fontSize="5.5" fill={c.muted}>3</text>
+      <text x="30" y="74.5" fontFamily={FONT} fontSize="5.5" fill={c.muted}>
+        3
+      </text>
       <rect x="48" y="69" width="62" height="5" rx="2.5" fill={c.line} />
     </Card>
   );
@@ -144,23 +292,103 @@ export function GenerateThumb() {
   return (
     <Card c={c}>
       <path d={sparkle(30, 22, 5)} fill={c.accent} />
-      <text x="40" y="25" fontFamily={FONT} fontSize="7.5" fontWeight="700" fill={c.text}>Generate</text>
+      <text
+        x="40"
+        y="25"
+        fontFamily={FONT}
+        fontSize="7.5"
+        fontWeight="600"
+        fill={c.text}
+      >
+        Generate
+      </text>
       <rect x="128" y="17" width="22" height="10" rx="5" fill={c.line} />
-      <text x="133" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>~20</text>
+      <text x="133" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        ~20
+      </text>
       <line x1="26" y1="33" x2="150" y2="33" stroke={c.line} strokeWidth="1" />
 
       {/* depth — Standard picked */}
-      <rect x="26" y="38" width="36" height="11" rx="3" fill="none" stroke={c.line} strokeWidth="1" />
-      <text x="44" y="45.5" textAnchor="middle" fontFamily={FONT} fontSize="5.5" fill={c.muted}>Smoke</text>
-      <rect x="66" y="38" width="44" height="11" rx="3" fill={c.tint} stroke={c.accent} strokeWidth="0.75" />
-      <text x="88" y="45.5" textAnchor="middle" fontFamily={FONT} fontSize="5.5" fill={c.accent}>Standard</text>
-      <rect x="114" y="38" width="36" height="11" rx="3" fill="none" stroke={c.line} strokeWidth="1" />
-      <text x="132" y="45.5" textAnchor="middle" fontFamily={FONT} fontSize="5.5" fill={c.muted}>Deep</text>
+      <rect
+        x="26"
+        y="38"
+        width="36"
+        height="11"
+        rx="3"
+        fill="none"
+        stroke={c.line}
+        strokeWidth="1"
+      />
+      <text
+        x="44"
+        y="45.5"
+        textAnchor="middle"
+        fontFamily={FONT}
+        fontSize="5.5"
+        fill={c.muted}
+      >
+        Smoke
+      </text>
+      <rect
+        x="66"
+        y="38"
+        width="44"
+        height="11"
+        rx="3"
+        fill={c.tint}
+        stroke={c.accent}
+        strokeWidth="0.75"
+      />
+      <text
+        x="88"
+        y="45.5"
+        textAnchor="middle"
+        fontFamily={FONT}
+        fontSize="5.5"
+        fill={c.accent}
+      >
+        Standard
+      </text>
+      <rect
+        x="114"
+        y="38"
+        width="36"
+        height="11"
+        rx="3"
+        fill="none"
+        stroke={c.line}
+        strokeWidth="1"
+      />
+      <text
+        x="132"
+        y="45.5"
+        textAnchor="middle"
+        fontFamily={FONT}
+        fontSize="5.5"
+        fill={c.muted}
+      >
+        Deep
+      </text>
 
       {/* scenarios arriving — the newest still being written */}
       <circle cx="30" cy="59" r="3" fill={c.accent} />
-      <rect x="38" y="56.5" width="76" height="5" rx="2.5" fill={c.accent} opacity="0.45" />
-      <circle cx="30" cy="73" r="3" fill="none" stroke={c.solid} strokeWidth="1" />
+      <rect
+        x="38"
+        y="56.5"
+        width="76"
+        height="5"
+        rx="2.5"
+        fill={c.accent}
+        opacity="0.45"
+      />
+      <circle
+        cx="30"
+        cy="73"
+        r="3"
+        fill="none"
+        stroke={c.solid}
+        strokeWidth="1"
+      />
       <rect x="38" y="70.5" width="54" height="5" rx="2.5" fill={c.line} />
       <path d={sparkle(100, 73, 3)} fill={c.accent} opacity="0.7" />
     </Card>
@@ -173,30 +401,109 @@ export function ProductionThumb() {
   return (
     <Card c={c}>
       {/* header — Error Feed title strip */}
-      <rect x="26" y="17" width="80" height="7" rx="2" fill={c.text} opacity="0.75" />
-      <text x="128" y="22" fontFamily={FONT} fontSize="5.5" fill={c.muted}>Error Feed</text>
+      <rect
+        x="26"
+        y="17"
+        width="80"
+        height="7"
+        rx="2"
+        fill={c.text}
+        opacity="0.75"
+      />
+      <text x="128" y="22" fontFamily={FONT} fontSize="5.5" fill={c.muted}>
+        Error Feed
+      </text>
 
       {/* cluster 1 — hot */}
-      <rect x="26" y="32" width="124" height="12" rx="2" fill={c.line} opacity="0.25" />
-      <circle cx="32" cy="38" r="2.4" fill="#DC2626" />
-      <rect x="40" y="35" width="46" height="3" rx="1.5" fill={c.text} opacity="0.8" />
+      <rect
+        x="26"
+        y="32"
+        width="124"
+        height="12"
+        rx="2"
+        fill={c.line}
+        opacity="0.25"
+      />
+      <circle cx="32" cy="38" r="2.4" fill={c.danger} />
+      <rect
+        x="40"
+        y="35"
+        width="46"
+        height="3"
+        rx="1.5"
+        fill={c.text}
+        opacity="0.8"
+      />
       <rect x="40" y="40" width="30" height="2.5" rx="1.25" fill={c.muted} />
-      <text x="140" y="40.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill="#DC2626" fontWeight="700">47</text>
+      <text
+        x="140"
+        y="40.5"
+        textAnchor="end"
+        fontFamily={MONO}
+        fontSize="5.5"
+        fill={c.danger}
+        fontWeight="600"
+      >
+        47
+      </text>
 
       {/* cluster 2 — being promoted (accent + arrow to right) */}
       <rect x="26" y="49" width="124" height="12" rx="2" fill={c.tint} />
       <rect x="26" y="49" width="2" height="12" fill={c.accent} />
       <circle cx="32" cy="55" r="2.4" fill={c.accent} />
-      <rect x="40" y="52" width="52" height="3" rx="1.5" fill={c.text} opacity="0.9" />
+      <rect
+        x="40"
+        y="52"
+        width="52"
+        height="3"
+        rx="1.5"
+        fill={c.text}
+        opacity="0.9"
+      />
       <rect x="40" y="57" width="36" height="2.5" rx="1.25" fill={c.muted} />
-      <text x="140" y="57.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.accent} fontWeight="700">→ +1</text>
+      <text
+        x="140"
+        y="57.5"
+        textAnchor="end"
+        fontFamily={MONO}
+        fontSize="5.5"
+        fill={c.accent}
+        fontWeight="600"
+      >
+        → +1
+      </text>
 
       {/* cluster 3 */}
-      <rect x="26" y="66" width="124" height="12" rx="2" fill={c.line} opacity="0.25" />
-      <circle cx="32" cy="72" r="2.4" fill="#B45309" />
-      <rect x="40" y="69" width="40" height="3" rx="1.5" fill={c.text} opacity="0.8" />
+      <rect
+        x="26"
+        y="66"
+        width="124"
+        height="12"
+        rx="2"
+        fill={c.line}
+        opacity="0.25"
+      />
+      <circle cx="32" cy="72" r="2.4" fill={c.warning} />
+      <rect
+        x="40"
+        y="69"
+        width="40"
+        height="3"
+        rx="1.5"
+        fill={c.text}
+        opacity="0.8"
+      />
       <rect x="40" y="74" width="26" height="2.5" rx="1.25" fill={c.muted} />
-      <text x="140" y="74.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.muted}>18</text>
+      <text
+        x="140"
+        y="74.5"
+        textAnchor="end"
+        fontFamily={MONO}
+        fontSize="5.5"
+        fill={c.muted}
+      >
+        18
+      </text>
     </Card>
   );
 }
@@ -204,29 +511,89 @@ export function ProductionThumb() {
 /** From failing cases — a run's results, the failed row being picked. */
 export function FailingCasesThumb() {
   const c = usePalette();
-  const red = "#DC2626";
+  const red = c.danger;
   return (
     <Card c={c}>
-      <text x="26" y="25" fontFamily={FONT} fontSize="7.5" fontWeight="700" fill={c.text}>Run 3</text>
-      <text x="52" y="25" fontFamily={FONT} fontSize="6" fill={c.muted}>agent v3</text>
+      <text
+        x="26"
+        y="25"
+        fontFamily={FONT}
+        fontSize="7.5"
+        fontWeight="600"
+        fill={c.text}
+      >
+        Run 3
+      </text>
+      <text x="52" y="25" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        agent v3
+      </text>
       <rect x="122" y="17" width="28" height="10" rx="5" fill={c.line} />
-      <text x="127" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>2 failed</text>
+      <text x="127" y="24.5" fontFamily={FONT} fontSize="6" fill={c.muted}>
+        2 failed
+      </text>
       <line x1="26" y1="33" x2="150" y2="33" stroke={c.line} strokeWidth="1" />
 
       {/* passed */}
-      <circle cx="30" cy="42" r="3" fill="none" stroke={c.solid} strokeWidth="1" />
+      <circle
+        cx="30"
+        cy="42"
+        r="3"
+        fill="none"
+        stroke={c.solid}
+        strokeWidth="1"
+      />
       <rect x="38" y="39.5" width="70" height="5" rx="2.5" fill={c.line} />
 
       {/* failed — being picked */}
       <rect x="22" y="49" width="132" height="14" rx="3" fill={c.tint} />
-      <path d="M27.8 53.8l4.4 4.4M32.2 53.8l-4.4 4.4" stroke={red} strokeWidth="1.3" strokeLinecap="round" />
-      <rect x="38" y="53.5" width="58" height="5" rx="2.5" fill={c.accent} opacity="0.55" />
-      <text x="146" y="58.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.accent} fontWeight="700">→ +1</text>
+      <path
+        d="M27.8 53.8l4.4 4.4M32.2 53.8l-4.4 4.4"
+        stroke={red}
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <rect
+        x="38"
+        y="53.5"
+        width="58"
+        height="5"
+        rx="2.5"
+        fill={c.accent}
+        opacity="0.55"
+      />
+      <text
+        x="146"
+        y="58.5"
+        textAnchor="end"
+        fontFamily={MONO}
+        fontSize="5.5"
+        fill={c.accent}
+        fontWeight="600"
+      >
+        → +1
+      </text>
 
       {/* flaky */}
-      <circle cx="30" cy="72" r="3" fill="none" stroke={c.muted} strokeWidth="1" strokeDasharray="2 1.5" />
+      <circle
+        cx="30"
+        cy="72"
+        r="3"
+        fill="none"
+        stroke={c.muted}
+        strokeWidth="1"
+        strokeDasharray="2 1.5"
+      />
       <rect x="38" y="69.5" width="48" height="5" rx="2.5" fill={c.line} />
-      <text x="146" y="74" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.muted}>1/3</text>
+      <text
+        x="146"
+        y="74"
+        textAnchor="end"
+        fontFamily={MONO}
+        fontSize="5.5"
+        fill={c.muted}
+      >
+        1/3
+      </text>
     </Card>
   );
 }
@@ -238,17 +605,40 @@ export function AgentThumb() {
     <Card c={c}>
       <rect x="26" y="17" width="46" height="12" rx="6" fill={c.tint} />
       <circle cx="34" cy="23" r="2.5" fill={c.accent} />
-      <text x="40" y="25.5" fontFamily={FONT} fontSize="6" fill={c.accent}>your agent</text>
+      <text x="40" y="25.5" fontFamily={FONT} fontSize="6" fill={c.accent}>
+        your agent
+      </text>
 
       <rect x="26" y="38" width="52" height="11" rx="3" fill={c.line} />
-      <text x="31" y="45.5" fontFamily={MONO} fontSize="6" fill={c.muted}>lookup_order</text>
+      <text x="31" y="45.5" fontFamily={MONO} fontSize="6" fill={c.muted}>
+        lookup_order
+      </text>
       <rect x="84" y="38" width="50" height="11" rx="3" fill={c.line} />
-      <text x="89" y="45.5" fontFamily={MONO} fontSize="6" fill={c.muted}>issue_refund</text>
+      <text x="89" y="45.5" fontFamily={MONO} fontSize="6" fill={c.muted}>
+        issue_refund
+      </text>
 
-      <path d="M52 53v8h52v6" stroke={c.accent} strokeWidth="1" strokeDasharray="3 3" fill="none" opacity="0.7" />
-      <rect x="60" y="65" width="88" height="14" rx="4" fill={c.accent} opacity="0.14" />
+      <path
+        d="M52 53v8h52v6"
+        stroke={c.accent}
+        strokeWidth="1"
+        strokeDasharray="3 3"
+        fill="none"
+        opacity="0.7"
+      />
+      <rect
+        x="60"
+        y="65"
+        width="88"
+        height="14"
+        rx="4"
+        fill={c.accent}
+        opacity="0.14"
+      />
       <circle cx="70" cy="72" r="3" fill={c.accent} />
-      <text x="78" y="74.5" fontFamily={FONT} fontSize="6" fill={c.accent}>weak spot found</text>
+      <text x="78" y="74.5" fontFamily={FONT} fontSize="6" fill={c.accent}>
+        weak spot found
+      </text>
     </Card>
   );
 }
@@ -257,18 +647,55 @@ export function AgentThumb() {
 export function PickRouteIllustration() {
   const c = usePalette();
   return (
-    <svg width="150" height="94" viewBox="0 0 150 94" fill="none" style={{ display: "block", margin: "0 auto" }}>
-      <rect x="10" y="8" width="130" height="70" rx="7" fill={c.paper} stroke={c.solid} strokeWidth="1.25" />
-      <text x="22" y="26" fontFamily={FONT} fontSize="8" fontWeight="700" fill={c.text}>Scenarios</text>
+    <svg
+      width="150"
+      height="94"
+      viewBox="0 0 150 94"
+      fill="none"
+      style={{ display: "block", margin: "0 auto" }}
+    >
+      <rect
+        x="10"
+        y="8"
+        width="130"
+        height="70"
+        rx="7"
+        fill={c.paper}
+        stroke={c.solid}
+        strokeWidth="1.25"
+      />
+      <text
+        x="22"
+        y="26"
+        fontFamily={FONT}
+        // eslint-disable-next-line no-restricted-syntax -- ds: illustration text
+        fontSize="8"
+        fontWeight="600"
+        fill={c.text}
+      >
+        Scenarios
+      </text>
       <line x1="10" y1="33" x2="140" y2="33" stroke={c.line} strokeWidth="1" />
       {[42, 56, 70].map((y, i) => (
         <g key={y}>
           <circle cx="24" cy={y} r="3" fill={i === 0 ? c.accent : c.line} />
-          <rect x="33" y={y - 3} width={i === 1 ? 58 : 76} height="6" rx="3" fill={c.line} />
+          <rect
+            x="33"
+            y={y - 3}
+            width={i === 1 ? 58 : 76}
+            height="6"
+            rx="3"
+            fill={c.line}
+          />
         </g>
       ))}
       <circle cx="122" cy="72" r="16" fill={c.accent} opacity="0.12" />
-      <path d="M115 72h14M122 65v14" stroke={c.accent} strokeWidth="2" strokeLinecap="round" />
+      <path
+        d="M115 72h14M122 65v14"
+        stroke={c.accent}
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -285,12 +712,65 @@ export function PersonasThumb() {
     <Card c={c}>
       {rows.map((r) => (
         <g key={r.y}>
-          {r.on && <rect x="22" y={r.y - 3} width="132" height="18" rx="3" fill={c.tint} />}
-          <rect x="27" y={r.y + 2.5} width="7" height="7" rx="1.5" fill={r.on ? c.accent : "none"} stroke={r.on ? c.accent : c.solid} strokeWidth="1" />
-          <circle cx="44" cy={r.y + 6} r="4.5" fill={r.on ? c.accent : c.line} opacity={r.on ? 0.5 : 1} />
-          <text x="52" y={r.y + 8.5} fontFamily={FONT} fontSize="6.5" fontWeight="700" fill={r.on ? c.text : c.muted}>{r.name}</text>
-          <rect x="104" y={r.y + 2} width={r.w} height="8" rx="4" fill="none" stroke={r.on ? c.accent : c.line} strokeWidth="0.75" opacity={r.on ? 0.7 : 1} />
-          <rect x={108 + r.w} y={r.y + 2} width="14" height="8" rx="4" fill="none" stroke={r.on ? c.accent : c.line} strokeWidth="0.75" opacity={r.on ? 0.7 : 1} />
+          {r.on && (
+            <rect
+              x="22"
+              y={r.y - 3}
+              width="132"
+              height="18"
+              rx="3"
+              fill={c.tint}
+            />
+          )}
+          <rect
+            x="27"
+            y={r.y + 2.5}
+            width="7"
+            height="7"
+            rx="1.5"
+            fill={r.on ? c.accent : "none"}
+            stroke={r.on ? c.accent : c.solid}
+            strokeWidth="1"
+          />
+          <circle
+            cx="44"
+            cy={r.y + 6}
+            r="4.5"
+            fill={r.on ? c.accent : c.line}
+            opacity={r.on ? 0.5 : 1}
+          />
+          <text
+            x="52"
+            y={r.y + 8.5}
+            fontFamily={FONT}
+            fontSize="6.5"
+            fontWeight="600"
+            fill={r.on ? c.text : c.muted}
+          >
+            {r.name}
+          </text>
+          <rect
+            x="104"
+            y={r.y + 2}
+            width={r.w}
+            height="8"
+            rx="4"
+            fill="none"
+            stroke={r.on ? c.accent : c.line}
+            strokeWidth="0.75"
+            opacity={r.on ? 0.7 : 1}
+          />
+          <rect
+            x={108 + r.w}
+            y={r.y + 2}
+            width="14"
+            height="8"
+            rx="4"
+            fill="none"
+            stroke={r.on ? c.accent : c.line}
+            strokeWidth="0.75"
+            opacity={r.on ? 0.7 : 1}
+          />
         </g>
       ))}
     </Card>

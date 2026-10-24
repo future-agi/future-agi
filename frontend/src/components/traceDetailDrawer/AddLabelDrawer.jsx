@@ -10,7 +10,9 @@ import {
   InputAdornment,
   TextField,
   Typography,
+  CircularProgress,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import {
   useInfiniteAnnotationLabelsList,
@@ -187,7 +189,7 @@ const AddLabelDrawerContent = ({
           Add Labels
         </Typography>
         <IconButton onClick={onClose} size="small">
-          <Iconify icon="akar-icons:cross" width={18} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Box>
 
@@ -219,7 +221,6 @@ const AddLabelDrawerContent = ({
                 label={label.name}
                 size="small"
                 onDelete={() => handleToggle(label.id)}
-                sx={{ borderRadius: 1 }}
               />
             ))}
           </Box>
@@ -236,7 +237,7 @@ const AddLabelDrawerContent = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
                   sx={{ color: "text.disabled", width: 16, height: 16 }}
                 />
               </InputAdornment>
@@ -258,13 +259,9 @@ const AddLabelDrawerContent = ({
           }}
         >
           {isInitialLoading ? (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ p: 2, textAlign: "center" }}
-            >
-              Loading...
-            </Typography>
+            <Box sx={{ p: 2, display: "flex", justifyContent: "center" }}>
+              <CircularProgress size={20} />
+            </Box>
           ) : isLabelsError && labels.length === 0 ? (
             <Alert
               severity="error"
@@ -343,7 +340,6 @@ const AddLabelDrawerContent = ({
               size="small"
               disabled={isFetchingNextPage}
               onClick={() => fetchNextPage()}
-              sx={{ borderRadius: 0, py: 1 }}
             >
               {isFetchingNextPage ? "Loading more..." : "Load more labels"}
             </Button>
@@ -353,10 +349,10 @@ const AddLabelDrawerContent = ({
         {/* Create new label */}
         <Button
           size="small"
-          startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
           onClick={() => setCreateLabelOpen(true)}
           disabled={!defaultQueue?.id}
-          sx={{ alignSelf: "flex-start", fontSize: 12 }}
+          sx={{ alignSelf: "flex-start" }}
         >
           Create new label
         </Button>
@@ -407,13 +403,15 @@ const AddLabelDrawer = ({
   agentDefinitionId,
   onLabelsChanged,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
-        sx: { width: 400, zIndex: 20 },
+        sx: { width: 480, zIndex: 20 },
       }}
       ModalProps={{
         BackdropProps: {

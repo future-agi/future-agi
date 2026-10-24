@@ -48,7 +48,6 @@ export default function SettingsButton({ sx }) {
           onClick={settings.onToggle}
           sx={{
             width: 40,
-            height: 40,
           }}
         >
           <Iconify icon="solar:settings-bold-duotone" width={24} />

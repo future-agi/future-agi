@@ -42,6 +42,7 @@ import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
 import { useRunEvaluationStore } from "src/sections/develop-detail/states";
 import { useWorkbenchEvaluationContext } from "src/sections/workbench/createPrompt/Evaluation/context/WorkbenchEvaluationContext";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvaluationDrawerChild = ({
   onClose,
@@ -298,14 +299,14 @@ const EvaluationDrawerChild = ({
                   onClick={onClose}
                   sx={{ p: 0, color: "text.primary" }}
                 >
-                  <Icon icon="mingcute:close-line" />
+                  <Icon icon="solar:close-linear" />
                 </IconButton>
               </Box>
               {isLoading ? (
                 <Box
                   border="1px solid"
                   borderColor={theme.palette.divider}
-                  borderRadius={0.5}
+                  borderRadius="4px"
                   p={theme.spacing(1.5)}
                   flexGrow={1}
                   display="flex"
@@ -326,7 +327,7 @@ const EvaluationDrawerChild = ({
                   alignItems="center"
                   sx={{ width: "100%", height: "calc(100% - 50px)" }}
                 >
-                  <Typography fontSize={16} fontWeight="bold">
+                  <Typography fontSize={16} fontWeight="600">
                     No evaluations added
                   </Typography>
                   <Typography
@@ -343,15 +344,13 @@ const EvaluationDrawerChild = ({
                     onClick={() => setVisibleSection("config")}
                     startIcon={
                       <SvgColor
+                        width={16}
                         src="/assets/icons/action_buttons/ic_add.svg"
                         sx={{
-                          width: 16,
-                          height: 16,
                           color: "inherit",
                         }}
                       />
                     }
-                    sx={{ px: theme.spacing(3), fontWeight: 500 }}
                   >
                     Add Evaluations
                   </Button>
@@ -1001,6 +1000,7 @@ const EvaluationDrawer = ({
     };
   }, []);
 
+  const covered = useDrawerCovered(open);
   return (
     <EvaluationProvider>
       <EvaluationContext.Consumer>
@@ -1022,11 +1022,12 @@ const EvaluationDrawer = ({
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant={type}
         onClose={handleClose}
         PaperProps={{
           sx: (theme) => ({
-            width: 650,
+            width: 640,
             maxWidth: "100vw",
             height: "100vh",
             position: "fixed",
@@ -1073,9 +1074,6 @@ const EvaluationDrawer = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: 3,
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 onClose();

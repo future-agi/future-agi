@@ -10,6 +10,7 @@ import {
   TextField,
   Typography,
   useTheme,
+  ButtonBase,
 } from "@mui/material";
 import React, { useMemo, useRef, useState } from "react";
 import { trackEvent, Events } from "src/utils/Mixpanel";
@@ -46,7 +47,7 @@ export function StaticAccordion({ control, formHandle, columnData, isWatch }) {
             <IconButton size="small" color="text.secondary">
               <Iconify
                 width="13px"
-                icon="eva:alert-circle-fill"
+                icon="solar:danger-circle-linear"
                 height="13px"
                 color="text.secondary"
               />
@@ -128,7 +129,7 @@ export function StaticAccordion({ control, formHandle, columnData, isWatch }) {
           <Button
             size="small"
             color="primary"
-            startIcon={<Iconify icon="mdi:plus" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             onClick={() => {
               trackEvent(Events.annStaticFieldAdd);
               formHandle.staticAppend({
@@ -187,7 +188,7 @@ export function ResponseAccordion({
             <IconButton size="small" color="text.secondary">
               <Iconify
                 width="13px"
-                icon="eva:alert-circle-fill"
+                icon="solar:danger-circle-linear"
                 height="13px"
                 color="text.secondary"
               />
@@ -274,7 +275,7 @@ export function ResponseAccordion({
           <Button
             size="small"
             color="primary"
-            startIcon={<Iconify icon="mdi:plus" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             onClick={() => {
               trackEvent(Events.annResponseFieldAdd);
               formHandle.responseAppend({
@@ -368,7 +369,7 @@ export function LabelsAccordion({
         }}
         PaperProps={{
           sx: {
-            width: 280,
+            width: 320,
             maxHeight: 300,
             display: "flex",
             flexDirection: "column",
@@ -384,7 +385,10 @@ export function LabelsAccordion({
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+                <Iconify
+                  icon="solar:magnifier-linear" width={16}
+                  sx={{ color: "divider" }}
+                />
               </InputAdornment>
             ),
           }}
@@ -409,7 +413,7 @@ export function LabelsAccordion({
                 >
                   <Typography
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "13px",
                     }}
                   >
                     {option.label}
@@ -430,18 +434,20 @@ export function LabelsAccordion({
           </List>
         </Box>
 
-        <Box
+        <ButtonBase
+          component="div"
           sx={{
             position: "sticky",
             bottom: 0,
             left: 0,
             width: "100%",
             color: theme.palette.primary.main,
-            cursor: "pointer",
-            fontSize: "14px",
+            fontSize: "13px",
             fontWeight: typography.fontWeightSemiBold,
             lineHeight: 1.6,
             display: "flex",
+            justifyContent: "flex-start",
+            textAlign: "left",
             alignItems: "center",
             borderTop: 1,
             borderTopStyle: "solid",
@@ -452,7 +458,7 @@ export function LabelsAccordion({
           }}
           onClick={handleCreateLabel}
         >
-          <Iconify icon="eva:plus-fill" color="primary.main" />
+          <Iconify icon="solar:add-linear" color="primary.main" />
           <Typography
             sx={{
               color: theme.palette.primary.main,
@@ -463,7 +469,7 @@ export function LabelsAccordion({
           >
             Create New Label
           </Typography>
-        </Box>
+        </ButtonBase>
       </Popover>
     );
   };
@@ -502,7 +508,7 @@ export function LabelsAccordion({
             <IconButton size="small" color="text.secondary">
               <Iconify
                 width="13px"
-                icon="eva:alert-circle-fill"
+                icon="solar:danger-circle-linear"
                 height="13px"
                 color="text.secondary"
               />
@@ -584,7 +590,7 @@ export function LabelsAccordion({
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mdi:plus" />}
+              startIcon={<Iconify icon="solar:add-linear" />}
               onClick={() =>
                 formHandle.labelAppend({ labelName: "", assign: "" })
               }
@@ -623,7 +629,7 @@ export function AnnotatorsAccordion({ formHandle, control, columnData }) {
           <Box display={"flex"} justifyItems={"center"} alignItems={"center"}>
             <IconButton size="small" color="text.secondary">
               <Iconify
-                icon="eva:alert-circle-fill"
+                icon="solar:danger-circle-linear"
                 width="13px"
                 height="13px"
                 color="text.secondary"
@@ -686,7 +692,7 @@ export function AnnotatorsAccordion({ formHandle, control, columnData }) {
           <Box display={"flex"} justifyItems={"center"} alignItems={"center"}>
             <IconButton size="small" color="text.secondary">
               <Iconify
-                icon="eva:alert-circle-fill"
+                icon="solar:danger-circle-linear"
                 width="13px"
                 height="13px"
                 color="text.secondary"

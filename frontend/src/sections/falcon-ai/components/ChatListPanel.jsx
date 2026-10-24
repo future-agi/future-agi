@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import { useNavigate, useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
@@ -9,7 +10,7 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 import {
@@ -58,14 +59,7 @@ function groupByDate(conversations) {
 // ---------------------------------------------------------------------------
 // ConversationItem — isolated for clean hover behavior
 // ---------------------------------------------------------------------------
-function ConversationItem({
-  conv,
-  isActive,
-  onSelect,
-  onMenuOpen,
-  theme,
-  isDark,
-}) {
+function ConversationItem({ conv, isActive, onSelect, onMenuOpen, theme }) {
   return (
     <Box
       onClick={() => onSelect(conv.id)}
@@ -76,32 +70,13 @@ function ConversationItem({
         height: 36,
         px: 1.5,
         mx: 0.5,
-        borderRadius: "8px",
+        borderRadius: "6px",
         cursor: "pointer",
         transition: "background 0.15s ease",
-        bgcolor: isActive
-          ? isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.06)
-          : "transparent",
+        bgcolor: isActive ? "action.selected" : "transparent",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.06)
-            : alpha(theme.palette.common.black, 0.04),
+          bgcolor: "action.hover",
         },
-        // Left accent bar for active item
-        ...(isActive && {
-          "&::before": {
-            content: '""',
-            position: "absolute",
-            left: 0,
-            top: "20%",
-            bottom: "20%",
-            width: 3,
-            borderRadius: 2,
-            bgcolor: "primary.main",
-          },
-        }),
         // Hover: show action button with gradient fade
         "&:hover .conv-actions": {
           opacity: 1,
@@ -113,7 +88,7 @@ function ConversationItem({
         sx={{
           flex: 1,
           fontSize: 13,
-          fontWeight: isActive ? 600 : 400,
+          fontWeight: isActive ? 500 : 400,
           color: "text.primary",
           lineHeight: 1.3,
         }}
@@ -135,31 +110,23 @@ function ConversationItem({
           pl: 3,
           opacity: 0,
           transition: "opacity 0.15s ease",
-          background: isActive
-            ? `linear-gradient(to right, transparent, ${
-                isDark
-                  ? alpha(theme.palette.common.white, 0.08)
-                  : alpha(theme.palette.common.black, 0.06)
-              } 40%)`
-            : `linear-gradient(to right, transparent, ${
-                isDark
-                  ? alpha(theme.palette.common.white, 0.06)
-                  : alpha(theme.palette.common.black, 0.04)
-              } 40%)`,
-          borderRadius: "0 8px 8px 0",
+          background: `linear-gradient(to right, transparent, ${
+            isActive
+              ? theme.palette.action.selected
+              : theme.palette.action.hover
+          } 40%)`,
+          borderRadius: "0 6px 6px 0",
         }}
       >
         <IconButton
           size="small"
           onClick={(e) => onMenuOpen(e, conv.id)}
           sx={{
-            width: 24,
-            height: 24,
             color: "text.secondary",
             "&:hover": { color: "text.primary" },
           }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={16} />
+          <Iconify icon="solar:menu-dots-linear" width={16} />
         </IconButton>
       </Box>
     </Box>
@@ -175,7 +142,6 @@ ConversationItem.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onMenuOpen: PropTypes.func.isRequired,
   theme: PropTypes.object.isRequired,
-  isDark: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -185,7 +151,6 @@ const PAGE_SIZE = 30;
 
 export default function ChatListPanel() {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isOnFalconPage = pathname.startsWith("/dashboard/falcon-ai");
@@ -358,15 +323,14 @@ export default function ChatListPanel() {
   return (
     <Box
       sx={{
-        width: 260,
-        minWidth: 260,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `1px solid ${t.palette.divider}`,
-        bgcolor: isDark
-          ? "background.default"
-          : alpha(theme.palette.grey[500], 0.04),
+        borderRight: "1px solid",
+        borderColor: "border.default",
+        bgcolor: "background.paper",
         height: "100%",
       }}
     >
@@ -381,54 +345,56 @@ export default function ChatListPanel() {
           gap: 0.25,
         }}
       >
-        <Box
+        <ButtonBase
+          component="div"
           onClick={handleNewChat}
           sx={{
+            justifyContent: "flex-start",
+            textAlign: "left",
             display: "flex",
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 1,
-            borderRadius: "10px",
+            height: 36,
+            borderRadius: "6px",
             cursor: "pointer",
             color: "text.primary",
             "&:hover": {
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.04),
+              bgcolor: "action.hover",
             },
           }}
         >
-          <Iconify icon="mdi:plus" width={18} />
+          <Iconify icon="solar:add-linear" width={16} />
           <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
             New chat
           </Typography>
-        </Box>
+        </ButtonBase>
 
-        <Box
+        <ButtonBase
+          component="div"
           onClick={() => useFalconStore.getState().setShowCustomize(true)}
           sx={{
+            justifyContent: "flex-start",
+            textAlign: "left",
             display: "flex",
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 1,
-            borderRadius: "10px",
+            height: 36,
+            borderRadius: "6px",
             cursor: "pointer",
             color: "text.secondary",
             "&:hover": {
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.04),
+              bgcolor: "action.hover",
               color: "text.primary",
             },
           }}
         >
-          <Iconify icon="mdi:tune-variant" width={18} />
+          <Iconify icon="solar:tuning-2-linear" width={16} />
           <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
             Customize
           </Typography>
-        </Box>
+        </ButtonBase>
       </Box>
 
       {/* ── Search ─────────────────────────────────────────────────── */}
@@ -443,7 +409,7 @@ export default function ChatListPanel() {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -452,12 +418,8 @@ export default function ChatListPanel() {
             ...(search && {
               endAdornment: (
                 <InputAdornment position="end">
-                  <IconButton
-                    size="small"
-                    onClick={() => setSearch("")}
-                    sx={{ width: 20, height: 20 }}
-                  >
-                    <Iconify icon="mdi:close" width={14} />
+                  <IconButton size="small" onClick={() => setSearch("")}>
+                    <Iconify icon="solar:close-linear" width={14} />
                   </IconButton>
                 </InputAdornment>
               ),
@@ -467,16 +429,14 @@ export default function ChatListPanel() {
             "& .MuiInputBase-root": {
               fontSize: 13,
               height: 36,
-              borderRadius: "10px",
+              borderRadius: "8px",
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
               borderColor: "transparent",
             },
             "& .MuiInputBase-root:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.12)
-                : alpha(theme.palette.common.black, 0.12),
+              borderColor: "border.default",
             },
             "& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline":
               {
@@ -499,9 +459,7 @@ export default function ChatListPanel() {
           // Slim scrollbar
           "&::-webkit-scrollbar": { width: 4 },
           "&::-webkit-scrollbar-thumb": {
-            bgcolor: isDark
-              ? alpha(theme.palette.common.white, 0.15)
-              : alpha(theme.palette.common.black, 0.15),
+            bgcolor: "action.hover",
             borderRadius: 2,
           },
           "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
@@ -513,9 +471,9 @@ export default function ChatListPanel() {
               <Typography
                 key={`h-${entry.label}`}
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
-                  color: "text.disabled",
+                  color: "text.tertiary",
                   px: 2,
                   pt: idx === 0 ? 0.5 : 2,
                   pb: 0.5,
@@ -535,7 +493,6 @@ export default function ChatListPanel() {
               onSelect={handleSelect}
               onMenuOpen={handleMenuOpen}
               theme={theme}
-              isDark={isDark}
             />
           );
         })}
@@ -568,20 +525,17 @@ export default function ChatListPanel() {
         onClose={handleMenuClose}
         PaperProps={{
           sx: {
-            minWidth: 160,
-            borderRadius: "10px",
-            boxShadow: isDark
-              ? `0 4px 24px ${alpha(theme.palette.common.black, 0.5)}`
-              : `0 4px 24px ${alpha(theme.palette.common.black, 0.12)}`,
+            minWidth: 200,
+            borderRadius: "8px",
           },
         }}
       >
         <MenuItem
           onClick={handleRename}
-          sx={{ fontSize: 13, py: 0.75, gap: 1.5 }}
+          sx={{ py: 0.75, gap: 1.5 }}
         >
           <Iconify
-            icon="mdi:pencil-outline"
+            icon="solar:pen-linear"
             width={16}
             sx={{ color: "text.secondary" }}
           />
@@ -589,9 +543,10 @@ export default function ChatListPanel() {
         </MenuItem>
         <MenuItem
           onClick={handleDelete}
-          sx={{ fontSize: 13, py: 0.75, gap: 1.5, color: "error.main" }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ py: 0.75, gap: 1.5, color: "status.danger.fg" }}
         >
-          <Iconify icon="mdi:delete-outline" width={16} />
+          <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           Delete
         </MenuItem>
       </Menu>

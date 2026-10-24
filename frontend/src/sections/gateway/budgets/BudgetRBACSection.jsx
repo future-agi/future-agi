@@ -1,4 +1,5 @@
 /* eslint-disable react/prop-types */
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -7,8 +8,6 @@ import {
   Stack,
   Tab,
   Tabs,
-  Card,
-  CardContent,
   Grid,
   LinearProgress,
   Table,
@@ -21,6 +20,8 @@ import {
   Skeleton,
   IconButton,
 } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import Iconify from "src/components/iconify";
 import { LoadingScreen } from "src/components/loading-screen";
 import SectionHeader from "../components/SectionHeader";
@@ -38,6 +39,16 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import SetBudgetDialog from "./SetBudgetDialog";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 const TAB_SLUGS = ["dashboard", "config", "access", "audit"];
 
@@ -165,138 +176,101 @@ const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
 
   return (
     <Stack spacing={3}>
-      {/* Summary cards */}
-      <Grid container spacing={2}>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Total Spend
-              </Typography>
-              <Typography variant="h4" color="primary.main">
-                {formatCost(totalSpend)}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Budget Levels
-              </Typography>
-              <Typography variant="h4">{budgets.length}</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Requests
-              </Typography>
-              <Typography variant="h4">
-                {totalRequests.toLocaleString()}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Avg Cost/Request
-              </Typography>
-              <Typography variant="h4">
-                {totalRequests > 0
-                  ? formatCost(totalSpend / totalRequests)
-                  : "$0.00"}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      <MetricStrip
+        items={[
+          { label: "Total spend", value: formatCost(totalSpend) },
+          { label: "Budget levels", value: budgets.length },
+          { label: "Requests", value: totalRequests.toLocaleString() },
+          {
+            label: "Avg cost/request",
+            value:
+              totalRequests > 0
+                ? formatCost(totalSpend / totalRequests)
+                : "$0.00",
+          },
+        ]}
+      />
 
       {/* Budget utilization */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Budget Utilization
-          </Typography>
-          {budgets.length > 0 ? (
-            <Stack spacing={2}>
-              {budgets.map((b, idx) => {
-                const limit = Number(
-                  getBudgetValue(b, "limit") ??
-                    getBudgetValue(b, "max") ??
-                    getBudgetValue(b, "hard_cap", "hardCap") ??
-                    0,
-                );
-                const spent = Number(getBudgetValue(b, "spent") ?? 0);
-                const pct =
-                  limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
-                return (
-                  <Box key={b.level || b.name || idx}>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                      mb={0.5}
-                    >
-                      <Typography
-                        variant="body2"
-                        fontWeight={500}
-                        sx={{
-                          cursor: "pointer",
-                          "&:hover": {
-                            textDecoration: "underline",
-                            color: "primary.main",
-                          },
-                        }}
-                        onClick={() =>
-                          navigate(
-                            `/dashboard/gateway/analytics?tab=cost&budget=${encodeURIComponent(b.level || b.name || "")}`,
-                          )
-                        }
-                      >
-                        {getBudgetLevelLabel(b.level || b.name) ||
-                          `Budget ${idx + 1}`}
-                      </Typography>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="body2" color="text.secondary">
-                          {formatCost(spent)} /{" "}
-                          {limit > 0 ? formatCost(limit) : "No limit"}
-                        </Typography>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleRemoveBudget(b.level || b.name)}
-                          title="Remove budget"
-                        >
-                          <Iconify icon="mdi:delete-outline" width={16} />
-                        </IconButton>
-                      </Stack>
-                    </Stack>
-                    <LinearProgress
-                      variant="determinate"
-                      value={pct}
-                      color={
-                        pct >= 90 ? "error" : pct >= 70 ? "warning" : "primary"
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Budget Utilization
+        </Typography>
+        {budgets.length > 0 ? (
+          <Stack spacing={2}>
+            {budgets.map((b, idx) => {
+              const limit = Number(
+                getBudgetValue(b, "limit") ??
+                  getBudgetValue(b, "max") ??
+                  getBudgetValue(b, "hard_cap", "hardCap") ??
+                  0,
+              );
+              const spent = Number(getBudgetValue(b, "spent") ?? 0);
+              const pct = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
+              return (
+                <Box key={b.level || b.name || idx}>
+                  <Stack
+                    direction="row"
+                    justifyContent="space-between"
+                    alignItems="center"
+                    mb={0.5}
+                  >
+                    <Typography
+                      variant="body2"
+                      fontWeight={500}
+                      sx={{
+                        cursor: "pointer",
+                        "&:hover": {
+                          textDecoration: "underline",
+                          color: "primary.main",
+                        },
+                      }}
+                      onClick={() =>
+                        navigate(
+                          `/dashboard/gateway/analytics?tab=cost&budget=${encodeURIComponent(b.level || b.name || "")}`,
+                        )
                       }
-                      sx={{ height: 8, borderRadius: 1 }}
-                    />
-                  </Box>
-                );
-              })}
-            </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No budget limits configured. Click &quot;Set Budget&quot; above to
-              add spending limits.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+                    >
+                      {getBudgetLevelLabel(b.level || b.name) ||
+                        `Budget ${idx + 1}`}
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="body2" color="text.secondary">
+                        {formatCost(spent)} /{" "}
+                        {limit > 0 ? formatCost(limit) : "No limit"}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleRemoveBudget(b.level || b.name)}
+                        title="Remove budget"
+                      >
+                        <Iconify
+                          icon="solar:trash-bin-trash-linear"
+                          width={16}
+                        />
+                      </IconButton>
+                    </Stack>
+                  </Stack>
+                  <LinearProgress
+                    variant="determinate"
+                    value={pct}
+                    color={
+                      pct >= 90 ? "error" : pct >= 70 ? "warning" : "primary"
+                    }
+                    sx={{ height: 8, borderRadius: 1 }}
+                  />
+                </Box>
+              );
+            })}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No budget limits configured. Click &quot;Set Budget&quot; above to
+            add spending limits.
+          </Typography>
+        )}
+      </Section>
     </Stack>
   );
 };
@@ -323,126 +297,124 @@ const BudgetConfigTab = ({ config }) => {
           );
           const resetDay = getBudgetValue(budget, "reset_day", "resetDay");
           return (
-            <Card key={level}>
-              <CardContent>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                  mb={1.5}
-                >
-                  <Typography variant="h6">
-                    {getBudgetLevelLabel(level)}
-                  </Typography>
-                  <Chip
-                    label={getBudgetAction(budget)}
-                    color={
-                      getBudgetAction(budget) === "block"
-                        ? "error"
-                        : getBudgetAction(budget) === "throttle"
-                          ? "warning"
-                          : "info"
-                    }
-                    size="small"
-                    variant="outlined"
-                  />
-                </Stack>
-                <Stack spacing={0.75}>
-                  {budget.limit != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Limit
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {formatCost(budget.limit)}
-                      </Typography>
-                    </Stack>
-                  )}
-                  {hardCap != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Hard Cap
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {formatCost(hardCap)}
-                      </Typography>
-                    </Stack>
-                  )}
-                  {alertThreshold != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Alert Threshold
-                      </Typography>
-                      <Typography variant="body2">{alertThreshold}%</Typography>
-                    </Stack>
-                  )}
-                  {budget.period && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Period
-                      </Typography>
-                      <Typography variant="body2">{budget.period}</Typography>
-                    </Stack>
-                  )}
-                  {resetDay != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Reset Day
-                      </Typography>
-                      <Typography variant="body2">{resetDay}</Typography>
-                    </Stack>
-                  )}
-                  {budget.description && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Description
-                      </Typography>
-                      <Typography variant="body2">
-                        {budget.description}
-                      </Typography>
-                    </Stack>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
+            <Section variant="panel" key={level}>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                mb={1.5}
+              >
+                <Typography variant="h6">
+                  {getBudgetLevelLabel(level)}
+                </Typography>
+                <Chip
+                  label={getBudgetAction(budget)}
+                  color={
+                    getBudgetAction(budget) === "block"
+                      ? "error"
+                      : getBudgetAction(budget) === "throttle"
+                        ? "warning"
+                        : "info"
+                  }
+                  size="small"
+                  variant="outlined"
+                />
+              </Stack>
+              <Stack spacing={0.75}>
+                {budget.limit != null && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Limit
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontFamily: "monospace" }}
+                    >
+                      {formatCost(budget.limit)}
+                    </Typography>
+                  </Stack>
+                )}
+                {hardCap != null && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Hard Cap
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontFamily: "monospace" }}
+                    >
+                      {formatCost(hardCap)}
+                    </Typography>
+                  </Stack>
+                )}
+                {alertThreshold != null && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Alert Threshold
+                    </Typography>
+                    <Typography variant="body2">{alertThreshold}%</Typography>
+                  </Stack>
+                )}
+                {budget.period && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Period
+                    </Typography>
+                    <Typography variant="body2">{budget.period}</Typography>
+                  </Stack>
+                )}
+                {resetDay != null && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Reset Day
+                    </Typography>
+                    <Typography variant="body2">{resetDay}</Typography>
+                  </Stack>
+                )}
+                {budget.description && (
+                  <Stack direction="row" spacing={2}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ minWidth: 140 }}
+                    >
+                      Description
+                    </Typography>
+                    <Typography variant="body2">
+                      {budget.description}
+                    </Typography>
+                  </Stack>
+                )}
+              </Stack>
+            </Section>
           );
         })
       ) : (
-        <Card sx={{ p: 4 }}>
+        <Section variant="panel" sx={{ p: 4 }}>
           <Typography variant="body2" color="text.secondary" textAlign="center">
             No budget configuration found. Set a budget from the Dashboard tab.
           </Typography>
-        </Card>
+        </Section>
       )}
     </Stack>
   );
@@ -457,83 +429,72 @@ const RBACTab = ({ roles, config }) => {
 
   return (
     <Stack spacing={2}>
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Authentication
-          </Typography>
-          <Stack spacing={1}>
-            <Stack direction="row" spacing={2}>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ minWidth: 120 }}
-              >
-                Auth Enabled
-              </Typography>
-              <Chip
-                label={authConfig.enabled ? "Yes" : "No"}
-                color={authConfig.enabled ? "success" : "default"}
-                size="small"
-              />
-            </Stack>
-          </Stack>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Roles & Permissions
-          </Typography>
-          {roles.length > 0 ? (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Role</TableCell>
-                    <TableCell>Permissions</TableCell>
-                    <TableCell>Description</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {roles.map((r, idx) => (
-                    <TableRow key={r.role || idx}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {r.role}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                          {(r.permissions || []).map((p) => (
-                            <Chip
-                              key={p}
-                              label={p}
-                              size="small"
-                              variant="outlined"
-                            />
-                          ))}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {r.description || "\u2014"}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No RBAC roles configured. The gateway uses API key-based
-              authentication.
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Authentication
+        </Typography>
+        <Stack spacing={1}>
+          <Stack direction="row" spacing={2}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ minWidth: 120 }}
+            >
+              Auth Enabled
             </Typography>
-          )}
-        </CardContent>
-      </Card>
+            <Chip
+              label={authConfig.enabled ? "Yes" : "No"}
+              color={authConfig.enabled ? "success" : "default"}
+              size="small"
+            />
+          </Stack>
+        </Stack>
+      </Section>
+
+      <Section variant="panel">
+        <Typography variant="h6" mb={2}>
+          Roles & Permissions
+        </Typography>
+        {roles.length > 0 ? (
+          <TableContainer>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Role</TableCell>
+                  <TableCell>Permissions</TableCell>
+                  <TableCell>Description</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {roles.map((r, idx) => (
+                  <TableRow key={r.role || idx}>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight={500}>
+                        {r.role}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {(r.permissions || []).join(" \u00B7 ") || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {r.description || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No RBAC roles configured. The gateway uses API key-based
+            authentication.
+          </Typography>
+        )}
+      </Section>
     </Stack>
   );
 };
@@ -558,89 +519,85 @@ const AuditLogTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="h6" mb={2}>
-          Recent Activity
-        </Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Time</TableCell>
-                <TableCell>Action</TableCell>
-                <TableCell>Model</TableCell>
-                <TableCell>API Key</TableCell>
-                <TableCell>Cost</TableCell>
-                <TableCell>Status</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {logList.slice(0, 25).map((log) => {
-                const isError = log.is_error ?? Number(log.status_code) >= 400;
+    <Section variant="panel">
+      <Typography variant="h6" mb={2}>
+        Recent Activity
+      </Typography>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Time</TableCell>
+              <TableCell>Action</TableCell>
+              <TableCell>Model</TableCell>
+              <TableCell>API Key</TableCell>
+              <TableCell>Cost</TableCell>
+              <TableCell>Status</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {logList.slice(0, 25).map((log) => {
+              const isError = log.is_error ?? Number(log.status_code) >= 400;
 
-                return (
-                  <TableRow key={log.id}>
-                    <TableCell>
-                      <Typography variant="body2" fontSize="0.75rem">
-                        {log.started_at
-                          ? new Date(log.started_at).toLocaleString()
-                          : "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {isError ? "Error" : "Request"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {log.model || "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
-                      >
-                        {log.api_key_id?.substring(0, 12) || "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {formatCost(log.cost)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={log.status_code || "\u2014"}
-                        color={isError ? "error" : "success"}
-                        size="small"
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              {logList.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} align="center">
-                    <Typography variant="body2" color="text.secondary" py={4}>
-                      No activity logs found
+              return (
+                <TableRow key={log.id}>
+                  <TableCell>
+                    <Typography variant="body2" fontSize="0.75rem">
+                      {log.started_at
+                        ? new Date(log.started_at).toLocaleString()
+                        : "\u2014"}
                     </Typography>
                   </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">
+                      {isError ? "Error" : "Request"}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">
+                      {log.model || "\u2014"}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontFamily: "monospace", fontSize: "12px" }}
+                    >
+                      {log.api_key_id?.substring(0, 12) || "\u2014"}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
+                    <Typography variant="body2">
+                      {formatCost(log.cost)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge
+                      status={log.status_code || "\u2014"}
+                      label={String(log.status_code || "\u2014")}
+                      role={CHIP_ROLE[isError ? "error" : "success"]}
+                    />
+                  </TableCell>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </CardContent>
-    </Card>
+              );
+            })}
+            {logList.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} align="center">
+                  <Typography variant="body2" color="text.secondary" py={4}>
+                    No activity logs found
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Section>
   );
 };
 
@@ -718,7 +675,7 @@ const BudgetRBACSection = () => {
             label: "Set Budget",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setBudgetDialogOpen(true),
           },
         ]}

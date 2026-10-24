@@ -9,6 +9,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Chip,
   CircularProgress,
   Collapse,
   Stack,
@@ -18,6 +19,7 @@ import {
 import { useInfiniteQuery } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
+import { statusColors } from "src/utils/runStatus";
 import {
   CategoryOptions,
   LevelOptions,
@@ -29,19 +31,24 @@ import NestedJsonTable, { deepMatch } from "./NestedJsonTable";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LEVEL_STYLES = {
-  ERROR: { label: "Error", color: "#EF4444", bg: "rgba(239, 68, 68, 0.08)" },
-  WARN: { label: "Warn", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.08)" },
-  INFO: { label: "Info", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.08)" },
-  LOG: { label: "Log", accent: "neutral", bg: "rgba(100, 116, 139, 0.08)" },
-  DEBUG: { label: "Debug", color: "#94A3B8", bg: "rgba(148, 163, 184, 0.08)" },
+  ERROR: { label: "Error", role: "danger" },
+  WARN: { label: "Warn", role: "warning" },
+  INFO: { label: "Info", role: "info" },
+  LOG: { label: "Log", role: "neutral" },
+  DEBUG: { label: "Debug" },
 };
 
-// Tints are built by concatenating alpha onto the hex, so entries that key off
-// `accent` need the resolved palette value rather than a palette path.
-const levelStyle = (level, palette) => {
+// Tints are built by concatenating alpha onto the hex, so the style carries the
+// resolved status colour rather than a palette path.
+const levelStyle = (level, theme) => {
   const cfg =
     LEVEL_STYLES[String(level || "").toUpperCase()] || LEVEL_STYLES.LOG;
-  return { ...cfg, color: cfg.color || palette.accent[cfg.accent] };
+  return {
+    ...cfg,
+    color: cfg.role
+      ? statusColors(theme, cfg.role).solid
+      : theme.palette.text.disabled,
+  };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,54 +90,38 @@ const fmtTs = (value) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LevelPill = ({ label, count, color, active, onClick }) => (
-  <Box
+  <Chip
+    size="small"
+    clickable
     onClick={onClick}
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      px: 0.75,
-      py: "3px",
-      borderRadius: "12px",
-      cursor: "pointer",
-      border: "1px solid",
-      borderColor: active ? color : "divider",
-      bgcolor: active ? `${color}14` : "transparent",
-      transition: "all 120ms",
-      "&:hover": { borderColor: color, bgcolor: `${color}0a` },
-    }}
-  >
-    {color && (
-      <Box
-        sx={{
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          bgcolor: color,
-        }}
-      />
-    )}
-    <Typography
-      sx={{
-        fontSize: 10.5,
-        fontWeight: active ? 600 : 500,
-        color: active ? color : "text.secondary",
-        lineHeight: 1,
-      }}
-    >
-      {label}
-    </Typography>
-    <Typography
-      sx={{
-        fontSize: 10,
-        color: active ? color : "text.disabled",
-        fontFamily: "monospace",
-        lineHeight: 1,
-      }}
-    >
-      {count}
-    </Typography>
-  </Box>
+    variant={active ? "filled" : "outlined"}
+    icon={
+      color ? (
+        <Box
+          component="span"
+          sx={{
+            width: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            height: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            borderRadius: "50%",
+            bgcolor: color,
+          }}
+        />
+      ) : undefined
+    }
+    label={
+      <>
+        {label}{" "}
+        <Box
+          component="span"
+          sx={{ color: "text.tertiary", fontVariantNumeric: "tabular-nums" }}
+        >
+          {count}
+        </Box>
+      </>
+    }
+  />
 );
 
 LevelPill.propTypes = {
@@ -208,7 +199,7 @@ const LogAttributes = ({ attributes, body }) => {
             gap: 0.5,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: "3px",
+            borderRadius: "4px",
             px: 0.75,
             py: 0.25,
             bgcolor: "background.paper",
@@ -216,7 +207,11 @@ const LogAttributes = ({ attributes, body }) => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={12}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Filter attributes (deep)"
@@ -228,7 +223,7 @@ const LogAttributes = ({ attributes, body }) => {
               border: "none",
               outline: "none",
               bgcolor: "transparent",
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.primary",
               fontFamily: "inherit",
               py: 0,
@@ -238,8 +233,8 @@ const LogAttributes = ({ attributes, body }) => {
           />
           {query && (
             <Iconify
-              icon="mdi:close"
-              width={11}
+              icon="solar:close-linear"
+              width={12}
               onClick={handleClearQuery}
               sx={{
                 cursor: "pointer",
@@ -259,11 +254,11 @@ const LogAttributes = ({ attributes, body }) => {
         <Box sx={{ mb: hasAttrs ? 1 : 0 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
+              textTransform: "none",
+              letterSpacing: 0,
               mb: 0.25,
             }}
           >
@@ -271,7 +266,7 @@ const LogAttributes = ({ attributes, body }) => {
           </Typography>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               fontFamily: "monospace",
               whiteSpace: "pre-wrap",
@@ -305,7 +300,7 @@ LogAttributes.propTypes = {
 
 const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
   const theme = useTheme();
-  const s = levelStyle(row.severity, theme.palette);
+  const s = levelStyle(row.severity, theme);
   return (
     <Box
       sx={{
@@ -331,7 +326,7 @@ const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
         }}
       >
         <Iconify
-          icon="mdi:chevron-right"
+          icon="solar:alt-arrow-right-linear"
           width={12}
           sx={{
             color: "text.disabled",
@@ -345,7 +340,7 @@ const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
         {/* Full timestamp — monospace, fixed-width so everything aligns */}
         <Typography
           sx={{
-            fontSize: 10.5,
+            fontSize: 12,
             fontFamily: "monospace",
             color: "text.disabled",
             flexShrink: 0,
@@ -359,12 +354,12 @@ const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
         {/* Level label */}
         <Typography
           sx={{
-            fontSize: 9.5,
-            fontWeight: 700,
+            fontSize: 12,
+            fontWeight: 600,
             color: s.color,
             fontFamily: "monospace",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             flexShrink: 0,
             minWidth: 36,
             lineHeight: "16px",
@@ -375,39 +370,16 @@ const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
 
         {/* Category pill — click-to-filter */}
         {row.category && (
-          <Box
+          <Chip
+            size="small"
+            clickable
+            label={row.category}
             onClick={(e) => {
               e.stopPropagation();
               onCategoryClick?.(row.category);
             }}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              px: 0.5,
-              borderRadius: "3px",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.paper",
-              flexShrink: 0,
-              cursor: "pointer",
-              height: 16,
-              "&:hover": { borderColor: "primary.main" },
-            }}
-          >
-            <Typography
-              sx={{
-                fontSize: 9.5,
-                fontWeight: 500,
-                color: "text.secondary",
-                textTransform: "lowercase",
-                letterSpacing: "0.02em",
-                lineHeight: 1,
-                fontFamily: "monospace",
-              }}
-            >
-              {row.category}
-            </Typography>
-          </Box>
+            sx={{ flexShrink: 0, fontFamily: "monospace" }}
+          />
         )}
 
         {/* Message — single line, truncates when collapsed */}
@@ -415,7 +387,7 @@ const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
           sx={{
             flex: 1,
             minWidth: 0,
-            fontSize: 11.5,
+            fontSize: 12,
             fontFamily: "monospace",
             color: "text.primary",
             lineHeight: "16px",
@@ -645,7 +617,11 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
               bgcolor: "background.paper",
             }}
           >
-            <Iconify icon="mdi:magnify" width={13} color="text.disabled" />
+            <Iconify
+              icon="solar:magnifier-linear"
+              width={14}
+              color="text.disabled"
+            />
             <Box
               component="input"
               placeholder="Search logs"
@@ -656,7 +632,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
                 border: "none",
                 outline: "none",
                 bgcolor: "transparent",
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.primary",
                 fontFamily: "inherit",
                 py: 0.25,
@@ -665,7 +641,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             />
             {search && (
               <Iconify
-                icon="mdi:close"
+                icon="solar:close-linear"
                 width={12}
                 onClick={() => setSearch("")}
                 sx={{
@@ -680,27 +656,14 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
           {/* Category filter — compact select chip that doubles as a
               status display when a category is selected */}
           {category ? (
-            <Box
+            <Chip
+              size="small"
+              variant="outlined"
+              label={category}
               onClick={() => setCategory("")}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.25,
-                px: 0.75,
-                py: 0.25,
-                borderRadius: "3px",
-                border: "1px solid",
-                borderColor: "primary.main",
-                color: "primary.main",
-                cursor: "pointer",
-                fontSize: 10.5,
-                fontFamily: "monospace",
-                flexShrink: 0,
-              }}
-            >
-              {category}
-              <Iconify icon="mdi:close" width={11} />
-            </Box>
+              onDelete={() => setCategory("")}
+              sx={{ flexShrink: 0, fontFamily: "monospace" }}
+            />
           ) : null}
         </Stack>
 
@@ -719,7 +682,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             onClick={() => setLevel("")}
           />
           {LevelOptions.map((lo) => {
-            const s = levelStyle(lo.value, theme.palette);
+            const s = levelStyle(lo.value, theme);
             const count = levelCounts[lo.value] || 0;
             return (
               <LevelPill
@@ -735,7 +698,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
           <Box sx={{ flex: 1 }} />
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "text.disabled",
               fontFamily: "monospace",
             }}
@@ -781,7 +744,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               Collecting logs from provider
             </Typography>
-            <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               This usually takes a few seconds
             </Typography>
           </Box>
@@ -798,14 +761,14 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             }}
           >
             <Iconify
-              icon="mdi:text-box-search-outline"
-              width={22}
+              icon="solar:file-search-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
             <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               No logs match the filters
             </Typography>
-            <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               Try clearing level / category / search above
             </Typography>
           </Box>
@@ -829,12 +792,6 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
               variant="outlined"
               onClick={() => serverQuery.fetchNextPage()}
               disabled={serverQuery.isFetchingNextPage}
-              sx={{
-                textTransform: "none",
-                fontSize: 11,
-                py: 0.25,
-                px: 1.25,
-              }}
             >
               {serverQuery.isFetchingNextPage ? (
                 <Stack direction="row" alignItems="center" gap={0.75}>

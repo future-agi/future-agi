@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Alert,
   Box,
@@ -6,7 +7,6 @@ import {
   CircularProgress,
   Stack,
   Tab,
-  Tabs,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -311,7 +311,6 @@ const TaskDetailPage = () => {
               size="small"
               onClick={() => refetch?.()}
               disabled={isFetching}
-              sx={{ textTransform: "none" }}
             >
               Retry
             </Button>
@@ -320,7 +319,6 @@ const TaskDetailPage = () => {
               size="small"
               onClick={() => navigate("/dashboard/tasks")}
               startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-              sx={{ textTransform: "none" }}
             >
               Back to Tasks
             </Button>
@@ -351,12 +349,6 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => navigate(linkedTraceSource.path)}
           startIcon={<Iconify icon="solar:map-point-wave-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           {linkedTraceSource.label}
         </Button>
@@ -367,12 +359,6 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => pauseTask()}
           startIcon={<Iconify icon="solar:pause-circle-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           Pause
         </Button>
@@ -383,12 +369,6 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => resumeTask()}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           Resume
         </Button>
@@ -406,12 +386,6 @@ const TaskDetailPage = () => {
             loading={isUpdating}
             disabled={!!rerunBlockedReason}
             startIcon={<Iconify icon="solar:restart-linear" width={14} />}
-            sx={{
-              textTransform: "none",
-              fontWeight: 500,
-              fontSize: "12px",
-              height: 30,
-            }}
           >
             Re-run
           </LoadingButton>
@@ -461,31 +435,10 @@ const TaskDetailPage = () => {
           backgroundColor: "background.paper",
         }}
       >
-        <Tabs
+        <SegmentedTabs
           value={tab}
           onChange={(_, val) => setTab(val)}
-          TabIndicatorProps={{ style: { display: "none" } }}
-          sx={{
-            minHeight: 32,
-            "& .MuiTab-root": {
-              minHeight: 32,
-              px: 1.5,
-              py: 0,
-              mr: "0px !important",
-              textTransform: "none",
-              fontSize: "13px",
-              borderRadius: "6px",
-            },
-            border: "1px solid",
-            borderColor: "divider",
-            p: "2px",
-            borderRadius: "8px",
-            width: "fit-content",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.04)"
-                : "background.neutral",
-          }}
+          sx={{ width: "fit-content" }}
         >
           {TAB_OPTIONS.map((t) => (
             <Tab
@@ -497,28 +450,9 @@ const TaskDetailPage = () => {
                   {t.label}
                 </Box>
               }
-              sx={{
-                bgcolor:
-                  tab === t.value
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "background.paper"
-                    : "transparent",
-                boxShadow:
-                  tab === t.value
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: tab === t.value ? 600 : 400,
-                color: tab === t.value ? "text.primary" : "text.disabled",
-              }}
             />
           ))}
-        </Tabs>
+        </SegmentedTabs>
       </Box>
 
       {/* Tab content */}
@@ -591,7 +525,7 @@ const TaskDetailPage = () => {
             disabled={!testState.canTest || !canEditTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
+            sx={{ minWidth: 120 }}
           >
             Test
           </LoadingButton>
@@ -601,7 +535,7 @@ const TaskDetailPage = () => {
             onClick={() => openConfirm("save")}
             loading={isUpdating}
             disabled={!canEditTask}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
+            sx={{ minWidth: 140 }}
           >
             Save
           </LoadingButton>

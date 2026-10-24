@@ -1,4 +1,5 @@
 import ReactApexChart from "react-apexcharts";
+import logger from "src/utils/logger";
 
 /*
   react-apexcharts discards the render() promise and calls destroy()/update
@@ -12,7 +13,11 @@ export default class SafeApexChart extends ReactApexChart {
   componentDidMount() {
     this.chart = new window.ApexCharts(this.chartRef.current, this.getConfig());
     this.chart.render().catch((err) => {
-      console.error(`[SafeApexChart] ${this.props.type} chart failed to render`, err, this.props);
+      logger.error(
+        `[SafeApexChart] ${this.props.type} chart failed to render`,
+        err,
+        this.props,
+      );
     });
   }
 

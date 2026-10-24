@@ -4,7 +4,6 @@ import {
   Typography,
   Button,
   Stack,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -15,11 +14,13 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Skeleton,
-  Card,
   InputAdornment,
 } from "@mui/material";
+import Section from "src/components/section";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import ListToolbar from "src/components/list-toolbar";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -28,12 +29,6 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
-
-const STATUS_COLORS = {
-  active: "success",
-  revoked: "error",
-  expired: "warning",
-};
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -95,7 +90,7 @@ const KeyManagementSection = () => {
           <Skeleton width={120} height={36} variant="rounded" />
         </Stack>
         <Skeleton width="100%" height={48} variant="rounded" sx={{ mb: 1 }} />
-        <Card>
+        <Section variant="panel">
           {[...Array(5)].map((_, i) => (
             <Stack
               key={i}
@@ -115,7 +110,7 @@ const KeyManagementSection = () => {
               <Skeleton width="15%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -135,6 +130,7 @@ const KeyManagementSection = () => {
     <Box p={3}>
       {/* Header */}
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.keys}
         title="API Keys"
         subtitle="Create and manage API keys for gateway access"
@@ -143,7 +139,7 @@ const KeyManagementSection = () => {
             label: syncMutation.isPending ? "Syncing..." : "Sync",
             variant: "outlined",
             size: "small",
-            icon: "mdi:sync",
+            icon: "solar:refresh-linear",
             onClick: handleSync,
             disabled: syncMutation.isPending,
           },
@@ -151,36 +147,14 @@ const KeyManagementSection = () => {
             label: "Create Key",
             variant: "contained",
             size: "small",
-            icon: "mdi:plus",
+            icon: "solar:add-linear",
             onClick: () => setCreateDialogOpen(true),
           },
         ]}
       />
 
       {/* Filters */}
-      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton
-              key={f.value}
-              value={f.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-
+      <ListToolbar>
         <TextField
           placeholder="Search by name or owner..."
           size="small"
@@ -190,12 +164,24 @@ const KeyManagementSection = () => {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
+                <Iconify icon="solar:magnifier-linear" width={16} />
               </InputAdornment>
             ),
           }}
         />
-      </Stack>
+        <ToggleButtonGroup
+          value={statusFilter}
+          exclusive
+          onChange={(_, val) => val !== null && setStatusFilter(val)}
+          size="small"
+        >
+          {STATUS_FILTERS.map((f) => (
+            <ToggleButton key={f.value} value={f.value}>
+              {f.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      </ListToolbar>
 
       {/* Table */}
       {filteredKeys.length === 0 ? (
@@ -207,7 +193,7 @@ const KeyManagementSection = () => {
           py={8}
         >
           <Iconify
-            icon="mdi:key-outline"
+            icon="solar:key-linear"
             width={48}
             sx={{ color: "text.disabled", mb: 2 }}
           />
@@ -219,7 +205,7 @@ const KeyManagementSection = () => {
           {keys?.length === 0 && (
             <Button
               variant="outlined"
-              startIcon={<Iconify icon="mdi:plus" width={20} />}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
               onClick={() => setCreateDialogOpen(true)}
             >
               Create Your First Key
@@ -266,12 +252,7 @@ const KeyManagementSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={key.status}
-                        color={STATUS_COLORS[key.status] || "default"}
-                        size="small"
-                        variant="outlined"
-                      />
+                      <StatusBadge status={key.status} />
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">

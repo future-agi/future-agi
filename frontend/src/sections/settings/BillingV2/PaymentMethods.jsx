@@ -13,13 +13,13 @@ import {
   Box,
   Typography,
   Stack,
-  Paper,
   Button,
   Chip,
   IconButton,
   Skeleton,
   Alert,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import axios, { endpoints } from "src/utils/axios";
@@ -142,7 +142,7 @@ export default function PaymentMethods() {
         <Button
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="mdi:plus" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => setAddDialogOpen(true)}
         >
           Add Card
@@ -150,34 +150,25 @@ export default function PaymentMethods() {
       </Stack>
 
       {!methods || methods.length === 0 ? (
-        <Paper
-          variant="outlined"
-          sx={{
-            p: 3,
-            textAlign: "center",
-            borderStyle: "dashed",
-            borderRadius: 2,
-          }}
-        >
+        <Section variant="panel" sx={{ p: 3, textAlign: "center" }}>
           <Iconify
-            icon="mdi:credit-card-outline"
+            icon="solar:card-linear"
             width={36}
             sx={{ color: "text.disabled", mb: 1 }}
           />
           <Typography variant="body2" color="text.secondary">
             No payment methods on file. Add a card to enable paid features.
           </Typography>
-        </Paper>
+        </Section>
       ) : (
-        <Stack spacing={1.5}>
+        <Stack spacing={0}>
           {methods.map((pm) => {
             const brandIcon =
-              BRAND_ICONS[pm.brand?.toLowerCase()] || "mdi:credit-card";
+              BRAND_ICONS[pm.brand?.toLowerCase()] || "solar:card-linear";
             return (
-              <Paper
+              <Section
                 key={pm.id}
-                variant="outlined"
-                sx={{ p: 2, borderRadius: 2 }}
+                sx={{ px: 0, py: 1, borderBottom: "1px solid" }}
               >
                 <Stack
                   direction="row"
@@ -187,10 +178,10 @@ export default function PaymentMethods() {
                   <Stack direction="row" alignItems="center" spacing={1.5}>
                     <Iconify icon={brandIcon} width={28} />
                     <Box>
-                      <Typography variant="body2" fontWeight={600}>
+                      <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
                         {pm.brand} •••• {pm.last4}
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography variant="caption" color="text.tertiary">
                         Expires {pm.exp_month}/{pm.exp_year}
                       </Typography>
                     </Box>
@@ -214,11 +205,11 @@ export default function PaymentMethods() {
                       onClick={() => setDeleteTarget(pm)}
                       title="Remove card"
                     >
-                      <Iconify icon="mdi:delete-outline" width={18} />
+                      <Iconify icon="solar:trash-bin-trash-linear" width={20} />
                     </IconButton>
                   </Stack>
                 </Stack>
-              </Paper>
+              </Section>
             );
           })}
         </Stack>
@@ -235,7 +226,7 @@ export default function PaymentMethods() {
         actionButton="Add Card"
         onClickAction={handleAddCard}
         loading={cardLoading}
-        preTitleIcon="mdi:credit-card-plus"
+        preTitleIcon="solar:card-linear"
       >
         <Box sx={{ px: 2, py: 1 }}>
           <Typography variant="body2" color="text.secondary" mb={2}>
@@ -259,7 +250,7 @@ export default function PaymentMethods() {
         color="error"
         onClickAction={() => deleteMutation.mutate(deleteTarget?.id)}
         loading={deleteMutation.isPending}
-        preTitleIcon="mdi:alert-circle"
+        preTitleIcon="solar:danger-circle-linear"
       >
         <Box sx={{ px: 2, py: 1 }}>
           <Typography variant="body2" color="text.secondary">

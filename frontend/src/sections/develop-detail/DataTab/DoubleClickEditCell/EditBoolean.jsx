@@ -71,11 +71,8 @@ const EditBoolean = ({ params, onClose, onCellValueChanged }) => {
           size="small"
           onClick={handleClose}
           sx={{
-            borderRadius: "10px",
             width: "90px",
-            fontSize: "14px",
-            fontWeight: 700,
-            backgroundColor: "rgba(98, 91, 113, 0.12)",
+            backgroundColor: "action.selected",
             color: "var(--text-primary)",
           }}
         >
@@ -89,10 +86,7 @@ const EditBoolean = ({ params, onClose, onCellValueChanged }) => {
           size="small"
           loading={false}
           sx={{
-            borderRadius: "10px",
             width: "90px",
-            fontSize: "14px",
-            fontWeight: 700,
             color: "primary.contrastText",
           }}
         >

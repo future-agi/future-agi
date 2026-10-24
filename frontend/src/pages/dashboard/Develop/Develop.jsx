@@ -1,8 +1,8 @@
 import React from "react";
-import { Box, Tooltip, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import DevelopView from "src/sections/develop/DevelopView";
-import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 
 const Develop = () => {
   return (
@@ -21,24 +21,11 @@ const Develop = () => {
           overflow: "hidden",
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography variant="h6" fontWeight={600}>
-            Datasets
-          </Typography>
-          <Tooltip
-            title="Manage datasets across your development lifecycle — create, update, and use them to evaluate prompts and workflows."
-            arrow
-            placement="right"
-          >
-            <Box sx={{ display: "flex", cursor: "help" }}>
-              <Iconify
-                icon="solar:info-circle-line-duotone"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </Box>
-          </Tooltip>
-        </Box>
+        <PageHeader
+          title="Datasets"
+          info="Manage datasets across your development lifecycle — create, update, and use them to evaluate prompts and workflows."
+          sx={{ mb: 0 }}
+        />
         <DevelopView />
       </Box>
     </>

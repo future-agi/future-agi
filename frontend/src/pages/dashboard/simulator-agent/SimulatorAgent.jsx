@@ -267,17 +267,12 @@ function SimulatorAgent() {
                     color="primary"
                     sx={{
                       px: "24px",
-                      borderRadius: "8px",
-                      height: "38px",
                     }}
                     startIcon={
                       <Iconify
-                        icon="octicon:plus-24"
+                        width={20}
+                        icon="solar:add-linear"
                         color="background.paper"
-                        sx={{
-                          width: "20px",
-                          height: "20px",
-                        }}
                       />
                     }
                     disabled={
@@ -331,17 +326,12 @@ function SimulatorAgent() {
                     color="primary"
                     sx={{
                       px: "24px",
-                      borderRadius: "8px",
-                      height: "38px",
                     }}
                     startIcon={
                       <Iconify
-                        icon="octicon:plus-24"
+                        width={20}
+                        icon="solar:add-linear"
                         color="background.paper"
-                        sx={{
-                          width: "20px",
-                          height: "20px",
-                        }}
                       />
                     }
                     disabled={

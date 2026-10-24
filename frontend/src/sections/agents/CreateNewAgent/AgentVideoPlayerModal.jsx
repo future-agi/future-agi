@@ -67,10 +67,9 @@ const AgentVideoPlayerModal = ({ open, onClose, content }) => {
             top: 8,
             right: 8,
             color: "text.primary",
-            p: 1,
           }}
         >
-          <Iconify icon="mdi:close" height={24} width={24} />
+          <Iconify icon="solar:close-linear" height={24} width={24} />
         </IconButton>
       </DialogTitle>
 

@@ -60,11 +60,18 @@ describe("GuardrailCheckDialog title", () => {
   });
 });
 
+// The card is a plain Section panel now; the nearest ancestor holding a button is it.
+const closestWithButton = (el) => {
+  let node = el;
+  while (node && !within(node).queryByRole("button")) node = node.parentElement;
+  return node;
+};
+
 describe("GuardrailConfigTab -> dialog (TH-3989 repro)", () => {
   it("opens the Presidio card with a correctly cased modal title", async () => {
     render(<GuardrailConfigTab guardrails={{ checks: {} }} onChange={noop} />);
 
-    const card = screen.getByText("Presidio PII").closest(".MuiCard-root");
+    const card = closestWithButton(screen.getByText("Presidio PII"));
     expect(card).not.toBeNull();
 
     fireEvent.click(within(card).getByRole("button"));

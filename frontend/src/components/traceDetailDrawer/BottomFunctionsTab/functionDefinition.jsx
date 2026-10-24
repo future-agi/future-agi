@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import {
   Accordion,
   AccordionDetails,
@@ -115,7 +115,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                         <Typography
                           sx={{
                             padding: 1.5,
-                            fontSize: "14px",
+                            fontSize: "13px",
                             backgroundColor: "background.neutral",
                           }}
                         >
@@ -130,7 +130,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                         key={idx}
                         sx={{
                           border: "1px solid",
-                          borderColor: "#938FA333",
+                          borderColor: "divider",
                           borderRadius: "8px",
                           mb: 2,
                           overflow: "hidden",
@@ -155,26 +155,18 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                           >
                             {param.name}
                           </Typography>
-                          <Chip
-                            label={param.type}
-                            size="small"
-                            variant="outlined"
-                            sx={{ height: 20, fontSize: "11px" }}
-                          />
-                          {param.isRequired && (
-                            <Chip
-                              label="required"
-                              size="small"
-                              color="warning"
-                              variant="outlined"
-                              sx={{ height: 20, fontSize: "11px" }}
-                            />
-                          )}
+                          <Typography
+                            sx={{ fontSize: 12, color: "text.tertiary" }}
+                          >
+                            {param.isRequired
+                              ? `${param.type} · required`
+                              : param.type}
+                          </Typography>
                         </Box>
                         <Typography
                           sx={{
                             padding: 1.5,
-                            fontSize: "14px",
+                            fontSize: "13px",
                             backgroundColor: "background.neutral",
                           }}
                         >

@@ -31,7 +31,7 @@ export default function LineChart() {
           }
           labelComponent={
             <VictoryTooltip
-              style={{ fontSize: 10 }}
+              style={{ fontSize: 12 }}
               cornerRadius={0} // This will make the tooltip a square shape
               //   flyoutStyle={tooltipStyle}
               flyoutPadding={{ top: 5, bottom: 5, left: 15, right: 15 }} // Adjust padding as needed

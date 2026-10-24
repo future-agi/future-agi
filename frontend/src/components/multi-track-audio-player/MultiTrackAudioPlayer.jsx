@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (waveform colours) */
 import React, { useEffect, useRef, useCallback, useState, memo } from "react";
 import MultiTrack from "wavesurfer-multitrack";
 import PropTypes from "prop-types";
@@ -23,7 +24,8 @@ const MultiTrackAudioPlayer = ({
   onInstance,
 }) => {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const cursorColor = theme.palette.text.primary;
+  const trackBackground = theme.palette.background.paper;
   const multiTrackAudioRef = useRef(null);
   const mtRef = useRef(null);
   const onInstanceRef = useRef(onInstance);
@@ -60,9 +62,9 @@ const MultiTrackAudioPlayer = ({
 
     mtRef.current = new MultiTrack(tracks, {
       container: multiTrackAudioRef.current,
-      cursorColor: isDark ? "#fafafa" : "#0F172A",
+      cursorColor,
       cursorWidth: 2,
-      trackBackground: isDark ? "#18181b" : "#FFFFFF",
+      trackBackground,
 
       rightButtonDrag: true,
       dragBounds: true,
@@ -83,7 +85,7 @@ const MultiTrackAudioPlayer = ({
       mtRef.current?.destroy();
       mtRef.current = null;
     };
-  }, [trackUrls, height, isDark]);
+  }, [trackUrls, height, cursorColor, trackBackground]);
 
   useEffect(() => {
     if (!isReady || reportedInstanceRef.current || !mtRef.current) return;
@@ -115,7 +117,7 @@ const MultiTrackAudioPlayer = ({
       gap={0}
       sx={{
         width: "100%",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Box
@@ -153,7 +155,7 @@ const MultiTrackAudioPlayer = ({
           sx={{
             visibility: !isReady ? "hidden" : "visible",
             opacity: !isReady ? 0 : 1,
-            transition: "opacity 0.3s ease-in-out",
+            transition: "opacity 0.2s ease-in-out",
             minHeight: 170,
           }}
         />
@@ -176,16 +178,14 @@ const MultiTrackAudioPlayer = ({
           }}
           disabled={!isReady}
           sx={{
-            padding: "6px",
             bgcolor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
             opacity: isReady ? 1 : 0.5,
           }}
         >
           <Icon
-            icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+            icon={isPlaying ? "solar:pause-linear" : "solar:play-linear"}
             width={20}
             height={20}
             color="text.primary"
@@ -210,7 +210,7 @@ const MultiTrackAudioPlayer = ({
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               opacity: isReady ? 1 : 0.5,
             }}
           />

@@ -11,7 +11,7 @@ export const AGENT_NODE = {
   title: "Agent Node",
   description: "Run an agent through LLM",
   iconSrc: "/assets/icons/navbar/ic_agents.svg",
-  color: "blue.600",
+  color: "status.info.fg",
 };
 
 export const NODE_TYPE_CONFIG = {
@@ -20,7 +20,7 @@ export const NODE_TYPE_CONFIG = {
     title: "LLM Prompt",
     description: "Run a prompt against an LLM",
     iconSrc: "/assets/icons/ic_chat_single.svg",
-    color: "orange.500",
+    color: "status.warning.fg",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
 };
@@ -42,7 +42,7 @@ export const AGENT_PLAYGROUND_TABS = [
     id: "executions",
     label: "Executions",
     title: "Executions",
-    icon: "material-symbols:rocket-launch-outline",
+    icon: "solar:rocket-linear",
   },
 ];
 

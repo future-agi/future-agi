@@ -70,20 +70,15 @@ export default function EmptyAlerts({ onStartCreatingAlerts, mainPage }) {
           }),
         }}
       >
-        <Typography
-          color={"text.primary"}
-          variant="m2"
-          fontWeight={"fontWeightSemiBold"}
-        >
-          Alerts
-        </Typography>
-        <ShowComponent condition={mainPage}>
+        {/* On the Alerts page the page header already says this; only an
+            embedded empty state (inside a project) needs its own title. */}
+        <ShowComponent condition={!mainPage}>
           <Typography
-            variant="s1"
             color={"text.primary"}
-            fontWeight={"fontWeightRegular"}
+            variant="m2"
+            fontWeight={"fontWeightSemiBold"}
           >
-            Proactively monitor their LLM by setting up alerts
+            Alerts
           </Typography>
         </ShowComponent>
       </Stack>

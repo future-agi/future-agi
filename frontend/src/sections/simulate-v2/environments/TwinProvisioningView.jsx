@@ -2,7 +2,12 @@ import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { alpha, keyframes } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, IconButton, Tooltip, Button,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Tooltip,
+  Button,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
@@ -11,8 +16,7 @@ import AssistantConsole from "../assistant/AssistantConsole";
 import TwinLogo from "../components/TwinLogo";
 import { twinById } from "../_mock/twins";
 
-const TWIN_TINT = "#7857FC";
-const SUCCESS = "#16A34A";
+const SUCCESS = "status.success.fg";
 
 /*
   Phases the twin runtime steps through when standing up a fresh
@@ -20,16 +24,31 @@ const SUCCESS = "#16A34A";
   the real system would stream progress as each hits.
 */
 const PHASES = [
-  { key: "provision", title: "Setting up the sandboxes", subtitle: "One sandbox for each app you picked", dwell: 1500 },
-  { key: "seed", title: "Seeding the starting state", subtitle: "Turning your description into each app's starting data", dwell: 1200 },
-  { key: "rotate", title: "Creating test sign-ins", subtitle: "Each run signs in to the sandboxes with a fresh test account", dwell: 900 },
-  { key: "probe", title: "Checking each app answers", subtitle: "A first request to every sandbox", dwell: 1100 },
+  {
+    key: "provision",
+    title: "Setting up the sandboxes",
+    subtitle: "One sandbox for each app you picked",
+    dwell: 1500,
+  },
+  {
+    key: "seed",
+    title: "Seeding the starting state",
+    subtitle: "Turning your description into each app's starting data",
+    dwell: 1200,
+  },
+  {
+    key: "rotate",
+    title: "Creating test sign-ins",
+    subtitle: "Each run signs in to the sandboxes with a fresh test account",
+    dwell: 900,
+  },
+  {
+    key: "probe",
+    title: "Checking each app answers",
+    subtitle: "A first request to every sandbox",
+    dwell: 1100,
+  },
 ];
-
-const glow = keyframes`
-  0%,100% { box-shadow: 0 0 0 2px rgba(120,87,252,0.20); }
-  50%     { box-shadow: 0 0 0 8px rgba(120,87,252,0.10); }
-`;
 
 const barShimmer = keyframes`
   0%   { background-position: 0% 0; }
@@ -70,7 +89,10 @@ const counterFlick = keyframes`
 function useTicker(target, active, duration = 800) {
   const [n, setN] = useState(0);
   useEffect(() => {
-    if (!active) { setN(target); return undefined; }
+    if (!active) {
+      setN(target);
+      return undefined;
+    }
     setN(0);
     const start = performance.now();
     let raf;
@@ -93,32 +115,34 @@ function useTicker(target, active, duration = 800) {
 */
 function logLinesFor(phase, twinName) {
   const t = twinName || "service";
-  return ({
-    provision: [
-      `start the ${t} sandbox`,
-      `load ${t}'s data model`,
-      `connect it to this environment`,
-      `ready`,
-    ],
-    seed: [
-      `read your description`,
-      `plan 3 collections, 12 records`,
-      `add users (4), channels (3), messages (11)`,
-      `saved`,
-    ],
-    rotate: [
-      `create a test account`,
-      `sign it in to ${t}`,
-      `keep it by reference only`,
-      `ready for the first run`,
-    ],
-    probe: [
-      `→ GET /health`,
-      `← 200 · 42ms`,
-      `→ GET /whoami`,
-      `← 200 · 18ms · verified`,
-    ],
-  })[phase] || [];
+  return (
+    {
+      provision: [
+        `start the ${t} sandbox`,
+        `load ${t}'s data model`,
+        `connect it to this environment`,
+        `ready`,
+      ],
+      seed: [
+        `read your description`,
+        `plan 3 collections, 12 records`,
+        `add users (4), channels (3), messages (11)`,
+        `saved`,
+      ],
+      rotate: [
+        `create a test account`,
+        `sign it in to ${t}`,
+        `keep it by reference only`,
+        `ready for the first run`,
+      ],
+      probe: [
+        `→ GET /health`,
+        `← 200 · 42ms`,
+        `→ GET /whoami`,
+        `← 200 · 18ms · verified`,
+      ],
+    }[phase] || []
+  );
 }
 
 /**
@@ -162,7 +186,10 @@ export default function TwinProvisioningView({ env, envState, onDone }) {
       const t = setTimeout(() => onDoneRef.current?.(), 400);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => setPhaseIdx((i) => i + 1), PHASES[phaseIdx].dwell);
+    const t = setTimeout(
+      () => setPhaseIdx((i) => i + 1),
+      PHASES[phaseIdx].dwell,
+    );
     return () => clearTimeout(t);
   }, [phaseIdx]);
 
@@ -175,77 +202,141 @@ export default function TwinProvisioningView({ env, envState, onDone }) {
     if (phaseIdx > PHASES.length) return;
     const phase = PHASES[phaseIdx];
     if (!phase) {
-      setTurns((prev) => [...prev, {
-        id: "done", role: "builder", title: "Sandbox ready",
-        steps: [{ kind: "note", text: `All ${services.length} app${services.length === 1 ? "" : "s"} answered. Opening the environment for review in a moment.` }],
-      }]);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: "done",
+          role: "builder",
+          title: "Sandbox ready",
+          steps: [
+            {
+              kind: "note",
+              text: `All ${services.length} app${services.length === 1 ? "" : "s"} answered. Opening the environment for review in a moment.`,
+            },
+          ],
+        },
+      ]);
       return;
     }
-    setTurns((prev) => [...prev, {
-      id: `phase-${phase.key}`, role: "builder", title: phase.title,
-      steps: [
-        { kind: "note", text: phase.subtitle },
-        ...services.map((sId) => {
-          const twin = twinById(sId);
-          const noteByPhase = {
-            provision: `Sandbox ready for ${twin?.name || sId}`,
-            seed: `Seeded ${twin?.name || sId} from your description`,
-            rotate: `Test account signed in to ${twin?.name || sId}`,
-            probe: `${twin?.name || sId} answered in ${40 + ((sId?.length || 4) * 7) % 90}ms`,
-          };
-          return { kind: "note", text: noteByPhase[phase.key] || `${twin?.name || sId} — ok` };
-        }),
-      ],
-    }]);
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `phase-${phase.key}`,
+        role: "builder",
+        title: phase.title,
+        steps: [
+          { kind: "note", text: phase.subtitle },
+          ...services.map((sId) => {
+            const twin = twinById(sId);
+            const noteByPhase = {
+              provision: `Sandbox ready for ${twin?.name || sId}`,
+              seed: `Seeded ${twin?.name || sId} from your description`,
+              rotate: `Test account signed in to ${twin?.name || sId}`,
+              probe: `${twin?.name || sId} answered in ${40 + (((sId?.length || 4) * 7) % 90)}ms`,
+            };
+            return {
+              kind: "note",
+              text: noteByPhase[phase.key] || `${twin?.name || sId} — ok`,
+            };
+          }),
+        ],
+      },
+    ]);
   }, [phaseIdx, services]);
 
-
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       {/* header */}
-      <Stack direction="row" alignItems="center" spacing={2} sx={{
-        px: 3, py: 1.75, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0,
-      }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{
+          px: 3,
+          py: 1.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
+      >
         <Tooltip arrow title="Back to environments">
-          <IconButton size="small" onClick={() => navigate(paths.dashboard.simulate.environments)} aria-label="Back to environments">
-            <Iconify icon="solar:alt-arrow-left-linear" width={17} />
+          <IconButton
+            size="small"
+            onClick={() => navigate(paths.dashboard.simulate.environments)}
+            aria-label="Back to environments"
+          >
+            <Iconify icon="solar:alt-arrow-left-linear" width={16} />
           </IconButton>
         </Tooltip>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>{env?.name}</Typography>
+          <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
+            {env?.name}
+          </Typography>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {`Setting up ${services.length} sandbox${services.length === 1 ? "" : "es"}${envState?.agent?.name ? ` for ${envState.agent.name}` : ""}`}
           </Typography>
         </Box>
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{
-          px: 1, py: 0.5, borderRadius: 999,
-          border: "1px solid", borderColor: "divider",
-          bgcolor: "background.neutral",
-          color: "text.secondary",
-        }}>
-          <Box sx={{
-            width: 7, height: 7, borderRadius: "50%",
-            bgcolor: "#F59E0B",
-            animation: `${beamPulse} 1.4s ease-in-out infinite`,
-          }} />
-          <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.3 }}>
-            SETTING UP
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{
+            px: 1,
+            py: 0.5,
+            borderRadius: 999,
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.neutral",
+            color: "text.secondary",
+          }}
+        >
+          <Box
+            sx={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              bgcolor: "status.warning.solid",
+              animation: `${beamPulse} 1.4s ease-in-out infinite`,
+            }}
+          />
+          <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+            Setting up
           </Typography>
         </Stack>
       </Stack>
 
       {/* split body — one surface split by a single rule, like the review
           screen and the workspace */}
-      <Box sx={{
-        flex: 1, minHeight: 0, display: "grid",
-        gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
-      }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
+        }}
+      >
         {/* left — narrating chat */}
-        <Box sx={{
-          height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
-          borderStyle: "solid", borderWidth: 0, borderColor: "divider",
-          borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
-        }}>
+        <Box
+          sx={{
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            borderStyle: "solid",
+            borderWidth: 0,
+            borderColor: "divider",
+            borderRightWidth: { xs: 0, lg: 1 },
+            borderBottomWidth: { xs: 1, lg: 0 },
+          }}
+        >
           <AssistantConsole
             turns={turns}
             running={phaseIdx < PHASES.length}
@@ -258,9 +349,22 @@ export default function TwinProvisioningView({ env, envState, onDone }) {
         </Box>
 
         {/* right — animation + step list */}
-        <Box sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5, bgcolor: "background.paper" }}>
+        <Box
+          sx={{
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            px: 2.5,
+            bgcolor: "background.paper",
+          }}
+        >
           <Box sx={{ pt: 2, overflow: "auto" }}>
-            <SandboxSpinup services={services} phaseIdx={phaseIdx} serviceProgress={serviceProgress} />
+            <SandboxSpinup
+              services={services}
+              phaseIdx={phaseIdx}
+              serviceProgress={serviceProgress}
+            />
             <Box sx={{ mt: 2.5 }}>
               <PhaseTimeline phaseIdx={phaseIdx} services={services} />
             </Box>
@@ -283,43 +387,90 @@ function SandboxSpinup({ services, phaseIdx }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Box sx={{
-          width: 6, height: 6, borderRadius: "50%", bgcolor: "#F59E0B",
-          animation: `${beamPulse} 1.4s ease-in-out infinite`,
-        }} />
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
-          Sandbox — {services.length} app{services.length === 1 ? "" : "s"} setting up
+        <Box
+          sx={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            bgcolor: "status.warning.solid",
+            animation: `${beamPulse} 1.4s ease-in-out infinite`,
+          }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.subtitle",
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
+        >
+          Sandbox — {services.length} app{services.length === 1 ? "" : "s"}{" "}
+          setting up
         </Typography>
         <Box flex={1} />
-        <Typography sx={{
-          typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace",
-        }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontFamily: "ui-monospace, Menlo, monospace",
+          }}
+        >
           {PHASES.find((p) => p.key === phaseKey)?.title || "Ready"}
         </Typography>
       </Stack>
-      <Box sx={{
-        position: "relative", borderRadius: 1.5, overflow: "hidden",
-        border: "1px solid", borderColor: "divider",
-        bgcolor: (t) => t.palette.mode === "dark" ? "#0B0B0B" : "#FAFAFA",
-        p: 2, minHeight: 340,
-      }}>
+      <Box
+        sx={{
+          position: "relative",
+          borderRadius: "8px",
+          overflow: "hidden",
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.neutral",
+          p: 2,
+          minHeight: 340,
+        }}
+      >
         {/* subtle grid */}
-        <Box sx={{
-          position: "absolute", inset: 0, pointerEvents: "none",
-          backgroundImage: (t) => `linear-gradient(${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.04)} 1px, transparent 1px),
-                                    linear-gradient(90deg, ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.04)} 1px, transparent 1px)`,
-          backgroundSize: "22px 22px",
-        }} />
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            backgroundImage: (
+              t,
+            ) => `linear-gradient(${t.palette.divider} 1px, transparent 1px),
+                                    linear-gradient(90deg, ${t.palette.divider} 1px, transparent 1px)`,
+            backgroundSize: "22px 22px",
+          }}
+        />
 
         {/* Control-plane hub on the left + streaming beams to each service */}
-        <Box sx={{ position: "relative", display: "grid", gap: 2, gridTemplateColumns: "auto 1fr", alignItems: "stretch" }}>
+        <Box
+          sx={{
+            position: "relative",
+            display: "grid",
+            gap: 2,
+            gridTemplateColumns: "auto 1fr",
+            alignItems: "stretch",
+          }}
+        >
           <ControlHub phaseIdx={phaseIdx} />
-          <Box sx={{
-            display: "grid", gap: 1.25,
-            gridTemplateColumns: services.length <= 2 ? "1fr 1fr" : "1fr 1fr 1fr",
-          }}>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 1.25,
+              gridTemplateColumns:
+                services.length <= 2 ? "1fr 1fr" : "1fr 1fr 1fr",
+            }}
+          >
             {services.map((sId, i) => (
-              <ServiceCard key={sId} serviceId={sId} phaseIdx={phaseIdx} orderIndex={i} />
+              <ServiceCard
+                key={sId}
+                serviceId={sId}
+                phaseIdx={phaseIdx}
+                orderIndex={i}
+              />
             ))}
           </Box>
         </Box>
@@ -327,7 +478,10 @@ function SandboxSpinup({ services, phaseIdx }) {
     </Box>
   );
 }
-SandboxSpinup.propTypes = { services: PropTypes.array, phaseIdx: PropTypes.number };
+SandboxSpinup.propTypes = {
+  services: PropTypes.array,
+  phaseIdx: PropTypes.number,
+};
 
 /*
   Left-side hub — the "twin runtime" that provisions everything. A
@@ -338,50 +492,86 @@ SandboxSpinup.propTypes = { services: PropTypes.array, phaseIdx: PropTypes.numbe
 function ControlHub({ phaseIdx }) {
   const done = phaseIdx >= PHASES.length;
   return (
-    <Box sx={{
-      position: "relative", width: 90, minHeight: 260,
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      gap: 1,
-    }}>
-      <Box sx={{
+    <Box
+      sx={{
         position: "relative",
-        width: 62, height: 62, borderRadius: "50%",
-        display: "grid", placeItems: "center",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-        border: (t) => `1.5px solid ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.28 : 0.2)}`,
-        animation: done ? "none" : `${beamPulse} 1.6s ease-in-out infinite`,
-      }}>
-        <Iconify icon="solar:server-square-linear" width={22} sx={{ color: "text.primary" }} />
+        width: 90,
+        minHeight: 260,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 1,
+      }}
+    >
+      <Box
+        sx={{
+          position: "relative",
+          width: 62,
+          height: 62,
+          borderRadius: "50%",
+          display: "grid",
+          placeItems: "center",
+          bgcolor: "action.selected",
+          border: "1.5px solid",
+          borderColor: "border.hover",
+          animation: done ? "none" : `${beamPulse} 1.6s ease-in-out infinite`,
+        }}
+      >
+        <Iconify
+          icon="solar:server-square-linear"
+          width={20}
+          sx={{ color: "text.primary" }}
+        />
         {/* orbiting particles — neutral text-primary so they read as
             "data leaving the runtime", not "look how purple this is" */}
-        {!done && [0, 0.4, 0.8, 1.2].map((d, i) => (
-          <Box key={i} sx={{
-            position: "absolute", top: "50%", left: "50%",
-            width: 5, height: 5, borderRadius: "50%",
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.7 : 0.55),
-            boxShadow: (t) => `0 0 6px ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.35 : 0.2)}`,
-            "--dx": `${80 + (i % 2) * 20}px`,
-            "--dy": `${(i - 1.5) * 40}px`,
-            animation: `${particleFly} 1.2s linear infinite`,
-            animationDelay: `${d}s`,
-          }} />
-        ))}
+        {!done &&
+          [0, 0.4, 0.8, 1.2].map((d, i) => (
+            <Box
+              key={i}
+              sx={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                bgcolor: "action.focus",
+                boxShadow: (t) =>
+                  `0 0 6px ${alpha(t.palette.text.primary, 0.25)}`,
+                "--dx": `${80 + (i % 2) * 20}px`,
+                "--dy": `${(i - 1.5) * 40}px`,
+                animation: `${particleFly} 1.2s linear infinite`,
+                animationDelay: `${d}s`,
+              }}
+            />
+          ))}
       </Box>
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.4,
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.subtitle",
+          textTransform: "none",
+          letterSpacing: 0.4,
+        }}
+      >
         Sandbox
       </Typography>
       {/* status pill */}
-      <Box sx={{
-        px: 0.75, py: 0.125, borderRadius: 0.5,
-        typography: "s3", fontWeight: 700, fontSize: 9, letterSpacing: 0.3,
-        color: done ? SUCCESS : "text.secondary",
-        bgcolor: (t) => done
-          ? alpha(SUCCESS, t.palette.mode === "dark" ? 0.16 : 0.09)
-          : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
-      }}>
+      <Box
+        sx={{
+          px: 0.75,
+          py: 0.125,
+          borderRadius: "4px",
+          typography: "s3",
+          fontWeight: 600,
+          fontSize: 12,
+          letterSpacing: 0.3,
+          color: done ? SUCCESS : "text.secondary",
+          bgcolor: done ? "status.success.bg" : "action.selected",
+        }}
+      >
         {done ? "READY" : "WORKING"}
       </Box>
     </Box>
@@ -399,9 +589,9 @@ function ServiceCard({ serviceId, phaseIdx, orderIndex }) {
      status the service is reporting back. */
   const counterTargets = {
     provision: { label: "instances", value: 1 },
-    seed: { label: "rows seeded", value: 18 + (serviceId.length * 3) % 40 },
+    seed: { label: "rows seeded", value: 18 + ((serviceId.length * 3) % 40) },
     rotate: { label: "test sign-ins", value: 1 },
-    probe: { label: "ms to answer", value: 40 + (serviceId.length * 7) % 90 },
+    probe: { label: "ms to answer", value: 40 + ((serviceId.length * 7) % 90) },
   };
   const ct = counterTargets[phaseKey] || { label: "ready", value: 100 };
   const n = useTicker(ct.value, active, 750);
@@ -412,124 +602,211 @@ function ServiceCard({ serviceId, phaseIdx, orderIndex }) {
   const lines = active ? logLinesFor(phaseKey, twin?.name) : [];
 
   return (
-    <Box sx={{
-      p: 1.25, borderRadius: 1, minHeight: 260,
-      display: "flex", flexDirection: "column",
-      border: (t) => `1px solid ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? (active ? 0.28 : 0.14) : (active ? 0.2 : 0.1))}`,
-      bgcolor: (t) => t.palette.mode === "dark" ? "#131313" : "#FFFFFF",
-      boxShadow: (t) => t.palette.mode === "dark" ? "0 4px 12px rgba(0,0,0,0.35)" : "0 4px 12px rgba(16,24,40,0.06)",
-      position: "relative",
-      overflow: "hidden",
-    }}>
+    <Box
+      sx={{
+        p: 1.25,
+        borderRadius: 1,
+        minHeight: 260,
+        display: "flex",
+        flexDirection: "column",
+        border: "1px solid",
+        borderColor: active ? "border.hover" : "border.default",
+        bgcolor: "background.paper",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       {/* incoming beam from left — neutral so it reads as data flow
           rather than brand purple every direction you look */}
       {active && (
-        <Box sx={{
-          position: "absolute", left: -18, top: 22, width: 18, height: 2,
-          background: (t) => `linear-gradient(90deg, transparent, ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.65 : 0.5)})`,
-          animation: `${beamPulse} 1.2s ease-in-out infinite`,
-          animationDelay: `${orderIndex * 150}ms`,
-        }} />
+        <Box
+          sx={{
+            position: "absolute",
+            left: -18,
+            top: 22,
+            width: 18,
+            height: 2,
+            background: (t) =>
+              `linear-gradient(90deg, transparent, ${alpha(t.palette.text.primary, 0.5)})`,
+            animation: `${beamPulse} 1.2s ease-in-out infinite`,
+            animationDelay: `${orderIndex * 150}ms`,
+          }}
+        />
       )}
 
       {/* header */}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
         <TwinLogo twin={twin} width={16} />
-        <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1 }} noWrap>
+        <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }} noWrap>
           {twin?.name || serviceId}
         </Typography>
         {done ? (
-          <Iconify icon="solar:check-circle-bold" width={13} sx={{ color: SUCCESS }} />
+          <Iconify
+            icon="solar:check-circle-bold"
+            width={14}
+            sx={{ color: SUCCESS }}
+          />
         ) : (
-          <Box sx={{
-            width: 8, height: 8, borderRadius: "50%",
-            bgcolor: "#F59E0B",
-            animation: `${beamPulse} 1.4s ease-in-out infinite`,
-            animationDelay: `${orderIndex * 120}ms`,
-          }} />
+          <Box
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              bgcolor: "status.warning.solid",
+              animation: `${beamPulse} 1.4s ease-in-out infinite`,
+              animationDelay: `${orderIndex * 120}ms`,
+            }}
+          />
         )}
       </Stack>
 
       {/* phase pips */}
       <Stack direction="row" spacing={0.5} sx={{ mb: 1 }}>
         {PHASES.map((p, i) => (
-          <Box key={p.key} sx={{
-            flex: 1, height: 4, borderRadius: 999,
-            overflow: "hidden", position: "relative",
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
-          }}>
-            <Box sx={{
-              position: "absolute", inset: 0,
-              bgcolor: (t) => i < phaseIdx
-                ? SUCCESS
-                : (i === phaseIdx ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.55 : 0.4) : "transparent"),
-              width: i < phaseIdx ? "100%" : (i === phaseIdx ? "100%" : "0%"),
-              backgroundImage: (t) => i === phaseIdx
-                ? `linear-gradient(90deg, ${alpha(t.palette.text.primary, 0.2)} 0%, ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.8 : 0.55)} 50%, ${alpha(t.palette.text.primary, 0.2)} 100%)`
-                : "none",
-              backgroundSize: "200% 100%",
-              animation: i === phaseIdx ? `${barShimmer} 1.6s linear infinite` : "none",
-              transition: "width 220ms ease-out",
-            }} />
+          <Box
+            key={p.key}
+            sx={{
+              flex: 1,
+              height: 4,
+              borderRadius: 999,
+              overflow: "hidden",
+              position: "relative",
+              bgcolor: "action.selected",
+            }}
+          >
+            <Box
+              sx={{
+                position: "absolute",
+                inset: 0,
+                bgcolor:
+                  i < phaseIdx
+                    ? "status.success.solid"
+                    : i === phaseIdx
+                      ? "text.disabled"
+                      : "transparent",
+                width: i < phaseIdx ? "100%" : i === phaseIdx ? "100%" : "0%",
+                backgroundImage: (t) =>
+                  i === phaseIdx
+                    ? `linear-gradient(90deg, ${alpha(t.palette.text.primary, 0.2)} 0%, ${alpha(t.palette.text.primary, 0.55)} 50%, ${alpha(t.palette.text.primary, 0.2)} 100%)`
+                    : "none",
+                backgroundSize: "200% 100%",
+                animation:
+                  i === phaseIdx
+                    ? `${barShimmer} 1.6s linear infinite`
+                    : "none",
+                transition: "width 200ms ease-out",
+              }}
+            />
           </Box>
         ))}
       </Stack>
 
       {/* live counter */}
-      <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ mb: 1 }}>
-        <Box sx={{
-          overflow: "hidden", display: "inline-block",
-        }}>
-          <Typography key={`${phaseKey}-${n}`} sx={{
-            typography: "s1", fontWeight: 800, lineHeight: 1,
-            fontVariantNumeric: "tabular-nums",
-            color: done ? SUCCESS : "text.primary",
-            animation: `${counterFlick} 400ms ease-out`,
-          }}>
+      <Stack
+        direction="row"
+        alignItems="baseline"
+        spacing={0.75}
+        sx={{ mb: 1 }}
+      >
+        <Box
+          sx={{
+            overflow: "hidden",
+            display: "inline-block",
+          }}
+        >
+          <Typography
+            key={`${phaseKey}-${n}`}
+            sx={{
+              typography: "s1",
+              fontWeight: 600,
+              lineHeight: 1,
+              fontVariantNumeric: "tabular-nums",
+              color: done ? SUCCESS : "text.primary",
+              animation: `${counterFlick} 400ms ease-out`,
+            }}
+          >
             {done ? "ready" : n}
             {!done && phaseKey === "probe" && n > 0 && (
-              <Box component="span" sx={{ typography: "s3", fontWeight: 600, ml: 0.25, color: "text.subtitle" }}>ms</Box>
+              <Box
+                component="span"
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  ml: 0.25,
+                  color: "text.subtitle",
+                }}
+              >
+                ms
+              </Box>
             )}
           </Typography>
         </Box>
-        <Typography sx={{
-          typography: "s3", color: "text.subtitle",
-          textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700,
-        }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            textTransform: "none",
+            letterSpacing: 0.4,
+            fontWeight: 600,
+          }}
+        >
           {done ? "sandbox live" : ct.label}
         </Typography>
       </Stack>
 
       {/* streaming log — the "something is happening in there" tell */}
-      <Box sx={{
-        flex: 1, minHeight: 0,
-        borderRadius: 0.75, p: 1,
-        border: (t) => `1px solid ${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06)}`,
-        bgcolor: (t) => t.palette.mode === "dark" ? "#0A0A0A" : "#F5F6F7",
-        overflow: "hidden",
-      }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          borderRadius: "4px",
+          p: 1,
+          border: "1px solid",
+          borderColor: "border.subtle",
+          bgcolor: "background.neutral",
+          overflow: "hidden",
+        }}
+      >
         {done ? (
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ height: "100%" }}>
-            <Iconify icon="solar:check-circle-bold" width={12} sx={{ color: SUCCESS }} />
-            <Typography sx={{
-              typography: "s3", color: SUCCESS, fontWeight: 700,
-              fontFamily: "ui-monospace, Menlo, monospace",
-            }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ height: "100%" }}
+          >
+            <Iconify
+              icon="solar:check-circle-bold"
+              width={12}
+              sx={{ color: SUCCESS }}
+            />
+            <Typography
+              sx={{
+                typography: "s3",
+                color: SUCCESS,
+                fontWeight: 600,
+                fontFamily: "ui-monospace, Menlo, monospace",
+              }}
+            >
               serving · idle
             </Typography>
           </Stack>
         ) : (
           <Stack spacing={0.375}>
             {lines.map((l, i) => (
-              <Typography key={`${phaseKey}-${i}`}
+              <Typography
+                key={`${phaseKey}-${i}`}
                 sx={{
-                  typography: "s3", fontSize: 10.5, lineHeight: 1.4,
+                  typography: "s3",
+                  fontSize: 12,
+                  lineHeight: 1.4,
                   color: "text.secondary",
                   fontFamily: "ui-monospace, Menlo, monospace",
                   opacity: 0,
                   animation: `${logIn} 260ms ease-out forwards`,
                   animationDelay: `${140 + i * 220}ms`,
-                }} noWrap>
+                }}
+                noWrap
+              >
                 <Box component="span" sx={{ color: "text.disabled", mr: 0.5 }}>
                   {`0.${String(i * 2 + 1).padStart(2, "0")}s`}
                 </Box>
@@ -541,18 +818,32 @@ function ServiceCard({ serviceId, phaseIdx, orderIndex }) {
       </Box>
 
       {/* dropped-chip pool — each phase drops one chip that accumulates */}
-      <Stack direction="row" spacing={0.5} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
+      <Stack
+        direction="row"
+        spacing={0.5}
+        sx={{ mt: 1 }}
+        flexWrap="wrap"
+        useFlexGap
+      >
         {PHASES.slice(0, Math.min(phaseIdx + 1, PHASES.length)).map((p, i) => {
           const settled = i < phaseIdx;
           if (!settled) return null;
           return (
-            <Box key={p.key} sx={{
-              px: 0.75, py: 0.125, borderRadius: 0.5,
-              typography: "s3", fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3,
-              color: SUCCESS,
-              bgcolor: (t) => alpha(SUCCESS, t.palette.mode === "dark" ? 0.16 : 0.1),
-              animation: `${chipDrop} 260ms ease-out`,
-            }}>
+            <Box
+              key={p.key}
+              sx={{
+                px: 0.75,
+                py: 0.125,
+                borderRadius: "4px",
+                typography: "s3",
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                color: SUCCESS,
+                bgcolor: "status.success.bg",
+                animation: `${chipDrop} 260ms ease-out`,
+              }}
+            >
               {p.key.toUpperCase()}
             </Box>
           );
@@ -562,7 +853,9 @@ function ServiceCard({ serviceId, phaseIdx, orderIndex }) {
   );
 }
 ServiceCard.propTypes = {
-  serviceId: PropTypes.string, phaseIdx: PropTypes.number, orderIndex: PropTypes.number,
+  serviceId: PropTypes.string,
+  phaseIdx: PropTypes.number,
+  orderIndex: PropTypes.number,
 };
 
 /* ── step timeline ───────────────────────────────────────────────────── */
@@ -571,11 +864,25 @@ function PhaseTimeline({ phaseIdx, services }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.subtitle",
+            textTransform: "none",
+            letterSpacing: 0.4,
+          }}
+        >
           Setup — the sandboxes
         </Typography>
         <Box flex={1} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {Math.min(phaseIdx, PHASES.length)} of {PHASES.length}
         </Typography>
       </Stack>
@@ -586,39 +893,66 @@ function PhaseTimeline({ phaseIdx, services }) {
           const pending = i > phaseIdx;
           const tone = done ? SUCCESS : running ? "text.primary" : undefined;
           return (
-            <Stack key={phase.key} direction="row" spacing={1.5} sx={{
-              px: 1.5, py: 1.25, borderRadius: 1,
-              bgcolor: (t) => running
-                ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04)
-                : "transparent",
-              opacity: pending ? 0.55 : 1,
-              transition: "background-color .2s ease, opacity .2s ease",
-            }}>
-              <Box sx={{
-                width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                display: "grid", placeItems: "center",
-                bgcolor: (t) => done
-                  ? alpha(SUCCESS, t.palette.mode === "dark" ? 0.18 : 0.12)
-                  : running
-                    ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.09)
-                    : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.05),
-                color: tone || "text.subtitle",
-                animation: running ? `${beamPulse} 1.6s ease-in-out infinite` : "none",
-              }}>
+            <Stack
+              key={phase.key}
+              direction="row"
+              spacing={1.5}
+              sx={{
+                px: 1.5,
+                py: 1.25,
+                borderRadius: 1,
+                bgcolor: running ? "action.hover" : "transparent",
+                opacity: pending ? 0.55 : 1,
+                transition: "background-color .2s ease, opacity .2s ease",
+              }}
+            >
+              <Box
+                sx={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: done
+                    ? "status.success.bg"
+                    : running
+                      ? "action.focus"
+                      : "action.hover",
+                  color: tone || "text.subtitle",
+                  animation: running
+                    ? `${beamPulse} 1.6s ease-in-out infinite`
+                    : "none",
+                }}
+              >
                 <Iconify
-                  icon={done ? "solar:check-circle-bold" : running ? "solar:refresh-circle-linear" : phaseIconFor(phase.key)}
+                  icon={
+                    done
+                      ? "solar:check-circle-bold"
+                      : running
+                        ? "solar:refresh-circle-linear"
+                        : phaseIconFor(phase.key)
+                  }
                   width={12}
-                  sx={{ animation: running ? "spin 1.4s linear infinite" : "none",
-                    "@keyframes spin": { to: { transform: "rotate(360deg)" } } }}
+                  sx={{
+                    animation: running ? "spin 1.4s linear infinite" : "none",
+                    "@keyframes spin": { to: { transform: "rotate(360deg)" } },
+                  }}
                 />
               </Box>
               <Box flex={1} minWidth={0}>
                 <Stack direction="row" alignItems="baseline" spacing={1}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                     {phase.title}
                   </Typography>
                   {done && (
-                    <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {(phase.dwell / 1000).toFixed(1)}s
                     </Typography>
                   )}
@@ -634,13 +968,18 @@ function PhaseTimeline({ phaseIdx, services }) {
     </Box>
   );
 }
-PhaseTimeline.propTypes = { phaseIdx: PropTypes.number, services: PropTypes.array };
+PhaseTimeline.propTypes = {
+  phaseIdx: PropTypes.number,
+  services: PropTypes.array,
+};
 
 function phaseIconFor(key) {
-  return ({
-    provision: "solar:server-square-linear",
-    seed: "solar:database-linear",
-    rotate: "solar:key-linear",
-    probe: "solar:pulse-2-linear",
-  })[key] || "solar:box-linear";
+  return (
+    {
+      provision: "solar:server-square-linear",
+      seed: "solar:database-linear",
+      rotate: "solar:key-linear",
+      probe: "solar:pulse-2-linear",
+    }[key] || "solar:box-linear"
+  );
 }

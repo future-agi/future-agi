@@ -5,14 +5,13 @@
   No brand colour: choosing an option isn't a highlight.
 */
 export const segmentedToggleSx = (theme) => {
-  const dark = theme.palette.mode === "dark";
   return {
     p: "2px",
     gap: 0,
     border: "1px solid",
     borderColor: "divider",
     borderRadius: "8px",
-    bgcolor: dark ? "rgba(255,255,255,0.04)" : "#f4f4f5",
+    bgcolor: "background.neutral",
     "& .MuiToggleButtonGroup-grouped, & .MuiToggleButton-root": {
       m: 0,
       border: "0 !important",
@@ -29,8 +28,8 @@ export const segmentedToggleSx = (theme) => {
       "&.Mui-selected, &.Mui-selected:hover": {
         fontWeight: 600,
         color: "text.primary",
-        bgcolor: dark ? "rgba(255,255,255,0.12)" : "#fff",
-        boxShadow: dark ? "none" : "0 1px 3px rgba(0,0,0,0.08)",
+        bgcolor: "background.paper",
+        boxShadow: `inset 0 0 0 1px ${theme.palette.divider}`,
       },
       "&.Mui-disabled": { color: "text.disabled" },
     },

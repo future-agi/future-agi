@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
@@ -126,7 +127,8 @@ const EvalTableRow = ({
   const [expanded, setExpanded] = useState(focused);
   const rowRef = useRef(null);
   useEffect(() => {
-    if (focused) rowRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (focused)
+      rowRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [focused]);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
@@ -138,19 +140,6 @@ const EvalTableRow = ({
     : hasError
       ? EVAL_STATUS.ERRORED
       : getEvalNonScoreStatus(ev?.status);
-  const sc = isSkipped
-    ? {
-        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-        text: "text.disabled",
-      }
-    : hasError
-      ? {
-          bg: (theme) => alpha(theme.palette.error.main, 0.08),
-          text: "error.main",
-        }
-      : ev?.passed === false
-        ? scoreColor(0)
-        : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
   // Pass/Fail evals
@@ -224,7 +213,11 @@ const EvalTableRow = ({
         >
           {canExpand && (
             <Iconify
-              icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
               width={14}
               color="text.disabled"
             />
@@ -237,7 +230,7 @@ const EvalTableRow = ({
           onClick={() => canExpand && setExpanded((p) => !p)}
           sx={{
             width: showSpanColumn ? "30%" : "60%",
-            fontSize: 11.5,
+            fontSize: 12,
             fontWeight: 500,
             cursor: canExpand ? "pointer" : "default",
           }}
@@ -263,32 +256,20 @@ const EvalTableRow = ({
               skippedReason={ev.skipped_reason}
             />
           ) : ev.score_items?.length ? (
-            ev.score_items.map((item, i) => (
-              <Chip
-                key={i}
-                label={item}
-                size="small"
-                variant="outlined"
-                sx={{
-                  borderRadius: "4px",
-                  borderColor: "purple.500",
-                  color: "purple.500",
-                  typography: "s3",
-                }}
-              />
-            ))
+            <Typography sx={{ typography: "s3", color: "text.primary" }}>
+              {ev.score_items.join(" · ")}
+            </Typography>
+          ) : passFailLabel != null ? (
+            <StatusBadge
+              role={ev.result ? "success" : "danger"}
+              label={scoreLabel}
+            />
           ) : (
             <Typography
               sx={{
-                display: "inline-block",
-                fontSize: 11.5,
-                fontWeight: "fontWeightSemiBold",
-                color: sc.text,
-                bgcolor: sc.bg,
-                px: 0.75,
-                py: 0.15,
-                borderRadius: "3px",
-                minWidth: 36,
+                fontSize: 12,
+                color: "text.primary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {scoreLabel}
@@ -300,7 +281,7 @@ const EvalTableRow = ({
         {showSpanColumn && (
           <Typography
             noWrap
-            sx={{ width: "30%", fontSize: 10.5, color: "text.secondary" }}
+            sx={{ width: "30%", fontSize: 12, color: "text.secondary" }}
           >
             {ev.spanName || ""}
           </Typography>
@@ -317,30 +298,17 @@ const EvalTableRow = ({
           }}
         >
           {ev.spanId && onSelectSpan && (
-            <Box
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<Iconify icon="solar:eye-linear" width={12} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onSelectSpan(ev.spanId);
               }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "3px",
-                px: 0.5,
-                py: 0.15,
-                borderRadius: "3px",
-                cursor: "pointer",
-                fontSize: 10,
-                color: "text.disabled",
-                "&:hover": {
-                  color: "primary.main",
-                  bgcolor: "rgba(120,87,252,0.06)",
-                },
-              }}
             >
-              <Iconify icon="mdi:eye-outline" width={12} />
-              <span>View span</span>
-            </Box>
+              View span
+            </Button>
           )}
         </Box>
       </Box>
@@ -364,7 +332,7 @@ const EvalTableRow = ({
           {explanation && (
             <Box
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.6,
                 "& p": { m: 0, mb: 0.5 },
@@ -374,8 +342,8 @@ const EvalTableRow = ({
                 "& code": {
                   bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.15),
                   px: 0.5,
-                  borderRadius: "2px",
-                  fontSize: 10,
+                  borderRadius: "4px",
+                  fontSize: 12,
                 },
               }}
             >
@@ -404,7 +372,12 @@ const EvalTableRow = ({
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
           {!isPassedEval(ev) && !hideRowFix && (
-            <Box
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 if (onFixWithFalcon) {
@@ -413,30 +386,10 @@ const EvalTableRow = ({
                   defaultFixNotice();
                 }
               }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 0.75,
-                py: 0.25,
-                alignSelf: "flex-start",
-                border: "1px solid",
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-                borderRadius: "4px",
-                cursor: "pointer",
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-                "&:hover": {
-                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                },
-              }}
+              sx={{ alignSelf: "flex-start" }}
             >
-              <Iconify icon="mdi:creation" width={12} color="primary.main" />
-              <Typography
-                sx={{ fontSize: 10, fontWeight: 600, color: "primary.main" }}
-              >
-                Fix with Falcon
-              </Typography>
-            </Box>
+              Fix with Falcon
+            </Button>
           )}
         </Box>
       )}
@@ -472,11 +425,21 @@ const EvalsTabView = ({
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
 
   const totalPass = useMemo(
-    () => list.filter((e) => (typeof e.passed === "boolean" ? e.passed : e.score != null && e.score >= 50)).length,
+    () =>
+      list.filter((e) =>
+        typeof e.passed === "boolean"
+          ? e.passed
+          : e.score != null && e.score >= 50,
+      ).length,
     [list],
   );
   const totalFail = useMemo(
-    () => list.filter((e) => (typeof e.passed === "boolean" ? !e.passed : e.score != null && e.score < 50)).length,
+    () =>
+      list.filter((e) =>
+        typeof e.passed === "boolean"
+          ? !e.passed
+          : e.score != null && e.score < 50,
+      ).length,
     [list],
   );
   const passRate =
@@ -497,7 +460,7 @@ const EvalsTabView = ({
     return (
       <Box sx={{ textAlign: "center", py: 4, px: 2, color: "text.secondary" }}>
         <Iconify
-          icon="mdi:chart-box-outline"
+          icon="solar:chart-2-linear"
           width={32}
           sx={{ mb: 1, opacity: 0.4 }}
         />
@@ -536,13 +499,13 @@ const EvalsTabView = ({
               {totalFail > 0 && (
                 <Typography
                   sx={{
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "error.main",
                     fontWeight: 500,
                     bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
                     px: 0.5,
                     py: 0.1,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                   }}
                 >
                   {totalFail} failed
@@ -568,7 +531,7 @@ const EvalsTabView = ({
                         ? "warning.main"
                         : "error.main",
                   borderRadius: 2,
-                  transition: "width 300ms",
+                  transition: "width 200ms",
                 }}
               />
             </Box>
@@ -581,7 +544,12 @@ const EvalsTabView = ({
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
         {list.some((e) => !isPassedEval(e)) && (
-          <Box
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+            }
             onClick={() => {
               if (onFixWithFalcon) {
                 const failing = list.filter((e) => !isPassedEval(e));
@@ -594,31 +562,10 @@ const EvalsTabView = ({
                 defaultFixNotice();
               }
             }}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.5,
-              mt: 1,
-              px: 1,
-              py: 0.35,
-              border: "1px solid",
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-              borderRadius: "6px",
-              cursor: "pointer",
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-              "&:hover": {
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.5),
-              },
-            }}
+            sx={{ mt: 1 }}
           >
-            <Iconify icon="mdi:creation" width={14} color="primary.main" />
-            <Typography
-              sx={{ fontSize: 11, fontWeight: 600, color: "primary.main" }}
-            >
-              Fix with Falcon
-            </Typography>
-          </Box>
+            Fix with Falcon
+          </Button>
         )}
       </Box>
 
@@ -648,7 +595,11 @@ const EvalsTabView = ({
             borderRadius: "4px",
           }}
         >
-          <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={12}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search evals..."
@@ -658,7 +609,7 @@ const EvalsTabView = ({
               border: "none",
               outline: "none",
               flex: 1,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               bgcolor: "transparent",
               py: 0.15,
@@ -682,12 +633,12 @@ const EvalsTabView = ({
           }}
         >
           <Iconify
-            icon="mdi:plus-circle-outline"
-            width={13}
+            icon="solar:add-circle-linear"
+            width={14}
             color="text.disabled"
           />
           <Typography
-            sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
+            sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
           >
             Add Evals
           </Typography>
@@ -695,11 +646,11 @@ const EvalsTabView = ({
             sx={{
               px: 0.6,
               py: 0.1,
-              borderRadius: "3px",
+              borderRadius: "4px",
               bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
               color: "success.dark",
-              fontSize: 9,
-              fontWeight: 700,
+              fontSize: 12,
+              fontWeight: 600,
               letterSpacing: 0.2,
               lineHeight: 1.5,
               whiteSpace: "nowrap",
@@ -729,7 +680,7 @@ const EvalsTabView = ({
           <Typography
             sx={{
               width: showSpanColumn ? "30%" : "60%",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
               display: "flex",
@@ -737,13 +688,13 @@ const EvalsTabView = ({
               gap: 0.5,
             }}
           >
-            <Iconify icon="mdi:checkbox-marked-circle-outline" width={12} />
+            <Iconify icon="solar:check-circle-linear" width={12} />
             Evaluation metric
           </Typography>
           <Typography
             sx={{
               width: "15%",
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
             }}
@@ -754,7 +705,7 @@ const EvalsTabView = ({
             <Typography
               sx={{
                 width: "30%",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.secondary",
               }}

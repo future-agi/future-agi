@@ -15,18 +15,45 @@ export function ProtectionLine({ tally }) {
   const parts = [
     tally.marked && `${tally.marked} must-pass`,
     tally.memory && `${tally.memory} regression memory`,
-    tally.passing && `${tally.passing} pass every repeat${tally.latestName ? ` in ${tally.latestName}` : " today"}`,
+    tally.passing &&
+      `${tally.passing} pass every repeat${tally.latestName ? ` in ${tally.latestName}` : " today"}`,
   ].filter(Boolean);
   return (
-    <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" rowGap={0.25} sx={{ px: 0.25, mb: 1.25 }}>
-      <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      flexWrap="wrap"
+      rowGap={0.25}
+      sx={{ px: 0.25, mb: 1.25 }}
+    >
+      <Iconify
+        icon="solar:shield-check-linear"
+        width={16}
+        sx={{ color: "text.tertiary", flexShrink: 0 }}
+      />
       <Typography sx={{ typography: "s2", color: "text.secondary", ...num }}>
-        <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{`Improvements can't break ${held} of ${tally.total}`}</Box>
+        <Box
+          component="span"
+          sx={{ color: "text.primary", fontWeight: 600 }}
+        >{`Improvements can't break ${held} of ${tally.total}`}</Box>
         {parts.length > 0 && ` — ${parts.join(" · ")}`}
       </Typography>
       {tally.open > 0 && (
-        <Tooltip arrow title="They failed or passed only some repeats in the latest run, or haven't run yet, so an improvement may change how they do. Mark the ones that must never break as must-pass.">
-          <Typography sx={{ typography: "s2", color: "text.subtitle", cursor: "help", borderBottom: "1px dotted", borderColor: "text.disabled", ...num }}>
+        <Tooltip
+          arrow
+          title="They failed or passed only some repeats in the latest run, or haven't run yet, so an improvement may change how they do. Mark the ones that must never break as must-pass."
+        >
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.tertiary",
+              cursor: "help",
+              borderBottom: "1px dotted",
+              borderColor: "text.disabled",
+              ...num,
+            }}
+          >
             {`${tally.open} not protected`}
           </Typography>
         </Tooltip>

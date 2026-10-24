@@ -10,15 +10,18 @@ export const SYSTEM_SPEAKER_ROLE = "system";
 // VoiceDetailDrawerV2. Surfaced as suggested-prompt chips in an unsaved
 // Imagine tab.
 export const CHAT_IMAGINE_PROMPTS = [
-  { label: "Summarize this chat", icon: "mdi:text-box-outline" },
-  { label: "Show the conversation flow", icon: "mdi:message-text-outline" },
+  { label: "Summarize this chat", icon: "solar:notes-linear" },
+  { label: "Show the conversation flow", icon: "solar:chat-round-line-linear" },
   {
     label: "Where did the user get frustrated?",
-    icon: "mdi:emoticon-sad-outline",
+    icon: "solar:sad-circle-linear",
   },
-  { label: "What's the cost breakdown?", icon: "mdi:currency-usd" },
-  { label: "Compare tone across turns", icon: "mdi:chart-line" },
-  { label: "Evaluate chat quality", icon: "mdi:checkbox-marked-circle-outline" },
+  {
+    label: "What's the cost breakdown?",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  { label: "Compare tone across turns", icon: "solar:graph-up-linear" },
+  { label: "Evaluate chat quality", icon: "solar:check-circle-linear" },
 ];
 
 // Drawer module identifiers (which surface the drawer is rendered in).

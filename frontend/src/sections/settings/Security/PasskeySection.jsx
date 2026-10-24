@@ -174,7 +174,7 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
             }}
           >
             <Iconify
-              icon="mdi:information"
+              icon="solar:info-circle-linear"
               sx={{ width: "18px", height: "18px", color: "info.main" }}
             />
             <Typography
@@ -224,7 +224,7 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
                     }}
                   >
                     <Iconify
-                      icon="mdi:key-variant"
+                      icon="solar:key-linear"
                       sx={{
                         width: "20px",
                         height: "20px",
@@ -262,7 +262,7 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
                       onClick={() => handleDeleteClick(pk)}
                     >
                       <Iconify
-                        icon="mdi:delete-outline"
+                        icon="solar:trash-bin-trash-linear"
                         sx={{
                           width: "18px",
                           height: "18px",
@@ -301,7 +301,8 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
       <Dialog
         open={deleteOpen}
         onClose={handleDeleteClose}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>

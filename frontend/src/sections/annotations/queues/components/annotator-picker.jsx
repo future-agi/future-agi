@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
-  alpha,
   Box,
   Checkbox,
   Chip,
@@ -155,7 +154,7 @@ export default function AnnotatorPicker({
           startAdornment: (
             <InputAdornment position="start">
               <Iconify
-                icon="eva:search-fill"
+                icon="solar:magnifier-linear"
                 sx={{ color: "text.disabled", width: 16, height: 16 }}
               />
             </InputAdornment>
@@ -171,8 +170,8 @@ export default function AnnotatorPicker({
           maxHeight: 220,
           overflow: "auto",
           border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
+          borderColor: "border.default",
+          borderRadius: "8px",
         }}
       >
         {members.map((m) => {
@@ -195,33 +194,19 @@ export default function AnnotatorPicker({
                 px: 1,
                 py: 0.5,
                 borderBottom: "1px solid",
-                borderColor: "divider",
+                borderColor: "border.subtle",
                 "&:last-child": { borderBottom: 0 },
-                bgcolor: (theme) =>
-                  isAutoAssigned
-                    ? alpha(
-                        theme.palette.primary.main,
-                        theme.palette.mode === "dark" ? 0.18 : 0.1,
-                      )
-                    : isSelected
-                      ? "action.selected"
-                      : "transparent",
-                boxShadow: (theme) =>
-                  isAutoAssigned
-                    ? `inset 3px 0 0 ${theme.palette.primary.main}`
-                    : "none",
+                bgcolor:
+                  isAutoAssigned || isSelected
+                    ? "action.selected"
+                    : "transparent",
                 "&:hover": {
-                  bgcolor: (theme) =>
-                    isAutoAssigned
-                      ? alpha(
-                          theme.palette.primary.main,
-                          theme.palette.mode === "dark" ? 0.24 : 0.14,
-                        )
-                      : isSelected
-                        ? "action.selected"
-                        : !rowReadOnly
-                          ? "action.hover"
-                          : "transparent",
+                  bgcolor:
+                    isAutoAssigned || isSelected
+                      ? "action.selected"
+                      : !rowReadOnly
+                        ? "action.hover"
+                        : "transparent",
                 },
               }}
             >
@@ -235,7 +220,7 @@ export default function AnnotatorPicker({
                 sx={{ p: 0.5 }}
               />
               <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="body2" noWrap>
+                <Typography noWrap sx={{ fontSize: 13, fontWeight: 500 }}>
                   {m.name || "Unnamed"}
                   {isCreator && (
                     <Typography
@@ -249,7 +234,7 @@ export default function AnnotatorPicker({
                   )}
                 </Typography>
                 {m.email && (
-                  <Typography variant="caption" color="text.secondary" noWrap>
+                  <Typography variant="caption" color="text.tertiary" noWrap>
                     {m.email}
                   </Typography>
                 )}
@@ -260,7 +245,7 @@ export default function AnnotatorPicker({
                   size="small"
                   color="primary"
                   variant="soft"
-                  sx={{ height: 20, fontSize: 11, flexShrink: 0 }}
+                  sx={{ flexShrink: 0 }}
                 />
               )}
 

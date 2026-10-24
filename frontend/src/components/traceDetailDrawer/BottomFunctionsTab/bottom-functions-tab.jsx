@@ -58,27 +58,15 @@ const BottomFunctionsTab = ({ toolCalls, toolDefinitions = [] }) => {
           aria-label="function tabs"
           textColor="primary"
           indicatorColor="primary"
-          TabIndicatorProps={{
-            style: { backgroundColor: theme.palette.primary.main },
-          }}
           sx={{
-            minHeight: 0,
             "& .MuiTab-root": {
               margin: "0 !important",
-              fontWeight: "600",
-              typography: "s1",
-              color: "primary.main",
-              "&:not(.Mui-selected)": {
-                color: "text.secondary",
-                fontWeight: "500",
-              },
             },
           }}
         >
           <Tab
             sx={{
               margin: theme.spacing(0),
-              px: theme.spacing(1.875),
             }}
             label="Function Output"
             {...a11yProps(0)}
@@ -86,7 +74,6 @@ const BottomFunctionsTab = ({ toolCalls, toolDefinitions = [] }) => {
           <Tab
             sx={{
               margin: theme.spacing(0),
-              px: theme.spacing(1.875),
             }}
             label="Function Definition"
             {...a11yProps(1)}

@@ -9,6 +9,7 @@ import {
   MenuItem,
   Typography,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -97,21 +98,25 @@ TraceDetailSpanFilterPanel.propTypes = {
 };
 
 const ACTION_ITEMS = [
-  { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
+  { id: "dataset", label: "Move to dataset", icon: "solar:database-linear" },
   {
     id: "workbench",
     label: "Iterate in prompt workbench",
-    icon: "mdi:pencil-box-outline",
+    icon: "solar:pen-new-square-linear",
     spanTypes: ["llm"],
   },
   // {
   //   id: "playground",
   //   label: "Iterate in agent playground",
-  //   icon: "mdi:gamepad-variant-outline",
+  //   icon: "solar:gamepad-linear",
   // },
-  { id: "tags", label: "Add Tags", icon: "mdi:tag-outline" },
-  { id: "annotate", label: "Annotate", icon: "mdi:comment-text-outline" },
-  { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
+  { id: "tags", label: "Add Tags", icon: "solar:tag-linear" },
+  { id: "annotate", label: "Annotate", icon: "solar:chat-round-line-linear" },
+  {
+    id: "queue",
+    label: "Add to annotation queue",
+    icon: "solar:list-plus-linear",
+  },
 ];
 
 function getSpan(entry) {
@@ -248,7 +253,7 @@ const TraceDetailDrawerV2 = ({
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -259,7 +264,7 @@ const TraceDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -271,7 +276,7 @@ const TraceDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -782,12 +787,16 @@ const TraceDetailDrawerV2 = ({
     activeDrawerTab === "__new_imagine__" ||
     drawerTabs.find((t) => t.id === activeDrawerTab)?.tabType === "imagine";
 
+  const covered = useDrawerCovered(open);
+  const annotateCovered = useDrawerCovered(Boolean(annotateDrawerOpen));
+
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
       variant="persistent"
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           width: isFullscreen
@@ -992,13 +1001,13 @@ const TraceDetailDrawerV2 = ({
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: "4px",
-                  fontSize: 11,
+                  fontSize: 12,
                   color: "text.primary",
                   whiteSpace: "nowrap",
                 }}
               >
                 <Iconify
-                  icon="mdi:filter-variant"
+                  icon="solar:filter-linear"
                   width={12}
                   color="text.disabled"
                 />
@@ -1010,7 +1019,7 @@ const TraceDetailDrawerV2 = ({
                   {Array.isArray(f.value) ? f.value.join(", ") : f.value}
                 </span>
                 <Iconify
-                  icon="mdi:close"
+                  icon="solar:close-linear"
                   width={12}
                   sx={{
                     cursor: "pointer",
@@ -1044,7 +1053,7 @@ const TraceDetailDrawerV2 = ({
                 "&:hover": { bgcolor: "action.hover", color: "text.secondary" },
               }}
             >
-              <Iconify icon="mdi:plus" width={14} />
+              <Iconify icon="solar:add-linear" width={14} />
             </Box>
           </Box>
 
@@ -1275,7 +1284,7 @@ const TraceDetailDrawerV2 = ({
                   }}
                 >
                   <Iconify
-                    icon="mdi:cursor-default-click-outline"
+                    icon="solar:cursor-linear"
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
@@ -1324,9 +1333,8 @@ const TraceDetailDrawerV2 = ({
         slotProps={{
           paper: {
             sx: {
-              minWidth: 220,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-              borderRadius: "6px",
+              minWidth: 240,
+              borderRadius: "8px",
               "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
             },
           },
@@ -1388,9 +1396,10 @@ const TraceDetailDrawerV2 = ({
         open={Boolean(annotateDrawerOpen)}
         onClose={() => setAnnotateDrawerOpen(null)}
         variant="temporary"
+        sx={coveredDrawerSx(annotateCovered)}
         PaperProps={{
           sx: {
-            width: 360,
+            width: 480,
             height: "100vh",
             borderRadius: 0,
             bgcolor: "background.paper",

@@ -101,9 +101,13 @@ const ViewConfigModal = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
-      PaperProps={{ component: "form", onSubmit: handleSubmit }}
+      PaperProps={{
+        component: "form",
+        onSubmit: handleSubmit,
+        sx: { maxWidth: 560 },
+      }}
     >
       <DialogTitle>
         {mode === "edit" ? "Edit View" : "Create New View"}

@@ -49,7 +49,13 @@ const CreateSecretModal = ({ open, onClose }) => {
   // "secretType": "API_KEY",
 
   return (
-    <Dialog open={open} onClose={onCloseClick} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={onCloseClick}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+    >
       <Box
         component="form"
         onSubmit={(e) => {
@@ -68,7 +74,7 @@ const CreateSecretModal = ({ open, onClose }) => {
           >
             Create Secret
             <IconButton onClick={onCloseClick}>
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </DialogTitle>

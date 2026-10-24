@@ -68,12 +68,12 @@ const getSessionGridThemeParams = (theme) => ({
   headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  rowBorder: { width: 1, color: theme.palette.border.subtle },
   headerFontSize: "13px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
-  rowHoverColor: "rgba(120,87,252,0.04)",
+  rowHoverColor: theme.palette.action.hover,
 });
 
 const sessionRowIdentity = (row) => {
@@ -203,7 +203,7 @@ const SessionGrid = React.forwardRef(
         suppressSizeToFit: false,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "13px",
           height: "100%",
         },
       }),

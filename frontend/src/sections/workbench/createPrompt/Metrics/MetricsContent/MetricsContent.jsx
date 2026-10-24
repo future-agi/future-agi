@@ -266,7 +266,7 @@ const MetricsContent = () => {
           columnDefs={columnDefs}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
-          rowHeight={40}
+          rowHeight={36}
           theme={agTheme}
           rowSelection="single"
           paginationPageSizeSelector={false}
@@ -284,7 +284,7 @@ const MetricsContent = () => {
           getMainMenuItems={(params) =>
             params.defaultItems.filter((item) => item !== "columnChooser")
           }
-          headerHeight={40}
+          headerHeight={32}
           groupHeaderHeight={40}
           overlayNoRowsTemplate={"No metrics found."}
           tooltipShowDelay={0}

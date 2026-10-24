@@ -12,11 +12,11 @@ import {
   MenuItem,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, {
   useCallback,
@@ -1128,6 +1128,14 @@ const EvalDetailPage = () => {
     );
   }
 
+  const typeRole = isComposite
+    ? "info"
+    : evalType === "code"
+      ? "warning"
+      : evalType === "agent"
+        ? "success"
+        : "discovery";
+
   return (
     <Box
       sx={{
@@ -1173,34 +1181,10 @@ const EvalDetailPage = () => {
               px: 1,
               py: 0.25,
               borderRadius: "4px",
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 600,
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? isComposite
-                    ? "rgba(99,102,241,0.16)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.16)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.16)"
-                        : "rgba(124,77,255,0.16)"
-                  : isComposite
-                    ? "rgba(99,102,241,0.08)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.08)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.08)"
-                        : "rgba(124,77,255,0.08)",
-              color: (theme) =>
-                isComposite
-                  ? theme.palette.info.main
-                  : evalType === "code"
-                    ? theme.palette.mode === "light"
-                      ? "#B45309"
-                      : theme.palette.warning.main
-                    : evalType === "agent"
-                      ? theme.palette.success.main
-                      : theme.palette.primary.main,
+              backgroundColor: `status.${typeRole}.bg`,
+              color: `status.${typeRole}.fg`,
             }}
           >
             {(() => {
@@ -1240,7 +1224,7 @@ const EvalDetailPage = () => {
                 size="small"
                 onClick={(e) => setMenuAnchor(e.currentTarget)}
               >
-                <Iconify icon="solar:menu-dots-bold" width={18} />
+                <Iconify icon="solar:menu-dots-bold" width={20} />
               </IconButton>
               <Menu
                 anchorEl={menuAnchor}
@@ -1291,7 +1275,8 @@ const EvalDetailPage = () => {
                   <MenuItem
                     disabled={!canEditEvals}
                     onClick={handleDeleteClick}
-                    sx={{ color: "error.main" }}
+                    // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+                    sx={{ color: "status.danger.fg" }}
                   >
                     <Iconify
                       icon="solar:trash-bin-trash-bold"
@@ -1316,33 +1301,10 @@ const EvalDetailPage = () => {
       />
 
       {/* Top Tabs */}
-      <Tabs
+      <SegmentedTabs
         value={activeTab}
         onChange={handleTabChange}
-        TabIndicatorProps={{ style: { display: "none" } }}
-        sx={{
-          minHeight: 32,
-          mb: 1.5,
-          flexShrink: 0,
-          "& .MuiTab-root": {
-            minHeight: 32,
-            px: 1.5,
-            py: 0,
-            mr: "0px !important",
-            textTransform: "none",
-            fontSize: "13px",
-            borderRadius: "6px",
-          },
-          border: "1px solid",
-          borderColor: "divider",
-          p: "2px",
-          borderRadius: "8px",
-          width: "fit-content",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.04)"
-              : "#f4f4f5",
-        }}
+        sx={{ mb: 1.5, flexShrink: 0, width: "fit-content" }}
       >
         {(evalType === "code" || isComposite
           ? ["details", "usage"]
@@ -1354,34 +1316,9 @@ const EvalDetailPage = () => {
             feedback: "Feedback",
             ground_truth: "Ground Truth",
           };
-          return (
-            <Tab
-              key={tab}
-              value={tab}
-              label={labels[tab]}
-              sx={{
-                bgcolor:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "#fff"
-                    : "transparent",
-                boxShadow:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: activeTab === tab ? 600 : 400,
-                color: activeTab === tab ? "text.primary" : "text.disabled",
-              }}
-            />
-          );
+          return <Tab key={tab} value={tab} label={labels[tab]} />;
         })}
-      </Tabs>
+      </SegmentedTabs>
 
       {/* ═══ Eval Details Tab — playground layout ═══ */}
       {activeTab === "details" && (
@@ -1424,10 +1361,7 @@ const EvalDetailPage = () => {
                         borderRadius: "8px",
                         border: "1px solid",
                         borderColor: "primary.main",
-                        backgroundColor: (theme) =>
-                          theme.palette.mode === "dark"
-                            ? "rgba(124,77,255,0.08)"
-                            : "rgba(124,77,255,0.04)",
+                        backgroundColor: "status.discovery.bg",
                       }}
                     >
                       <Iconify
@@ -1457,10 +1391,7 @@ const EvalDetailPage = () => {
                           handleVersionSelect(null);
                         }}
                         sx={{
-                          textTransform: "none",
-                          fontSize: "12px",
                           minWidth: 0,
-                          px: 1,
                         }}
                       >
                         Back to default
@@ -1793,20 +1724,20 @@ const EvalDetailPage = () => {
                         // Icon mapping for backend semantic tags. Unknown tags
                         // get a generic bookmark/tag icon.
                         const BACKEND_TAG_ICONS = {
-                          SAFETY: "mdi:shield-alert-outline",
-                          RAG: "mdi:database-search-outline",
-                          HALLUCINATION: "mdi:alert-octagon-outline",
-                          CONVERSATION: "mdi:message-text-outline",
-                          CHAT: "mdi:robot-outline",
-                          AUDIO: "mdi:volume-high",
-                          TEXT: "mdi:format-text",
-                          IMAGE: "mdi:image-outline",
-                          VIDEO: "mdi:video-outline",
+                          SAFETY: "solar:shield-warning-linear",
+                          RAG: "solar:database-linear",
+                          HALLUCINATION: "solar:danger-circle-linear",
+                          CONVERSATION: "solar:chat-round-line-linear",
+                          CHAT: "solar:bot-linear",
+                          AUDIO: "solar:volume-loud-linear",
+                          TEXT: "solar:notes-linear",
+                          IMAGE: "solar:gallery-linear",
+                          VIDEO: "solar:videocamera-linear",
                           PDF: "mdi:file-pdf-box",
-                          FUNCTION: "mdi:function-variant",
-                          LLMS: "mdi:brain",
-                          FUTURE_EVALS: "mdi:star-four-points-outline",
-                          CUSTOM: "mdi:pencil-outline",
+                          FUNCTION: "solar:programming-linear",
+                          LLMS: "solar:brain-linear",
+                          FUTURE_EVALS: "solar:stars-minimalistic-linear",
+                          CUSTOM: "solar:pen-linear",
                         };
                         const humanize = (s) =>
                           String(s)
@@ -1839,9 +1770,7 @@ const EvalDetailPage = () => {
                               isSystemEval || !onDelete ? undefined : onDelete
                             }
                             sx={{
-                              fontSize: "12px",
                               cursor: isSystemEval ? "default" : "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
                             }}
                           />
                         );
@@ -1852,7 +1781,8 @@ const EvalDetailPage = () => {
                             {extraTags.map((t) =>
                               renderChip({
                                 key: `extra-${t}`,
-                                icon: BACKEND_TAG_ICONS[t] || "mdi:tag-outline",
+                                icon:
+                                  BACKEND_TAG_ICONS[t] || "solar:tag-linear",
                                 label: humanize(t),
                                 selected: true,
                                 onDelete: () => {
@@ -1963,7 +1893,7 @@ const EvalDetailPage = () => {
                   {testError && (
                     <Typography
                       variant="caption"
-                      color="error.main"
+                      color="status.danger.fg"
                       sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                       noWrap
                     >
@@ -1980,13 +1910,13 @@ const EvalDetailPage = () => {
                       }}
                     >
                       <Iconify
-                        icon="mdi:check-circle"
+                        icon="solar:check-circle-bold"
                         width={16}
-                        sx={{ color: "success.main" }}
+                        sx={{ color: "status.success.fg" }}
                       />
                       <Typography
                         variant="caption"
-                        color="success.main"
+                        color="status.success.fg"
                         sx={{ fontSize: "12px" }}
                       >
                         Test completed
@@ -1997,11 +1927,8 @@ const EvalDetailPage = () => {
                     <Typography
                       variant="caption"
                       sx={{
-                        fontSize: "11px",
-                        color: (theme) =>
-                          theme.palette.mode === "light"
-                            ? theme.palette.amber[700]
-                            : theme.palette.warning.main,
+                        fontSize: "12px",
+                        color: "status.warning.fg",
                       }}
                     >
                       Unsaved changes
@@ -2019,7 +1946,7 @@ const EvalDetailPage = () => {
                   >
                     <span>
                       <Button
-                        variant={isComposite ? "contained" : "outlined"}
+                        variant="outlined"
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
@@ -2033,12 +1960,11 @@ const EvalDetailPage = () => {
                             <CircularProgress size={14} />
                           ) : (
                             <Iconify
-                              icon="mdi:play-circle-outline"
+                              icon="solar:play-circle-linear"
                               width={16}
                             />
                           )
                         }
-                        sx={{ textTransform: "none" }}
                       >
                         {isTesting
                           ? "Running..."
@@ -2073,12 +1999,11 @@ const EvalDetailPage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Version"}
                         </Button>
@@ -2110,12 +2035,11 @@ const EvalDetailPage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Changes"}
                         </Button>

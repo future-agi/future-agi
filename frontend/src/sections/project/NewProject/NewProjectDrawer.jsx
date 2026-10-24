@@ -7,6 +7,7 @@ import { useLocation } from "react-router-dom";
 
 import NewExperiment from "./NewExperiment";
 import NewObserve from "./NewObserve";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const NewProjectDrawer = ({ open, onClose }) => {
   const location = useLocation();
@@ -17,8 +18,11 @@ const NewProjectDrawer = ({ open, onClose }) => {
     setIsObserve(isObserve);
   }, [currentPath]);
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
@@ -27,7 +31,7 @@ const NewProjectDrawer = ({ open, onClose }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -53,7 +57,7 @@ const NewProjectDrawer = ({ open, onClose }) => {
             New Projects
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         {/* <Box sx={{ marginTop: "24px" }} /> */}

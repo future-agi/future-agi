@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useRef, useState } from "react";
-import { Box, IconButton, Popper, Typography } from "@mui/material";
+import { Box, IconButton, Popper, Typography, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
@@ -9,12 +9,14 @@ import { usePromptWorkbenchContext } from "../WorkbenchContext";
 const OptionItem = ({ onClick, icon, text, disabled, disabledText }) => {
   return (
     <CustomTooltip title={disabledText} show={disabled} placement="right" arrow>
-      <Box
+      <ButtonBase
+        component="div"
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
+          textAlign: "left",
           gap: "6px",
           padding: "4px",
-          cursor: "pointer",
         }}
         onClick={disabled ? undefined : onClick}
       >
@@ -43,7 +45,7 @@ const OptionItem = ({ onClick, icon, text, disabled, disabledText }) => {
         >
           {text}
         </Typography>
-      </Box>
+      </ButtonBase>
     </CustomTooltip>
   );
 };

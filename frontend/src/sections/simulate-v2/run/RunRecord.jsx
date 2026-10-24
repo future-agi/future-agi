@@ -15,17 +15,31 @@ function MeterTooltip({ metering }) {
       {/* Spend is said in credits, as everywhere else. */}
       {metering.detail.map((d, i) => {
         const usd = metering.lines?.[i]?.usd;
-        const price = usd == null ? (metering.lines?.[i]?.amount ? "not priced yet" : "0 credits") : creditsLabel(usd);
+        const price =
+          usd == null
+            ? metering.lines?.[i]?.amount
+              ? "not priced yet"
+              : "0 credits"
+            : creditsLabel(usd);
         return (
-          <Stack key={d.label} direction="row" spacing={2} justifyContent="space-between">
+          <Stack
+            key={d.label}
+            direction="row"
+            spacing={2}
+            justifyContent="space-between"
+          >
             <span>{d.label}</span>
             <span>{`${d.amount} · ${price}`}</span>
           </Stack>
         );
       })}
       <span>{`≈ ${creditsLabel(metering.usd || 0)} in all${metering.sandboxTbd ? ", plus run time not priced yet" : ""}`}</span>
-      {metering.judged.length > 0 && <span>{`Credits: ${metering.judged.join(", ")} (managed judge)`}</span>}
-      {metering.notes.map((n) => <span key={n}>{n}</span>)}
+      {metering.judged.length > 0 && (
+        <span>{`Credits: ${metering.judged.join(", ")} (managed judge)`}</span>
+      )}
+      {metering.notes.map((n) => (
+        <span key={n}>{n}</span>
+      ))}
     </Stack>
   );
 }
@@ -35,28 +49,63 @@ MeterTooltip.propTypes = { metering: PropTypes.object };
 export default function MeteredText({ metering }) {
   if (!metering?.line) return null;
   return (
-    <Tooltip arrow placement="bottom-start" title={<MeterTooltip metering={metering} />}>
-      <Box component="span" sx={{ cursor: "default" }}>{metering.line}</Box>
+    <Tooltip
+      arrow
+      placement="bottom-start"
+      title={<MeterTooltip metering={metering} />}
+    >
+      <Box component="span" sx={{ cursor: "default" }}>
+        {metering.line}
+      </Box>
     </Tooltip>
   );
 }
 MeteredText.propTypes = { metering: PropTypes.object };
 
 /** The foot of Insights: what the run metered, and the digest it sent. */
-export function RunRecordFooter({ metering, digest, destinations, sentAt, inline = false }) {
+export function RunRecordFooter({
+  metering,
+  digest,
+  destinations,
+  sentAt,
+  inline = false,
+}) {
   if (!metering && !digest) return null;
   return (
     <Stack
       direction={inline ? { xs: "column", md: "row" } : "column"}
       spacing={inline ? { xs: 0.5, md: 2 } : 0.75}
       alignItems={inline ? { md: "center" } : "stretch"}
-      sx={inline ? { minWidth: 0 } : { px: 1.75, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}
+      sx={
+        inline
+          ? { minWidth: 0 }
+          : {
+              px: 1.75,
+              py: 1.25,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+            }
+      }
     >
       {metering?.line && (
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-          <Iconify icon="solar:bill-list-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-          <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
-            <Box component="span" sx={{ color: "text.subtitle" }}>Metered · </Box>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ minWidth: 0 }}
+        >
+          <Iconify
+            icon="solar:bill-list-linear"
+            width={14}
+            sx={{ color: "text.tertiary", flexShrink: 0 }}
+          />
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}
+          >
+            <Box component="span" sx={{ color: "text.tertiary" }}>
+              Metered ·{" "}
+            </Box>
             <MeteredText metering={metering} />
             {metering.notes.map((n) => ` · ${n}`).join("")}
           </Typography>
@@ -67,7 +116,10 @@ export function RunRecordFooter({ metering, digest, destinations, sentAt, inline
   );
 }
 RunRecordFooter.propTypes = {
-  metering: PropTypes.object, digest: PropTypes.object, destinations: PropTypes.object, sentAt: PropTypes.string,
+  metering: PropTypes.object,
+  digest: PropTypes.object,
+  destinations: PropTypes.object,
+  sentAt: PropTypes.string,
   /* One line, no frame — the foot of the verdict card. */
   inline: PropTypes.bool,
 };

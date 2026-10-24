@@ -94,7 +94,7 @@ const FieldSelection = ({
               onChange={handleCheckbox}
               icon={
                 <Iconify
-                  icon="system-uicons:checkbox-empty"
+                  icon="solar:square-linear"
                   color="action.selected"
                   width="24px"
                   height="24px"
@@ -143,7 +143,7 @@ const FieldSelection = ({
                     ""
                   ) : (
                     <Iconify
-                      icon="material-symbols:lock-outline"
+                      icon="solar:lock-linear"
                       color="text.secondary"
                       sx={{
                         width: theme.spacing(3),

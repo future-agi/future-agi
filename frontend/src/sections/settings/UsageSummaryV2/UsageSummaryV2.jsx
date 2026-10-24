@@ -18,14 +18,17 @@ import {
   Chip,
   Alert,
   Collapse,
-  Paper,
   Tooltip,
   useTheme,
   alpha,
   ToggleButtonGroup,
   ToggleButton,
   IconButton,
+  ButtonBase,
+  Button,
 } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency, fUsage } from "src/utils/format-number";
@@ -35,30 +38,45 @@ import WorkspaceBreakdown from "./WorkspaceBreakdown";
 // ── Config ────────────────────────────────────────────────────────────────
 
 const DIMENSION_CONFIG = {
-  storage: { icon: "mdi:database", color: "#3b82f6", label: "Storage" },
-  ai_credits: { icon: "mdi:chip", color: "#8b5cf6", label: "AI Credits" },
+  storage: {
+    icon: "solar:database-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    color: "#3b82f6",
+    label: "Storage",
+  },
+  ai_credits: {
+    icon: "solar:cpu-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    color: "#7857FC",
+    label: "AI Credits",
+  },
   gateway_requests: {
-    icon: "mdi:swap-horizontal",
+    icon: "solar:transfer-horizontal-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     color: "#06b6d4",
     label: "Gateway Requests",
   },
   gateway_cache_hits: {
-    icon: "mdi:lightning-bolt",
+    icon: "solar:bolt-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     color: "#14b8a6",
     label: "Gateway Cache Hits",
   },
   text_sim_tokens: {
-    icon: "mdi:text-box-search-outline",
+    icon: "solar:file-search-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     color: "#f59e0b",
     label: "Text Simulation",
   },
   voice_sim_minutes: {
-    icon: "mdi:microphone-outline",
+    icon: "solar:microphone-3-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     color: "#ef4444",
     label: "Voice Simulation",
   },
   tracing_events: {
-    icon: "mdi:chart-timeline-variant",
+    icon: "solar:chart-2-linear",
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     color: "#ec4899",
     label: "Tracing Events",
   },
@@ -151,7 +169,7 @@ function UsageGauge({ current, projected, freeAllowance, color }) {
         sx={{
           height: 8,
           borderRadius: 4,
-          bgcolor: alpha(theme.palette.text.primary, 0.06),
+          bgcolor: "action.selected",
           position: "relative",
           overflow: "hidden",
         }}
@@ -219,87 +237,6 @@ UsageGauge.propTypes = {
   color: PropTypes.string,
 };
 
-// ── Stat Card ─────────────────────────────────────────────────────────────
-
-function StatCard({ icon, label, value, subtitle, color, tooltip }) {
-  const theme = useTheme();
-  const content = (
-    <Paper
-      variant="outlined"
-      sx={{
-        p: 2.5,
-        borderRadius: 2,
-        flex: 1,
-        minWidth: 160,
-        position: "relative",
-        overflow: "hidden",
-        transition: "border-color 0.2s, box-shadow 0.2s",
-        "&:hover": {
-          borderColor: color || theme.palette.primary.main,
-          boxShadow: `0 0 0 1px ${alpha(color || theme.palette.primary.main, 0.2)}`,
-        },
-      }}
-    >
-      <Stack direction="row" spacing={1.5} alignItems="flex-start">
-        <Box
-          sx={{
-            width: 40,
-            height: 40,
-            borderRadius: 1.5,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            bgcolor: alpha(color || theme.palette.primary.main, 0.1),
-            flexShrink: 0,
-          }}
-        >
-          <Iconify
-            icon={icon}
-            width={22}
-            sx={{ color: color || theme.palette.primary.main }}
-          />
-        </Box>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="h5" fontWeight={700} noWrap>
-            {value}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap>
-            {label}
-          </Typography>
-          {subtitle && (
-            <Typography
-              variant="caption"
-              display="block"
-              color="text.secondary"
-              noWrap
-            >
-              {subtitle}
-            </Typography>
-          )}
-        </Box>
-      </Stack>
-    </Paper>
-  );
-
-  if (tooltip) {
-    return (
-      <Tooltip title={tooltip} arrow placement="top">
-        {content}
-      </Tooltip>
-    );
-  }
-  return content;
-}
-
-StatCard.propTypes = {
-  icon: PropTypes.string.isRequired,
-  label: PropTypes.string.isRequired,
-  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
-  subtitle: PropTypes.string,
-  color: PropTypes.string,
-  tooltip: PropTypes.string,
-};
-
 // ── Dimension Product Card ────────────────────────────────────────────────
 
 function DimensionCard({ dim, periodCaption, periodMonthCount }) {
@@ -334,19 +271,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
   const isOverFree = usagePct > 100;
 
   return (
-    <Paper
-      variant="outlined"
-      sx={{
-        p: 0,
-        borderRadius: 2,
-        overflow: "hidden",
-        transition: "border-color 0.2s, box-shadow 0.2s",
-        "&:hover": {
-          borderColor: alpha(color, 0.4),
-          boxShadow: `0 0 0 1px ${alpha(color, 0.1)}`,
-        },
-      }}
-    >
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       <Box sx={{ p: 2.5 }}>
         {/* Row 1: Product name + spend */}
         <Stack
@@ -359,22 +284,22 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
               sx={{
                 width: 40,
                 height: 40,
-                borderRadius: 1.5,
+                borderRadius: "8px",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                bgcolor: alpha(color, 0.1),
+                bgcolor: "background.neutral",
                 flexShrink: 0,
               }}
             >
               <Iconify
-                icon={config.icon || "mdi:chart-donut"}
-                width={22}
+                icon={config.icon || "solar:pie-chart-2-linear"}
+                width={20}
                 sx={{ color }}
               />
             </Box>
             <Box>
-              <Typography variant="subtitle1" fontWeight={700}>
+              <Typography variant="subtitle1" fontWeight={600}>
                 {dim.display_name}
               </Typography>
               <Stack direction="row" spacing={0.5} alignItems="center">
@@ -384,7 +309,6 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
                     size="small"
                     color="warning"
                     variant="filled"
-                    sx={{ height: 20, fontSize: "0.675rem" }}
                   />
                 )}
                 {dim.free_allowance > 0 && !isOverFree && (
@@ -400,7 +324,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
           </Stack>
 
           <Stack alignItems="flex-end" sx={{ textAlign: "right" }}>
-            <Typography variant="h6" fontWeight={700}>
+            <Typography variant="h6" fontWeight={600}>
               {fCurrency(dim.estimated_cost)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -461,7 +385,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
           {projectedUsage > currentUsage && (
             <Stack direction="row" spacing={0.5} alignItems="center">
               <Iconify
-                icon="mdi:trending-up"
+                icon="solar:graph-up-linear"
                 width={14}
                 sx={{ color: "text.disabled" }}
               />
@@ -475,9 +399,12 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
         {/* Expandable tier breakdown */}
         {dim.tier_breakdown && dim.tier_breakdown.length > 0 && (
           <Box mt={1.5}>
-            <Box
+            <ButtonBase
+              component="div"
               onClick={() => setExpanded(!expanded)}
               sx={{
+                justifyContent: "flex-start",
+                textAlign: "left",
                 cursor: "pointer",
                 display: "inline-flex",
                 alignItems: "center",
@@ -490,7 +417,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
                 {expanded ? "Hide" : "View"} pricing tiers
               </Typography>
               <Iconify
-                icon="mdi:chevron-down"
+                icon="solar:alt-arrow-down-linear"
                 sx={{
                   fontSize: 16,
                   color: "primary.main",
@@ -498,14 +425,14 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
                   transition: "transform 0.2s",
                 }}
               />
-            </Box>
+            </ButtonBase>
             <Collapse in={expanded}>
               <Box
                 sx={{
                   mt: 1,
                   p: 1.5,
-                  borderRadius: 1.5,
-                  bgcolor: alpha(theme.palette.text.primary, 0.02),
+                  borderRadius: "8px",
+                  bgcolor: "background.neutral",
                   border: "1px solid",
                   borderColor: "divider",
                 }}
@@ -593,7 +520,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
           </Box>
         )}
       </Box>
-    </Paper>
+    </Section>
   );
 }
 
@@ -856,7 +783,7 @@ export default function UsageSummaryV2() {
     <Box>
       {/* Pending add-on cancellation notice */}
       {overview?.pending_cancel && (
-        <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
+        <Alert severity="warning" sx={{ mb: 2 }}>
           You&apos;ve requested to cancel your add-on. Your plan will become
           inactive
           {overview.cancel_at
@@ -871,21 +798,12 @@ export default function UsageSummaryV2() {
         <Alert
           key={banner.id}
           severity={banner.type === "error" ? "error" : "warning"}
-          sx={{ mb: 2, borderRadius: 2 }}
+          sx={{ mb: 2 }}
           action={
             banner.action && (
-              <Typography
-                variant="caption"
-                component="a"
-                href={banner.action.url}
-                sx={{
-                  color: "inherit",
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                }}
-              >
+              <Button size="small" color="inherit" href={banner.action.url}>
                 {banner.action.label}
-              </Typography>
+              </Button>
             )
           }
         >
@@ -901,7 +819,7 @@ export default function UsageSummaryV2() {
         sx={{ mb: 4 }}
       >
         <Box>
-          <Typography variant="h4" fontWeight={800}>
+          <Typography variant="h4" fontWeight={600}>
             Usage & Billing
           </Typography>
           <Stack direction="row" spacing={1.5} alignItems="center" mt={1}>
@@ -909,7 +827,6 @@ export default function UsageSummaryV2() {
               label={planLabel}
               size="small"
               sx={{
-                fontWeight: 600,
                 bgcolor: alpha(theme.palette.primary.main, 0.1),
                 color: theme.palette.primary.main,
                 border: "none",
@@ -925,7 +842,6 @@ export default function UsageSummaryV2() {
                 label={`${daysRemaining} days left`}
                 size="small"
                 variant="outlined"
-                sx={{ fontWeight: 500, fontSize: "0.7rem" }}
               />
             )}
           </Stack>
@@ -937,16 +853,11 @@ export default function UsageSummaryV2() {
           </Typography>
           <Typography
             variant="h3"
-            fontWeight={800}
+            fontWeight={600}
             sx={{
               lineHeight: 1,
               mt: 0.5,
-              background:
-                theme.palette.mode === "dark"
-                  ? "linear-gradient(135deg, #fff 0%, #94a3b8 100%)"
-                  : "linear-gradient(135deg, #1e293b 0%, #475569 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
+              color: "text.primary",
             }}
           >
             {fCurrency(overview?.total_with_platform || 0)}
@@ -978,11 +889,7 @@ export default function UsageSummaryV2() {
           size="small"
         >
           {TIME_RANGES.map((tr) => (
-            <ToggleButton
-              key={tr.value}
-              value={tr.value}
-              sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-            >
+            <ToggleButton key={tr.value} value={tr.value}>
               {tr.label}
             </ToggleButton>
           ))}
@@ -995,7 +902,7 @@ export default function UsageSummaryV2() {
               disabled={isRefreshing}
             >
               <Iconify
-                icon="mdi:refresh"
+                icon="solar:refresh-linear"
                 width={20}
                 sx={
                   isRefreshing
@@ -1013,52 +920,42 @@ export default function UsageSummaryV2() {
           </Tooltip>
           <Tooltip title="Export usage data as CSV" arrow>
             <IconButton size="small" onClick={handleExportCSV}>
-              <Iconify icon="mdi:download" width={20} />
+              <Iconify icon="solar:download-minimalistic-linear" width={20} />
             </IconButton>
           </Tooltip>
         </Stack>
       </Stack>
 
       {/* ── Score Cards Row ── */}
-      <Stack
-        direction="row"
-        spacing={2}
-        sx={{ mb: 4, flexWrap: "wrap" }}
-        useFlexGap
-      >
-        <StatCard
-          icon="mdi:receipt-text-outline"
-          label="Usage charges"
-          value={fCurrency(overview?.total_estimated_cost || 0)}
-          subtitle="this billing period"
-          color="#3b82f6"
-          tooltip="Total charges from metered usage across all dimensions"
-        />
-        <StatCard
-          icon="mdi:piggy-bank-outline"
-          label="Free tier savings"
-          value={freeTierSavings > 0 ? fCurrency(freeTierSavings) : "$0"}
-          subtitle="included with your plan"
-          color="#22c55e"
-          tooltip="How much you're saving from free tier allowances"
-        />
-        <StatCard
-          icon="mdi:pulse"
-          label="Active products"
-          value={`${activeDimensions}`}
-          subtitle={`of ${overview?.dimensions?.length || 0} available`}
-          color="#8b5cf6"
-          tooltip="Products with usage this billing period"
-        />
-        <StatCard
-          icon="mdi:calendar-clock-outline"
-          label="Days remaining"
-          value={daysRemaining !== null ? `${daysRemaining}` : "—"}
-          subtitle="in billing period"
-          color="#f59e0b"
-          tooltip="Days left in the current billing cycle"
-        />
-      </Stack>
+      <MetricStrip
+        sx={{ mb: 4 }}
+        items={[
+          {
+            label: "Usage charges",
+            value: fCurrency(overview?.total_estimated_cost || 0),
+            hint: "this billing period",
+            tooltip: "Total charges from metered usage across all dimensions",
+          },
+          {
+            label: "Free tier savings",
+            value: freeTierSavings > 0 ? fCurrency(freeTierSavings) : "$0",
+            hint: "included with your plan",
+            tooltip: "How much you're saving from free tier allowances",
+          },
+          {
+            label: "Active products",
+            value: `${activeDimensions}`,
+            hint: `of ${overview?.dimensions?.length || 0} available`,
+            tooltip: "Products with usage this billing period",
+          },
+          {
+            label: "Days remaining",
+            value: daysRemaining !== null ? `${daysRemaining}` : "—",
+            hint: "in billing period",
+            tooltip: "Days left in the current billing cycle",
+          },
+        ]}
+      />
 
       {/* ── Products Section ── */}
       <Stack
@@ -1067,7 +964,7 @@ export default function UsageSummaryV2() {
         alignItems="center"
         mb={1.5}
       >
-        <Typography variant="h6" fontWeight={700}>
+        <Typography variant="h6" fontWeight={600}>
           Products
         </Typography>
         <GaugeLegend />
@@ -1086,17 +983,9 @@ export default function UsageSummaryV2() {
 
       {/* Empty state */}
       {(!overview?.dimensions || overview.dimensions.length === 0) && (
-        <Paper
-          variant="outlined"
-          sx={{
-            p: 5,
-            textAlign: "center",
-            borderStyle: "dashed",
-            borderRadius: 2,
-          }}
-        >
+        <Section variant="panel" sx={{ p: 5, textAlign: "center" }}>
           <Iconify
-            icon="mdi:chart-donut"
+            icon="solar:pie-chart-2-linear"
             width={56}
             sx={{ color: "text.disabled", mb: 1.5 }}
           />
@@ -1106,7 +995,7 @@ export default function UsageSummaryV2() {
           <Typography variant="body2" color="text.secondary">
             Start using FutureAGI features and your usage will appear here.
           </Typography>
-        </Paper>
+        </Section>
       )}
 
       {/* ── Dimension Detail (chart + workspace breakdown) ── */}
@@ -1140,7 +1029,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
 
   return (
     <Box mt={5}>
-      <Typography variant="h6" fontWeight={700} mb={2}>
+      <Typography variant="h6" fontWeight={600} mb={2}>
         Usage details
       </Typography>
 
@@ -1154,7 +1043,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
               key={dim.key}
               icon={
                 <Iconify
-                  icon={dc.icon || "mdi:chart-donut"}
+                  icon={dc.icon || "solar:pie-chart-2-linear"}
                   width={16}
                   sx={{ color: isActive ? "common.white" : dc.color }}
                 />
@@ -1165,7 +1054,6 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
               size="small"
               sx={{
                 cursor: "pointer",
-                fontWeight: isActive ? 600 : 400,
                 ...(isActive && {
                   bgcolor: config.color || theme.palette.primary.main,
                   color: "common.white",
@@ -1178,7 +1066,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
       </Stack>
 
       {/* Chart */}
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2, mb: 3 }}>
+      <Section variant="panel" sx={{ p: 2.5, mb: 3 }}>
         <Stack
           direction="row"
           justifyContent="space-between"
@@ -1201,10 +1089,10 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           freeAllowance={selected.free_allowance}
           displayUnit={selected.display_unit}
         />
-      </Paper>
+      </Section>
 
       {/* Workspace breakdown */}
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
+      <Section variant="panel" sx={{ p: 2.5 }}>
         <Typography variant="subtitle2" fontWeight={600} mb={2}>
           Usage by workspace — {selected.display_name}
         </Typography>
@@ -1214,7 +1102,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           periodEnd={periodEnd}
           displayUnit={selected.display_unit}
         />
-      </Paper>
+      </Section>
     </Box>
   );
 }

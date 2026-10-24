@@ -61,7 +61,9 @@ const StepperForExperiment = () => {
                 justifyContent: "center",
                 fontWeight: "fontWeightMedium",
                 transition: "all 0.2s ease",
-                backgroundColor: isValidated ? "green.600" : "transparent",
+                backgroundColor: isValidated
+                  ? "status.success.solid"
+                  : "transparent",
                 color:
                   isActive || isValidated ? "text.primary" : "text.secondary",
               }}

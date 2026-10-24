@@ -31,6 +31,7 @@ import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import { apiPath } from "src/api/contracts/api-surface";
 import axios from "src/utils/axios";
 
@@ -56,32 +57,40 @@ import {
   createEmptyGroundTruthDatasetRead,
   readNextGroundTruthDatasetPage,
 } from "./ground_truth_dataset_pagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
 // ═══════════════════════════════════════════════════════════════
 const StatusBadge = ({ status }) => {
   const map = {
-    pending: { label: "Pending", color: "default", icon: "mdi:clock-outline" },
+    pending: {
+      label: "Pending",
+      role: "neutral",
+      icon: "solar:clock-circle-linear",
+    },
     processing: {
       label: "Embedding...",
-      color: "warning",
+      role: "info",
       icon: "mdi:loading",
     },
     completed: {
       label: "Ready",
-      color: "success",
-      icon: "mdi:check-circle-outline",
+      role: "success",
+      icon: "solar:check-circle-linear",
     },
     failed: {
       label: "Failed",
-      color: "error",
-      icon: "mdi:alert-circle-outline",
+      role: "danger",
+      icon: "solar:danger-circle-linear",
     },
   };
   const info = map[status] || map.pending;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
+      label={info.label}
+      role={info.role}
       icon={
         <Iconify
           icon={info.icon}
@@ -98,19 +107,6 @@ const StatusBadge = ({ status }) => {
           }
         />
       }
-      label={info.label}
-      size="small"
-      color={info.color}
-      variant="outlined"
-      sx={{
-        fontSize: "11px",
-        height: 22,
-        ...(status === "processing" && {
-          borderColor: "warning.dark",
-          color: "warning.dark",
-          "& .MuiChip-icon": { color: "warning.dark" },
-        }),
-      }}
     />
   );
 };
@@ -558,15 +554,17 @@ export const UploadDrawer = ({
   const activeColumns = step === 1 ? parsedColumns : datasetColumnNames;
   const isConfigStep = step === 1 || step === 3;
   const isSubmitting = upload.isPending || loadingDatasetData;
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
-          width: 520,
+          width: 480,
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
@@ -603,7 +601,7 @@ export const UploadDrawer = ({
                 : "Configure Dataset"}
           </Typography>
           <IconButton size="small" onClick={handleClose}>
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
 
@@ -611,7 +609,7 @@ export const UploadDrawer = ({
         <Stepper
           activeStep={step === 2 ? 0 : isConfigStep ? 1 : 0}
           alternativeLabel
-          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "11px" } }}
+          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "12px" } }}
         >
           <Step>
             <StepLabel>Choose Source</StepLabel>
@@ -632,7 +630,7 @@ export const UploadDrawer = ({
               sx={{
                 border: "2px dashed",
                 borderColor: isDragActive ? "primary.main" : "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 4,
                 display: "flex",
                 flexDirection: "column",
@@ -640,18 +638,10 @@ export const UploadDrawer = ({
                 gap: 1.5,
                 cursor: "pointer",
                 transition: "all 0.2s",
-                bgcolor: isDragActive
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.08)"
-                        : "rgba(124,77,255,0.04)"
-                  : "transparent",
+                bgcolor: isDragActive ? "status.discovery.bg" : "transparent",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -660,18 +650,15 @@ export const UploadDrawer = ({
                 sx={{
                   width: 48,
                   height: 48,
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(124,77,255,0.12)"
-                      : "rgba(124,77,255,0.08)",
+                  bgcolor: "status.discovery.bg",
                 }}
               >
                 <Iconify
-                  icon="mdi:cloud-upload-outline"
+                  icon="solar:cloud-upload-linear"
                   width={24}
                   sx={{ color: "primary.main" }}
                 />
@@ -693,8 +680,6 @@ export const UploadDrawer = ({
                 size="small"
                 sx={{
                   mt: 0.5,
-                  px: 3,
-                  borderRadius: "8px",
                   borderColor: "divider",
                   color: "text.primary",
                 }}
@@ -715,7 +700,7 @@ export const UploadDrawer = ({
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 2.5,
                 display: "flex",
                 alignItems: "center",
@@ -724,10 +709,7 @@ export const UploadDrawer = ({
                 transition: "all 0.2s",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -739,14 +721,11 @@ export const UploadDrawer = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.06)"
-                      : "background.neutral",
+                  bgcolor: "background.neutral",
                 }}
               >
                 <Iconify
-                  icon="mdi:database-outline"
+                  icon="solar:database-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
@@ -760,7 +739,7 @@ export const UploadDrawer = ({
                 </Typography>
               </Box>
               <Iconify
-                icon="mdi:chevron-right"
+                icon="solar:alt-arrow-right-linear"
                 width={20}
                 sx={{ color: "text.disabled" }}
               />
@@ -787,8 +766,8 @@ export const UploadDrawer = ({
               InputProps={{
                 startAdornment: (
                   <Iconify
-                    icon="mdi:magnify"
-                    width={18}
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ mr: 0.5, color: "text.disabled" }}
                   />
                 ),
@@ -838,16 +817,13 @@ export const UploadDrawer = ({
                     transition: "all 0.15s",
                     "&:hover": {
                       borderColor: "primary.main",
-                      bgcolor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.03)"
-                          : "rgba(0,0,0,0.015)",
+                      bgcolor: "background.neutral",
                     },
                   }}
                 >
                   <Iconify
-                    icon="mdi:table"
-                    width={18}
+                    icon="solar:table-linear"
+                    width={20}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
                   <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -861,8 +837,8 @@ export const UploadDrawer = ({
                     )}
                   </Box>
                   <Iconify
-                    icon="mdi:chevron-right"
-                    width={18}
+                    icon="solar:alt-arrow-right-linear"
+                    width={20}
                     sx={{ color: "text.disabled", flexShrink: 0 }}
                   />
                 </Box>
@@ -914,7 +890,7 @@ export const UploadDrawer = ({
                     file.name.endsWith(".csv")
                       ? "mdi:file-delimited-outline"
                       : file.name.endsWith(".json")
-                        ? "mdi:code-json"
+                        ? "solar:code-linear"
                         : "mdi:file-excel-outline"
                   }
                   width={20}
@@ -936,7 +912,7 @@ export const UploadDrawer = ({
                     setParsedColumns([]);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
             )}
@@ -954,7 +930,7 @@ export const UploadDrawer = ({
                 }}
               >
                 <Iconify
-                  icon="mdi:table"
+                  icon="solar:table-linear"
                   width={20}
                   sx={{ color: "primary.main", flexShrink: 0 }}
                 />
@@ -980,7 +956,7 @@ export const UploadDrawer = ({
                     setStep(2);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
             )}
@@ -1016,12 +992,10 @@ export const UploadDrawer = ({
                     </Typography>
                   </Box>
                   {datasetRead.complete && (
-                    <Chip
+                    <RunStatusBadge
+                      status="completed"
                       label="Complete"
-                      size="small"
-                      color="success"
-                      variant="outlined"
-                      sx={{ height: 22, fontSize: "10px", flexShrink: 0 }}
+                      role="success"
                     />
                   )}
                 </Box>
@@ -1036,7 +1010,7 @@ export const UploadDrawer = ({
                     />
                   )}
                 {datasetReadError && (
-                  <Typography variant="caption" color="error.main">
+                  <Typography variant="caption" color="status.danger.fg">
                     {datasetReadError}
                   </Typography>
                 )}
@@ -1103,8 +1077,6 @@ export const UploadDrawer = ({
                           size="small"
                           variant="outlined"
                           sx={{
-                            fontSize: "11px",
-                            height: 24,
                             minWidth: 100,
                             maxWidth: 200,
                             flexShrink: 0,
@@ -1113,7 +1085,7 @@ export const UploadDrawer = ({
                         />
                       </Tooltip>
                       <Iconify
-                        icon="mdi:arrow-right"
+                        icon="solar:arrow-right-linear"
                         width={14}
                         sx={{ color: "text.disabled", flexShrink: 0 }}
                       />
@@ -1134,11 +1106,7 @@ export const UploadDrawer = ({
                           <em>Skip</em>
                         </MenuItem>
                         {activeColumns.map((col) => (
-                          <MenuItem
-                            key={col}
-                            value={col}
-                            sx={{ fontSize: "12px" }}
-                          >
+                          <MenuItem key={col} value={col}>
                             {col}
                           </MenuItem>
                         ))}
@@ -1167,7 +1135,6 @@ export const UploadDrawer = ({
                       label={col}
                       size="small"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 20 }}
                     />
                   ))}
                 </Box>
@@ -1261,10 +1228,7 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
       transition: "all 0.2s",
       "&:hover": {
         borderColor: "primary.main",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       },
     }}
   >
@@ -1276,14 +1240,11 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.06)"
-            : "background.neutral",
+        bgcolor: "background.neutral",
       }}
     >
       <Iconify
-        icon="mdi:database-plus-outline"
+        icon="solar:add-folder-linear"
         width={28}
         sx={{ color: "text.disabled" }}
       />
@@ -1565,7 +1526,7 @@ const GroundTruthSetupForm = ({
             variant="caption"
             sx={{
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
               lineHeight: 1.3,
               wordBreak: "break-word",
             }}
@@ -1588,14 +1549,14 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Inputs</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           Map each template variable to a ground truth column.
         </Typography>
         {enabled && !hasMapping && liveVariables.length > 0 ? (
           <Typography
             variant="caption"
-            sx={{ color: "error.main", fontSize: "11px", mt: 0.25 }}
+            sx={{ color: "status.danger.fg", fontSize: "12px", mt: 0.25 }}
           >
             Map at least one input variable before saving with ground truth
             enabled.
@@ -1616,8 +1577,6 @@ const GroundTruthSetupForm = ({
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "11px",
-                  height: 24,
                   maxWidth: 160,
                   "& .MuiChip-label": {
                     overflow: "hidden",
@@ -1626,7 +1585,7 @@ const GroundTruthSetupForm = ({
                 }}
               />
               <Iconify
-                icon="mdi:arrow-right"
+                icon="solar:arrow-right-linear"
                 width={14}
                 sx={{ color: "text.disabled", flexShrink: 0 }}
               />
@@ -1647,7 +1606,7 @@ const GroundTruthSetupForm = ({
                   <em>None</em>
                 </MenuItem>
                 {columns.map((col) => (
-                  <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                  <MenuItem key={col} value={col}>
                     {col}
                   </MenuItem>
                 ))}
@@ -1662,7 +1621,7 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Reference output</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           The expected answer the evaluator should converge toward for each
           example.
@@ -1670,7 +1629,7 @@ const GroundTruthSetupForm = ({
         {referenceHint && (
           <Typography
             variant="caption"
-            sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
+            sx={{ color: "status.warning.fg", fontSize: "12px", mt: -0.25 }}
           >
             Values in this column must match the eval&apos;s output type.{" "}
             {referenceHint}
@@ -1681,7 +1640,7 @@ const GroundTruthSetupForm = ({
             Output column *
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1698,7 +1657,7 @@ const GroundTruthSetupForm = ({
               <em>Pick a column</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1710,7 +1669,7 @@ const GroundTruthSetupForm = ({
             Explanation (optional)
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1726,7 +1685,7 @@ const GroundTruthSetupForm = ({
               <em>None (optional)</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1739,7 +1698,7 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Retrieval</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           On each eval run, the rows most similar to the input are attached to
           the judge prompt as calibration examples.
@@ -1765,11 +1724,7 @@ const GroundTruthSetupForm = ({
             valueLabelDisplay="auto"
             sx={{ flex: 1 }}
           />
-          <Chip
-            size="small"
-            label={maxExamples}
-            sx={{ minWidth: 36, height: 22, fontSize: "11px" }}
-          />
+          <Chip size="small" label={maxExamples} sx={{ minWidth: 36 }} />
         </Box>
       </Box>
 
@@ -1785,13 +1740,13 @@ const GroundTruthSetupForm = ({
           <Typography
             variant="caption"
             sx={{
-              color: "error.main",
+              color: "status.danger.fg",
               display: "flex",
               alignItems: "center",
               gap: 0.5,
             }}
           >
-            <Iconify icon="mdi:alert-circle-outline" width={14} />
+            <Iconify icon="solar:danger-circle-linear" width={14} />
             Pick the column that holds the reference output.
           </Typography>
         )}
@@ -1804,9 +1759,9 @@ const GroundTruthSetupForm = ({
               ctaPending ? (
                 <CircularProgress size={14} />
               ) : hasWork ? (
-                <Iconify icon="mdi:content-save-outline" width={16} />
+                <Iconify icon="solar:diskette-linear" width={16} />
               ) : (
-                <Iconify icon="mdi:check" width={16} />
+                <Iconify icon="solar:check-linear" width={16} />
               )
             }
             sx={{ flex: 1, minWidth: 0 }}
@@ -1826,7 +1781,7 @@ const GroundTruthSetupForm = ({
               <Button
                 variant="text"
                 onClick={onTest}
-                endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
                 disabled={!onTest}
                 sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
               >
@@ -1998,19 +1953,14 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
             }}
           >
             <Iconify
-              icon="mdi:database-outline"
-              width={18}
+              icon="solar:database-linear"
+              width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography variant="body2" fontWeight={600}>
               {activeDataset.name}
             </Typography>
-            <Chip
-              label={`${totalRows} rows`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Chip label={`${totalRows} rows`} size="small" variant="outlined" />
             <StatusBadge status={embeddingStatus} />
 
             {(embeddingStatus === "processing" ||
@@ -2054,7 +2004,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   onClick={() => setDrawerOpen(true)}
                   disabled={!canEdit}
                 >
-                  <Iconify icon="mdi:upload" width={16} />
+                  <Iconify icon="solar:upload-minimalistic-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -2066,7 +2016,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   onClick={handleDelete}
                   disabled={deleteGt.isPending || !canEdit}
                 >
-                  <Iconify icon="mdi:delete-outline" width={16} />
+                  <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -2135,10 +2085,6 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                 sx={{
                   flex: 1,
                   minHeight: 200,
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  border: "1px solid",
-                  borderColor: "divider",
                 }}
               >
                 <AgGridReact

@@ -70,7 +70,7 @@ function DurationCell({ row }) {
   return (
     <Box display="flex" alignItems="center" gap={0.5}>
       <Iconify
-        icon="radix-icons:clock"
+        icon="solar:clock-circle-linear"
         width={14}
         height={14}
         sx={{ color: "text.primary" }}

@@ -25,21 +25,25 @@ import { useGetMetricOptions } from "../../../../../api/model/metric";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { FormSelectField } from "src/components/FormSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 export const CreateUpdateCustomMetric = ({ show, onClose, updateData }) => {
+  const covered = useDrawerCovered(show);
+
   return (
     <>
       <Drawer
+        sx={coveredDrawerSx(covered)}
         anchor="right"
         open={show}
         onClose={onClose}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "550px",
+            width: "480px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -193,7 +197,7 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
               onClick={() => onClose()}
               sx={{ position: "absolute", top: "12px", right: "12px" }}
             >
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <Box
@@ -210,7 +214,7 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
               sx={{
                 "& .MuiInputBase-input": {
                   // fontSize: "24px",
-                  fontWeight: 700,
+                  fontWeight: 600,
                 },
                 "& .MuiInputLabel-root": {
                   // fontSize: "24px", // Default font size
@@ -252,7 +256,7 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
                       onClick={() => setSuggestedPrompt(null)}
                       size="small"
                     >
-                      <Iconify icon="mingcute:close-line" width={16} />
+                      <Iconify icon="solar:close-linear" width={16} />
                     </IconButton>
                   </Box>
                   <Box
@@ -267,7 +271,8 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
                     <TextField
                       label={
                         <Box sx={{ display: "flex", alignItems: "center" }}>
-                          <Iconify icon="tabler:bulb" /> Suggested Prompt
+                          <Iconify icon="solar:lightbulb-linear" /> Suggested
+                          Prompt
                         </Box>
                       }
                       sx={{ width: "300px" }}
@@ -366,7 +371,7 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
             <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 2 }}>
               <LoadingButton
                 loading={isTesting}
-                variant="contained"
+                variant="outlined"
                 color="primary"
                 onClick={() => testMetric({ prompt })}
                 disabled={testButtonDisabled}

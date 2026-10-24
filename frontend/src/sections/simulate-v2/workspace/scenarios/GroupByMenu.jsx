@@ -14,17 +14,25 @@ export default function GroupByMenu({ value, onChange, options }) {
   return (
     <>
       <Button
-        size="small" variant="outlined"
+        size="small"
+        variant="outlined"
         onClick={(e) => setAnchor(e.currentTarget)}
         startIcon={<Iconify icon={current.icon} width={14} />}
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
         sx={{
-          typography: "s2", fontWeight: 700, textTransform: "none", height: 30, flexShrink: 0, whiteSpace: "nowrap",
-          color: "text.primary", borderColor: anchor ? "text.primary" : "divider",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+          color: "text.primary",
+          borderColor: anchor ? "text.primary" : "divider",
           bgcolor: anchor ? "action.selected" : "transparent",
         }}
       >
-        <Box component="span" sx={{ color: "text.secondary", fontWeight: 500, mr: 0.5 }}>Group by</Box>
+        <Box
+          component="span"
+          sx={{ color: "text.secondary", fontWeight: 500, mr: 0.5 }}
+        >
+          Group by
+        </Box>
         {current.label}
       </Button>
       <Menu
@@ -39,16 +47,33 @@ export default function GroupByMenu({ value, onChange, options }) {
           <MenuItem
             key={o.id}
             selected={o.id === current.id}
-            onClick={() => { setAnchor(null); onChange(o.id); }}
+            onClick={() => {
+              setAnchor(null);
+              onChange(o.id);
+            }}
             sx={{ typography: "s2", gap: 1 }}
           >
-            <Iconify icon={o.icon} width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+            <Iconify
+              icon={o.icon}
+              width={14}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
+            />
             <Box sx={{ flex: 1 }}>{o.label}</Box>
-            {o.id === current.id && <Iconify icon="eva:checkmark-fill" width={15} sx={{ color: "text.secondary" }} />}
+            {o.id === current.id && (
+              <Iconify
+                icon="solar:check-linear"
+                width={16}
+                sx={{ color: "text.secondary" }}
+              />
+            )}
           </MenuItem>
         ))}
       </Menu>
     </>
   );
 }
-GroupByMenu.propTypes = { value: PropTypes.string, onChange: PropTypes.func.isRequired, options: PropTypes.array.isRequired };
+GroupByMenu.propTypes = {
+  value: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+  options: PropTypes.array.isRequired,
+};

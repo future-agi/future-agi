@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { useMemo } from "react";
@@ -76,7 +77,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
         type: "datetime",
         tickAmount: Math.min(volumeData.length, 12),
         labels: {
-          style: { fontSize: "10px", colors: theme.palette.text.secondary },
+          style: { fontSize: "12px", colors: theme.palette.text.secondary },
           datetimeUTC: false,
           datetimeFormatter: { day: "MMM dd", month: "MMM ''yy" },
         },
@@ -89,13 +90,13 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
               title: {
                 text: "Volume",
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                 },
               },
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? Math.round(v).toString() : ""),
@@ -108,13 +109,13 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
               title: {
                 text: valueLabel,
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                 },
               },
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? `${Math.round(v * 100)}%` : ""),
@@ -128,7 +129,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
             {
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? Math.round(v).toString() : ""),
@@ -146,7 +147,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
       legend: {
         position: "top",
         horizontalAlign: "right",
-        fontSize: "11px",
+        fontSize: "12px",
         labels: { colors: theme.palette.text.secondary },
         markers: { width: 8, height: 8, radius: 2 },
       },

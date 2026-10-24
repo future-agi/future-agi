@@ -85,6 +85,6 @@ const style = {
     objectFit: "cover",
     fontSize: "12px",
     backgroundColor: "action.hover",
-    color: "pink.500",
+    color: "status.discovery.fg",
   },
 };

@@ -1,4 +1,4 @@
-import { Box, Skeleton, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Skeleton, Tab, Tabs, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
 import Label from "src/components/label";
@@ -23,7 +23,6 @@ const categories = [
 ];
 
 const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
-  const theme = useTheme();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
@@ -121,7 +120,7 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
             Create from a custom eval
           </Typography>
           <Iconify
-            icon="flowbite:x-outline"
+            icon="solar:close-linear"
             sx={{ cursor: "pointer" }}
             onClick={onClose}
           />
@@ -145,37 +144,13 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
           }}
         >
           <Tabs
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
-            sx={{
-              minHeight: 0,
-              "& .MuiTab-root": {
-                margin: "0 !important",
-                fontWeight: "600",
-                color: "primary.main",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: "500",
-                },
-              },
-              ml: -3,
-            }}
+            sx={{ ml: -3 }}
           >
             <Tab
               label="All"
               value="all"
-              sx={{
-                "&.MuiTab-root": {
-                  marginRight: 2,
-                  fontSize: 12,
-                },
-                px: theme.spacing(1),
-              }}
               icon={
                 loadingEvalList ? (
                   <Skeleton variant="text" width={20} height={35} />
@@ -183,10 +158,6 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
                   <Label
                     variant="soft"
                     color={selectedCategory === "all" ? "success" : "default"}
-                    sx={{
-                      fontSize: 12,
-                      fontWeight: selectedCategory === "all" ? 600 : 500,
-                    }}
                   >
                     {categoryCount["all"]}
                   </Label>
@@ -206,23 +177,12 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
                     <Label
                       variant="soft"
                       color={selectedCategory === value ? "success" : "default"}
-                      sx={{
-                        fontSize: 12,
-                        fontWeight: selectedCategory === value ? 600 : 500,
-                      }}
                     >
                       {categoryCount[value] ?? 0}
                     </Label>
                   )
                 }
                 iconPosition="end"
-                sx={{
-                  "&.MuiTab-root": {
-                    marginRight: 2,
-                    fontSize: 12,
-                    px: theme.spacing(1),
-                  },
-                }}
               />
             ))}
           </Tabs>

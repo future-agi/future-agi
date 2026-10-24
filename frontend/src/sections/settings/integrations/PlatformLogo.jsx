@@ -21,7 +21,7 @@ export default function PlatformLogo({ platform, size = 40 }) {
     return (
       <Avatar
         variant="rounded"
-        sx={{ width: size, height: size, bgcolor: "transparent" }}
+        sx={{ width: size, height: size }}
       >
         <Iconify
           icon={p.icon}

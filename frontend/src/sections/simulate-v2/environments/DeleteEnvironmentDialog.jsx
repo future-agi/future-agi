@@ -1,6 +1,11 @@
 import PropTypes from "prop-types";
 import {
-  Button, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from "@mui/material";
 
 /**
@@ -11,32 +16,31 @@ import {
  */
 export default function DeleteEnvironmentDialog({ env, onCancel, onConfirm }) {
   return (
-    <Dialog open={!!env} onClose={onCancel} maxWidth="xs" fullWidth>
-      <DialogTitle sx={{ typography: "m2", fontWeight: 700 }}>
+    <Dialog
+      open={!!env}
+      onClose={onCancel}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
+      <DialogTitle sx={{ typography: "m2", fontWeight: 600 }}>
         Delete environment?
       </DialogTitle>
       <DialogContent>
         <DialogContentText sx={{ typography: "s2" }}>
-          <b>{env?.name}</b> and everything derived from it —
-          scenarios, evaluations and run history — will be removed
-          from this workspace. Personas stay in your library. This cannot be undone.
+          <b>{env?.name}</b> and everything derived from it — scenarios,
+          evaluations and run history — will be removed from this workspace.
+          Personas stay in your library. This cannot be undone.
         </DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button
-          onClick={onCancel}
-          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
-        >
+        <Button onClick={onCancel} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
         <Button
           variant="contained"
           onClick={() => onConfirm(env)}
-          sx={{
-            typography: "s2", fontWeight: 700,
-            bgcolor: "#DC2626", color: "#fff",
-            "&:hover": { bgcolor: "#B91C1C", color: "#fff" },
-          }}
+          color="error"
         >
           Delete
         </Button>

@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
 import {
-  Box,
-  Typography,
-  Button,
-  LinearProgress,
-  Tabs,
-  Tab,
-  useTheme,
   alpha,
+  Box,
+  Button,
+  ButtonBase,
+  LinearProgress,
+  Tab,
+  Tabs,
+  Typography,
+  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { grey } from "src/theme/palette";
@@ -294,12 +295,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                 indicatorColor="primary"
                 sx={{
                   marginLeft: "2%",
-                  "& .Mui-selected": {
-                    color: "primary.main",
-                  },
-                  "& .MuiTabs-indicator": {
-                    backgroundColor: "primary.main",
-                  },
                 }}
               >
                 <Tab label="Upload" />
@@ -356,7 +351,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                       ref={fileInputRef}
                     />
                     <Icon
-                      icon="lucide:download"
+                      icon="solar:download-minimalistic-linear"
                       width="22"
                       color="var(--primary-main)"
                     />
@@ -384,9 +379,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                         variant="outlined"
                         size="small"
                         sx={{
-                          paddingY: (theme) => theme.spacing(0.75),
-                          paddingX: (theme) => theme.spacing(3),
-                          borderRadius: (theme) => theme.spacing(1),
                           background: (theme) => theme.palette.divider,
                           color: "text.primary",
                           borderColor: "text.disabled",
@@ -460,8 +452,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                           position: "absolute",
                           right: 20,
                           top: 5,
-                          fontWeight: 400,
-                          fontSize: "12px",
                         }}
                       >
                         Remove
@@ -530,7 +520,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                         maxWidth: "400px",
                       }}
                       fontWeight={500}
-                      fontSize="14px"
+                      fontSize="13px"
                     >
                       {audioData?.fileName}
                     </Typography>
@@ -551,7 +541,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                   startIcon={
                     loading ? (
                       <Icon
-                        icon="material-symbols:close"
+                        icon="solar:close-linear"
                         color="black"
                         width={16}
                       />
@@ -566,8 +556,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                     position: "absolute",
                     right: 10,
                     top: 5,
-                    fontWeight: 400,
-                    fontSize: "12px",
                   }}
                 >
                   {loading ? "Cancel" : "Delete"}
@@ -586,8 +574,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                       position: "absolute",
                       right: 90,
                       top: 5,
-                      fontWeight: 400,
-                      fontSize: "12px",
                     }}
                   >
                     Replace
@@ -638,7 +624,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
           <ShowComponent condition={error}>
             <Typography sx={{ fontSize: "12px", mt: 1 }}>
               {errorMessage}{" "}
-              <Box
+              <ButtonBase
                 component="span"
                 onClick={() => {
                   setError(false);
@@ -652,14 +638,15 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                   }
                 }}
                 sx={{
-                  fontWeight: "bold",
-                  color: "red.500",
+                  font: "inherit",
+                  fontWeight: 600,
+                  color: "status.danger.fg",
                   textDecoration: "underline",
-                  cursor: "pointer",
+                  verticalAlign: "baseline",
                 }}
               >
                 Try again
-              </Box>
+              </ButtonBase>
             </Typography>
           </ShowComponent>
 
@@ -680,9 +667,6 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
               sx={{
                 backgroundColor: theme.palette.primary.main,
                 "&:hover": { backgroundColor: theme.palette.primary.main },
-                borderRadius: "10px",
-                fontSize: "14px",
-                fontWeight: 600,
                 width: "205px",
               }}
             >

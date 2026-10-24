@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (avatar palette) */
 import { Avatar, Box, Button, Chip, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -29,12 +30,10 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import DisplayOptionsPopover, {
   DEFAULT_COLUMN_ORDER,
 } from "./DisplayOptionsPopover";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import EvalTypeBadge from "./EvalTypeBadge";
 import VolumeBarChart from "src/sections/project/VolumeBarChart";
 import ErrorRateSparkline from "./ErrorRateSparkline";
-import TypeBadge from "./TypeBadge";
-import VersionBadge from "./VersionBadge";
 import { EVAL_TAGS, TAG_LOOKUP } from "../constant";
 
 // ── TagsCell ──
@@ -43,6 +42,12 @@ import { EVAL_TAGS, TAG_LOOKUP } from "../constant";
 // CustomTooltip listing the hidden tag labels.
 const TAG_GAP_PX = 4; // matches sx gap: 0.5 → 4px
 const PLUS_CHIP_RESERVE_PX = 44; // rough reservation for the "+N" chip
+
+const TAG_TEXT_SX = {
+  fontSize: 13,
+  color: "text.secondary",
+  whiteSpace: "nowrap",
+};
 
 const TagsCell = ({ tags }) => {
   const containerRef = useRef(null);
@@ -122,40 +127,32 @@ const TagsCell = ({ tags }) => {
           top: -9999,
         }}
       >
-        {allTags.map((tag) => {
+        {allTags.map((tag, i) => {
           const tagDef = TAG_LOOKUP[tag];
           return (
-            <Chip
+            <Typography
               key={`measure-${tag}`}
-              icon={
-                tagDef?.icon ? (
-                  <Iconify icon={tagDef.icon} width={12} />
-                ) : undefined
-              }
-              label={tagDef?.label || tag}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 22 }}
-            />
+              component="span"
+              sx={{ ...TAG_TEXT_SX, flexShrink: 0 }}
+            >
+              {i > 0 ? "· " : ""}
+              {tagDef?.label || tag}
+            </Typography>
           );
         })}
       </Box>
 
-      {visible.map((tag) => {
+      {visible.map((tag, i) => {
         const tagDef = TAG_LOOKUP[tag];
         return (
-          <Chip
+          <Typography
             key={tag}
-            icon={
-              tagDef?.icon ? (
-                <Iconify icon={tagDef.icon} width={12} />
-              ) : undefined
-            }
-            label={tagDef?.label || tag}
-            size="small"
-            variant="outlined"
-            sx={{ fontSize: "11px", height: 22, flexShrink: 0 }}
-          />
+            component="span"
+            sx={{ ...TAG_TEXT_SX, flexShrink: 0 }}
+          >
+            {i > 0 ? "· " : ""}
+            {tagDef?.label || tag}
+          </Typography>
         );
       })}
 
@@ -166,17 +163,17 @@ const TagsCell = ({ tags }) => {
           arrow
           size="small"
         >
-          <Chip
-            label={`+${hidden.length}`}
-            size="small"
-            variant="outlined"
+          <Typography
+            component="span"
             sx={{
-              fontSize: "11px",
-              height: 22,
+              ...TAG_TEXT_SX,
+              color: "text.tertiary",
               cursor: "default",
               flexShrink: 0,
             }}
-          />
+          >
+            {`· +${hidden.length}`}
+          </Typography>
         </CustomTooltip>
       )}
     </Box>
@@ -188,6 +185,12 @@ TagsCell.propTypes = {
 };
 
 // ── Static filter fields ──
+const OUTPUT_TYPE_LABELS = {
+  pass_fail: "Pass/fail",
+  percentage: "Percentage",
+  deterministic: "Choices",
+};
+
 const STATIC_FILTER_FIELDS = [
   {
     value: "eval_type",
@@ -200,6 +203,7 @@ const STATIC_FILTER_FIELDS = [
     label: "Output Type",
     type: "enum",
     choices: ["pass_fail", "percentage", "deterministic"],
+    choiceLabels: OUTPUT_TYPE_LABELS,
   },
   {
     value: "template_type",
@@ -212,13 +216,14 @@ const STATIC_FILTER_FIELDS = [
     label: "Tags",
     type: "enum",
     choices: EVAL_TAGS.map((t) => t.value),
+    choiceLabels: Object.fromEntries(EVAL_TAGS.map((t) => [t.value, t.label])),
   },
 ];
 
 // ── Helpers ──
 
 const AVATAR_COLORS = [
-  "#7C4DFF",
+  "#7857FC",
   "#FF6B6B",
   "#5BE49B",
   "#FFB547",
@@ -242,12 +247,6 @@ function getInitials(name) {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
-
-const OUTPUT_TYPE_LABELS = {
-  pass_fail: "Pass/fail",
-  percentage: "Percentage",
-  deterministic: "Choices",
-};
 
 const COLUMN_VISIBILITY_STORAGE_KEY = "evals-list-column-visibility";
 const COLUMN_ORDER_STORAGE_KEY = "evals-list-column-order";
@@ -651,12 +650,8 @@ const EvalsListView = () => {
                   sx={{
                     width: 24,
                     height: 24,
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    bgcolor: isSystem
-                      ? "action.selected"
-                      : getAvatarColor(name),
-                    color: isSystem ? "text.secondary" : "common.white",
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {isSystem ? (
@@ -702,7 +697,15 @@ const EvalsListView = () => {
           const version = getValue();
           const isDraft = row.original.is_draft || version === "draft";
           if (isDraft || !version) return null;
-          return <VersionBadge version={version} />;
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: "13px", fontVariantNumeric: "tabular-nums" }}
+            >
+              {version}
+            </Typography>
+          );
         },
       },
       {
@@ -723,7 +726,11 @@ const EvalsListView = () => {
         header: "Type",
         size: 110,
         enableSorting: false,
-        cell: ({ getValue }) => <TypeBadge type={getValue()} />,
+        cell: ({ getValue }) => (
+          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+            {getValue() === "composite" ? "Composite" : "Single"}
+          </Typography>
+        ),
       },
     ],
     [chartsData, chartsFetching, chartsLoading, chartsRead, chartsRenderable],
@@ -857,13 +864,10 @@ const EvalsListView = () => {
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={16} />}
+            startIcon={<Iconify icon="solar:filter-linear" width={16} />}
             endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
             onClick={(e) => setFilterAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
               borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
               color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
             }}
@@ -876,9 +880,6 @@ const EvalsListView = () => {
             startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
             onClick={(e) => setDisplayAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
               borderColor:
                 hiddenColumns.length > 0 ? "primary.main" : "divider",
               color:
@@ -902,10 +903,10 @@ const EvalsListView = () => {
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
               onClick={() => navigate("/dashboard/evaluations/create")}
               disabled={!canEditEvals}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              sx={{ typography: "body2" }}
             >
               Create evals
             </Button>
@@ -963,7 +964,7 @@ const EvalsListView = () => {
                 }
                 setPage(0);
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              sx={{ cursor: "pointer" }}
             />
           );
         })}
@@ -980,7 +981,6 @@ const EvalsListView = () => {
               });
               setPage(0);
             }}
-            sx={{ fontSize: "11px", height: 26 }}
           />
         )}
       </Box>
@@ -996,7 +996,7 @@ const EvalsListView = () => {
             px: 1.25,
             py: 0.5,
             border: "1px solid",
-            borderColor: "warning.main",
+            borderColor: "status.warning.border",
             borderRadius: 1,
           }}
         >
@@ -1074,7 +1074,7 @@ const EvalsListView = () => {
       />
 
       {/* Filter panel */}
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterAnchorEl}
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}

@@ -1,4 +1,5 @@
 import React from "react";
+import PropTypes from "prop-types";
 import parse from "autosuggest-highlight/parse";
 import match from "autosuggest-highlight/match";
 import { memo, useState, useCallback } from "react";
@@ -29,7 +30,7 @@ import { applyFilter, groupedData, getAllItems } from "./utils";
 
 // ----------------------------------------------------------------------
 
-function Searchbar() {
+function Searchbar({ variant }) {
   const theme = useTheme();
 
   const router = useRouter();
@@ -107,19 +108,72 @@ function Searchbar() {
       ));
   };
 
-  const renderButton = (
-    <Stack direction="row" alignItems="center">
-      <IconButton onClick={search.onTrue}>
-        <Iconify icon="eva:search-fill" />
-      </IconButton>
-
-      {lgUp && (
-        <Label sx={{ px: 0.75, fontSize: 12, color: "text.secondary" }}>
-          ⌘K
-        </Label>
-      )}
-    </Stack>
+  // Design system nav search: a 28px field in the sidebar that opens the
+  // same ⌘K dialog.
+  const renderNavButton = (
+    <Box
+      component="button"
+      type="button"
+      onClick={search.onTrue}
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1,
+        width: 1,
+        height: 28,
+        px: 1,
+        borderRadius: "6px",
+        border: (t) => `1px solid ${t.palette.border.default}`,
+        bgcolor: "background.paper",
+        color: "text.tertiary",
+        font: "inherit",
+        fontSize: 13,
+        cursor: "text",
+        textAlign: "left",
+        "&:hover": { borderColor: (t) => t.palette.border.hover },
+        "&:focus-visible": {
+          outline: (t) => `2px solid ${t.palette.border.focus}`,
+          outlineOffset: 1,
+        },
+      }}
+    >
+      <Iconify icon="solar:magnifier-linear" width={14} />
+      <Box component="span" sx={{ flex: 1 }}>
+        Search
+      </Box>
+      <Box
+        component="kbd"
+        sx={{
+          fontFamily: "inherit",
+          fontSize: 11,
+          lineHeight: "16px",
+          px: 0.5,
+          borderRadius: "4px",
+          border: (t) => `1px solid ${t.palette.border.default}`,
+          color: "text.tertiary",
+        }}
+      >
+        ⌘K
+      </Box>
+    </Box>
   );
+
+  const renderButton =
+    variant === "nav" ? (
+      renderNavButton
+    ) : (
+      <Stack direction="row" alignItems="center">
+        <IconButton onClick={search.onTrue}>
+          <Iconify icon="solar:magnifier-linear" />
+        </IconButton>
+
+        {lgUp && (
+          <Label sx={{ px: 0.75, fontSize: 12, color: "text.secondary" }}>
+            ⌘K
+          </Label>
+        )}
+      </Stack>
+    );
 
   return (
     <>
@@ -127,7 +181,7 @@ function Searchbar() {
 
       <Dialog
         fullWidth
-        maxWidth="sm"
+        maxWidth={false}
         open={search.value}
         onClose={handleClose}
         transitionDuration={{
@@ -135,10 +189,7 @@ function Searchbar() {
           exit: 0,
         }}
         PaperProps={{
-          sx: {
-            mt: 15,
-            overflow: "unset",
-          },
+          sx: { maxWidth: 720, mt: 15, overflow: "unset" },
         }}
         sx={{
           [`& .${dialogClasses.container}`]: {
@@ -156,8 +207,8 @@ function Searchbar() {
             startAdornment={
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
-                  width={24}
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </InputAdornment>
@@ -184,6 +235,8 @@ function Searchbar() {
     </>
   );
 }
+
+Searchbar.propTypes = { variant: PropTypes.oneOf(["nav"]) };
 
 const MemoizedSearchbar = memo(Searchbar);
 

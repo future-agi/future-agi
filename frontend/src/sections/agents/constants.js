@@ -106,36 +106,36 @@ export const transportFromContactNumber = (contactNumber) =>
 export const callStatusCellStyle = {
   "in-progress": {
     sx: {
-      color: "orange.700",
-      backgroundColor: "orange.o10",
+      color: "status.warning.fg",
+      backgroundColor: "status.warning.bg",
     },
     icon: "/assets/icons/navbar/ic_new_clock.svg",
   },
   completed: {
     sx: {
-      color: "green.700",
-      backgroundColor: "green.o10",
+      color: "status.success.fg",
+      backgroundColor: "status.success.bg",
     },
     icon: "/assets/icons/agent/call_completed.svg",
   },
   failed: {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/agent/call_failed.svg",
   },
   dropped: {
     sx: {
-      color: "blue.700",
-      backgroundColor: "blue.o10",
+      color: "status.info.fg",
+      backgroundColor: "status.info.bg",
     },
     icon: "/assets/icons/agent/call_dropped.svg",
   },
   "not-connected": {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/ic_failed.svg",
   },

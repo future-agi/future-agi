@@ -1,35 +1,25 @@
-import { alpha } from "@mui/material/styles";
 import { drawerClasses } from "@mui/material/Drawer";
 
-import { paper } from "../../css";
-
-// ----------------------------------------------------------------------
-
+// Design system drawer: bg.overlay, a 1px border on the open edge, a soft edge
+// shadow (customShadows.drawer) instead of the old 80–100px blur.
 export function drawer(theme) {
-  const lightMode = theme.palette.mode === "light";
-  const darkBorder = theme.palette.border?.hover || "#3f3f46";
-
   return {
     MuiDrawer: {
       styleOverrides: {
         root: ({ ownerState }) => ({
           ...(ownerState.variant === "temporary" && {
             [`& .${drawerClasses.paper}`]: {
-              ...paper({ theme }),
-              ...(!lightMode && {
-                backgroundColor: theme.palette.background.neutral,
-                borderLeft: `1px solid ${darkBorder}`,
-                borderRight: `1px solid ${darkBorder}`,
-              }),
+              backgroundImage: "none",
+              backgroundColor: theme.palette.background.overlay,
               ...(ownerState.anchor === "left" && {
-                boxShadow: lightMode
-                  ? `40px 40px 80px -8px ${alpha(theme.palette.grey[500], 0.24)}`
-                  : `8px 0px 40px 0px rgba(0, 0, 0, 0.7)`,
+                borderRight: `1px solid ${theme.palette.border.default}`,
+                boxShadow: theme.customShadows.drawer
+                  .replace("-12px", "12px")
+                  .replace("-8px 0", "8px 0"),
               }),
               ...(ownerState.anchor === "right" && {
-                boxShadow: lightMode
-                  ? `-40px 40px 80px -8px ${alpha(theme.palette.grey[500], 0.24)}`
-                  : `-8px 0px 40px 0px rgba(0, 0, 0, 0.7)`,
+                borderLeft: `1px solid ${theme.palette.border.default}`,
+                boxShadow: theme.customShadows.drawer,
               }),
             },
           }),

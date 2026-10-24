@@ -2,7 +2,15 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Tooltip, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Divider,
+  Box,
+  Stack,
+  Tooltip,
+  IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Divider,
 } from "@mui/material";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -29,25 +37,47 @@ import { WidgetOpenContext } from "./widgetOpenContext";
  * with reorder / resize / duplicate / hide / delete / export.
  */
 export default function SortablePanel({
-  id, children,
-  sectionColumns, currentSpan,
+  id,
+  children,
+  sectionColumns,
+  currentSpan,
   onSetSpan,
-  onHide, onDuplicate, onDelete, onExport,
+  onHide,
+  onDuplicate,
+  onDelete,
+  onExport,
   onEdit,
   // eslint-disable-next-line no-unused-vars
-  onRename, onCustomizeCopy,
-  onResetOverride, hasOverrides,
-  isCustom, hasExport,
+  onRename,
+  onCustomizeCopy,
+  onResetOverride,
+  hasOverrides,
+  isCustom,
+  hasExport,
   /* Retained on the props signature so the shell doesn't need to
      rewire — the menu just doesn't surface these any more. */
   // eslint-disable-next-line no-unused-vars
-  isFirstInSection, isLastInSection,
+  isFirstInSection,
+  isLastInSection,
   // eslint-disable-next-line no-unused-vars
-  onMoveUp, onMoveDown, onMoveTop, onMoveBottom, onResetSpan,
+  onMoveUp,
+  onMoveDown,
+  onMoveTop,
+  onMoveBottom,
+  onResetSpan,
   // eslint-disable-next-line no-unused-vars
-  onCopyLink, onPrintOnly, hasEdit,
+  onCopyLink,
+  onPrintOnly,
+  hasEdit,
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -59,35 +89,45 @@ export default function SortablePanel({
     opacity: isDragging ? 0.25 : 1,
   };
   const [menuAnchor, setMenuAnchor] = useState(null);
-  const openMenu = (e) => { e.stopPropagation(); setMenuAnchor(e.currentTarget); };
+  const openMenu = (e) => {
+    e.stopPropagation();
+    setMenuAnchor(e.currentTarget);
+  };
   const closeMenu = () => setMenuAnchor(null);
-  const call = (fn) => () => { closeMenu(); fn?.(); };
+  const call = (fn) => () => {
+    closeMenu();
+    fn?.();
+  };
   // eslint-disable-next-line no-unused-vars
   const { enqueueSnackbar } = useSnackbar();
 
   /* Resize options depend on the section's column count. In a
      2-column section the choice is Half or Full; in a 4-column
      Breakdowns section it's Quarter / Half / Full. */
-  const spanOptions = sectionColumns >= 4
-    ? [
-      { label: "Quarter width", value: 1, icon: "solar:widget-2-linear" },
-      { label: "Half width",    value: 2, icon: "solar:widget-3-linear" },
-      { label: "Full width",    value: 4, icon: "solar:widget-linear" },
-    ]
-    : [
-      { label: "Half width",    value: 1, icon: "solar:widget-2-linear" },
-      { label: "Full width",    value: 2, icon: "solar:widget-linear" },
-    ];
+  const spanOptions =
+    sectionColumns >= 4
+      ? [
+          { label: "Quarter width", value: 1, icon: "solar:widget-2-linear" },
+          { label: "Half width", value: 2, icon: "solar:widget-3-linear" },
+          { label: "Full width", value: 4, icon: "solar:widget-linear" },
+        ]
+      : [
+          { label: "Half width", value: 1, icon: "solar:widget-2-linear" },
+          { label: "Full width", value: 2, icon: "solar:widget-linear" },
+        ];
 
   return (
     <Box
-      ref={setNodeRef} style={style}
-      {...attributes} {...listeners}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
       className="sortable-panel-wrap"
       id={`widget-${id}`}
       data-widget-id={id}
       sx={{
-        position: "relative", height: "100%",
+        position: "relative",
+        height: "100%",
         outline: isDragging ? "2px solid" : "none",
         outlineColor: (t) => alpha(t.palette.primary.main, 0.6),
         borderRadius: 2,
@@ -107,15 +147,23 @@ export default function SortablePanel({
           so the "there's an override here" cue is visible without
           opening the menu. */}
       {hasOverrides && (
-        <Tooltip arrow title="Modified — Reset to default from the menu to revert.">
+        <Tooltip
+          arrow
+          title="Modified — Reset to default from the menu to revert."
+        >
           <Box
             className="modified-dot analytics-no-print"
             onPointerDown={(e) => e.stopPropagation()}
             sx={{
-              position: "absolute", top: 12, right: 42, zIndex: 3,
-              width: 8, height: 8, borderRadius: "50%",
-              bgcolor: "#F59E0B",
-              boxShadow: (t) => `0 0 0 3px ${alpha("#F59E0B", t.palette.mode === "dark" ? 0.2 : 0.15)}`,
+              position: "absolute",
+              top: 12,
+              right: 42,
+              zIndex: 3,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              bgcolor: "status.warning.solid",
+              boxShadow: (t) => `0 0 0 3px ${t.palette.status.warning.border}`,
             }}
           />
         </Tooltip>
@@ -128,19 +176,26 @@ export default function SortablePanel({
         className="kebab-btn analytics-no-print"
         onPointerDown={(e) => e.stopPropagation()}
         sx={{
-          position: "absolute", top: 8, right: 8, zIndex: 3,
+          position: "absolute",
+          top: 8,
+          right: 8,
+          zIndex: 3,
           opacity: menuAnchor ? 1 : 0.7,
           transition: "opacity 120ms",
         }}
       >
         <Tooltip arrow title="Widget actions">
           <IconButton
-            size="small" onClick={openMenu} aria-label="Widget actions"
+            size="small"
+            onClick={openMenu}
+            aria-label="Widget actions"
             sx={{
-              width: 26, height: 26, borderRadius: 1,
               bgcolor: (t) => alpha(t.palette.background.default, 0.75),
-              color: "text.subtitle",
-              "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, 0.12), color: "text.primary" },
+              color: "text.tertiary",
+              "&:hover": {
+                bgcolor: (t) => alpha(t.palette.text.primary, 0.12),
+                color: "text.primary",
+              },
             }}
           >
             <Iconify icon="solar:menu-dots-bold" width={16} />
@@ -165,7 +220,9 @@ export default function SortablePanel({
             Delete. Built-ins open with their equivalent query. */}
         {onEdit && (
           <MenuItem onClick={call(onEdit)}>
-            <ListItemIcon><Iconify icon="solar:pen-2-linear" width={16} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon="solar:pen-2-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Edit</ListItemText>
           </MenuItem>
         )}
@@ -174,7 +231,9 @@ export default function SortablePanel({
             widget right after it. */}
         {onDuplicate && (
           <MenuItem onClick={call(onDuplicate)}>
-            <ListItemIcon><Iconify icon="solar:copy-linear" width={16} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon="solar:copy-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Duplicate</ListItemText>
           </MenuItem>
         )}
@@ -184,7 +243,9 @@ export default function SortablePanel({
             widgets it reverts to the config as-of the last save. */}
         {hasOverrides && (
           <MenuItem onClick={call(onResetOverride)}>
-            <ListItemIcon><Iconify icon="solar:restart-linear" width={16} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon="solar:restart-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Reset to default</ListItemText>
           </MenuItem>
         )}
@@ -197,10 +258,16 @@ export default function SortablePanel({
             selected={currentSpan === opt.value}
             onClick={call(() => onSetSpan?.(opt.value))}
           >
-            <ListItemIcon><Iconify icon={opt.icon} width={16} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon={opt.icon} width={16} />
+            </ListItemIcon>
             <ListItemText>{opt.label}</ListItemText>
             {currentSpan === opt.value && (
-              <Iconify icon="solar:check-circle-bold" width={14} sx={{ ml: 1, color: "primary.main" }} />
+              <Iconify
+                icon="solar:check-circle-bold"
+                width={14}
+                sx={{ ml: 1, color: "primary.main" }}
+              />
             )}
           </MenuItem>
         ))}
@@ -208,7 +275,9 @@ export default function SortablePanel({
         {/* Download — only when the widget exposes an export set. */}
         {hasExport && (
           <MenuItem onClick={call(onExport)}>
-            <ListItemIcon><Iconify icon="solar:download-minimalistic-linear" width={16} /></ListItemIcon>
+            <ListItemIcon>
+              <Iconify icon="solar:download-minimalistic-linear" width={16} />
+            </ListItemIcon>
             <ListItemText>Download</ListItemText>
           </MenuItem>
         )}
@@ -220,9 +289,16 @@ export default function SortablePanel({
             widget's config is removed permanently. */}
         <MenuItem
           onClick={call(isCustom ? onDelete : onHide)}
-          sx={{ color: "#DC2626" }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
         >
-          <ListItemIcon><Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "#DC2626" }} /></ListItemIcon>
+          <ListItemIcon>
+            <Iconify
+              icon="solar:trash-bin-trash-linear"
+              width={16}
+              sx={{ color: "status.danger.fg" }}
+            />
+          </ListItemIcon>
           <ListItemText>Delete</ListItemText>
         </MenuItem>
       </Menu>
@@ -235,14 +311,30 @@ export default function SortablePanel({
   );
 }
 SortablePanel.propTypes = {
-  id: PropTypes.string.isRequired, children: PropTypes.node.isRequired,
-  sectionColumns: PropTypes.number, currentSpan: PropTypes.number,
-  isFirstInSection: PropTypes.bool, isLastInSection: PropTypes.bool,
-  onMoveUp: PropTypes.func, onMoveDown: PropTypes.func, onMoveTop: PropTypes.func, onMoveBottom: PropTypes.func,
-  onSetSpan: PropTypes.func, onResetSpan: PropTypes.func,
-  onHide: PropTypes.func, onDuplicate: PropTypes.func, onEdit: PropTypes.func, onDelete: PropTypes.func,
-  onRename: PropTypes.func, onCustomizeCopy: PropTypes.func,
-  onResetOverride: PropTypes.func, hasOverrides: PropTypes.bool,
-  onExport: PropTypes.func, onCopyLink: PropTypes.func, onPrintOnly: PropTypes.func,
-  isCustom: PropTypes.bool, hasEdit: PropTypes.bool, hasExport: PropTypes.bool,
+  id: PropTypes.string.isRequired,
+  children: PropTypes.node.isRequired,
+  sectionColumns: PropTypes.number,
+  currentSpan: PropTypes.number,
+  isFirstInSection: PropTypes.bool,
+  isLastInSection: PropTypes.bool,
+  onMoveUp: PropTypes.func,
+  onMoveDown: PropTypes.func,
+  onMoveTop: PropTypes.func,
+  onMoveBottom: PropTypes.func,
+  onSetSpan: PropTypes.func,
+  onResetSpan: PropTypes.func,
+  onHide: PropTypes.func,
+  onDuplicate: PropTypes.func,
+  onEdit: PropTypes.func,
+  onDelete: PropTypes.func,
+  onRename: PropTypes.func,
+  onCustomizeCopy: PropTypes.func,
+  onResetOverride: PropTypes.func,
+  hasOverrides: PropTypes.bool,
+  onExport: PropTypes.func,
+  onCopyLink: PropTypes.func,
+  onPrintOnly: PropTypes.func,
+  isCustom: PropTypes.bool,
+  hasEdit: PropTypes.bool,
+  hasExport: PropTypes.bool,
 };

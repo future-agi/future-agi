@@ -397,7 +397,7 @@ export default function JwtRegisterView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -408,7 +408,7 @@ export default function JwtRegisterView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.secondary",
           maxWidth: "440px",
           fontFamily: "Inter",
@@ -444,7 +444,7 @@ export default function JwtRegisterView() {
             label="Set Password"
             type={password.value ? "text" : "password"}
             autoComplete="new-password"
-            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
@@ -468,7 +468,7 @@ export default function JwtRegisterView() {
             label="Confirm Password"
             type={confirmPassword.value ? "text" : "password"}
             autoComplete="new-password"
-            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
@@ -489,27 +489,26 @@ export default function JwtRegisterView() {
       )}
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
-          sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
-          }}
         >
           {errorMsg}
         </Alert>
       )}
 
       <LoadingButton
+        size="large"
         disabled={registerSuccess}
         fullWidth
         color="primary"
         type="submit"
         variant="contained"
         loading={loading}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Continue
       </LoadingButton>
@@ -563,20 +562,15 @@ export default function JwtRegisterView() {
         {!isOSS && (
           <>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                color: "text.primary",
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("google")}
               startIcon={<Iconify icon="logos:google-icon" width={20} />}
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px" }}
+                sx={{ fontSize: "13px" }}
               >
                 Continue with Google
               </Typography>
@@ -586,7 +580,7 @@ export default function JwtRegisterView() {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius:0.5,
+          borderRadius:"4px",
           display: "flex",
           height: 44,
 
@@ -604,7 +598,7 @@ export default function JwtRegisterView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "15px",
+            fontSize: "13px",
             marginRight: -1.5,
           }}
         >
@@ -612,13 +606,9 @@ export default function JwtRegisterView() {
         </Typography>
       </Button> */}
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("github")}
               startIcon={
                 <Iconify
@@ -630,20 +620,15 @@ export default function JwtRegisterView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", color: "text.primary" }}
+                sx={{ fontSize: "13px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
             </Button>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-                color: "text.primary",
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={handleSsoLogin}
               startIcon={
                 <SvgColor
@@ -654,7 +639,7 @@ export default function JwtRegisterView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", marginRight: -1.5 }}
+                sx={{ fontSize: "13px", marginRight: -1.5 }}
               >
                 Continue with SSO/SAML
               </Typography>
@@ -663,7 +648,7 @@ export default function JwtRegisterView() {
         )}
 
         <Typography
-          fontSize={"15px"}
+          fontSize={"13px"}
           fontWeight={"fontWeightMedium"}
           color="text.secondary"
           sx={{ textAlign: "center" }}

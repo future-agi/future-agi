@@ -1,24 +1,25 @@
 import React, { useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
-  Card,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  TablePagination,
   TableSortLabel,
   Typography,
-  Chip,
   Skeleton,
   Stack,
   Tooltip,
   Alert,
   Button,
 } from "@mui/material";
+import { TablePaginationCustom } from "src/components/table";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import useRequestLogs from "./hooks/useRequestLogs";
 import { formatCost } from "../utils/formatters";
 
@@ -42,6 +43,16 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 function getStatusChipColor(code) {
   if (code === 246) return "warning"; // guardrail warn
@@ -98,27 +109,21 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
     <TableRow
       hover
       onClick={() => onClick(log.id)}
-      sx={{
+      sx={(theme) => ({
         cursor: "pointer",
         ...(isErrorRow && {
-          boxShadow: "inset 3px 0 0 0 #FF5630",
+          boxShadow: `inset 3px 0 0 0 ${statusColors(theme, "danger").solid}`,
           "& > td": {
-            backgroundColor: "rgba(255, 86, 48, 0.14) !important",
-          },
-          "&:hover > td": {
-            backgroundColor: "rgba(255, 86, 48, 0.22) !important",
+            backgroundColor: `${statusColors(theme, "danger").bg} !important`,
           },
         }),
         ...(isWarnRow && {
-          boxShadow: "inset 3px 0 0 0 #FFAB00",
+          boxShadow: `inset 3px 0 0 0 ${statusColors(theme, "warning").solid}`,
           "& > td": {
-            backgroundColor: "rgba(255, 171, 0, 0.12) !important",
-          },
-          "&:hover > td": {
-            backgroundColor: "rgba(255, 171, 0, 0.20) !important",
+            backgroundColor: `${statusColors(theme, "warning").bg} !important`,
           },
         }),
-      }}
+      })}
     >
       {/* Timestamp */}
       <TableCell sx={{ whiteSpace: "nowrap" }}>
@@ -141,11 +146,10 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
 
       {/* Status */}
       <TableCell>
-        <Chip
-          label={log.status_code ?? "-"}
-          size="small"
-          variant="outlined"
-          color={getStatusChipColor(log.status_code)}
+        <StatusBadge
+          status={log.status_code}
+          label={String(log.status_code ?? "-")}
+          role={CHIP_ROLE[getStatusChipColor(log.status_code)]}
         />
       </TableCell>
 
@@ -163,7 +167,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
       </TableCell>
 
       {/* Cost */}
-      <TableCell>
+      <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
         <Typography variant="body2">{formatCost(log.cost)}</Typography>
       </TableCell>
 
@@ -191,7 +195,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
           {log.cache_hit && (
             <Tooltip title="Cache Hit" arrow>
               <Iconify
-                icon="mdi:cached"
+                icon="solar:refresh-linear"
                 width={16}
                 sx={{ color: "info.main" }}
               />
@@ -200,7 +204,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
           {guardrailTriggered && (
             <Tooltip title="Guardrail Triggered" arrow>
               <Iconify
-                icon="mdi:shield-outline"
+                icon="solar:shield-linear"
                 width={16}
                 sx={{ color: "warning.dark" }}
               />
@@ -209,7 +213,7 @@ const RequestRow = React.memo(function RequestRow({ log, onClick }) {
           {fallbackUsed && (
             <Tooltip title="Fallback Used" arrow>
               <Iconify
-                icon="mdi:swap-horizontal"
+                icon="solar:transfer-horizontal-linear"
                 width={16}
                 sx={{ color: "secondary.main" }}
               />
@@ -310,7 +314,7 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
   // =========================================================================
 
   return (
-    <Card>
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       {/* Error state */}
       {error && (
         <Alert
@@ -320,7 +324,6 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
               Retry
             </Button>
           }
-          sx={{ borderRadius: 0 }}
         >
           Failed to load request logs: {error.message || "Unknown error"}
         </Alert>
@@ -391,7 +394,7 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
                 <TableCell colSpan={COLUMNS.length}>
                   <Stack alignItems="center" spacing={1.5} py={6}>
                     <Iconify
-                      icon="mdi:magnify-remove-outline"
+                      icon="solar:magnifier-close-linear"
                       width={48}
                       sx={{ color: "text.disabled" }}
                     />
@@ -411,8 +414,7 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
       </TableContainer>
 
       {/* ---- Pagination ---- */}
-      <TablePagination
-        component="div"
+      <TablePaginationCustom
         count={totalCount}
         page={page - 1}
         rowsPerPage={pageSize}
@@ -420,7 +422,7 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
       />
-    </Card>
+    </Section>
   );
 };
 

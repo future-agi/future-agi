@@ -24,7 +24,7 @@ const DatasetCellRenderer = (props) => {
     >
       <CompareDatasetSummaryIcon index={props.data.datasetIndex} />
       <Typography
-        sx={{ fontSize: "14px", fontWeight: 400, color: "text.primary" }}
+        sx={{ fontSize: "13px", fontWeight: 400, color: "text.primary" }}
       >
         {props.value}
       </Typography>

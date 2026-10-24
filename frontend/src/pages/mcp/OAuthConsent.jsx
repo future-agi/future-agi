@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Box,
-  Card,
   Typography,
   Checkbox,
   FormControlLabel,
@@ -12,6 +11,7 @@ import {
   Stack,
   Divider,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
@@ -177,8 +177,7 @@ export default function OAuthConsent() {
         });
       }
 
-      const redirectUrl =
-        response.data?.result?.redirect_url;
+      const redirectUrl = response.data?.result?.redirect_url;
       if (response.data?.status && redirectUrl) {
         window.location.href = redirectUrl;
       } else {
@@ -211,7 +210,8 @@ export default function OAuthConsent() {
         p: 2,
       }}
     >
-      <Card
+      <Section
+        variant="panel"
         sx={{
           maxWidth: 480,
           width: "100%",
@@ -265,7 +265,7 @@ export default function OAuthConsent() {
                 Authorize MCP Connection
               </Typography>
               <Typography variant="body2" color="text.secondary" align="center">
-                 <strong>{consentData.client_name}</strong> wants to access your
+                <strong>{consentData.client_name}</strong> wants to access your
                 Future AGI account
               </Typography>
             </>
@@ -291,7 +291,7 @@ export default function OAuthConsent() {
                 sx={{
                   mb: 1,
                   display: "block",
-                  textTransform: "uppercase",
+                  textTransform: "none",
                   letterSpacing: 0.5,
                 }}
               >
@@ -360,16 +360,7 @@ export default function OAuthConsent() {
                   variant="contained"
                   onClick={() => handleConsent(true)}
                   disabled={submitting || selectedCount === 0}
-                  sx={{
-                    bgcolor: "#7C3AED",
-                    color: "#fff",
-                    fontWeight: 600,
-                    px: 3,
-                    "&:hover": { bgcolor: "#6D28D9" },
-                    "&.Mui-disabled": {
-                      bgcolor: "action.disabledBackground",
-                    },
-                  }}
+                  sx={{ px: 3 }}
                 >
                   {submitting ? (
                     <CircularProgress size={20} color="inherit" />
@@ -381,7 +372,7 @@ export default function OAuthConsent() {
             </Box>
           </>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 }

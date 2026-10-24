@@ -22,12 +22,12 @@ const TABS = [
   {
     value: "users",
     label: "Users",
-    icon: <Iconify icon="ic:round-vpn-key" width={24} />,
+    icon: <Iconify icon="solar:key-linear" width={24} />,
   },
   {
     value: "security",
     label: "Security",
-    icon: <Iconify icon="ic:round-vpn-key" width={24} />,
+    icon: <Iconify icon="solar:key-linear" width={24} />,
   },
 ];
 
@@ -44,7 +44,7 @@ export default function AccountView() {
 
   return (
     <Container maxWidth={settings.themeStretch ? false : "lg"}>
-      <Typography variant="h4"> Settings </Typography>
+      <Typography variant="h2"> Settings </Typography>
       <Tabs
         value={currentTab}
         onChange={handleChangeTab}

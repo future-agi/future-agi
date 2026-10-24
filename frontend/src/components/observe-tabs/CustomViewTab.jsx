@@ -92,7 +92,7 @@ const CustomViewTab = ({
         }}
       >
         <Iconify
-          icon="mdi:eye-outline"
+          icon="solar:eye-linear"
           width={14}
           sx={{ color: "text.primary", flexShrink: 0 }}
         />
@@ -132,7 +132,7 @@ const CustomViewTab = ({
         {!isRenaming && (
           <Iconify
             className="close-btn"
-            icon="mdi:close"
+            icon="solar:close-linear"
             width={12}
             onClick={(e) => {
               e.stopPropagation();

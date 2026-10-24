@@ -25,7 +25,7 @@ const PerformanceTagDistribution = ({
   return (
     <>
       {isLoading && <LinearProgress />}
-      <Paper elevation={2} sx={{ padding: 2 }}>
+      <Paper variant="outlined" sx={{ padding: 2 }}>
         <FormControl size="small" sx={{ minWidth: "216px" }}>
           <Select
             size="small"

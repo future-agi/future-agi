@@ -12,14 +12,12 @@ const StopGeneratingButton = ({ children, sx, ...props }) => {
         variant="outlined"
         size="small"
         sx={{
-          borderRadius: "4px",
           width: "133px",
-          paddingX: "0px",
           ...sx,
         }}
         startIcon={
           <Iconify
-            icon="bi:stop-circle"
+            icon="solar:stop-circle-linear"
             color="text.primary"
             width="16px"
             height="16px"

@@ -156,7 +156,7 @@ const NotFoundView = () => {
             overflow: "hidden",
             "& .star": {
               position: "absolute",
-              background: "#fafafa",
+              background: "text.disabled",
               borderRadius: "50%",
             },
             "& .star-far": {
@@ -448,7 +448,7 @@ const NotFoundView = () => {
         <Typography
           color="primary.main"
           fontSize={{ xs: "72px", sm: "96px" }}
-          fontWeight={300}
+          fontWeight={400}
           lineHeight={1}
           fontFamily="IBM Plex Sans"
           letterSpacing="-0.04em"
@@ -460,7 +460,7 @@ const NotFoundView = () => {
         {/* Headline */}
         <Typography
           color="text.primary"
-          fontSize={{ xs: "22px", sm: "28px" }}
+          fontSize={{ xs: "20px", sm: "24px" }}
           fontWeight={600}
           lineHeight={1.3}
           fontFamily="IBM Plex Sans"
@@ -475,7 +475,7 @@ const NotFoundView = () => {
           fontWeight={400}
           fontFamily="IBM Plex Sans"
           textAlign="center"
-          fontSize="15px"
+          fontSize="13px"
           fontStyle="italic"
           lineHeight={1.6}
           maxWidth="450px"
@@ -495,15 +495,11 @@ const NotFoundView = () => {
             maxWidth: "340px",
             fontFamily: "monospace",
             fontSize: "12px",
-            boxShadow: (theme) =>
-              theme.palette.mode === "dark"
-                ? "0 0 0 1px rgba(255, 255, 255, 0.03), 0 4px 20px -4px rgba(0, 0, 0, 0.5)"
-                : "0 1px 3px rgba(0,0,0,0.08)",
           }}
         >
           <Typography
             fontFamily="monospace"
-            fontSize="11px"
+            fontSize="12px"
             color="text.disabled"
             mb={1}
           >
@@ -540,15 +536,14 @@ const NotFoundView = () => {
           variant="contained"
           color="primary"
           sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            px: "24px",
-            py: "6px",
-            boxShadow: 0,
             mt: 1,
           }}
         >
-          <Iconify icon="ion:chevron-back" width="15px" height="15px" />
+          <Iconify
+            icon="solar:alt-arrow-left-linear"
+            width="15px"
+            height="15px"
+          />
           <Typography
             fontSize="12px"
             fontFamily="IBM Plex Sans"

@@ -13,9 +13,7 @@ const HeaderIcon = ({ displayName }) => {
     );
   }
   if (displayName === "Updated At") {
-    return (
-      <Iconify sx={{ ...iconSize }} icon="material-symbols:schedule-outline" />
-    );
+    return <Iconify sx={{ ...iconSize }} icon="solar:clock-circle-linear" />;
   }
   return (
     <SvgColor

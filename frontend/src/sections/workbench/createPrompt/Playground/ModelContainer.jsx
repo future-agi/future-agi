@@ -247,7 +247,7 @@ const ModelContainer = ({
         <Box
           display={"flex"}
           flexDirection={"row"}
-          borderRadius={0.5}
+          borderRadius="4px"
           gap={1}
           ref={modelContainerRef}
           sx={{
@@ -274,7 +274,7 @@ const ModelContainer = ({
             }
             buttonIcon={
               <Iconify
-                icon="radix-icons:box-model"
+                icon="solar:graph-linear"
                 width="16px"
                 height="16px"
                 sx={{
@@ -356,8 +356,6 @@ const ModelContainer = ({
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
-              padding: "5px 10px",
               flexShrink: 0,
             }}
             onClick={handleUseTemplate}

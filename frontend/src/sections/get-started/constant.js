@@ -133,36 +133,6 @@ export const getStartedPage = {
 };
 
 export const menuesConstant = {
-  statusColor: {
-    complete: {
-      iconColor: "green.700",
-      titleColor: "text.primary",
-      iconBackgroundColor: "green.o10",
-      hoverIconBackgroundColor: "green.o10",
-      borderColor: "green.500",
-      hoverColor: "green.o10",
-      backgroundColor: "#00A25105",
-    },
-    active: {
-      iconColor: "blue.700",
-      titleColor: "text.primary",
-      iconBackgroundColor: "blue.o10",
-      hoverIconBackgroundColor: "blue.o10",
-      borderColor: "blue.500",
-      hoverColor: "",
-      backgroundColor: "",
-    },
-    incomplete: {
-      iconColor: "text.primary",
-      titleColor: "text.primary",
-      iconBackgroundColor: `background.neutral`,
-      hoverIconBackgroundColor: `background.neutral`,
-      borderColor: `divider`,
-      hoverColor: ``,
-      backgroundColor: "",
-    },
-  },
-
   menusList: [
     {
       id: 0,

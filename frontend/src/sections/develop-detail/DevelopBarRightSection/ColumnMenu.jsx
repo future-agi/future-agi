@@ -67,10 +67,10 @@ const DraggableDropdownItem = (props) => {
               padding: "0px",
               "&.Mui-checked": { color: "primary.light" },
             }}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" />}
+            checkedIcon={<Iconify icon="solar:check-square-bold" />}
             icon={
               <Iconify
-                icon="carbon:checkbox"
+                icon="solar:square-linear"
                 sx={{
                   color: theme.palette.divider,
                 }}
@@ -84,10 +84,7 @@ const DraggableDropdownItem = (props) => {
             {...attributes}
             {...listeners}
             sx={{
-              borderRadius: "8px",
               display: "inline-block",
-              px: "4px",
-              py: "2px",
               ":hover": {
                 cursor: "grab",
               },
@@ -207,7 +204,7 @@ function ColumnMenu({
           maxHeight: "400px",
           overflowY: "auto",
           padding: 0,
-          minWidth: "250px",
+          minWidth: "320px",
         },
       }}
     >
@@ -275,7 +272,7 @@ function ColumnMenu({
                         }}
                         expandIcon={
                           <Iconify
-                            icon="gg:chevron-right"
+                            icon="solar:alt-arrow-right-linear"
                             sx={{ color: "text.secondary" }}
                             width={16}
                           />

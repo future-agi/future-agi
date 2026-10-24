@@ -31,7 +31,7 @@ const RoleChip = ({ role }) => {
         px: "12px",
         py: "4px",
         height: "24px",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         width: "fit-content",
         ...styles,
       }}
@@ -106,7 +106,7 @@ const WorkspaceRoleSelect = ({
       >
         {WS_ROLE_OPTIONS.map((opt) => (
           <MenuItem key={opt.value} value={opt.value}>
-            <Typography typography="s2" fontWeight="fontWeightMedium">
+            <Typography typography="s2" fontWeight={400}>
               {opt.label}
             </Typography>
           </MenuItem>
@@ -193,7 +193,7 @@ const RemoveFromWorkspaceButton = ({
           {isPending ? (
             <CircularProgress size={16} />
           ) : (
-            <Iconify icon="solar:trash-bin-minimalistic-bold" width={18} />
+            <Iconify icon="solar:trash-bin-minimalistic-bold" width={20} />
           )}
         </IconButton>
       </CustomTooltip>

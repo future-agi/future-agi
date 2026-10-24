@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tooltip,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import TrialsPicker from "./TrialsPicker";
 
@@ -20,32 +27,73 @@ import TrialsPicker from "./TrialsPicker";
  */
 const ICON_BTN_SX = { minWidth: 0, width: 30, px: 0 };
 const BTN_SX = {
-  typography: "s2", fontWeight: 700, textTransform: "none", height: 30, flexShrink: 0, whiteSpace: "nowrap",
-  color: "text.primary", borderColor: "divider",
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+  color: "text.primary",
+  borderColor: "divider",
 };
 
-export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustPass, allMustPass = false, run = null }) {
+export default function SelectionBar({
+  count,
+  onEdit,
+  onDelete,
+  onClear,
+  onMustPass,
+  allMustPass = false,
+  run = null,
+}) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ minHeight: 30 }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
-        <Box sx={{
-          width: 18, height: 18, borderRadius: 0.5,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          bgcolor: "primary.main",
-          color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-        }}>
-          <Iconify icon="eva:checkmark-fill" width={13} />
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ minHeight: 30 }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ flexShrink: 0 }}
+      >
+        <Box
+          sx={{
+            width: 18,
+            height: 18,
+            borderRadius: "4px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            bgcolor: "primary.main",
+            color: (t) =>
+              t.palette.mode === "dark"
+                ? "background.default"
+                : "background.paper",
+          }}
+        >
+          <Iconify icon="solar:check-linear" width={14} />
         </Box>
-        <Typography sx={{
-          typography: "s2", fontWeight: 700,
-          color: "text.primary", whiteSpace: "nowrap",
-          fontVariantNumeric: "tabular-nums",
-        }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: 600,
+            color: "text.primary",
+            whiteSpace: "nowrap",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {`${count} scenario${count === 1 ? "" : "s"} selected`}
         </Typography>
         <Tooltip arrow title="Clear selection">
-          <IconButton size="small" aria-label="Clear selection" onClick={onClear} sx={{ p: 0.375 }}>
-            <Iconify icon="eva:close-fill" width={16} sx={{ color: "text.subtitle" }} />
+          <IconButton
+            size="small"
+            aria-label="Clear selection"
+            onClick={onClear}
+          >
+            <Iconify
+              icon="solar:close-linear"
+              width={16}
+              sx={{ color: "text.tertiary" }}
+            />
           </IconButton>
         </Tooltip>
       </Stack>
@@ -59,7 +107,16 @@ export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustP
           size="small"
           variant="outlined"
           onClick={onMustPass}
-          startIcon={<Iconify icon={allMustPass ? "solar:shield-check-bold" : "solar:shield-check-linear"} width={14} />}
+          startIcon={
+            <Iconify
+              icon={
+                allMustPass
+                  ? "solar:shield-check-bold"
+                  : "solar:shield-check-linear"
+              }
+              width={14}
+            />
+          }
           sx={BTN_SX}
         >
           {allMustPass ? "Remove must-pass" : "Must-pass"}
@@ -67,13 +124,25 @@ export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustP
       )}
       {/* Edit and Delete as icons — the bar keeps room for the run. */}
       {onEdit && (
-        <Tooltip arrow title={`Edit ${count === 1 ? "it" : `these ${count}`} in chat`}>
-          <Button size="small" variant="outlined" onClick={onEdit} aria-label="Edit in chat" sx={{ ...BTN_SX, ...ICON_BTN_SX }}>
-            <Iconify icon="solar:pen-new-square-linear" width={15} />
+        <Tooltip
+          arrow
+          title={`Edit ${count === 1 ? "it" : `these ${count}`} in chat`}
+        >
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onEdit}
+            aria-label="Edit in chat"
+            sx={{ ...BTN_SX, ...ICON_BTN_SX }}
+          >
+            <Iconify icon="solar:pen-new-square-linear" width={16} />
           </Button>
         </Tooltip>
       )}
-      <Tooltip arrow title={`Delete ${count === 1 ? "this scenario" : `${count} scenarios`}`}>
+      <Tooltip
+        arrow
+        title={`Delete ${count === 1 ? "this scenario" : `${count} scenarios`}`}
+      >
         <Button
           size="small"
           variant="outlined"
@@ -86,11 +155,15 @@ export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustP
             borderColor: (t) => alpha(t.palette.error.main, 0.4),
             "&:hover": {
               borderColor: "error.main",
-              bgcolor: (t) => alpha(t.palette.error.main, t.palette.mode === "dark" ? 0.1 : 0.05),
+              bgcolor: (t) =>
+                alpha(
+                  t.palette.error.main,
+                  t.palette.mode === "dark" ? 0.1 : 0.05,
+                ),
             },
           }}
         >
-          <Iconify icon="solar:trash-bin-trash-linear" width={15} />
+          <Iconify icon="solar:trash-bin-trash-linear" width={16} />
         </Button>
       </Tooltip>
 
@@ -98,9 +171,27 @@ export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustP
           header's own run controls step aside, so there's one Run. */}
       {run && (
         <>
-          <Box sx={{ width: "1px", alignSelf: "stretch", my: 0.5, mx: 0.5, bgcolor: "divider", flexShrink: 0 }} />
-          <TrialsPicker trials={run.repeats} onChange={run.onRepeats} scenarioCount={count} unit={run.unit || "conversation"} />
-          <Tooltip arrow title={run.disabledReason || ""} disableHoverListener={!run.disabledReason}>
+          <Box
+            sx={{
+              width: "1px",
+              alignSelf: "stretch",
+              my: 0.5,
+              mx: 0.5,
+              bgcolor: "divider",
+              flexShrink: 0,
+            }}
+          />
+          <TrialsPicker
+            trials={run.repeats}
+            onChange={run.onRepeats}
+            scenarioCount={count}
+            unit={run.unit || "conversation"}
+          />
+          <Tooltip
+            arrow
+            title={run.disabledReason || ""}
+            disableHoverListener={!run.disabledReason}
+          >
             <span>
               <Button
                 size="small"
@@ -109,7 +200,7 @@ export default function SelectionBar({ count, onEdit, onDelete, onClear, onMustP
                 disabled={!!run.disabledReason}
                 onClick={run.onRun}
                 startIcon={<Iconify icon="solar:play-bold" width={14} />}
-                sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {`Run simulation (${count})`}
               </Button>

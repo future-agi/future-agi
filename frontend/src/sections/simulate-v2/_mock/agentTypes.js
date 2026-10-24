@@ -45,7 +45,12 @@ export const AGENT_TYPES = [
     color: "#7857FC",
     surfaces: ["voice"],
     direction: "both",
-    handshake: ["Validating API key", "Fetching agent roster", "Reserving a test number", "Placing a silent probe call"],
+    handshake: [
+      "Validating API key",
+      "Fetching agent roster",
+      "Reserving a test number",
+      "Placing a silent probe call",
+    ],
     fields: [
       {
         key: "provider",
@@ -61,7 +66,13 @@ export const AGENT_TYPES = [
           { value: "other", label: "Other / custom" },
         ],
       },
-      { key: "apiKey", label: "API key", type: FIELD.SECRET, required: true, placeholder: "sk_live_…" },
+      {
+        key: "apiKey",
+        label: "API key",
+        type: FIELD.SECRET,
+        required: true,
+        placeholder: "sk_live_…",
+      },
       /*
         Providers disagree on the noun: Vapi has assistants, Retell and
         ElevenLabs have agents, Bland has pathways. Whichever they picked, the
@@ -91,8 +102,16 @@ export const AGENT_TYPES = [
         type: FIELD.RADIO_CARD,
         required: true,
         options: [
-          { value: "inbound", label: "Inbound", desc: "Your agent answers the number we issue." },
-          { value: "outbound", label: "Outbound", desc: "Your agent dials our simulated customer." },
+          {
+            value: "inbound",
+            label: "Inbound",
+            desc: "Your agent answers the number we issue.",
+          },
+          {
+            value: "outbound",
+            label: "Outbound",
+            desc: "Your agent dials our simulated customer.",
+          },
         ],
       },
     ],
@@ -106,9 +125,20 @@ export const AGENT_TYPES = [
     color: "#6D28D9",
     surfaces: ["voice"],
     direction: "inbound",
-    handshake: ["Resolving SIP host", "Registering", "Negotiating codec (opus)", "Sending OPTIONS ping"],
+    handshake: [
+      "Resolving SIP host",
+      "Registering",
+      "Negotiating codec (opus)",
+      "Sending OPTIONS ping",
+    ],
     fields: [
-      { key: "sipUri", label: "SIP URI", type: FIELD.TEXT, required: true, placeholder: "sip:agent@your-trunk.com" },
+      {
+        key: "sipUri",
+        label: "SIP URI",
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: "sip:agent@your-trunk.com",
+      },
       /*
         Digest auth is opt-in. Most production trunks use IP allowlisting
         or embed credentials directly in the SIP URI, so making
@@ -122,11 +152,28 @@ export const AGENT_TYPES = [
         default: false,
         help: "Turn on if your SIP trunk authenticates with a username + password. Leave off for IP-allowlisted trunks or trunks that embed credentials in the URI.",
       },
-      { key: "username", label: "Username", type: FIELD.TEXT, dependsOn: { key: "needsAuth", eq: true } },
-      { key: "password", label: "Password", type: FIELD.SECRET, dependsOn: { key: "needsAuth", eq: true } },
-      { key: "codec", label: "Preferred codec", type: FIELD.SELECT, options: [
-        { value: "opus", label: "Opus" }, { value: "pcmu", label: "PCMU (G.711µ)" }, { value: "pcma", label: "PCMA (G.711a)" },
-      ] },
+      {
+        key: "username",
+        label: "Username",
+        type: FIELD.TEXT,
+        dependsOn: { key: "needsAuth", eq: true },
+      },
+      {
+        key: "password",
+        label: "Password",
+        type: FIELD.SECRET,
+        dependsOn: { key: "needsAuth", eq: true },
+      },
+      {
+        key: "codec",
+        label: "Preferred codec",
+        type: FIELD.SELECT,
+        options: [
+          { value: "opus", label: "Opus" },
+          { value: "pcmu", label: "PCMU (G.711µ)" },
+          { value: "pcma", label: "PCMA (G.711a)" },
+        ],
+      },
     ],
   },
 
@@ -140,36 +187,99 @@ export const AGENT_TYPES = [
     color: "#2563EB",
     surfaces: ["chat", "messaging"],
     direction: "outbound",
-    handshake: ["Resolving endpoint", "Checking auth", "Sending probe message", "Mapping response shape"],
+    handshake: [
+      "Resolving endpoint",
+      "Checking auth",
+      "Sending probe message",
+      "Mapping response shape",
+    ],
     fields: [
-      { key: "endpoint", label: "Endpoint URL", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/agent/chat" },
-      { key: "auth", label: "Authentication", type: FIELD.SELECT, required: true, defaultValue: "none", options: [
-        { value: "none", label: "No auth" },
-        { value: "bearer", label: "Bearer token" }, { value: "apikey", label: "API key header" },
-        { value: "basic", label: "Basic auth" },
-      ] },
-      { key: "token", label: "Token", type: FIELD.SECRET, dependsOn: { key: "auth", not: "none" } },
+      {
+        key: "endpoint",
+        label: "Endpoint URL",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "https://api.yourapp.com/agent/chat",
+      },
+      {
+        key: "auth",
+        label: "Authentication",
+        type: FIELD.SELECT,
+        required: true,
+        defaultValue: "none",
+        options: [
+          { value: "none", label: "No auth" },
+          { value: "bearer", label: "Bearer token" },
+          { value: "apikey", label: "API key header" },
+          { value: "basic", label: "Basic auth" },
+        ],
+      },
+      {
+        key: "token",
+        label: "Token",
+        type: FIELD.SECRET,
+        dependsOn: { key: "auth", not: "none" },
+      },
       { key: "headers", label: "Extra headers", type: FIELD.KEYVALUE },
-      { key: "messagePath", label: "Reply JSON path", type: FIELD.TEXT, placeholder: "$.choices[0].message.content", help: "Where the reply text lives in your response." },
-      { key: "sessionPath", label: "Session ID path", type: FIELD.TEXT, placeholder: "$.session_id", help: "Lets us keep multi-turn state." },
-      { key: "streaming", label: "Response is streamed (SSE)", type: FIELD.SWITCH },
+      {
+        key: "messagePath",
+        label: "Reply JSON path",
+        type: FIELD.TEXT,
+        placeholder: "$.choices[0].message.content",
+        help: "Where the reply text lives in your response.",
+      },
+      {
+        key: "sessionPath",
+        label: "Session ID path",
+        type: FIELD.TEXT,
+        placeholder: "$.session_id",
+        help: "Lets us keep multi-turn state.",
+      },
+      {
+        key: "streaming",
+        label: "Response is streamed (SSE)",
+        type: FIELD.SWITCH,
+      },
     ],
   },
   {
     id: "chat_openai",
     group: "Voice & chat",
     label: "OpenAI-compatible endpoint",
-    blurb: "Anything speaking /v1/chat/completions — vLLM, Ollama, Together, your gateway.",
+    blurb:
+      "Anything speaking /v1/chat/completions — vLLM, Ollama, Together, your gateway.",
     icon: "solar:widget-add-linear",
     color: "#0EA5E9",
     surfaces: ["chat", "api"],
     direction: "outbound",
-    handshake: ["Reaching /v1/models", "Confirming model id", "Probing a completion", "Checking tool-call support"],
+    handshake: [
+      "Reaching /v1/models",
+      "Confirming model id",
+      "Probing a completion",
+      "Checking tool-call support",
+    ],
     fields: [
-      { key: "baseUrl", label: "Base URL", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/v1" },
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "https://api.yourapp.com/v1",
+      },
       { key: "apiKey", label: "API key", type: FIELD.SECRET, required: true },
-      { key: "model", label: "Model", type: FIELD.TEXT, required: true, placeholder: "my-support-agent-v3" },
-      { key: "systemPrompt", label: "System prompt override", type: FIELD.TEXTAREA, help: "Optional. Leave blank to use whatever your endpoint already does." },
+      {
+        key: "model",
+        label: "Model",
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: "my-support-agent-v3",
+      },
+      {
+        key: "systemPrompt",
+        label: "System prompt override",
+        type: FIELD.TEXTAREA,
+        help: "Optional. Leave blank to use whatever your endpoint already does.",
+      },
     ],
   },
 
@@ -189,7 +299,8 @@ export const AGENT_TYPES = [
     id: "twin_backed",
     group: "Service clones",
     label: "Clone-backed agent",
-    blurb: "Your agent talks to a live sandbox of Slack, Notion, Salesforce, etc. We spin it up per run.",
+    blurb:
+      "Your agent talks to a live sandbox of Slack, Notion, Salesforce, etc. We spin it up per run.",
     icon: "solar:server-square-linear",
     color: "#7857FC",
     surfaces: ["chat", "messaging", "email", "sim", "tools"],
@@ -201,10 +312,30 @@ export const AGENT_TYPES = [
       "Streaming first probe",
     ],
     fields: [
-      { key: "sdkEndpoint", label: "Agent SDK endpoint", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/agent/step" },
-      { key: "authToken", label: "Auth token", type: FIELD.SECRET, help: "Optional — only needed if your agent endpoint requires an Authorization header." },
-      { key: "identityMap", label: "Service credentials map", type: FIELD.KEYVALUE, help: "How your agent should authenticate against each twinned service. Keys are the service ids, values are secret refs." },
-      { key: "resetBetween", label: "Reset sandbox between runs", type: FIELD.SWITCH },
+      {
+        key: "sdkEndpoint",
+        label: "Agent SDK endpoint",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "https://api.yourapp.com/agent/step",
+      },
+      {
+        key: "authToken",
+        label: "Auth token",
+        type: FIELD.SECRET,
+        help: "Optional — only needed if your agent endpoint requires an Authorization header.",
+      },
+      {
+        key: "identityMap",
+        label: "Service credentials map",
+        type: FIELD.KEYVALUE,
+        help: "How your agent should authenticate against each twinned service. Keys are the service ids, values are secret refs.",
+      },
+      {
+        key: "resetBetween",
+        label: "Reset sandbox between runs",
+        type: FIELD.SWITCH,
+      },
     ],
   },
 
@@ -213,25 +344,51 @@ export const AGENT_TYPES = [
     id: "browser_agent",
     group: "Computer use",
     label: "Browser agent",
-    blurb: "Your agent drives a browser we host. Full screen recording of every step.",
+    blurb:
+      "Your agent drives a browser we host. Full screen recording of every step.",
     icon: "solar:monitor-smartphone-linear",
     color: "#EA580C",
     surfaces: ["browser"],
     direction: "inbound",
-    handshake: ["Booting sandbox VM", "Starting Chromium", "Opening CDP socket", "Streaming first frame"],
+    handshake: [
+      "Booting sandbox VM",
+      "Starting Chromium",
+      "Opening CDP socket",
+      "Streaming first frame",
+    ],
     issues: ["cdp", "token"],
     fields: [
-      { key: "framework", label: "Framework", type: FIELD.SELECT, required: true, options: [
-        { value: "playwright", label: "Playwright" }, { value: "puppeteer", label: "Puppeteer" },
-        { value: "browser_use", label: "browser-use" }, { value: "stagehand", label: "Stagehand" },
-        { value: "cua", label: "OpenAI computer-use" }, { value: "claude_cu", label: "Claude computer-use" },
-        { value: "custom", label: "Custom / raw CDP" },
-      ] },
-      { key: "viewport", label: "Viewport", type: FIELD.SELECT, options: [
-        { value: "1280x800", label: "1280 × 800 (desktop)" }, { value: "1920x1080", label: "1920 × 1080 (desktop HD)" },
-        { value: "390x844", label: "390 × 844 (mobile)" },
-      ] },
-      { key: "recordVideo", label: "Record video of every task", type: FIELD.SWITCH, default: true },
+      {
+        key: "framework",
+        label: "Framework",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "playwright", label: "Playwright" },
+          { value: "puppeteer", label: "Puppeteer" },
+          { value: "browser_use", label: "browser-use" },
+          { value: "stagehand", label: "Stagehand" },
+          { value: "cua", label: "OpenAI computer-use" },
+          { value: "claude_cu", label: "Claude computer-use" },
+          { value: "custom", label: "Custom / raw CDP" },
+        ],
+      },
+      {
+        key: "viewport",
+        label: "Viewport",
+        type: FIELD.SELECT,
+        options: [
+          { value: "1280x800", label: "1280 × 800 (desktop)" },
+          { value: "1920x1080", label: "1920 × 1080 (desktop HD)" },
+          { value: "390x844", label: "390 × 844 (mobile)" },
+        ],
+      },
+      {
+        key: "recordVideo",
+        label: "Record video of every task",
+        type: FIELD.SWITCH,
+        default: true,
+      },
     ],
   },
   {
@@ -243,15 +400,39 @@ export const AGENT_TYPES = [
     color: "#B45309",
     surfaces: ["browser"],
     direction: "inbound",
-    handshake: ["Provisioning desktop VM", "Installing seed apps", "Starting VNC", "Streaming first frame"],
+    handshake: [
+      "Provisioning desktop VM",
+      "Installing seed apps",
+      "Starting VNC",
+      "Streaming first frame",
+    ],
     fields: [
-      { key: "os", label: "Operating system", type: FIELD.SELECT, required: true, options: [
-        { value: "ubuntu", label: "Ubuntu 24.04" }, { value: "windows", label: "Windows 11" }, { value: "macos", label: "macOS" },
-      ] },
-      { key: "apps", label: "Pre-installed apps", type: FIELD.TEXT, placeholder: "libreoffice, firefox, thunderbird" },
-      { key: "resolution", label: "Resolution", type: FIELD.SELECT, options: [
-        { value: "1280x800", label: "1280 × 800" }, { value: "1920x1080", label: "1920 × 1080" },
-      ] },
+      {
+        key: "os",
+        label: "Operating system",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "ubuntu", label: "Ubuntu 24.04" },
+          { value: "windows", label: "Windows 11" },
+          { value: "macos", label: "macOS" },
+        ],
+      },
+      {
+        key: "apps",
+        label: "Pre-installed apps",
+        type: FIELD.TEXT,
+        placeholder: "libreoffice, firefox, thunderbird",
+      },
+      {
+        key: "resolution",
+        label: "Resolution",
+        type: FIELD.SELECT,
+        options: [
+          { value: "1280x800", label: "1280 × 800" },
+          { value: "1920x1080", label: "1920 × 1080" },
+        ],
+      },
     ],
   },
 
@@ -260,18 +441,42 @@ export const AGENT_TYPES = [
     id: "mcp_agent",
     group: "Tools & protocol",
     label: "MCP agent",
-    blurb: "We publish the environment as MCP tools; your agent connects and acts.",
-    icon: "mdi:transit-connection-variant",
+    blurb:
+      "We publish the environment as MCP tools; your agent connects and acts.",
+    icon: "solar:routing-2-linear",
     color: "#DB2777",
     surfaces: ["mcp", "api"],
     direction: "inbound",
-    handshake: ["Publishing tool manifest", "Waiting for client", "Negotiating protocol version", "Listing granted tools"],
+    handshake: [
+      "Publishing tool manifest",
+      "Waiting for client",
+      "Negotiating protocol version",
+      "Listing granted tools",
+    ],
     fields: [
-      { key: "transport", label: "Transport", type: FIELD.SELECT, required: true, options: [
-        { value: "sse", label: "HTTP + SSE" }, { value: "stdio", label: "stdio" }, { value: "ws", label: "WebSocket" },
-      ] },
-      { key: "clientName", label: "Client name", type: FIELD.TEXT, placeholder: "my-agent/1.0" },
-      { key: "toolTimeout", label: "Per-tool timeout (s)", type: FIELD.TEXT, placeholder: "30" },
+      {
+        key: "transport",
+        label: "Transport",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "sse", label: "HTTP + SSE" },
+          { value: "stdio", label: "stdio" },
+          { value: "ws", label: "WebSocket" },
+        ],
+      },
+      {
+        key: "clientName",
+        label: "Client name",
+        type: FIELD.TEXT,
+        placeholder: "my-agent/1.0",
+      },
+      {
+        key: "toolTimeout",
+        label: "Per-tool timeout (s)",
+        type: FIELD.TEXT,
+        placeholder: "30",
+      },
     ],
   },
   {
@@ -280,22 +485,70 @@ export const AGENT_TYPES = [
     label: "API / workflow agent",
     blurb: "Task in, result out. Good for batch, RAG and back-office agents.",
     icon: "solar:code-square-linear",
-    color: "#9333EA",
+    color: "#7857FC",
     surfaces: ["api"],
     direction: "outbound",
-    handshake: ["Resolving endpoint", "Checking auth", "Submitting probe task", "Polling for result"],
+    handshake: [
+      "Resolving endpoint",
+      "Checking auth",
+      "Submitting probe task",
+      "Polling for result",
+    ],
     fields: [
-      { key: "endpoint", label: "Task endpoint", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/tasks" },
-      { key: "method", label: "Method", type: FIELD.SELECT, options: [{ value: "POST", label: "POST" }, { value: "PUT", label: "PUT" }] },
-      { key: "auth", label: "Authentication", type: FIELD.SELECT, options: [
-        { value: "bearer", label: "Bearer token" }, { value: "apikey", label: "API key header" }, { value: "none", label: "No auth" },
-      ] },
-      { key: "token", label: "Token", type: FIELD.SECRET, dependsOn: { key: "auth", not: "none" } },
-      { key: "mode", label: "Result delivery", type: FIELD.RADIO_CARD, options: [
-        { value: "sync", label: "Synchronous", desc: "Result comes back in the response body." },
-        { value: "poll", label: "Poll for result", desc: "We poll a status URL until it settles." },
-        { value: "callback", label: "Callback", desc: "You POST back to a URL we issue." },
-      ] },
+      {
+        key: "endpoint",
+        label: "Task endpoint",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "https://api.yourapp.com/tasks",
+      },
+      {
+        key: "method",
+        label: "Method",
+        type: FIELD.SELECT,
+        options: [
+          { value: "POST", label: "POST" },
+          { value: "PUT", label: "PUT" },
+        ],
+      },
+      {
+        key: "auth",
+        label: "Authentication",
+        type: FIELD.SELECT,
+        options: [
+          { value: "bearer", label: "Bearer token" },
+          { value: "apikey", label: "API key header" },
+          { value: "none", label: "No auth" },
+        ],
+      },
+      {
+        key: "token",
+        label: "Token",
+        type: FIELD.SECRET,
+        dependsOn: { key: "auth", not: "none" },
+      },
+      {
+        key: "mode",
+        label: "Result delivery",
+        type: FIELD.RADIO_CARD,
+        options: [
+          {
+            value: "sync",
+            label: "Synchronous",
+            desc: "Result comes back in the response body.",
+          },
+          {
+            value: "poll",
+            label: "Poll for result",
+            desc: "We poll a status URL until it settles.",
+          },
+          {
+            value: "callback",
+            label: "Callback",
+            desc: "You POST back to a URL we issue.",
+          },
+        ],
+      },
     ],
   },
 
@@ -304,40 +557,99 @@ export const AGENT_TYPES = [
     id: "coding_agent",
     group: "Code",
     label: "Coding agent (CLI)",
-    blurb: "Runs in a container with a seeded repo. We watch commands and diffs.",
+    blurb:
+      "Runs in a container with a seeded repo. We watch commands and diffs.",
     icon: "solar:command-linear",
     color: "#525252",
     surfaces: ["cli"],
     direction: "inbound",
-    handshake: ["Building container image", "Cloning seed repo", "Installing dependencies", "Attaching to pty"],
+    handshake: [
+      "Building container image",
+      "Cloning seed repo",
+      "Installing dependencies",
+      "Attaching to pty",
+    ],
     fields: [
-      { key: "runtime", label: "Runtime", type: FIELD.SELECT, required: true, options: [
-        { value: "docker", label: "Docker image" }, { value: "e2b", label: "E2B sandbox" }, { value: "ssh", label: "Your own host (SSH)" },
-      ] },
-      { key: "image", label: "Image / template", type: FIELD.TEXT, required: true, placeholder: "ghcr.io/acme/agent:latest" },
-      { key: "command", label: "Entry command", type: FIELD.TEXT, required: true, placeholder: "my-agent --task \"$FAGI_TASK\"" },
+      {
+        key: "runtime",
+        label: "Runtime",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "docker", label: "Docker image" },
+          { value: "e2b", label: "E2B sandbox" },
+          { value: "ssh", label: "Your own host (SSH)" },
+        ],
+      },
+      {
+        key: "image",
+        label: "Image / template",
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: "ghcr.io/acme/agent:latest",
+      },
+      {
+        key: "command",
+        label: "Entry command",
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: 'my-agent --task "$FAGI_TASK"',
+      },
       { key: "env", label: "Environment variables", type: FIELD.KEYVALUE },
-      { key: "network", label: "Allow outbound network", type: FIELD.SWITCH, default: true },
+      {
+        key: "network",
+        label: "Allow outbound network",
+        type: FIELD.SWITCH,
+        default: true,
+      },
     ],
   },
   {
     id: "framework_agent",
     group: "Code",
     label: "Framework agent (SDK)",
-    blurb: "LangGraph, CrewAI, OpenAI Agents SDK, Google ADK — traced via our SDK.",
+    blurb:
+      "LangGraph, CrewAI, OpenAI Agents SDK, Google ADK — traced via our SDK.",
     icon: "solar:atom-linear",
     color: "#0D9488",
     surfaces: ["api", "mcp", "chat"],
     direction: "inbound",
-    handshake: ["Issuing project token", "Waiting for first span", "Verifying trace schema", "Linking to environment"],
+    handshake: [
+      "Issuing project token",
+      "Waiting for first span",
+      "Verifying trace schema",
+      "Linking to environment",
+    ],
     fields: [
-      { key: "framework", label: "Framework", type: FIELD.SELECT, required: true, options: [
-        { value: "langgraph", label: "LangGraph" }, { value: "crewai", label: "CrewAI" },
-        { value: "openai_agents", label: "OpenAI Agents SDK" }, { value: "adk", label: "Google ADK" },
-        { value: "autogen", label: "AutoGen" }, { value: "custom", label: "Custom (OTel)" },
-      ] },
-      { key: "language", label: "Language", type: FIELD.SELECT, options: [{ value: "python", label: "Python" }, { value: "ts", label: "TypeScript" }] },
-      { key: "entrypoint", label: "Graph / crew entrypoint", type: FIELD.TEXT, placeholder: "app.graph:support_agent" },
+      {
+        key: "framework",
+        label: "Framework",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "langgraph", label: "LangGraph" },
+          { value: "crewai", label: "CrewAI" },
+          { value: "openai_agents", label: "OpenAI Agents SDK" },
+          { value: "adk", label: "Google ADK" },
+          { value: "autogen", label: "AutoGen" },
+          { value: "custom", label: "Custom (OTel)" },
+        ],
+      },
+      {
+        key: "language",
+        label: "Language",
+        type: FIELD.SELECT,
+        options: [
+          { value: "python", label: "Python" },
+          { value: "ts", label: "TypeScript" },
+        ],
+      },
+      {
+        key: "entrypoint",
+        label: "Graph / crew entrypoint",
+        type: FIELD.TEXT,
+        placeholder: "app.graph:support_agent",
+      },
     ],
   },
 
@@ -346,41 +658,112 @@ export const AGENT_TYPES = [
     id: "sim_agent",
     group: "Robotics",
     label: "Embodied / policy agent",
-    blurb: "Acts in a stepped physics world. Scored on reward, not conversation.",
+    blurb:
+      "Acts in a stepped physics world. Scored on reward, not conversation.",
     icon: "solar:cpu-bolt-linear",
-    color: "#8B5CF6",
+    color: "#7857FC",
     surfaces: ["sim"],
     direction: "inbound",
-    handshake: ["Starting physics engine", "Loading scene assets", "Opening step channel", "Sending first observation"],
+    handshake: [
+      "Starting physics engine",
+      "Loading scene assets",
+      "Opening step channel",
+      "Sending first observation",
+    ],
     fields: [
-      { key: "engine", label: "Simulator", type: FIELD.SELECT, required: true, options: [
-        { value: "mujoco", label: "MuJoCo" }, { value: "newton", label: "Newton physics" },
-        { value: "isaac", label: "Isaac Sim" }, { value: "pybullet", label: "PyBullet" },
-      ] },
-      { key: "policy", label: "Policy endpoint", type: FIELD.URL, required: true, placeholder: "http://localhost:8080/act", help: "We POST an observation and expect an action back." },
-      { key: "controlHz", label: "Control rate (Hz)", type: FIELD.TEXT, placeholder: "20" },
-      { key: "maxSteps", label: "Max steps per episode", type: FIELD.TEXT, placeholder: "500" },
-      { key: "recordVideo", label: "Record video of every episode", type: FIELD.SWITCH, default: true },
+      {
+        key: "engine",
+        label: "Simulator",
+        type: FIELD.SELECT,
+        required: true,
+        options: [
+          { value: "mujoco", label: "MuJoCo" },
+          { value: "newton", label: "Newton physics" },
+          { value: "isaac", label: "Isaac Sim" },
+          { value: "pybullet", label: "PyBullet" },
+        ],
+      },
+      {
+        key: "policy",
+        label: "Policy endpoint",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "http://localhost:8080/act",
+        help: "We POST an observation and expect an action back.",
+      },
+      {
+        key: "controlHz",
+        label: "Control rate (Hz)",
+        type: FIELD.TEXT,
+        placeholder: "20",
+      },
+      {
+        key: "maxSteps",
+        label: "Max steps per episode",
+        type: FIELD.TEXT,
+        placeholder: "500",
+      },
+      {
+        key: "recordVideo",
+        label: "Record video of every episode",
+        type: FIELD.SWITCH,
+        default: true,
+      },
     ],
   },
   {
     id: "game_agent",
     group: "Games & worldsims",
     label: "Game-playing agent",
-    blurb: "Sees frames, presses buttons. For emulators and interactive worlds.",
+    blurb:
+      "Sees frames, presses buttons. For emulators and interactive worlds.",
     icon: "solar:gamepad-linear",
     color: "#C026D3",
     surfaces: ["sim"],
     direction: "inbound",
-    handshake: ["Booting emulator", "Loading ROM / level", "Attaching frame capture", "Streaming first frame"],
+    handshake: [
+      "Booting emulator",
+      "Loading ROM / level",
+      "Attaching frame capture",
+      "Streaming first frame",
+    ],
     fields: [
-      { key: "observation", label: "Observation type", type: FIELD.RADIO_CARD, required: true, options: [
-        { value: "pixels", label: "Pixels", desc: "Raw frames, as a human would see them." },
-        { value: "symbolic", label: "Symbolic", desc: "Structured game state instead of an image." },
-      ] },
-      { key: "policy", label: "Policy endpoint", type: FIELD.URL, required: true, placeholder: "http://localhost:8080/act" },
-      { key: "frameSkip", label: "Frame skip", type: FIELD.TEXT, placeholder: "4" },
-      { key: "allowSaveStates", label: "Allow save states", type: FIELD.SWITCH },
+      {
+        key: "observation",
+        label: "Observation type",
+        type: FIELD.RADIO_CARD,
+        required: true,
+        options: [
+          {
+            value: "pixels",
+            label: "Pixels",
+            desc: "Raw frames, as a human would see them.",
+          },
+          {
+            value: "symbolic",
+            label: "Symbolic",
+            desc: "Structured game state instead of an image.",
+          },
+        ],
+      },
+      {
+        key: "policy",
+        label: "Policy endpoint",
+        type: FIELD.URL,
+        required: true,
+        placeholder: "http://localhost:8080/act",
+      },
+      {
+        key: "frameSkip",
+        label: "Frame skip",
+        type: FIELD.TEXT,
+        placeholder: "4",
+      },
+      {
+        key: "allowSaveStates",
+        label: "Allow save states",
+        type: FIELD.SWITCH,
+      },
     ],
   },
 
@@ -394,15 +777,49 @@ export const AGENT_TYPES = [
     color: "#CA8A04",
     surfaces: ["multi", "api", "chat"],
     direction: "inbound",
-    handshake: ["Issuing project token", "Discovering agent graph", "Mapping handoff edges", "Verifying trace schema"],
+    handshake: [
+      "Issuing project token",
+      "Discovering agent graph",
+      "Mapping handoff edges",
+      "Verifying trace schema",
+    ],
     fields: [
-      { key: "topology", label: "Topology", type: FIELD.RADIO_CARD, required: true, options: [
-        { value: "supervisor", label: "Supervisor", desc: "One router delegates to specialists." },
-        { value: "swarm", label: "Swarm", desc: "Peers hand off to each other freely." },
-        { value: "pipeline", label: "Pipeline", desc: "Fixed sequence of stages." },
-      ] },
-      { key: "entrypoint", label: "Entry agent", type: FIELD.TEXT, required: true, placeholder: "supervisor" },
-      { key: "scoreHandoffs", label: "Evaluate handoff quality", type: FIELD.SWITCH, default: true },
+      {
+        key: "topology",
+        label: "Topology",
+        type: FIELD.RADIO_CARD,
+        required: true,
+        options: [
+          {
+            value: "supervisor",
+            label: "Supervisor",
+            desc: "One router delegates to specialists.",
+          },
+          {
+            value: "swarm",
+            label: "Swarm",
+            desc: "Peers hand off to each other freely.",
+          },
+          {
+            value: "pipeline",
+            label: "Pipeline",
+            desc: "Fixed sequence of stages.",
+          },
+        ],
+      },
+      {
+        key: "entrypoint",
+        label: "Entry agent",
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: "supervisor",
+      },
+      {
+        key: "scoreHandoffs",
+        label: "Evaluate handoff quality",
+        type: FIELD.SWITCH,
+        default: true,
+      },
     ],
   },
 ];
@@ -448,12 +865,18 @@ export const agentTypesForSurface = (surfaceId) => {
  * would give it nothing to answer.
  */
 export const MCP_GROUPS = [
-  "Computer use", "Robotics", "Games & worldsims", "Tools & protocol", "Code", "Composite",
+  "Computer use",
+  "Robotics",
+  "Games & worldsims",
+  "Tools & protocol",
+  "Code",
+  "Composite",
 ];
 
 export const supportsMcp = (type) => !!type && MCP_GROUPS.includes(type.group);
 
-const slugFor = (env) => (env?.name || "environment").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+const slugFor = (env) =>
+  (env?.name || "environment").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
 /**
  * The config a user pastes into their MCP client.
@@ -471,7 +894,11 @@ export const mcpConfig = (env, { scenarioScoped = true } = {}) => {
     ...(scenarioScoped ? { "Scenario-Id": "<SCENARIO_ID>" } : {}),
   };
   return JSON.stringify(
-    { mcpServers: { [slug]: { url: "https://sim.futureagi.com/v1/mcp", headers } } },
+    {
+      mcpServers: {
+        [slug]: { url: "https://sim.futureagi.com/v1/mcp", headers },
+      },
+    },
     null,
     2,
   );

@@ -1,6 +1,9 @@
 import PropTypes from "prop-types";
 import { Drawer } from "@mui/material";
-import { COVERED_DRAWER_SX, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import {
+  COVERED_DRAWER_SX,
+  useDrawerCovered,
+} from "src/hooks/use-drawer-stack";
 
 /**
  * The side drawer, matching the ones in Datasets.
@@ -25,7 +28,14 @@ import { COVERED_DRAWER_SX, useDrawerCovered } from "src/hooks/use-drawer-stack"
  * One drawer on screen at a time: one opened from inside this one hides it
  * until it closes (src/hooks/use-drawer-stack).
  */
-export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, persistent = false, children }) {
+export default function SideDrawer({
+  open,
+  onClose,
+  width = 480,
+  keepMounted = false,
+  persistent = false,
+  children,
+}) {
   const covered = useDrawerCovered(open);
   return (
     <Drawer
@@ -42,10 +52,9 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           backgroundImage: "none",
-          boxShadow: "-10px 0px 100px #00000035",
         },
         ...(covered && COVERED_DRAWER_SX),
       }}
@@ -62,7 +71,11 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
 SideDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
-  width: PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.object]),
+  width: PropTypes.oneOfType([
+    PropTypes.number,
+    PropTypes.string,
+    PropTypes.object,
+  ]),
   keepMounted: PropTypes.bool,
   persistent: PropTypes.bool,
   children: PropTypes.node,

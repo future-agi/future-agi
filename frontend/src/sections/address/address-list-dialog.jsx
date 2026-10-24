@@ -108,7 +108,13 @@ export default function AddressListDialog({
   );
 
   return (
-    <Dialog fullWidth maxWidth="xs" open={open} onClose={onClose}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 560 } }}
+      open={open}
+      onClose={onClose}
+    >
       <Stack
         direction="row"
         alignItems="center"
@@ -129,7 +135,8 @@ export default function AddressListDialog({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </InputAdornment>

@@ -23,6 +23,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
@@ -35,35 +36,60 @@ import { DEFAULT_DECIMALS, formatValueWithConfig } from "./widgetUtils";
 export const AXIS_LABEL_MAX_LENGTH = 50;
 
 export const CHART_TYPES = [
-  { label: "Line", value: "line", icon: "mdi:chart-line", group: "line" },
+  {
+    label: "Line",
+    value: "line",
+    icon: "solar:graph-up-linear",
+    group: "line",
+  },
   {
     label: "Stacked Line",
     value: "stacked_line",
-    icon: "mdi:chart-line-stacked",
+    icon: "solar:graph-up-linear",
     group: "line",
   },
-  { label: "Column", value: "column", icon: "mdi:chart-bar", group: "column" },
+  {
+    label: "Column",
+    value: "column",
+    icon: "solar:chart-2-linear",
+    group: "column",
+  },
   {
     label: "Stacked Column",
     value: "stacked_column",
-    icon: "mdi:chart-bar-stacked",
+    icon: "solar:chart-2-linear",
     group: "column",
   },
   {
     label: "Bar",
     value: "bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
   {
     label: "Stacked Bar",
     value: "stacked_bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
-  { label: "Pie", value: "pie", icon: "mdi:chart-pie", group: "other" },
-  { label: "Table", value: "table", icon: "mdi:table", group: "other" },
-  { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
+  {
+    label: "Pie",
+    value: "pie",
+    icon: "solar:pie-chart-2-linear",
+    group: "other",
+  },
+  {
+    label: "Table",
+    value: "table",
+    icon: "solar:table-linear",
+    group: "other",
+  },
+  {
+    label: "Metric",
+    value: "metric",
+    icon: "solar:hashtag-linear",
+    group: "other",
+  },
 ];
 
 export const UNIT_PRESETS = [
@@ -87,23 +113,33 @@ export const DATASET_EXTRA_AGGREGATIONS = [
 ];
 
 export const METRIC_TYPE_ICONS = {
-  system: "mdi:cog-outline",
-  eval_metric: "mdi:check-circle-outline",
-  annotation: "mdi:format-quote-close",
-  custom_attribute: "mdi:tune-variant",
-  custom_column: "mdi:table-column",
+  system: "solar:settings-linear",
+  eval_metric: "solar:check-circle-linear",
+  annotation: "solar:quote-linear",
+  custom_attribute: "solar:tuning-2-linear",
+  custom_column: "solar:columns-3-linear",
 };
 
 export const SERIES_COLORS = [
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#7B56DB", // purple (primary)
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#1ABCFE", // cyan
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#FF6B6B", // coral red
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#2ECB71", // emerald green
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#F7B731", // amber
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#E84393", // magenta pink
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#0984E3", // ocean blue
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#FD7E14", // tangerine orange
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#00CEC9", // teal
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#A29BFE", // lavender
 ];
 
@@ -163,12 +199,7 @@ export function ToggleButtons({ options, value, onChange, theme }) {
               value === opt.value
                 ? theme.palette.text.primary
                 : theme.palette.text.secondary,
-            bgcolor:
-              value === opt.value
-                ? theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "rgba(0,0,0,0.06)"
-                : "transparent",
+            bgcolor: value === opt.value ? "action.selected" : "transparent",
             borderRight:
               i < options.length - 1
                 ? `1px solid ${theme.palette.divider}`
@@ -177,10 +208,7 @@ export function ToggleButtons({ options, value, onChange, theme }) {
             userSelect: "none",
             transition: "all 0.15s",
             "&:hover": {
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.05)"
-                  : "rgba(0,0,0,0.03)",
+              bgcolor: "action.hover",
             },
           }}
         >
@@ -203,7 +231,14 @@ ToggleButtons.propTypes = {
   theme: PropTypes.object.isRequired,
 };
 
-export function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
+export function AxisSection({
+  title,
+  config,
+  onChange,
+  theme,
+  showReset,
+  onReset,
+}) {
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -212,7 +247,7 @@ export function AxisSection({ title, config, onChange, theme, showReset, onReset
         alignItems="center"
         sx={{ mb: 1.5 }}
       >
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography variant="subtitle2" fontWeight={600}>
           {title}
         </Typography>
         {showReset && (
@@ -295,17 +330,11 @@ export function AxisSection({ title, config, onChange, theme, showReset, onReset
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
-            <MenuItem
-              key={opt.value}
-              value={opt.value}
-              sx={{ fontSize: "13px" }}
-            >
+            <MenuItem key={opt.value} value={opt.value}>
               {opt.label}
             </MenuItem>
           ))}
-          <MenuItem value="custom" sx={{ fontSize: "13px" }}>
-            Custom
-          </MenuItem>
+          <MenuItem value="custom">Custom</MenuItem>
         </TextField>
       </Stack>
 
@@ -478,7 +507,6 @@ AxisSection.propTypes = {
 export function AggregationPicker({
   value,
   onChange,
-  theme,
   extraOptions,
   allowedAggregations,
 }) {
@@ -528,9 +556,9 @@ export function AggregationPicker({
         size="small"
         variant="outlined"
         onClick={handleOpen}
-        deleteIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        deleteIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onDelete={handleOpen}
-        sx={{ mt: 1, cursor: "pointer", fontSize: "12px" }}
+        sx={{ mt: 1, cursor: "pointer" }}
       />
       <Popper
         open={open}
@@ -539,15 +567,7 @@ export function AggregationPicker({
         sx={{ zIndex: 1400 }}
       >
         <ClickAwayListener onClickAway={handleClose}>
-          <Paper
-            elevation={8}
-            sx={{
-              minWidth: 180,
-              border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 1,
-              overflow: "hidden",
-            }}
-          >
+          <Paper elevation={8} sx={{ minWidth: 180, overflow: "hidden" }}>
             {!showPercentiles ? (
               <List dense disablePadding>
                 {primaryAggs.map((opt) => (
@@ -607,7 +627,7 @@ export function AggregationPicker({
                         }}
                       />
                       <Iconify
-                        icon="mdi:chevron-right"
+                        icon="solar:alt-arrow-right-linear"
                         width={16}
                         sx={{ color: "text.secondary" }}
                       />
@@ -622,7 +642,7 @@ export function AggregationPicker({
                   sx={{ py: 0.75 }}
                 >
                   <Iconify
-                    icon="mdi:chevron-left"
+                    icon="solar:alt-arrow-left-linear"
                     width={16}
                     sx={{ color: "text.secondary", mr: 0.5 }}
                   />
@@ -711,7 +731,16 @@ export const defaultAxisConfig = () => ({
 
 /* ── Preset pill group (time range / run range) ────────────────────── */
 
-export function PresetPillGroup({ options, value, onSelect, theme, renderLabel, itemRef, isDisabled, titleFor }) {
+export function PresetPillGroup({
+  options,
+  value,
+  onSelect,
+  theme,
+  renderLabel,
+  itemRef,
+  isDisabled,
+  titleFor,
+}) {
   return (
     <Box
       sx={{
@@ -725,49 +754,44 @@ export function PresetPillGroup({ options, value, onSelect, theme, renderLabel, 
       {options.map((p, i) => {
         const disabled = !!isDisabled?.(p.value);
         return (
-        <Box
-          key={p.value}
-          ref={itemRef ? itemRef(p.value) : undefined}
-          onClick={disabled ? undefined : () => onSelect(p.value)}
-          title={titleFor?.(p.value) || undefined}
-          aria-disabled={disabled || undefined}
-          sx={{
-            px: 1.5,
-            py: 0.6,
-            cursor: disabled ? "default" : "pointer",
-            opacity: disabled ? 0.4 : 1,
-            fontSize: "13px",
-            fontWeight: value === p.value ? 600 : 400,
-            color:
-              value === p.value
-                ? theme.palette.text.primary
-                : theme.palette.text.secondary,
-            bgcolor:
-              value === p.value
-                ? theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "rgba(0,0,0,0.06)"
-                : "transparent",
-            borderRight:
-              i < options.length - 1
-                ? `1px solid ${theme.palette.divider}`
-                : "none",
-            whiteSpace: "nowrap",
-            userSelect: "none",
-            transition: "all 0.15s",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            "&:hover": {
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.05)"
-                  : "rgba(0,0,0,0.03)",
-            },
-          }}
-        >
-          {renderLabel ? renderLabel(p) : p.label}
-        </Box>
+          <ButtonBase
+            component="div"
+            key={p.value}
+            ref={itemRef ? itemRef(p.value) : undefined}
+            onClick={disabled ? undefined : () => onSelect(p.value)}
+            title={titleFor?.(p.value) || undefined}
+            aria-disabled={disabled || undefined}
+            sx={{
+              justifyContent: "flex-start",
+              textAlign: "left",
+              px: 1.5,
+              py: 0.6,
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.4 : 1,
+              fontSize: "13px",
+              fontWeight: value === p.value ? 600 : 400,
+              color:
+                value === p.value
+                  ? theme.palette.text.primary
+                  : theme.palette.text.secondary,
+              bgcolor: value === p.value ? "action.selected" : "transparent",
+              borderRight:
+                i < options.length - 1
+                  ? `1px solid ${theme.palette.divider}`
+                  : "none",
+              whiteSpace: "nowrap",
+              userSelect: "none",
+              transition: "all 0.15s",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              "&:hover": {
+                bgcolor: "action.hover",
+              },
+            }}
+          >
+            {renderLabel ? renderLabel(p) : p.label}
+          </ButtonBase>
         );
       })}
     </Box>
@@ -791,13 +815,34 @@ PresetPillGroup.propTypes = {
 /* ── View mode bar on the chart/table splitter ─────────────────────── */
 
 export const VIEW_MODES = [
-  { mode: "table", icon: "mdi:table", height: 0, tip: "Table" },
-  { mode: "split-table", icon: "mdi:page-layout-header", height: 180, tip: "Chart + Table" },
-  { mode: "split-chart", icon: "mdi:page-layout-body", height: 350, tip: "Chart (expanded)" },
-  { mode: "chart", icon: "mdi:chart-line", height: 600, tip: "Chart only" },
+  { mode: "table", icon: "solar:table-linear", height: 0, tip: "Table" },
+  {
+    mode: "split-table",
+    icon: "solar:panel-top-linear",
+    height: 180,
+    tip: "Chart + Table",
+  },
+  {
+    mode: "split-chart",
+    icon: "mdi:page-layout-body",
+    height: 350,
+    tip: "Chart (expanded)",
+  },
+  {
+    mode: "chart",
+    icon: "solar:graph-up-linear",
+    height: 600,
+    tip: "Chart only",
+  },
 ];
 
-export function ViewModeBar({ viewMode, onSelect, onDragStart, isDragging, theme }) {
+export function ViewModeBar({
+  viewMode,
+  onSelect,
+  onDragStart,
+  isDragging,
+  theme,
+}) {
   return (
     <Box
       onMouseDown={onDragStart}
@@ -844,7 +889,6 @@ export function ViewModeBar({ viewMode, onSelect, onDragStart, isDragging, theme
           borderRadius: "8px",
           overflow: "hidden",
           bgcolor: "background.paper",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         }}
       >
         {VIEW_MODES.map(({ mode, icon, height, tip }) => (
@@ -858,19 +902,19 @@ export function ViewModeBar({ viewMode, onSelect, onDragStart, isDragging, theme
               }}
               onMouseDown={(e) => e.stopPropagation()}
               sx={{
-                borderRadius: 0,
-                px: 1.2,
-                py: 0.6,
                 bgcolor: viewMode === mode ? "action.selected" : "transparent",
                 "&:hover": {
-                  bgcolor: viewMode === mode ? "action.selected" : "action.hover",
+                  bgcolor:
+                    viewMode === mode ? "action.selected" : "action.hover",
                 },
               }}
             >
               <Iconify
                 icon={icon}
-                width={18}
-                sx={{ color: viewMode === mode ? "text.primary" : "text.disabled" }}
+                width={20}
+                sx={{
+                  color: viewMode === mode ? "text.primary" : "text.disabled",
+                }}
               />
             </IconButton>
           </Tooltip>
@@ -919,13 +963,13 @@ export function ChartAxisSettings({
     <>
       <Typography
         variant="overline"
-        fontWeight={700}
+        fontWeight={600}
         sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
       >
         AXIS
       </Typography>
       <Box>
-        <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1.5 }}>
+        <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
           Axis Assignment
         </Typography>
         {series.map((s, si) => {
@@ -948,20 +992,20 @@ export function ChartAxisSettings({
                   sx={{
                     width: 22,
                     height: 22,
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     bgcolor: seriesColor + "22",
                     color: seriesColor,
-                    fontSize: "11px",
-                    fontWeight: 700,
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {LETTER_LABELS[si] || si}
                 </Box>
                 <Iconify
-                  icon="mdi:chart-line"
+                  icon="solar:graph-up-linear"
                   width={16}
                   sx={{ color: seriesColor, flexShrink: 0 }}
                 />
@@ -1011,7 +1055,7 @@ export function ChartAxisSettings({
       />
       <Divider sx={{ my: 2 }} />
       <Box sx={{ mb: 3 }}>
-        <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1.5 }}>
+        <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
           X-Axis
         </Typography>
         <Stack
@@ -1033,7 +1077,11 @@ export function ChartAxisSettings({
             theme={theme}
           />
         </Stack>
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
           <Typography variant="body2" color="text.secondary">
             Label
           </Typography>

@@ -51,9 +51,10 @@ export const FormCheckboxField = ({
                   alignItems: "flex-start",
                   py: 1.2,
                   cursor: "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "8px",
                   backgroundColor: "background.paper",
-                  boxShadow: "1px 1px 23px 0px #0000000F",
+                  border: "1px solid",
+                  borderColor: "border.default",
 
                   transition: "all 0.2s ease",
                 }),
@@ -81,7 +82,7 @@ export const FormCheckboxField = ({
                     inputProps={{ "aria-label": "controlled" }}
                     icon={
                       <Iconify
-                        icon="system-uicons:checkbox-empty"
+                        icon="solar:square-linear"
                         sx={{
                           color:
                             theme.palette.mode === "light"
@@ -117,7 +118,7 @@ export const FormCheckboxField = ({
                       marginLeft: -1,
                     }}
                   >
-                    <Typography sx={{ fontWeight: 500, fontSize: "15px" }}>
+                    <Typography sx={{ fontWeight: 500, fontSize: "13px" }}>
                       {label}
                     </Typography>
                     <Typography

@@ -59,11 +59,11 @@ export default function NavMini() {
         flexShrink: { xs: 0 },
         width: { xs: NAV.W_MINI },
         backgroundColor: "background.paper",
+        borderRight: (theme) => `1px solid ${theme.palette.divider}`,
         paddingBottom: "16px",
         position: "relative", // important for settings panel overlay
         height: "100vh",
         overflow: "hidden",
-        borderRight: (theme) => `solid 1px ${theme.palette.divider}`,
       }}
     >
       <Stack
@@ -186,15 +186,14 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  size="small"
                   onClick={() =>
                     navigate("/dashboard/settings/profile-settings")
                   }
                   sx={{
                     p: 0,
                     width: 20,
-                    height: 20,
                     minWidth: "auto",
-                    minHeight: "auto",
                   }}
                 >
                   <SvgColor
@@ -239,6 +238,7 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  size="small"
                   onClick={() => {
                     const appRedirectUrl = localStorage.getItem(
                       "redirect-url-from-settings",
@@ -250,9 +250,7 @@ export default function NavMini() {
                   sx={{
                     p: 0,
                     width: 20,
-                    height: 20,
                     minWidth: "auto",
-                    minHeight: "auto",
                   }}
                 >
                   <SvgColor

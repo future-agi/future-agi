@@ -1,7 +1,8 @@
 import { Helmet } from "react-helmet-async";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import { paths } from "src/routes/paths";
 import MyEnvironmentsTable from "src/sections/simulate-v2/environments/MyEnvironmentsTable";
 import { SimStoreProvider, useSimStore } from "src/sections/simulate-v2/store";
@@ -54,34 +55,27 @@ function SimulatedRunsInner() {
         p: 2,
       }}
     >
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        justifyContent="space-between"
-        alignItems={{ sm: "flex-end" }}
-        spacing={2}
-        sx={{ flexShrink: 0 }}
-      >
-        <Box>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            Simulated Runs
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            Every environment you&apos;ve created, its readiness, and how its scenarios and runs are tracking. Click a row to open the environment workspace.
-          </Typography>
-        </Box>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={() => navigate(paths.dashboard.simulate.environments)}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          sx={{ typography: "s1", fontWeight: 600, flexShrink: 0 }}
-        >
-          Create a simulation
-        </Button>
-      </Stack>
+      <PageHeader
+        title="Simulated runs"
+        description="Every environment you've created, its readiness, and how its scenarios and runs are tracking. Click a row to open the environment workspace."
+        sx={{ mb: 0, flexShrink: 0 }}
+        actions={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() => navigate(paths.dashboard.simulate.environments)}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+          >
+            Create a simulation
+          </Button>
+        }
+      />
       <MyEnvironmentsTable
         envs={existing}
-        onOpen={(env) => navigate(paths.dashboard.simulate.environmentDetail(env.id))}
+        onOpen={(env) =>
+          navigate(paths.dashboard.simulate.environmentDetail(env.id))
+        }
         hideStatus
       />
     </Box>

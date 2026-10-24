@@ -1,17 +1,11 @@
 import React, { useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "../SpanAccordianElements";
-import {
-  Box,
-  IconButton,
-  Tab,
-  Tabs,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, IconButton, Tab, Typography } from "@mui/material";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -28,7 +22,6 @@ const ChainSpan = ({
   promptName,
   promptTemplateId,
 }) => {
-  const theme = useTheme();
   const navigate = useNavigate();
   const [tabValue, setTabValue] = useState("raw");
   const handleTabChange = (_, newValue) => {
@@ -118,30 +111,10 @@ const ChainSpan = ({
                   alignItems: "center",
                 }}
               >
-                <Tabs
-                  textColor="primary"
-                  value={tabValue}
-                  onChange={handleTabChange}
-                  TabIndicatorProps={{
-                    style: { display: "none" },
-                  }}
-                  sx={{
-                    marginLeft: (theme) => theme.spacing(2),
-                    "& .MuiTab-root": {
-                      marginRight: (theme) => theme.spacing(1),
-                      color: "text.secondary",
-                      typography: "s2",
-                      fontWeight: "fontWeightRegular",
-                    },
-                    "& .Mui-selected": {
-                      color: theme.palette.primary.main,
-                      fontWeight: "fontWeightSemiBold",
-                    },
-                  }}
-                >
+                <SegmentedTabs value={tabValue} onChange={handleTabChange}>
                   <Tab value="markdown" label="Markdown" />
                   <Tab value="raw" label="Raw" />
-                </Tabs>
+                </SegmentedTabs>
                 {allowCopy && (
                   <Box>
                     <IconButton
@@ -153,9 +126,9 @@ const ChainSpan = ({
                       }}
                     >
                       <Iconify
-                        icon="basil:copy-outline"
+                        icon="solar:copy-linear"
                         color="grey"
-                        width={21}
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </IconButton>

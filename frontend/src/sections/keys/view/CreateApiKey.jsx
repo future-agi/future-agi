@@ -68,7 +68,8 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
       onClose={handleClose}
       aria-labelledby="api-key-dialog"
       fullWidth
-      maxWidth="sm"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
     >
       <Box sx={{ padding: 2 }}>
         <DialogTitle
@@ -86,11 +87,11 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
             alignItems="center"
             justifyContent="space-between"
           >
-            <Typography color="text.primary" fontWeight={700} fontSize="18px">
+            <Typography color="text.primary" fontWeight={600} fontSize="16px">
               {isSecretKey ? "Key’s Generated" : "Key Name"}
             </Typography>
             <IconButton onClick={handleClose}>
-              <Iconify icon="mdi:close" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
         </DialogTitle>

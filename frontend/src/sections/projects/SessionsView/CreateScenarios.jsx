@@ -14,13 +14,13 @@ const ScenarioItem = ({ title, description, iconSrc, onClick, disabled }) => {
       padding={2}
       border="1px solid"
       borderColor="divider"
-      borderRadius={0.5}
+      borderRadius="4px"
       sx={{
         cursor: "pointer",
         "&:hover": {
           backgroundColor: "action.hover",
         },
-        transition: "background-color 0.3s ease",
+        transition: "background-color 200ms ease",
         "&:active": {
           backgroundColor: "action.hover",
         },

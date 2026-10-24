@@ -19,8 +19,8 @@ import PromtLeftSidebar from "../../PromtSidebar/PromtLeftSidebar";
 import logger from "src/utils/logger";
 
 const ICON_BUTTONS = [
-  { icon: "gridicons:add-outline", action: "add", tooltip: "New Prompt" },
-  { icon: "ic:baseline-list", action: "list", tooltip: "Your Prompts" },
+  { icon: "solar:add-linear", action: "add", tooltip: "New Prompt" },
+  { icon: "solar:list-linear", action: "list", tooltip: "Your Prompts" },
 ];
 
 const LeftMenu = ({
@@ -113,11 +113,7 @@ const LeftMenu = ({
     >
       {ICON_BUTTONS.map(({ icon, action, tooltip }) => (
         <Tooltip key={icon} title={tooltip} placement="bottom" arrow>
-          <IconButton
-            size="small"
-            onClick={() => handleAction(action)}
-            sx={{ borderRadius: 0.75 }}
-          >
+          <IconButton size="small" onClick={() => handleAction(action)}>
             <Iconify
               sx={{ cursor: "pointer" }}
               height={24}
@@ -177,10 +173,10 @@ const LeftMenu = ({
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "550px",
+            width: "480px",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}

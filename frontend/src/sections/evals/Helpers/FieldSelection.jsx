@@ -10,7 +10,9 @@ const FieldSelection = ({ field }) => {
         value={field}
         InputProps={{
           readOnly: true,
-          endAdornment: <Iconify icon="mynaui:lock" color="text.disabled" />,
+          endAdornment: (
+            <Iconify icon="solar:lock-linear" color="text.disabled" />
+          ),
         }}
         sx={{
           width: "150px",

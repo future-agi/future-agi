@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (editor theme) */
 import React, { useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import PropTypes from "prop-types";
@@ -112,7 +113,7 @@ const CodeEditor = ({
         "editorLineNumber.foreground": "#4a5568",
         "editorLineNumber.activeForeground": "#a0aec0",
         "editor.selectionBackground": "#2d3748",
-        "editorCursor.foreground": "#7c3aed",
+        "editorCursor.foreground": "#7857FC",
         "editorGutter.background": "#141A21",
       },
     });
@@ -198,7 +199,7 @@ const CodeEditor = ({
       <Box
         sx={{
           border: "1px solid",
-          borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
+          borderColor: "divider",
           borderRadius: "8px",
           overflow: "auto",
           maxHeight: height,
@@ -238,7 +239,7 @@ const CodeEditor = ({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
+        borderColor: "divider",
         borderRadius: "8px",
         overflow: "hidden",
         position: "relative",
@@ -294,7 +295,7 @@ const CodeEditor = ({
             position: "absolute",
             top: 12,
             left: 64,
-            color: isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.3)",
+            color: "text.disabled",
             fontSize: "13px",
             fontFamily:
               "'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",

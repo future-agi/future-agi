@@ -40,7 +40,8 @@ export default function MetricTile({
         borderRadius: 1,
         p: 1,
         m: -1,
-        transition: (t) => t.transitions.create("background-color", { duration: 150 }),
+        transition: (t) =>
+          t.transitions.create("background-color", { duration: 150 }),
         ...(onClick && { "&:hover": { bgcolor: "action.hover" } }),
       }}
     >
@@ -50,14 +51,21 @@ export default function MetricTile({
             height: 30,
             width: 30,
             flexShrink: 0,
-            borderRadius: 0.75,
+            borderRadius: "4px",
             bgcolor: "background.neutral",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          <SvgColor sx={{ height: 15, width: 15, bgcolor: iconColor || "text.subtitle" }} src={icon} />
+          <SvgColor
+            sx={{
+              height: 15,
+              width: 15,
+              bgcolor: iconColor || "text.subtitle",
+            }}
+            src={icon}
+          />
         </Box>
       )}
 
@@ -69,7 +77,7 @@ export default function MetricTile({
               fontWeight: "fontWeightBold",
               color: "text.subtitle",
               letterSpacing: 0.3,
-              textTransform: "uppercase",
+              textTransform: "none",
             }}
           >
             {label}
@@ -77,7 +85,13 @@ export default function MetricTile({
           {tooltip && (
             <CustomTooltip size="small" show title={tooltip}>
               <SvgColor
-                sx={{ height: 12, width: 12, cursor: "pointer", flexShrink: 0, bgcolor: "text.disabled" }}
+                sx={{
+                  height: 12,
+                  width: 12,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  bgcolor: "text.disabled",
+                }}
                 src="/assets/icons/ic_info.svg"
               />
             </CustomTooltip>
@@ -97,7 +111,12 @@ export default function MetricTile({
           {value != null && suffix ? (
             <Typography
               component="span"
-              sx={{ typography: "s2", color: "text.subtitle", ml: 0.25, fontWeight: "fontWeightRegular" }}
+              sx={{
+                typography: "s2",
+                color: "text.subtitle",
+                ml: 0.25,
+                fontWeight: "fontWeightRegular",
+              }}
             >
               {suffix}
             </Typography>
@@ -105,7 +124,9 @@ export default function MetricTile({
         </Typography>
 
         {subtext && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{subtext}</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {subtext}
+          </Typography>
         )}
       </Box>
     </Stack>

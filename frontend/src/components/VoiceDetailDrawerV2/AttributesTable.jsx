@@ -99,7 +99,11 @@ const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
             py: 0.25,
           }}
         >
-          <Iconify icon="mdi:magnify" width={14} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={14}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search attributes"
@@ -110,7 +114,7 @@ const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
               border: "none",
               outline: "none",
               bgcolor: "transparent",
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               fontFamily: "inherit",
               py: 0.25,
@@ -119,7 +123,7 @@ const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
           />
           {query && (
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={12}
               onClick={handleClearQuery}
               sx={{
@@ -135,14 +139,11 @@ const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
             size="small"
             onClick={handleCopyAll}
             sx={{
-              width: 24,
-              height: 24,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
             }}
           >
-            <Iconify icon="tabler:copy" width={13} />
+            <Iconify icon="solar:copy-linear" width={14} />
           </IconButton>
         </Tooltip>
       </Stack>

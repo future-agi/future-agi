@@ -54,7 +54,7 @@ const EditIndividualGroupDetailsDialog = ({
     <ModalWrapper
       isValid={isValid}
       actionBtnTitle="Save Changes"
-      modalWidth="480px"
+      modalWidth="560px"
       title="Edit Group Info"
       open={open}
       onClose={onClose}

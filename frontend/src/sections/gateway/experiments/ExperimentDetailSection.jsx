@@ -4,12 +4,9 @@ import {
   Box,
   Typography,
   Stack,
-  Chip,
   Button,
   Tabs,
   Tab,
-  Card,
-  CardContent,
   Table,
   TableBody,
   TableCell,
@@ -19,6 +16,9 @@ import {
   Skeleton,
   Collapse,
 } from "@mui/material";
+import Section from "src/components/section";
+import PageHeader from "src/components/page-header";
+import MetricStrip from "src/components/metric-strip";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import PageErrorState from "../components/PageErrorState";
@@ -34,12 +34,8 @@ import {
   useDeleteExperiment,
 } from "./hooks/useExperiments";
 import SideBySideViewer from "./SideBySideViewer";
-
-const STATUS_COLORS = {
-  active: "success",
-  paused: "warning",
-  completed: "info",
-};
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 
 const TAB_LABELS = ["Overview", "Results", "Configuration"];
 
@@ -135,75 +131,72 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
     <Box p={3}>
       {/* Back button */}
       <Button
-        startIcon={<Iconify icon="eva:arrow-back-outline" />}
+        startIcon={<Iconify icon="solar:arrow-left-linear" />}
         onClick={onBack}
-        sx={{ mb: 2, textTransform: "none" }}
+        sx={{ mb: 2 }}
         size="small"
       >
         Back to Experiments
       </Button>
 
-      {/* Header */}
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="flex-start"
-        mb={1}
-      >
-        <Box>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Typography variant="h5" fontWeight={600}>
-              {experiment.name}
-            </Typography>
-            <Chip
-              label={status}
-              color={STATUS_COLORS[status] || "default"}
-              size="small"
-            />
-          </Stack>
-          {experiment.description && (
-            <Typography variant="body2" color="text.secondary" mt={0.5}>
-              {experiment.description}
-            </Typography>
-          )}
-          <Typography variant="body2" color="text.secondary" mt={0.5}>
+      <PageHeader
+        title={experiment.name}
+        badge={<StatusBadge status={status} />}
+        description={
+          <>
+            {experiment.description && (
+              <>
+                {experiment.description}
+                <br />
+              </>
+            )}
             {sourceModel} &rarr; {shadowModel}
             {" \u2022 "}
             Sample rate: {Math.round(Number(experiment.sample_rate || 0) * 100)}
             %
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          {status === "active" && (
-            <>
-              <Button size="small" variant="outlined" onClick={handlePause}>
-                Pause
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
-            </>
-          )}
-          {status === "paused" && (
-            <>
-              <Button size="small" variant="outlined" onClick={handleResume}>
-                Resume
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
-            </>
-          )}
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            onClick={handleDelete}
-          >
-            Delete
-          </Button>
-        </Stack>
-      </Stack>
+          </>
+        }
+        actions={
+          <>
+            {status === "active" && (
+              <>
+                <Button size="small" variant="outlined" onClick={handlePause}>
+                  Pause
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                >
+                  Complete
+                </Button>
+              </>
+            )}
+            {status === "paused" && (
+              <>
+                <Button size="small" variant="outlined" onClick={handleResume}>
+                  Resume
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                >
+                  Complete
+                </Button>
+              </>
+            )}
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              onClick={handleDelete}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
 
       {/* Tabs */}
       <Tabs
@@ -212,7 +205,7 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
         sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
       >
         {TAB_LABELS.map((label) => (
-          <Tab key={label} label={label} sx={{ textTransform: "none" }} />
+          <Tab key={label} label={label} />
         ))}
       </Tabs>
 
@@ -304,45 +297,22 @@ const OverviewTab = ({ experimentId, experiment }) => {
 
   return (
     <Box>
-      {/* Summary cards */}
-      <Stack direction="row" spacing={2} mb={4} flexWrap="wrap">
-        {summaryCards.map((card) => (
-          <Card
-            key={card.label}
-            variant="outlined"
-            sx={{ minWidth: 170, flex: 1, borderRadius: 2 }}
-          >
-            <CardContent sx={{ py: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                {card.label}
-              </Typography>
-              <Typography
-                variant="h5"
-                fontWeight={600}
-                sx={{
-                  color:
-                    card.delta != null
-                      ? card.invertColor
-                        ? card.delta > 0
-                          ? "#EF4444"
-                          : "#10B981"
-                        : card.delta < 0
-                          ? "#10B981"
-                          : card.delta > 0
-                            ? "#EF4444"
-                            : undefined
-                      : undefined,
-                }}
-              >
-                {card.delta != null &&
-                  card.delta !== 0 &&
-                  (card.delta < 0 ? "\u25BC " : "\u25B2 ")}
-                {card.value}
-              </Typography>
-            </CardContent>
-          </Card>
-        ))}
-      </Stack>
+      <MetricStrip
+        sx={{ mb: 4 }}
+        items={summaryCards.map((card) => {
+          const d = card.delta;
+          const moved = d != null && d !== 0;
+          const up = d > 0;
+          return {
+            label: card.label,
+            value: card.value,
+            ...(moved && {
+              change: up ? "\u25B2" : "\u25BC",
+              trend: up ? "worse" : "better",
+            }),
+          };
+        })}
+      />
 
       {/* Metrics comparison table */}
       <Typography variant="subtitle1" fontWeight={600} mb={2}>
@@ -420,7 +390,7 @@ const ResultsTab = ({ experimentId, experiment }) => {
     return (
       <Box display="flex" flexDirection="column" alignItems="center" py={6}>
         <Iconify
-          icon="mdi:table-off"
+          icon="solar:table-linear"
           width={40}
           sx={{ color: "text.disabled", mb: 1 }}
         />
@@ -477,31 +447,33 @@ const ResultsTab = ({ experimentId, experiment }) => {
                     <TableCell>
                       <Iconify
                         icon={
-                          isExpanded ? "mdi:chevron-down" : "mdi:chevron-right"
+                          isExpanded
+                            ? "solar:alt-arrow-down-linear"
+                            : "solar:alt-arrow-right-linear"
                         }
-                        width={18}
+                        width={20}
                       />
                     </TableCell>
                     <TableCell>
                       <Typography
                         variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+                        sx={{ fontFamily: "monospace", fontSize: "13px" }}
                       >
                         {formatDateTime(r.created_at)}
                       </Typography>
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                       {Number(r.source_latency_ms || 0).toLocaleString()}
                       ms
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                       {Number(r.shadow_latency_ms || 0).toLocaleString()}
                       ms
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                       {Number(r.source_tokens || 0).toLocaleString()}
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                       {Number(r.shadow_tokens || 0).toLocaleString()}
                     </TableCell>
                     <TableCell>
@@ -600,27 +572,25 @@ const ConfigurationTab = ({ experiment }) => {
   ];
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2 }}>
-      <CardContent>
-        <Typography variant="subtitle1" fontWeight={600} mb={2}>
-          Experiment Configuration
-        </Typography>
-        <Stack spacing={1.5}>
-          {fields.map((f) => (
-            <Stack key={f.label} direction="row" spacing={2}>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ minWidth: 160 }}
-              >
-                {f.label}:
-              </Typography>
-              <Typography variant="body2">{f.value}</Typography>
-            </Stack>
-          ))}
-        </Stack>
-      </CardContent>
-    </Card>
+    <Section variant="panel">
+      <Typography variant="subtitle1" fontWeight={600} mb={2}>
+        Experiment Configuration
+      </Typography>
+      <Stack spacing={1.5}>
+        {fields.map((f) => (
+          <Stack key={f.label} direction="row" spacing={2}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ minWidth: 160 }}
+            >
+              {f.label}:
+            </Typography>
+            <Typography variant="body2">{f.value}</Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Section>
   );
 };
 
@@ -634,12 +604,12 @@ const DeltaText = ({ value }) => {
       </Box>
     );
   const isImprovement = value < 0;
-  const color = isImprovement ? "#10B981" : "#EF4444";
+  const color = isImprovement ? "status.success.fg" : "status.danger.fg";
   const arrow = isImprovement ? "\u25BC" : "\u25B2";
   return (
-    <span style={{ color, fontWeight: 500 }}>
+    <Box component="span" sx={{ color, fontWeight: 500 }}>
       {arrow} {Math.abs(value).toFixed(1)}%
-    </span>
+    </Box>
   );
 };
 
@@ -649,7 +619,7 @@ const StatusDot = ({ ok }) => (
       width: 8,
       height: 8,
       borderRadius: "50%",
-      bgcolor: ok ? "#22C55E" : "#EF4444",
+      bgcolor: (t) => statusColors(t, ok ? "success" : "danger").solid,
       display: "inline-block",
       mt: 0.5,
     }}

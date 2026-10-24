@@ -60,7 +60,7 @@ export const SingleTrackPlayer = ({ url }) => (
       sx={{
         minWidth: "32px",
         mr: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "background.paper",
       }}
     />
@@ -92,6 +92,7 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
 
   const {

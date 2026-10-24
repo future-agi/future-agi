@@ -27,6 +27,7 @@ import { FormSelectField } from "src/components/FormSelectField";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const createValidationSchema = (datasetId, openDescription) =>
   z.object({
@@ -273,18 +274,20 @@ const SyntheticDataDrawer = ({
 
   const knowledgeBaseDropdownDisabled = Boolean(knowledgeId);
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onCloseClick}
       PaperProps={{
         sx: {
           height: "100vh",
-          // width: "550px",
+          // width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -332,7 +335,7 @@ const SyntheticDataDrawer = ({
                 Create Synthetic Data
               </Typography>
               <IconButton onClick={onCloseClick} size="small">
-                <Iconify icon="mingcute:close-line" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
             <Box
@@ -435,7 +438,7 @@ const SyntheticDataDrawer = ({
                 loading={false}
                 onClick={handleAddColumn}
               >
-                <Iconify icon="mdi:plus" color="background.paper" />
+                <Iconify icon="solar:add-linear" color="background.paper" />
               </LoadingButton>
               <Divider orientation="horizontal" />
 

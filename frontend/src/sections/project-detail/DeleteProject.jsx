@@ -49,7 +49,7 @@ const DeleteProject = ({
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: 480,
+          width: 560,
           maxHeight: 329,
           display: "flex",
           flexDirection: "column",
@@ -69,13 +69,11 @@ const DeleteProject = ({
             Delete Project
           </Box>
           <IconButton
+            size="small"
             aria-label="close-configure-project"
             onClick={onClose}
-            sx={{
-              p: 0,
-            }}
           >
-            <Iconify icon="line-md:close" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -88,14 +86,13 @@ const DeleteProject = ({
         sx={{ paddingX: theme.spacing(1.5), paddingBottom: theme.spacing(2) }}
       >
         <Button
+          size="small"
           onClick={onClose}
           aria-label="Cancel-configure-project"
           variant="outlined"
           color="inherit"
           sx={{
             width: "90px",
-            height: "30px",
-            fontSize: "12px",
             color: "text.disabled",
           }}
         >
@@ -103,13 +100,12 @@ const DeleteProject = ({
         </Button>
 
         <LoadingButton
+          size="small"
           aria-label="update-project"
           onClick={() => mutate()}
           disabled={isPending}
           sx={{
             width: "90px",
-            height: "30px",
-            fontSize: "12px",
           }}
           variant="contained"
           color="error"

@@ -108,10 +108,11 @@ export default function CreateAgentScenarioHelp({ open, onClose }) {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="lg"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
+          maxWidth: 960,
           padding: 2,
           display: "flex",
           flexDirection: "column",

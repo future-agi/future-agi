@@ -1,14 +1,7 @@
 import React, { useState } from "react";
-import {
-  Stack,
-  Card,
-  CardContent,
-  Typography,
-  Button,
-  Chip,
-  Skeleton,
-  Box,
-} from "@mui/material";
+import { Stack, Typography, Button, Chip, Skeleton, Box } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import Iconify from "src/components/iconify";
 import {
   useOrgConfig,
@@ -62,173 +55,151 @@ const OrgConfigSection = () => {
   return (
     <Stack spacing={2}>
       {/* Active config card */}
-      <Card>
-        <CardContent>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="flex-start"
-          >
-            <Stack spacing={1}>
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Iconify
-                  icon="mdi:tune-variant"
-                  width={24}
-                  sx={{ color: "primary.main" }}
+      <Section variant="panel">
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="flex-start"
+        >
+          <Stack spacing={1}>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Iconify
+                icon="solar:tuning-2-linear"
+                width={24}
+                sx={{ color: "primary.main" }}
+              />
+              <Typography variant="h6">Organization Config</Typography>
+              {hasConfig && (
+                <Chip
+                  label={`Version ${activeConfig.version || 1}`}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
                 />
-                <Typography variant="h6">Organization Config</Typography>
-                {hasConfig && (
-                  <Chip
-                    label={`Version ${activeConfig.version || 1}`}
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                    sx={{ height: 22, fontSize: "0.7rem" }}
-                  />
-                )}
-              </Stack>
-
-              {hasConfig ? (
-                <>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        bgcolor: "success.main",
-                      }}
-                    />
-                    <Typography variant="body2" fontWeight={500}>
-                      Custom Config Active
-                    </Typography>
-                  </Stack>
-                  {activeConfig.created_at && (
-                    <Typography variant="caption" color="text.secondary">
-                      Last Updated:{" "}
-                      {new Date(activeConfig.created_at).toLocaleString()}
-                    </Typography>
-                  )}
-                  {activeConfig.change_description && (
-                    <Typography variant="caption" color="text.secondary">
-                      Change: &ldquo;{activeConfig.change_description}&rdquo;
-                    </Typography>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        bgcolor: "text.disabled",
-                      }}
-                    />
-                    <Typography variant="body2" fontWeight={500}>
-                      Using Default Config
-                    </Typography>
-                  </Stack>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ maxWidth: 500 }}
-                  >
-                    Your organization is using the system defaults. Create a
-                    custom config to set your own provider keys, guardrails, and
-                    routing strategies.
-                  </Typography>
-                </>
               )}
             </Stack>
 
-            <Stack direction="row" spacing={1}>
-              {hasConfig && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => setHistoryOpen(true)}
+            {hasConfig ? (
+              <>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      bgcolor: "success.main",
+                    }}
+                  />
+                  <Typography variant="body2" fontWeight={500}>
+                    Custom Config Active
+                  </Typography>
+                </Stack>
+                {activeConfig.created_at && (
+                  <Typography variant="caption" color="text.secondary">
+                    Last Updated:{" "}
+                    {new Date(activeConfig.created_at).toLocaleString()}
+                  </Typography>
+                )}
+                {activeConfig.change_description && (
+                  <Typography variant="caption" color="text.secondary">
+                    Change: &ldquo;{activeConfig.change_description}&rdquo;
+                  </Typography>
+                )}
+              </>
+            ) : (
+              <>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      bgcolor: "text.disabled",
+                    }}
+                  />
+                  <Typography variant="body2" fontWeight={500}>
+                    Using Default Config
+                  </Typography>
+                </Stack>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ maxWidth: 500 }}
                 >
-                  View History
-                </Button>
-              )}
+                  Your organization is using the system defaults. Create a
+                  custom config to set your own provider keys, guardrails, and
+                  routing strategies.
+                </Typography>
+              </>
+            )}
+          </Stack>
+
+          <Stack direction="row" spacing={1}>
+            {hasConfig && (
               <Button
                 size="small"
-                variant="contained"
-                onClick={() => setEditorOpen(true)}
-                startIcon={
-                  <Iconify
-                    icon={hasConfig ? "mdi:pencil" : "mdi:plus"}
-                    width={18}
-                  />
-                }
+                variant="outlined"
+                onClick={() => setHistoryOpen(true)}
               >
-                {hasConfig ? "Edit Config" : "Create Custom Config"}
+                View History
               </Button>
-            </Stack>
+            )}
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => setEditorOpen(true)}
+              startIcon={
+                <Iconify
+                  icon={hasConfig ? "solar:pen-linear" : "solar:add-linear"}
+                  width={20}
+                />
+              }
+            >
+              {hasConfig ? "Edit Config" : "Create Custom Config"}
+            </Button>
           </Stack>
-        </CardContent>
-      </Card>
-
-      {/* Summary cards */}
-      {hasConfig && (
-        <Stack direction="row" spacing={2}>
-          <Card sx={{ flex: 1 }}>
-            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-              <Typography variant="caption" color="text.secondary">
-                Providers
-              </Typography>
-              <Typography variant="h5">{providerCount}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {providerCount === 0
-                  ? "No configured providers"
-                  : `${providerCount} configured`}
-              </Typography>
-            </CardContent>
-          </Card>
-          <Card sx={{ flex: 1 }}>
-            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-              <Typography variant="caption" color="text.secondary">
-                Guardrail Checks
-              </Typography>
-              <Typography variant="h5">{checkCount}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {checkCount === 0
-                  ? "Using defaults"
-                  : `${checkCount} overrides`}
-              </Typography>
-            </CardContent>
-          </Card>
-          <Card sx={{ flex: 1 }}>
-            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-              <Typography variant="caption" color="text.secondary">
-                Routing Strategy
-              </Typography>
-              <Typography variant="h5" sx={{ textTransform: "capitalize" }}>
-                {(routing.strategy || "default").replace(/_/g, " ")}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {routing.strategy ? "Custom" : "System default"}
-              </Typography>
-            </CardContent>
-          </Card>
-          <Card sx={{ flex: 1 }}>
-            <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-              <Typography variant="caption" color="text.secondary">
-                Cache
-              </Typography>
-              <Typography variant="h5" sx={{ textTransform: "capitalize" }}>
-                {cacheEnabled ? cacheBackend.replace(/-/g, " ") : "Disabled"}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {cacheEnabled
-                  ? `L1: ${cacheBackend}${cacheConfig.semantic?.enabled ? ` + L2: ${cacheConfig.semantic?.backend || "memory"}` : ""}`
-                  : "Not configured"}
-              </Typography>
-            </CardContent>
-          </Card>
         </Stack>
+      </Section>
+
+      {hasConfig && (
+        <MetricStrip
+          items={[
+            {
+              label: "Providers",
+              value: providerCount,
+              hint:
+                providerCount === 0
+                  ? "No configured providers"
+                  : `${providerCount} configured`,
+            },
+            {
+              label: "Guardrail checks",
+              value: checkCount,
+              hint:
+                checkCount === 0 ? "Using defaults" : `${checkCount} overrides`,
+            },
+            {
+              label: "Routing strategy",
+              value: (
+                <span style={{ textTransform: "capitalize" }}>
+                  {(routing.strategy || "default").replace(/_/g, " ")}
+                </span>
+              ),
+              hint: routing.strategy ? "Custom" : "System default",
+            },
+            {
+              label: "Cache",
+              value: (
+                <span style={{ textTransform: "capitalize" }}>
+                  {cacheEnabled ? cacheBackend.replace(/-/g, " ") : "Disabled"}
+                </span>
+              ),
+              hint: cacheEnabled
+                ? `L1: ${cacheBackend}${cacheConfig.semantic?.enabled ? ` + L2: ${cacheConfig.semantic?.backend || "memory"}` : ""}`
+                : "Not configured",
+            },
+          ]}
+        />
       )}
 
       <OrgConfigEditor

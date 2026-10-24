@@ -5,25 +5,25 @@ import Iconify from "src/components/iconify";
 
 const VARIANTS = {
   "no-gateway": {
-    icon: "mdi:server-off",
+    icon: "solar:server-minimalistic-linear",
     title: "Gateway is starting up",
     description:
       "The Agent Command Center gateway is being provisioned. This usually takes a few seconds. If this persists, check that the gateway container is running.",
     ctaLabel: "Retry",
-    ctaIcon: "mdi:refresh",
+    ctaIcon: "solar:refresh-linear",
   },
   "no-data": {
-    icon: "mdi:database-off-outline",
+    icon: "solar:database-linear",
     title: "No data yet",
     description:
       "Data will appear here once requests start flowing through the gateway.",
   },
   "no-results": {
-    icon: "mdi:filter-off-outline",
+    icon: "solar:filter-linear",
     title: "No results found",
     description: "Try adjusting your filters or search query.",
     ctaLabel: "Clear Filters",
-    ctaIcon: "mdi:filter-remove-outline",
+    ctaIcon: "solar:filter-linear",
   },
 };
 
@@ -69,7 +69,7 @@ const GatewayEmptyState = ({
           onClick={onAction}
           startIcon={
             preset.ctaIcon ? (
-              <Iconify icon={preset.ctaIcon} width={18} />
+              <Iconify icon={preset.ctaIcon} width={20} />
             ) : undefined
           }
         >

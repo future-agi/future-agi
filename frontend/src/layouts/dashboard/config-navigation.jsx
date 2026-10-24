@@ -21,13 +21,46 @@ import {
   RoutesName,
 } from "src/utils/rolePermissionMapping";
 
-const icon = (name) => (
-  <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
-  // OR
-  // <Iconify icon="fluent:mail-24-filled" />
-  // https://icon-sets.iconify.design/solar/
-  // https://www.streamlinehq.com/icons
-);
+// Design system: nav icons are Solar linear, the same set as the rest of
+// the product. Names not listed fall back to the old navbar SVGs.
+const SOLAR_NAV_ICONS = {
+  ic_blog: "solar:chart-square-linear",
+  ic_analytics: "solar:database-linear",
+  ic_lock: "solar:key-minimalistic-linear",
+  ic_dash_tasks: "solar:checklist-minimalistic-linear",
+  ic_users: "solar:users-group-rounded-linear",
+  hugeicons: "solar:database-linear",
+  ic_docs: "solar:document-text-linear",
+  ic_booking: "solar:map-arrow-right-linear",
+  ic_chat: "solar:chat-round-line-linear",
+  ic_run: "solar:routing-2-linear",
+  ic_prompt: "solar:notes-linear",
+  ic_add_team: "solar:user-plus-linear",
+  ic_help: "solar:question-circle-linear",
+  ic_eval: "solar:checklist-linear",
+  ic_prototype: "solar:box-linear",
+  ic_annotate: "solar:pen-2-linear",
+  ic_knowledge_base: "solar:book-2-linear",
+  ic_alert: "solar:bell-linear",
+  ic_experiment: "solar:test-tube-linear",
+  ic_project: "solar:folder-linear",
+  ic_sessions: "solar:layers-minimalistic-linear",
+  ic_optimize: "solar:tuning-2-linear",
+  ic_evaluate: "solar:clipboard-check-linear",
+  ic_feed: "solar:bug-linear",
+  ic_persona: "solar:user-id-linear",
+  ic_agents: "solar:cpu-bolt-linear",
+  ic_chartsObserve: "solar:graph-up-linear",
+  ic_gateway: "solar:server-square-linear",
+  ic_environment: "solar:globus-linear",
+};
+
+const icon = (name) =>
+  SOLAR_NAV_ICONS[name] ? (
+    <Iconify icon={SOLAR_NAV_ICONS[name]} />
+  ) : (
+    <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
+  );
 
 const ICONS = {
   dashboard: icon("ic_blog"),
@@ -164,7 +197,7 @@ export function useNavData() {
           {
             title: "Error Feed",
             path: paths.dashboard.errorFeed.root,
-            icon: <Iconify icon="mdi:bug-outline" />,
+            icon: <Iconify icon="solar:bug-linear" />,
           },
           {
             title: "Tasks",
@@ -204,7 +237,7 @@ export function useNavData() {
           {
             title: "Gateway",
             path: paths.dashboard.gateway.root,
-            icon: <Iconify icon="mdi:transit-connection-variant" />,
+            icon: <Iconify icon="solar:routing-2-linear" />,
             hasChildren: true,
           },
         ],
@@ -226,11 +259,15 @@ export function useNavData() {
              one source (an env or a dataset); clicking drills into
              that source's runs summary. Hidden when the workspace's
              internal agentImprovement flag is off. */
-          ...(improving ? [{
-            title: "Improvements",
-            path: paths.dashboard.simulate.improvements,
-            icon: ICONS.improvements,
-          }] : []),
+          ...(improving
+            ? [
+                {
+                  title: "Improvements",
+                  path: paths.dashboard.simulate.improvements,
+                  icon: ICONS.improvements,
+                },
+              ]
+            : []),
           // {
           //   title: "Agent Definition",
           //   path: paths.dashboard.simulate.agentDefinition,
@@ -617,92 +654,92 @@ export function useNavGatewayData() {
         {
           title: "Overview",
           path: paths.dashboard.gateway.overview,
-          iconName: "mdi:view-dashboard-outline",
+          iconName: "solar:widget-4-linear",
         },
       ],
     },
     {
-      subheader: "CONFIGURE",
+      subheader: "Configure",
       items: [
         {
           title: "Providers",
           path: paths.dashboard.gateway.providers,
-          iconName: "mdi:cloud-cog-outline",
+          iconName: "solar:cloud-linear",
         },
         {
           title: "API Keys",
           path: paths.dashboard.gateway.keys,
-          iconName: "mdi:key-outline",
+          iconName: "solar:key-linear",
         },
         {
           title: "Guardrails",
           path: paths.dashboard.gateway.guardrails.root,
-          iconName: "mdi:shield-check-outline",
+          iconName: "solar:shield-check-linear",
         },
         {
           title: "Fallbacks",
           path: paths.dashboard.gateway.fallbacks,
-          iconName: "mdi:swap-horizontal",
+          iconName: "solar:transfer-horizontal-linear",
         },
       ],
     },
     {
-      subheader: "INSIGHTS",
+      subheader: "Insights",
       items: [
         {
           title: "Request Logs",
           path: paths.dashboard.gateway.logs,
-          iconName: "mdi:text-box-search-outline",
+          iconName: "solar:file-search-linear",
         },
         {
           title: "Analytics",
           path: paths.dashboard.gateway.analytics,
-          iconName: "mdi:chart-line",
+          iconName: "solar:graph-up-linear",
         },
         {
           title: "Monitoring",
           path: paths.dashboard.gateway.monitoring,
-          iconName: "mdi:bell-ring-outline",
+          iconName: "solar:bell-ring-linear",
         },
         {
           title: "Sessions",
           path: paths.dashboard.gateway.sessions,
-          iconName: "mdi:message-text-outline",
+          iconName: "solar:chat-round-line-linear",
         },
         // {
         //   title: "Experiments",
         //   path: paths.dashboard.gateway.experiments,
-        //   iconName: "mdi:flask-outline",
+        //   iconName: "solar:test-tube-linear",
         // },
       ],
     },
     {
-      subheader: "MANAGE",
+      subheader: "Manage",
       items: [
         {
           title: "Budgets",
           path: paths.dashboard.gateway.budgets,
-          iconName: "mdi:wallet-outline",
+          iconName: "solar:wallet-linear",
         },
         {
           title: "Webhooks",
           path: paths.dashboard.gateway.webhooks,
-          iconName: "mdi:webhook",
+          iconName: "solar:link-circle-linear",
         },
         {
           title: "Custom Properties",
           path: paths.dashboard.gateway.customProperties,
-          iconName: "mdi:tag-multiple-outline",
+          iconName: "solar:tag-price-linear",
         },
         {
           title: "MCP Tools",
           path: paths.dashboard.gateway.mcp,
-          iconName: "mdi:tools",
+          iconName: "solar:toolbox-linear",
         },
         {
           title: "Settings",
           path: paths.dashboard.gateway.settings,
-          iconName: "mdi:cog-outline",
+          iconName: "solar:settings-linear",
         },
       ],
     },

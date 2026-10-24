@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Stack,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -14,13 +13,15 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Skeleton,
-  Card,
   InputAdornment,
   IconButton,
 } from "@mui/material";
+import Section from "src/components/section";
 import { Tooltip } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import ListToolbar from "src/components/list-toolbar";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -74,7 +75,7 @@ const SessionExplorerSection = () => {
         <Stack direction="row" justifyContent="space-between" mb={3}>
           <Skeleton width={200} height={40} />
         </Stack>
-        <Card>
+        <Section variant="panel">
           {[...Array(5)].map((_, i) => (
             <Stack
               key={i}
@@ -93,7 +94,7 @@ const SessionExplorerSection = () => {
               <Skeleton width="20%" height={20} />
             </Stack>
           ))}
-        </Card>
+        </Section>
       </Box>
     );
   }
@@ -112,12 +113,27 @@ const SessionExplorerSection = () => {
   return (
     <Box p={3}>
       <SectionHeader
+        sx={{ mb: 1.5 }}
         icon={GATEWAY_ICONS.sessions}
         title="Sessions"
         subtitle="Browse and manage active conversation sessions"
       />
 
-      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
+      <ListToolbar>
+        <TextField
+          placeholder="Search by session ID or name..."
+          size="small"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          sx={{ width: 280 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Iconify icon="solar:magnifier-linear" width={16} />
+              </InputAdornment>
+            ),
+          }}
+        />
         <ToggleButtonGroup
           value={statusFilter}
           exclusive
@@ -125,41 +141,17 @@ const SessionExplorerSection = () => {
           size="small"
         >
           {STATUS_FILTERS.map((f) => (
-            <ToggleButton
-              key={f.value}
-              value={f.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
+            <ToggleButton key={f.value} value={f.value}>
               {f.label}
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
-
-        <TextField
-          placeholder="Search by session ID or name..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 300 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Stack>
+      </ListToolbar>
 
       {filteredSessions.length === 0 ? (
         <Box display="flex" flexDirection="column" alignItems="center" py={8}>
           <Iconify
-            icon="mdi:timeline-outline"
+            icon="solar:graph-new-linear"
             width={48}
             sx={{ color: "text.disabled", mb: 2 }}
           />
@@ -184,7 +176,12 @@ const SessionExplorerSection = () => {
                   <TableCell>Status</TableCell>
                   <TableCell>Requests</TableCell>
                   <TableCell>Created</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Actions
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -223,12 +220,12 @@ const SessionExplorerSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
+                      <StatusBadge
+                        status={session.status}
                         label={session.status}
-                        color={
-                          session.status === "active" ? "success" : "default"
+                        role={
+                          session.status === "active" ? "success" : "neutral"
                         }
-                        size="small"
                       />
                     </TableCell>
                     <TableCell>
@@ -244,17 +241,19 @@ const SessionExplorerSection = () => {
                       </Typography>
                     </TableCell>
                     <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
                       align="right"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {session.status === "active" && (
                         <IconButton
+                          className="row-hover-action"
                           size="small"
                           title="Close session"
                           onClick={() => handleClose(session.id)}
                           disabled={closeMutation.isPending}
                         >
-                          <Iconify icon="mdi:stop-circle-outline" width={20} />
+                          <Iconify icon="solar:stop-circle-linear" width={20} />
                         </IconButton>
                       )}
                     </TableCell>

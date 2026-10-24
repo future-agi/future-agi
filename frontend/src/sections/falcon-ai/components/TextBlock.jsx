@@ -4,12 +4,9 @@ import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
 function CodeBlockWrapper({ children, className }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [copied, setCopied] = useState(false);
 
   // Extract language from className (e.g., "language-js")
@@ -31,12 +28,8 @@ function CodeBlockWrapper({ children, className }) {
         sx={{
           fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
           fontSize: "0.875em",
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.06),
-          color: isDark
-            ? theme.palette.primary.light || "#A792FD"
-            : theme.palette.primary.dark || "#5A41BD",
+          bgcolor: "background.neutral",
+          color: "primary.main",
           borderRadius: "4px",
           px: 0.75,
           py: 0.25,
@@ -49,7 +42,16 @@ function CodeBlockWrapper({ children, className }) {
 
   // Code block
   return (
-    <Box sx={{ position: "relative", my: 1.5 }}>
+    <Box
+      sx={{
+        position: "relative",
+        my: 1.5,
+        border: 1,
+        borderColor: "border.default",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
       {/* Header bar */}
       <Box
         sx={{
@@ -58,23 +60,19 @@ function CodeBlockWrapper({ children, className }) {
           justifyContent: "space-between",
           px: 1.5,
           py: 0.75,
-          bgcolor: isDark ? "#1e1e1e" : "#f6f6f6",
-          borderTopLeftRadius: "10px",
-          borderTopRightRadius: "10px",
+          bgcolor: "background.neutral",
           borderBottom: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.06)
-            : alpha(theme.palette.common.black, 0.06),
+          borderColor: "divider",
         }}
       >
         <Box
           component="span"
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
             color: "text.disabled",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
+            textTransform: "none",
+            letterSpacing: 0,
           }}
         >
           {language}
@@ -83,14 +81,13 @@ function CodeBlockWrapper({ children, className }) {
           size="small"
           onClick={handleCopy}
           sx={{
-            p: 0.25,
             color: "text.disabled",
             "&:hover": { color: "text.secondary" },
           }}
           title={copied ? "Copied!" : "Copy code"}
         >
           <Iconify
-            icon={copied ? "mdi:check" : "mdi:content-copy"}
+            icon={copied ? "solar:check-linear" : "solar:copy-linear"}
             width={14}
           />
         </IconButton>
@@ -104,10 +101,8 @@ function CodeBlockWrapper({ children, className }) {
           fontSize: 13,
           lineHeight: 1.6,
           fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
-          bgcolor: isDark ? "#161616" : "#fafafa",
-          color: isDark ? "#e4e4e7" : "#1a1a1a",
-          borderBottomLeftRadius: "10px",
-          borderBottomRightRadius: "10px",
+          bgcolor: "background.paper",
+          color: "text.primary",
         }}
       >
         <code>{children}</code>
@@ -122,15 +117,12 @@ CodeBlockWrapper.propTypes = {
 };
 
 export default function TextBlock({ content }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   if (!content) return null;
 
   return (
     <Box
       sx={{
-        fontSize: 14,
+        fontSize: 13,
         lineHeight: 1.7,
         color: "text.primary",
         wordBreak: "break-word",
@@ -149,8 +141,8 @@ export default function TextBlock({ content }) {
           color: "text.primary",
         },
         "& h1": { fontSize: 20 },
-        "& h2": { fontSize: 17 },
-        "& h3": { fontSize: 15 },
+        "& h2": { fontSize: 16 },
+        "& h3": { fontSize: 13 },
         // Tables
         "& table": {
           borderCollapse: "collapse",
@@ -160,14 +152,10 @@ export default function TextBlock({ content }) {
           borderRadius: "8px",
           overflow: "hidden",
           border: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.08),
+          borderColor: "border.default",
         },
         "& th": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.06)
-            : alpha(theme.palette.common.black, 0.03),
+          bgcolor: "background.neutral",
           fontWeight: 600,
           px: 1.5,
           py: 1,
@@ -175,27 +163,18 @@ export default function TextBlock({ content }) {
           fontSize: 12,
           color: "text.secondary",
           borderBottom: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.08),
+          borderColor: "border.default",
         },
         "& td": {
           px: 1.5,
           py: 0.75,
           borderBottom: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.04)
-            : alpha(theme.palette.common.black, 0.04),
+          borderColor: "divider",
           fontSize: 13,
           color: "text.primary",
         },
         "& tr:last-child td": {
           borderBottom: 0,
-        },
-        "& tr:nth-of-type(even) td": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.02)
-            : alpha(theme.palette.common.black, 0.015),
         },
         // Lists
         "& ul, & ol": {
@@ -212,9 +191,7 @@ export default function TextBlock({ content }) {
         },
         // Links
         "& a": {
-          color: isDark
-            ? theme.palette.primary.light || "#A792FD"
-            : "primary.main",
+          color: "primary.main",
           textDecoration: "none",
           fontWeight: 500,
           "&:hover": {
@@ -224,9 +201,7 @@ export default function TextBlock({ content }) {
         // Blockquotes
         "& blockquote": {
           borderLeft: 3,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.12)
-            : alpha(theme.palette.primary.main, 0.3),
+          borderColor: "border.default",
           pl: 2,
           ml: 0,
           my: 1.5,
@@ -237,9 +212,7 @@ export default function TextBlock({ content }) {
         "& hr": {
           border: "none",
           borderTop: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.08),
+          borderColor: "border.default",
           my: 2,
         },
         // Strong / em

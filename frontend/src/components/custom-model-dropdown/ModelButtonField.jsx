@@ -94,7 +94,7 @@ const ModelButtonField = ({
             ) : (
               buttonIcon || (
                 <Iconify
-                  icon="radix-icons:box-model"
+                  icon="solar:graph-linear"
                   width="16px"
                   height="16px"
                   sx={{
@@ -121,13 +121,11 @@ const ModelButtonField = ({
           </Box>
         ) : (
           <Button
+            size="small"
             sx={{
-              borderRadius: "4px",
               backgroundColor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              height: "32px",
-              padding: "4px 8px",
               display: "flex",
               // flexDirection: "row",
               // alignItems: "center",
@@ -154,7 +152,7 @@ const ModelButtonField = ({
               ) : (
                 buttonIcon || (
                   <Iconify
-                    icon="radix-icons:box-model"
+                    icon="solar:graph-linear"
                     width="16px"
                     height="16px"
                     sx={{
@@ -187,7 +185,7 @@ const ModelButtonField = ({
           {openDropdown ? (
             <IconButton
               sx={{
-                transition: "transform 0.3s ease",
+                transition: "transform 0.2s ease",
                 transform: openDropdown ? "rotate(180deg)" : "rotate(0deg)",
               }}
             >

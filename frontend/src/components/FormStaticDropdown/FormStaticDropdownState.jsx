@@ -71,7 +71,7 @@ const FormStaticDropdownState = React.forwardRef(
             >
               <Iconify
                 // @ts-ignore
-                icon="ion:chevron-down"
+                icon="solar:alt-arrow-down-linear"
                 width={20}
                 height={20}
                 sx={{ color: "text.disabled" }}
@@ -101,7 +101,7 @@ const FormStaticDropdownState = React.forwardRef(
             <MenuItem disabled value="">
               <Typography
                 typography="s1"
-                fontWeight="fontWeightMedium"
+                fontWeight={400}
                 color="text.disabled"
               >
                 {placeholder}
@@ -128,7 +128,7 @@ const FormStaticDropdownState = React.forwardRef(
           <FormHelperText
             sx={{
               marginLeft: 0,
-              color: isError ? "red.500" : "text.primary",
+              color: isError ? "status.danger.fg" : "text.primary",
             }}
           >
             {errorMessage || helperText}

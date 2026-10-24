@@ -5,27 +5,28 @@ import MenuItem from "@mui/material/MenuItem";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 
 const CONTEXT_OPTIONS = [
-  { value: "auto", label: "Auto", icon: "mdi:auto-fix" },
-  { value: "datasets", label: "Datasets", icon: "mdi:database-outline" },
+  { value: "auto", label: "Auto", icon: "solar:stars-minimalistic-linear" },
+  { value: "datasets", label: "Datasets", icon: "solar:database-linear" },
   {
     value: "evaluations",
     label: "Evaluations",
-    icon: "mdi:clipboard-check-outline",
+    icon: "solar:checklist-minimalistic-linear",
   },
-  { value: "tracing", label: "Tracing", icon: "mdi:chart-timeline-variant" },
-  { value: "experiments", label: "Experiments", icon: "mdi:flask-outline" },
-  { value: "agents", label: "Agents", icon: "mdi:robot-outline" },
-  { value: "prompts", label: "Prompts", icon: "mdi:text-box-outline" },
+  { value: "tracing", label: "Tracing", icon: "solar:chart-2-linear" },
+  {
+    value: "experiments",
+    label: "Experiments",
+    icon: "solar:test-tube-linear",
+  },
+  { value: "agents", label: "Agents", icon: "solar:bot-linear" },
+  { value: "prompts", label: "Prompts", icon: "solar:notes-linear" },
 ];
 
 export default function ContextSelector() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [anchorEl, setAnchorEl] = useState(null);
 
   const selectedContext = useFalconStore((s) => s.selectedContext);
@@ -55,22 +56,14 @@ export default function ContextSelector() {
           gap: 0.5,
           px: 1,
           py: 0.5,
-          borderRadius: "10px",
+          borderRadius: "8px",
           border: 1,
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.1)
-            : alpha(theme.palette.common.black, 0.1),
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.04)
-            : alpha(theme.palette.common.black, 0.03),
+          borderColor: "border.default",
+          bgcolor: "background.neutral",
           transition: "all 0.15s ease",
           "&:hover": {
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.2)
-              : alpha(theme.palette.common.black, 0.2),
-            bgcolor: isDark
-              ? alpha(theme.palette.common.white, 0.08)
-              : alpha(theme.palette.common.black, 0.05),
+            borderColor: "border.default",
+            bgcolor: "action.hover",
           },
         }}
       >
@@ -91,7 +84,7 @@ export default function ContextSelector() {
           {current.label}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{ color: "text.disabled", ml: -0.25 }}
         />
@@ -112,9 +105,6 @@ export default function ContextSelector() {
               borderRadius: "12px",
               border: 1,
               borderColor: "divider",
-              boxShadow: isDark
-                ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
             },
           },
         }}
@@ -130,16 +120,14 @@ export default function ContextSelector() {
               borderRadius: "8px",
               mx: 0.5,
               "&.Mui-selected": {
-                bgcolor: isDark
-                  ? alpha(theme.palette.common.white, 0.08)
-                  : alpha(theme.palette.primary.main, 0.08),
+                bgcolor: "action.selected",
               },
             }}
           >
             <ListItemIcon sx={{ minWidth: 28 }}>
               <Iconify
                 icon={option.icon}
-                width={18}
+                width={16}
                 sx={{ color: "text.secondary" }}
               />
             </ListItemIcon>
@@ -149,7 +137,7 @@ export default function ContextSelector() {
             />
             {selectedContext === option.value && (
               <Iconify
-                icon="mdi:check"
+                icon="solar:check-linear"
                 width={16}
                 sx={{ color: "primary.main", ml: 1 }}
               />

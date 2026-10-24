@@ -70,7 +70,13 @@ export default function ConnectorToolList({ open, connector, onClose }) {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         <Box display="flex" alignItems="center" justifyContent="space-between">
           <Typography variant="h6" component="span">
@@ -95,7 +101,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
         ) : tools.length === 0 ? (
           <Box py={4} textAlign="center">
             <Iconify
-              icon="mdi:tools"
+              icon="solar:toolbox-linear"
               width={36}
               sx={{ color: "text.disabled", mb: 1 }}
             />
@@ -112,7 +118,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  py: 1.5,
+                  py: 1,
                   px: 0.5,
                 }}
               >
@@ -122,6 +128,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                     sx={{
                       color: "text.primary",
                       fontSize: 13,
+                      fontWeight: 500,
                     }}
                   >
                     {tool.name}
@@ -130,7 +137,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
                     <Typography
                       variant="caption"
                       sx={{
-                        color: "text.secondary",
+                        color: "text.tertiary",
                         display: "block",
                         mt: 0.25,
                       }}
@@ -154,7 +161,7 @@ export default function ConnectorToolList({ open, connector, onClose }) {
         <Button
           onClick={loadTools}
           disabled={loading}
-          startIcon={<Iconify icon="mdi:refresh" width={18} />}
+          startIcon={<Iconify icon="solar:refresh-linear" width={20} />}
           sx={{ mr: "auto" }}
         >
           Refresh

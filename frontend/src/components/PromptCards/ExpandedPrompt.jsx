@@ -299,8 +299,8 @@ export default function ExpandedPrompt({
       keepMounted={false}
       PaperProps={{
         sx: {
-          minWidth: "700px",
-          maxWidth: "700px",
+          minWidth: "720px",
+          maxWidth: "720px",
           minHeight: "300px",
           overflow: "visible",
           padding: 2,
@@ -323,12 +323,7 @@ export default function ExpandedPrompt({
         }}
       >
         {label}
-        <IconButton
-          sx={{
-            padding: 0,
-          }}
-          onClick={onClose}
-        >
+        <IconButton onClick={onClose}>
           <SvgColor
             src="/assets/icons/ic_close.svg"
             sx={{

@@ -25,9 +25,11 @@ export default function DatasetSelector({
   let datasetName = "";
 
   if (datasetType === "primary") {
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     borderColor = "#551a8b";
     datasetName = "A";
   } else {
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     borderColor = "#03AC13";
     datasetName = "B";
   }
@@ -74,7 +76,7 @@ export default function DatasetSelector({
             p: 1,
             mr: 1,
             border: "2.5px solid " + borderColor,
-            borderRadius: "10px",
+            borderRadius: "6px",
             alignItems: "center",
             width: "auto",
           }}

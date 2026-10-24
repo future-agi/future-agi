@@ -450,8 +450,8 @@ export const getSummaryCards = (data) => [
     title: "Active Days",
     value: data?.active_days?.toLocaleString() ?? 0,
     icon: "user_active_days",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Total Tokens used",
@@ -471,8 +471,8 @@ export const getSummaryCards = (data) => [
     title: "Avg Latency per trace",
     value: data?.avg_trace_latency ? formatMs(data.avg_trace_latency) : 0,
     icon: "user_avg_latency_per_trace",
-    color: "orange.500",
-    bgColor: "orange.o5",
+    color: "status.warning.fg",
+    bgColor: "status.warning.bg",
   },
   {
     title: "Avg Latency per session",
@@ -481,22 +481,22 @@ export const getSummaryCards = (data) => [
       ? formatMs(data.avg_session_duration * 1000)
       : 0,
     icon: "user_avg_latency_per_session",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Traces with error",
     value: data?.num_traces_with_errors?.toLocaleString() ?? 0,
     icon: "user_trace_with_error",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
   {
     title: "Traces with guardrails triggered",
     value: data?.num_guardrails_triggered?.toLocaleString() ?? 0,
     icon: "user_traces_with_guardrails_triggered",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
 ];
 export const detectTimePeriod = (start, end) => {

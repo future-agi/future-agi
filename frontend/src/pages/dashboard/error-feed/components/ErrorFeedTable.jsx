@@ -3,12 +3,7 @@ import React, { useCallback, useMemo } from "react";
 import {
   Box,
   Checkbox,
-  Chip,
   IconButton,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -19,11 +14,11 @@ import {
   Tooltip,
   Typography,
   useTheme,
-  alpha,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import IssueStatusChip from "./IssueStatusChip";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
@@ -31,7 +26,10 @@ import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
 import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
-import { clickable, focusRing } from "src/sections/simulate-v2/components/clickable";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -49,80 +47,73 @@ const humanizeTime = (iso) => {
   }
 };
 
-function ErrorTypeTag({ type, isDark }) {
+function ErrorTypeTag({ type }) {
   const shortType = type
     .replace(/Error$/, "")
     .replace(/([A-Z])/g, " $1")
     .trim();
   return (
     <Tooltip arrow title={`Error type: ${shortType}`}>
-    <Chip
-      label={shortType}
-      size="small"
-      sx={{
-        height: 18,
-        borderRadius: "3px",
-        fontSize: "10px",
-        fontWeight: 500,
-        bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
-        color: isDark ? "#a1a1aa" : "#605C70",
-        "& .MuiChip-label": { px: "5px" },
-        maxWidth: 140,
-        overflow: "hidden",
-      }}
-    />
+      <Typography
+        noWrap
+        sx={{ fontSize: "12px", color: "text.tertiary", maxWidth: 140 }}
+      >
+        {shortType}
+      </Typography>
     </Tooltip>
   );
 }
 
 ErrorTypeTag.propTypes = {
   type: PropTypes.string,
-  isDark: PropTypes.bool,
 };
 
 // ── Fix layer chip ──────────────────────────────────────────────────────────
 /* Where the fix most likely belongs. */
 const FIX_LAYER_CONFIG = {
-  prompt: { label: "Prompt", tip: "Most likely fixed in the agent's prompt or instructions." },
-  orchestration: { label: "Orchestration", tip: "Most likely fixed in how the agent's steps and tool calls are wired together." },
-  tools: { label: "Tools", tip: "Most likely fixed in a tool, or in how the agent calls it." },
-  guardrails: { label: "Guardrails", tip: "Most likely fixed in a check or guardrail around the agent." },
-  data: { label: "Data", tip: "Most likely fixed in the data the agent reads." },
-  memory: { label: "Memory", tip: "Most likely fixed in what the agent keeps between turns or hands over." },
+  prompt: {
+    label: "Prompt",
+    tip: "Most likely fixed in the agent's prompt or instructions.",
+  },
+  orchestration: {
+    label: "Orchestration",
+    tip: "Most likely fixed in how the agent's steps and tool calls are wired together.",
+  },
+  tools: {
+    label: "Tools",
+    tip: "Most likely fixed in a tool, or in how the agent calls it.",
+  },
+  guardrails: {
+    label: "Guardrails",
+    tip: "Most likely fixed in a check or guardrail around the agent.",
+  },
+  data: {
+    label: "Data",
+    tip: "Most likely fixed in the data the agent reads.",
+  },
+  memory: {
+    label: "Memory",
+    tip: "Most likely fixed in what the agent keeps between turns or hands over.",
+  },
 };
 
 function FixLayerChip({ layer }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const cfg = FIX_LAYER_CONFIG[layer];
-  if (!cfg) return <span style={{ color: "#71717a", fontSize: 11 }}>—</span>;
+  if (!cfg)
+    return (
+      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
+        —
+      </span>
+    );
   return (
     <Tooltip arrow title={cfg.tip}>
-    <Box
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        px: "8px",
-        py: "3px",
-        borderRadius: "5px",
-        bgcolor: isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.55)",
-        border: "1px solid",
-        borderColor: isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.3)",
-        whiteSpace: "nowrap",
-      }}
-    >
       <Typography
-        sx={{
-          fontSize: "11px",
-          fontWeight: 600,
-          color: "#fff",
-          lineHeight: 1,
-          letterSpacing: "0.01em",
-        }}
+        noWrap
+        sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
       >
         {cfg.label}
       </Typography>
-    </Box>
     </Tooltip>
   );
 }
@@ -153,15 +144,15 @@ function SortIcon({ active, dir }) {
   if (!active)
     return (
       <Iconify
-        icon="mdi:unfold-more-horizontal"
-        width={13}
+        icon="solar:chevrons-up-down-linear"
+        width={14}
         sx={{ opacity: 0.3, ml: 0.25 }}
       />
     );
   return (
     <Iconify
-      icon={dir === "asc" ? "mdi:arrow-up" : "mdi:arrow-down"}
-      width={13}
+      icon={dir === "asc" ? "solar:arrow-up-linear" : "solar:arrow-down-linear"}
+      width={14}
       sx={{ ml: 0.25, color: "primary.main" }}
     />
   );
@@ -171,10 +162,8 @@ SortIcon.propTypes = { active: PropTypes.bool, dir: PropTypes.string };
 // ── skeleton rows ──────────────────────────────────────────────────────────
 /* eslint-disable-next-line react/prop-types */
 function SkeletonRow({ withAgent = false }) {
-  const theme = useTheme();
   const pulse = {
-    bgcolor:
-      theme.palette.mode === "dark" ? alpha("#fff", 0.06) : alpha("#000", 0.06),
+    bgcolor: "action.selected",
     borderRadius: "4px",
     animation: "pulse 1.4s ease-in-out infinite",
     "@keyframes pulse": {
@@ -211,7 +200,7 @@ function SkeletonRow({ withAgent = false }) {
         <Box sx={{ ...pulse, height: 14, width: 35 }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "5px" }} />
+        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "4px" }} />
       </TableCell>
       <TableCell>
         <Box sx={{ ...pulse, height: 36, width: "100%" }} />
@@ -241,7 +230,7 @@ function EmptyState({ filtered, colSpan = 9 }) {
             }}
           >
             <Iconify
-              icon="mdi:check-circle-outline"
+              icon="solar:check-circle-linear"
               width={24}
               sx={{ color: "text.disabled" }}
             />
@@ -272,7 +261,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const theme = useTheme();
   const improving = useAgentImprovementFlag();
   const columns = improving ? WITH_AGENT : COLUMNS;
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
@@ -302,13 +290,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
     [navigate],
   );
 
-  const hoverBg = isDark
-    ? alpha(theme.palette.common.white, 0.04)
-    : alpha(theme.palette.grey[500], 0.04);
+  const hoverBg = theme.palette.action.hover;
 
-  const selectedBg = isDark
-    ? alpha(theme.palette.primary.main, 0.12)
-    : alpha(theme.palette.primary.main, 0.05);
+  const selectedBg = theme.palette.action.selected;
 
   return (
     <>
@@ -412,7 +396,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     key={row.cluster_id}
                     hover
                     selected={isSelected}
-                    {...clickable(() => handleRowClick(row.cluster_id), { role: "link" })}
+                    {...clickable(() => handleRowClick(row.cluster_id), {
+                      role: "link",
+                    })}
                     role={undefined}
                     sx={{
                       ...focusRing,
@@ -475,11 +461,15 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           <Typography
                             typography="s3"
                             color="text.secondary"
-                            sx={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontFeatureSettings: "'tnum'" }}
+                            sx={{
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, Menlo, monospace",
+                              fontFeatureSettings: "'tnum'",
+                            }}
                           >
                             {row.cluster_id}
                           </Typography>
-                          <ErrorTypeTag type={row.error.type} isDark={isDark} />
+                          <ErrorTypeTag type={row.error.type} />
                           {row.eval_score != null && (
                             <Typography
                               typography="s3"
@@ -566,7 +556,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           }}
                           onClick={() => handleRowClick(row.cluster_id)}
                         >
-                          <Iconify icon="mdi:arrow-right" width={16} />
+                          <Iconify icon="solar:arrow-right-linear" width={16} />
                         </IconButton>
                       </Tooltip>
                     </TableCell>
@@ -580,78 +570,15 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
       {/* ── Pagination ── */}
       {totalCount > 0 && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, py: 1.5, flexShrink: 0 }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-            <Select
-              size="small"
-              value={pageSize}
-              onChange={(e) => {
-                useErrorFeedStore.setState({
-                  pageSize: e.target.value,
-                  page: 0,
-                });
-              }}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {[10, 25, 50].map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Pagination
-            count={Math.ceil(totalCount / pageSize)}
-            variant="outlined"
-            shape="rounded"
-            page={page + 1}
-            color="primary"
-            onChange={(_, value) => setPage(value - 1)}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-                slots={{
-                  previous: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Iconify
-                        icon="octicon:chevron-left-24"
-                        width={18}
-                        height={18}
-                        sx={{ path: { strokeWidth: 1.5 } }}
-                      />
-                      Back
-                    </Box>
-                  ),
-                  next: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      Next
-                      <Iconify
-                        icon="octicon:chevron-right-24"
-                        width={18}
-                        height={18}
-                        sx={{ path: { strokeWidth: 1.5 } }}
-                      />
-                    </Box>
-                  ),
-                }}
-              />
-            )}
-          />
-        </Stack>
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={totalCount}
+          onPageChange={setPage}
+          onPageSizeChange={(size) =>
+            useErrorFeedStore.setState({ pageSize: size, page: 0 })
+          }
+        />
       )}
     </>
   );

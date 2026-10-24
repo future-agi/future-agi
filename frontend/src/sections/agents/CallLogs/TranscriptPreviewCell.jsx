@@ -15,21 +15,21 @@ const TranscriptTooltip = ({ transcript }) => {
         <Box key={i} sx={{ mb: 0.5 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: 600,
               color: t.role === "user" ? "info.main" : "secondary.main",
-              textTransform: "uppercase",
+              textTransform: "none",
             }}
           >
             {t.role}
           </Typography>
-          <Typography sx={{ fontSize: 11, color: "inherit", lineHeight: 1.3 }}>
+          <Typography sx={{ fontSize: 12, color: "inherit", lineHeight: 1.3 }}>
             {t.content}
           </Typography>
         </Box>
       ))}
       {transcript.length > 10 && (
-        <Typography sx={{ fontSize: 10, color: "text.disabled", mt: 0.5 }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled", mt: 0.5 }}>
           +{transcript.length - 10} more messages
         </Typography>
       )}
@@ -81,7 +81,7 @@ const TranscriptPreviewCell = (params) => {
         }}
       >
         <Iconify
-          icon="mdi:message-text-outline"
+          icon="solar:chat-round-line-linear"
           width={14}
           color="text.disabled"
         />

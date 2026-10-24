@@ -36,7 +36,7 @@ const NoMetricAdded = () => {
       <Typography
         sx={{ width: "30ch" }}
         textAlign="center"
-        fontSize="14px"
+        fontSize="13px"
         fontWeight={600}
         id="optimize-no-metric"
       >

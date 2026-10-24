@@ -1,15 +1,23 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  Box, Stack, Typography, TextField, MenuItem, Button, IconButton, Chip,
-  ToggleButton, ToggleButtonGroup,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Box,
+  Stack,
+  Typography,
+  TextField,
+  MenuItem,
+  Button,
+  IconButton,
+  Chip,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { twinById } from "../../_mock/twins";
-
-const TWIN_TINT = "#7857FC";
 
 /**
  * Assertion catalog.
@@ -32,13 +40,32 @@ const SHAPES = [
     icon: "solar:chat-round-line-linear",
     applies: ["slack"],
     params: [
-      { key: "channel", label: "Channel", placeholder: "#support-urgent", type: "text" },
-      { key: "contains", label: "Message contains", placeholder: "ETA", type: "text", optional: true },
-      { key: "byRole", label: "Sender", type: "select", options: [
-        { value: "any", label: "Any" }, { value: "agent", label: "Agent only" },
-      ], defaultValue: "agent" },
+      {
+        key: "channel",
+        label: "Channel",
+        placeholder: "#support-urgent",
+        type: "text",
+      },
+      {
+        key: "contains",
+        label: "Message contains",
+        placeholder: "ETA",
+        type: "text",
+        optional: true,
+      },
+      {
+        key: "byRole",
+        label: "Sender",
+        type: "select",
+        options: [
+          { value: "any", label: "Any" },
+          { value: "agent", label: "Agent only" },
+        ],
+        defaultValue: "agent",
+      },
     ],
-    preview: (p) => `Slack: message${p.contains ? ` mentioning "${p.contains}"` : ""} posted in ${p.channel || "channel"} by ${p.byRole === "agent" ? "the agent" : "anyone"}`,
+    preview: (p) =>
+      `Slack: message${p.contains ? ` mentioning "${p.contains}"` : ""} posted in ${p.channel || "channel"} by ${p.byRole === "agent" ? "the agent" : "anyone"}`,
   },
   {
     id: "row_written",
@@ -46,17 +73,34 @@ const SHAPES = [
     icon: "solar:database-linear",
     applies: ["notion", "salesforce", "linear", "github"],
     params: [
-      { key: "target", label: "Database / project", placeholder: "Launch", type: "text" },
-      { key: "count", label: "At least how many rows", type: "number", defaultValue: 1 },
-      { key: "op", label: "Write kind", type: "select", options: [
-        { value: "any", label: "Any write" },
-        { value: "create", label: "Create only" },
-        { value: "update", label: "Update only" },
-      ], defaultValue: "any" },
+      {
+        key: "target",
+        label: "Database / project",
+        placeholder: "Launch",
+        type: "text",
+      },
+      {
+        key: "count",
+        label: "At least how many rows",
+        type: "number",
+        defaultValue: 1,
+      },
+      {
+        key: "op",
+        label: "Write kind",
+        type: "select",
+        options: [
+          { value: "any", label: "Any write" },
+          { value: "create", label: "Create only" },
+          { value: "update", label: "Update only" },
+        ],
+        defaultValue: "any",
+      },
     ],
     preview: (p, sId) => {
       const s = twinById(sId)?.name || sId;
-      const op = p.op === "any" ? "written" : p.op === "create" ? "created" : "updated";
+      const op =
+        p.op === "any" ? "written" : p.op === "create" ? "created" : "updated";
       return `${s}: at least ${p.count || 1} row${p.count === 1 ? "" : "s"} ${op} in ${p.target || "the target"}`;
     },
   },
@@ -66,11 +110,22 @@ const SHAPES = [
     icon: "solar:lock-keyhole-minimalistic-linear",
     applies: ["slack", "notion", "gmail", "salesforce", "github", "linear"],
     params: [
-      { key: "maxWrites", label: "At most this many writes", type: "number", defaultValue: 1 },
-      { key: "scope", label: "Scope", type: "select", options: [
-        { value: "any", label: "Anywhere in the service" },
-        { value: "outside", label: "Outside the expected target" },
-      ], defaultValue: "outside" },
+      {
+        key: "maxWrites",
+        label: "At most this many writes",
+        type: "number",
+        defaultValue: 1,
+      },
+      {
+        key: "scope",
+        label: "Scope",
+        type: "select",
+        options: [
+          { value: "any", label: "Anywhere in the service" },
+          { value: "outside", label: "Outside the expected target" },
+        ],
+        defaultValue: "outside",
+      },
     ],
     preview: (p, sId) => {
       const s = twinById(sId)?.name || sId;
@@ -84,10 +139,22 @@ const SHAPES = [
     icon: "solar:tag-linear",
     applies: ["gmail", "salesforce", "linear", "github"],
     params: [
-      { key: "value", label: "Label or status", placeholder: "Escalated", type: "text" },
-      { key: "target", label: "On (email / issue / account)", placeholder: "Legal email", type: "text", optional: true },
+      {
+        key: "value",
+        label: "Label or status",
+        placeholder: "Escalated",
+        type: "text",
+      },
+      {
+        key: "target",
+        label: "On (email / issue / account)",
+        placeholder: "Legal email",
+        type: "text",
+        optional: true,
+      },
     ],
-    preview: (p, sId) => `${twinById(sId)?.name || sId}: '${p.value || "label"}' applied${p.target ? ` on ${p.target}` : ""}`,
+    preview: (p, sId) =>
+      `${twinById(sId)?.name || sId}: '${p.value || "label"}' applied${p.target ? ` on ${p.target}` : ""}`,
   },
 ];
 
@@ -95,7 +162,8 @@ const shapeById = (id) => SHAPES.find((s) => s.id === id);
 
 const paramsForShape = (shape, service) => shape.params;
 
-const initialParamsFor = (shape) => Object.fromEntries(shape.params.map((p) => [p.key, p.defaultValue ?? ""]));
+const initialParamsFor = (shape) =>
+  Object.fromEntries(shape.params.map((p) => [p.key, p.defaultValue ?? ""]));
 
 /**
  * Author a twin end-state evaluation.
@@ -118,19 +186,26 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
   if (!open) return null;
   if (!services.length) return null;
 
-  const addAssertion = () => setAssertions((prev) => [...prev, seedAssertion(services)]);
-  const removeAssertion = (i) => setAssertions((prev) => prev.filter((_, idx) => idx !== i));
-  const patchAssertion = (i, patch) => setAssertions((prev) =>
-    prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a))
-  );
+  const addAssertion = () =>
+    setAssertions((prev) => [...prev, seedAssertion(services)]);
+  const removeAssertion = (i) =>
+    setAssertions((prev) => prev.filter((_, idx) => idx !== i));
+  const patchAssertion = (i, patch) =>
+    setAssertions((prev) =>
+      prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a)),
+    );
 
-  const canSave = name.trim().length > 0 && assertions.length > 0 &&
+  const canSave =
+    name.trim().length > 0 &&
+    assertions.length > 0 &&
     assertions.every((a) => shapeById(a.shapeId) && a.service);
 
   const save = () => {
     const cleaned = assertions.map((a) => {
       const shape = shapeById(a.shapeId);
-      const params = Object.fromEntries(shape.params.map((p) => [p.key, a.params[p.key]]));
+      const params = Object.fromEntries(
+        shape.params.map((p) => [p.key, a.params[p.key]]),
+      );
       return { shapeId: a.shapeId, service: a.service, params };
     });
     const blurb = cleaned
@@ -157,30 +232,45 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
     setCombinator("all");
     setAssertions([seedAssertion(services)]);
   };
-  const close = () => { reset(); onClose(); };
+  const close = () => {
+    reset();
+    onClose();
+  };
 
   return (
     <Dialog
       open={open}
       onClose={close}
-      maxWidth="md" fullWidth
+      maxWidth={false}
+      fullWidth
       PaperProps={{
         sx: {
-          borderRadius: 2, backgroundImage: "none",
-          bgcolor: "background.paper", border: "1px solid", borderColor: "divider",
+          maxWidth: 960,
+          borderRadius: 2,
+          backgroundImage: "none",
+          bgcolor: "background.paper",
+          border: "1px solid",
+          borderColor: "divider",
         },
       }}
     >
       <DialogTitle sx={{ p: 2.5, pb: 1.5 }}>
         <Stack direction="row" alignItems="flex-start" spacing={1.5}>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "m2", fontWeight: 700 }}>Author clone end-state eval</Typography>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              Structured assertions against the final sandbox state. Not a prompt — a boolean per assertion.
+            <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+              Author clone end-state eval
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              Structured assertions against the final sandbox state. Not a
+              prompt — a boolean per assertion.
             </Typography>
           </Box>
           <IconButton size="small" onClick={close}>
-            <Iconify icon="solar:close-circle-linear" width={16} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon="solar:close-circle-linear"
+              width={16}
+              sx={{ color: "text.tertiary" }}
+            />
           </IconButton>
         </Stack>
       </DialogTitle>
@@ -188,7 +278,8 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
       <DialogContent sx={{ p: 2.5, pt: 1 }} dividers>
         <Stack spacing={2}>
           <TextField
-            size="small" fullWidth
+            size="small"
+            fullWidth
             label="Eval name"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -197,22 +288,14 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
           />
 
           <Stack direction="row" alignItems="center" spacing={1.5}>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>An assertion passes when</Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              An assertion passes when
+            </Typography>
             <ToggleButtonGroup
-              value={combinator} exclusive
+              value={combinator}
+              exclusive
               onChange={(_, v) => v && setCombinator(v)}
               size="small"
-              sx={{
-                "& .MuiToggleButton-root": {
-                  typography: "s2", fontWeight: 700, textTransform: "none",
-                  px: 1.5, py: 0.5, borderColor: "divider",
-                },
-                "& .Mui-selected": {
-                  bgcolor: (t) => `${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08)} !important`,
-                  color: (t) => `${t.palette.text.primary} !important`,
-                  borderColor: (t) => `${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.35 : 0.28)} !important`,
-                },
-              }}
             >
               <ToggleButton value="all">All must pass</ToggleButton>
               <ToggleButton value="any">Any must pass</ToggleButton>
@@ -227,52 +310,74 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
                 assertion={a}
                 services={services}
                 onPatch={(patch) => patchAssertion(i, patch)}
-                onRemove={assertions.length > 1 ? () => removeAssertion(i) : null}
+                onRemove={
+                  assertions.length > 1 ? () => removeAssertion(i) : null
+                }
               />
             ))}
           </Stack>
 
           <Button
-            variant="outlined" size="small"
+            variant="outlined"
+            size="small"
             onClick={addAssertion}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={13} />}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
             sx={{
-              typography: "s2", fontWeight: 700, alignSelf: "flex-start",
-              borderColor: "divider", color: "text.primary",
+              alignSelf: "flex-start",
+              borderColor: "divider",
+              color: "text.primary",
             }}
           >
             Add assertion
           </Button>
 
-          {assertions.length > 0 && assertions.every((a) => shapeById(a.shapeId)) && (
-            <Box sx={{
-              p: 1.5, borderRadius: 1.25, border: "1px dashed",
-              borderColor: "divider",
-              bgcolor: "background.neutral",
-            }}>
-              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 0.5 }}>
-                Preview
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.primary" }}>
-                {assertions
-                  .map((a) => shapeById(a.shapeId)?.preview(a.params, a.service))
-                  .filter(Boolean)
-                  .join(` ${combinator === "all" ? "AND " : "OR "}`)}
-              </Typography>
-            </Box>
-          )}
+          {assertions.length > 0 &&
+            assertions.every((a) => shapeById(a.shapeId)) && (
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: "8px",
+                  border: "1px dashed",
+                  borderColor: "divider",
+                  bgcolor: "background.neutral",
+                }}
+              >
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                    textTransform: "none",
+                    letterSpacing: 0.4,
+                    mb: 0.5,
+                  }}
+                >
+                  Preview
+                </Typography>
+                <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                  {assertions
+                    .map((a) =>
+                      shapeById(a.shapeId)?.preview(a.params, a.service),
+                    )
+                    .filter(Boolean)
+                    .join(` ${combinator === "all" ? "AND " : "OR "}`)}
+                </Typography>
+              </Box>
+            )}
         </Stack>
       </DialogContent>
 
       <DialogActions sx={{ p: 2, pt: 1.5 }}>
-        <Button onClick={close} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>
+        <Button size="small" onClick={close} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
         <Button
-          variant="contained" color="primary"
-          disabled={!canSave} onClick={save}
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={!canSave}
+          onClick={save}
           startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-          sx={{ typography: "s2", fontWeight: 700 }}
         >
           Add to evaluations
         </Button>
@@ -299,7 +404,11 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
 
   const changeService = (sId) => {
     const nextShape = SHAPES.find((s) => s.applies.includes(sId)) || SHAPES[0];
-    onPatch({ service: sId, shapeId: nextShape.id, params: initialParamsFor(nextShape) });
+    onPatch({
+      service: sId,
+      shapeId: nextShape.id,
+      params: initialParamsFor(nextShape),
+    });
   };
 
   const changeShape = (shapeId) => {
@@ -308,31 +417,46 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
   };
 
   return (
-    <Box sx={{
-      p: 1.5, borderRadius: 1.25, border: "1px solid", borderColor: "divider",
-      bgcolor: "background.paper",
-    }}>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 1.25 }}>
+    <Box
+      sx={{
+        p: 1.5,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{ mb: 1.25 }}
+      >
         <Chip
-          label={`#${index + 1}`} size="small"
+          label={`#${index + 1}`}
+          size="small"
           sx={{
-            height: 18, fontSize: 10, fontWeight: 700,
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
+            bgcolor: "action.selected",
             color: "text.secondary",
-            "& .MuiChip-label": { px: 0.75 },
           }}
         />
         <Box flex={1} />
         {onRemove && (
           <IconButton size="small" onClick={onRemove}>
-            <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
+            <Iconify
+              icon="solar:close-circle-linear"
+              width={14}
+              sx={{ color: "text.tertiary" }}
+            />
           </IconButton>
         )}
       </Stack>
 
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
         <TextField
-          select size="small" label="Service"
+          select
+          size="small"
+          label="Service"
           value={assertion.service}
           onChange={(e) => changeService(e.target.value)}
           sx={{ minWidth: 160 }}
@@ -344,7 +468,11 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
             return (
               <MenuItem key={sId} value={sId} sx={{ typography: "s2" }}>
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Iconify icon={t?.icon || "solar:server-square-linear"} width={12} sx={{ color: t?.color || "text.subtitle" }} />
+                  <Iconify
+                    icon={t?.icon || "solar:server-square-linear"}
+                    width={12}
+                    sx={{ color: t?.color || "text.tertiary" }}
+                  />
                   <span>{t?.name || sId}</span>
                 </Stack>
               </MenuItem>
@@ -353,7 +481,9 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
         </TextField>
 
         <TextField
-          select size="small" label="Assertion"
+          select
+          size="small"
+          label="Assertion"
           value={assertion.shapeId}
           onChange={(e) => changeShape(e.target.value)}
           disabled={eligibleShapes.length === 0}
@@ -364,7 +494,11 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
           {eligibleShapes.map((s) => (
             <MenuItem key={s.id} value={s.id} sx={{ typography: "s2" }}>
               <Stack direction="row" alignItems="center" spacing={0.75}>
-                <Iconify icon={s.icon} width={12} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon={s.icon}
+                  width={12}
+                  sx={{ color: "text.tertiary" }}
+                />
                 <span>{s.label}</span>
               </Stack>
             </MenuItem>
@@ -373,10 +507,17 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
       </Stack>
 
       {shape && (
-        <Box sx={{
-          display: "grid", gap: 1.25, mt: 1.25,
-          gridTemplateColumns: { xs: "1fr", sm: `repeat(${Math.min(3, shape.params.length)}, 1fr)` },
-        }}>
+        <Box
+          sx={{
+            display: "grid",
+            gap: 1.25,
+            mt: 1.25,
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: `repeat(${Math.min(3, shape.params.length)}, 1fr)`,
+            },
+          }}
+        >
           {paramsForShape(shape, assertion.service).map((p) => (
             <TextField
               key={p.key}
@@ -386,13 +527,27 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
               label={p.label + (p.optional ? " (optional)" : "")}
               placeholder={p.placeholder}
               value={assertion.params[p.key] ?? ""}
-              onChange={(e) => onPatch({ params: { ...assertion.params, [p.key]: e.target.value } })}
-              InputLabelProps={{ sx: { typography: "s2" }, shrink: p.placeholder ? true : undefined }}
+              onChange={(e) =>
+                onPatch({
+                  params: { ...assertion.params, [p.key]: e.target.value },
+                })
+              }
+              InputLabelProps={{
+                sx: { typography: "s2" },
+                shrink: p.placeholder ? true : undefined,
+              }}
               InputProps={{ sx: { typography: "s2" } }}
             >
-              {p.type === "select" && p.options.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value} sx={{ typography: "s2" }}>{opt.label}</MenuItem>
-              ))}
+              {p.type === "select" &&
+                p.options.map((opt) => (
+                  <MenuItem
+                    key={opt.value}
+                    value={opt.value}
+                    sx={{ typography: "s2" }}
+                  >
+                    {opt.label}
+                  </MenuItem>
+                ))}
             </TextField>
           ))}
         </Box>

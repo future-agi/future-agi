@@ -145,7 +145,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: "570px",
+          width: "560px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
@@ -173,7 +173,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
       </DialogTitle>

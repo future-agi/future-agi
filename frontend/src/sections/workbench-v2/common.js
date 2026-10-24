@@ -28,11 +28,10 @@ export const CREATE_PROMPT_OPTIONS = [
 ];
 
 export const iconStyles = {
-  boxShadow: "2px -2px 12px 0px rgba(0, 0, 0, 0.08)",
   fileIcon: "/assets/icons/ic_prompt.svg",
   folderIcon: "/assets/icons/ic_folder.svg",
-  fileColor: "red.500",
-  folderColor: "blue.500",
+  fileColor: "text.secondary",
+  folderColor: "text.secondary",
 };
 
 export const PROMPT_ICON_MAPPER = {

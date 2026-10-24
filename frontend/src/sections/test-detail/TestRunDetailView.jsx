@@ -1,4 +1,5 @@
-import { Box, Paper, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import TestRunDetailHeader from "./TestRunDetailHeader";
 import { resetState, useTestDetailStore } from "./states";
@@ -85,18 +86,15 @@ const TestRunDetailView = () => {
         }}
       >
         {/* Header Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            borderRadius: 0,
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent header from shrinking
+            flexShrink: 0,
           }}
         >
           <TestRunDetailHeader />
-        </Paper>
+        </Section>
         <TestExecutionDetailTabs
           tabs={tabs}
           currentTab={currentTab}

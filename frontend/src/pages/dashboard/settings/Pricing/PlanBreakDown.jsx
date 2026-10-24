@@ -199,11 +199,11 @@ const RenderValue = ({ value, heading }) => {
         {typeof value === "boolean" ? (
           <Iconify
             // @ts-ignore
-            icon={value ? "charm:tick" : "material-symbols:close-rounded"}
+            icon={value ? "solar:check-linear" : "solar:close-linear"}
             sx={{
               width: 20,
               height: 20,
-              color: value ? "green.500" : "red.500",
+              color: value ? "status.success.fg" : "status.danger.fg",
             }}
           />
         ) : (

@@ -61,14 +61,10 @@ const TableAction = (params) => {
         >
           <IconButton
             sx={{
-              width: 32,
-              height: 32,
               border: "1px solid",
               borderColor: isReRunningExperiment ? "text.disabled" : "divider",
-              borderRadius: "4px",
               backgroundColor: "transparent",
               transition: "border-color 0.2s",
-              p: 0,
             }}
             onClick={() => reRunExperiment()}
             disabled={isReRunningExperiment}
@@ -101,16 +97,12 @@ const TableAction = (params) => {
           <span>
             <IconButton
               sx={{
-                width: 32,
-                height: 32,
                 border: "1px solid",
                 borderColor: isStoppingExperiment
                   ? "border.hover"
                   : "border.default",
-                borderRadius: "4px",
                 backgroundColor: "transparent",
                 transition: "border-color 0.2s",
-                p: 0,
               }}
               onClick={() => stopExperiment()}
               disabled={

@@ -10,7 +10,6 @@ import {
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -115,7 +114,6 @@ function autoMapVariables(variables, sourceColumns) {
 }
 
 const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
-  const theme = useTheme();
   // Only clear a seeded Turing model once denial is *confirmed* (capabilities
   // loaded AND not allowed). Doing it in the useState initializer below would
   // wipe a legitimate selection at mount, before the fetch resolves, and never
@@ -227,7 +225,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
         }}
       >
         <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-          <Iconify icon="solar:arrow-left-linear" width={18} />
+          <Iconify icon="solar:arrow-left-linear" width={20} />
         </IconButton>
         <Typography variant="subtitle1" fontWeight={600}>
           Configure Evaluation
@@ -292,7 +290,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                     <Typography
                       variant="caption"
                       color="text.secondary"
-                      sx={{ fontSize: "11px" }}
+                      sx={{ fontSize: "12px" }}
                     >
                       {m.description}
                     </Typography>
@@ -323,7 +321,6 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                   size="small"
                   color="warning"
                   variant="outlined"
-                  sx={{ fontSize: "11px", height: 20 }}
                 />
               )}
             </Box>
@@ -337,10 +334,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                 borderRadius: 1,
                 border: "1px solid",
                 borderColor: "divider",
-                bgcolor:
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.02)"
-                    : "rgba(0,0,0,0.01)",
+                bgcolor: "background.neutral",
               }}
             >
               {sourceColumnInventoryControls}
@@ -499,7 +493,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
           variant="outlined"
           size="small"
           onClick={onBack}
-          sx={{ textTransform: "none", minWidth: 80 }}
+          sx={{ minWidth: 80 }}
         >
           Back
         </Button>
@@ -517,7 +511,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
               onClick={handleSave}
               loading={isSaving}
               disabled={unmappedCount > 0}
-              sx={{ textTransform: "none", minWidth: 140 }}
+              sx={{ minWidth: 140 }}
             >
               Add Evaluation
             </LoadingButton>

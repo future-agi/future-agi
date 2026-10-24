@@ -7,16 +7,38 @@ import { Box, Stack, Typography } from "@mui/material";
  */
 export default function SettingsSection({ title, sub, children }) {
   return (
-    <Box sx={{
-      display: "grid", gridTemplateColumns: { xs: "1fr", lg: "220px minmax(0, 1fr)" }, columnGap: 4, rowGap: 1.25,
-      py: 2.5, borderTop: "1px solid", borderColor: "divider",
-    }}>
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", lg: "220px minmax(0, 1fr)" },
+        columnGap: 4,
+        rowGap: 1.25,
+        py: 2.5,
+        borderTop: "1px solid",
+        borderColor: "divider",
+      }}
+    >
       <Box>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>{title}</Typography>
-        {sub && <Typography component="div" sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{sub}</Typography>}
+        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        {sub && (
+          <Typography
+            component="div"
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+          >
+            {sub}
+          </Typography>
+        )}
       </Box>
-      <Stack spacing={1.5} sx={{ minWidth: 0 }}>{children}</Stack>
+      <Stack spacing={1.5} sx={{ minWidth: 0 }}>
+        {children}
+      </Stack>
     </Box>
   );
 }
-SettingsSection.propTypes = { title: PropTypes.node, sub: PropTypes.node, children: PropTypes.node };
+SettingsSection.propTypes = {
+  title: PropTypes.node,
+  sub: PropTypes.node,
+  children: PropTypes.node,
+};

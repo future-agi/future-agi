@@ -125,7 +125,7 @@ const SpiderChartExperiment = ({ data, cols }) => {
                     backgroundColor: tagBackground,
                     width: "16px",
                     height: "16px",
-                    borderRadius: "2px",
+                    borderRadius: "4px",
                     border: "1px solid",
                     borderColor: tagForeground,
                   }}

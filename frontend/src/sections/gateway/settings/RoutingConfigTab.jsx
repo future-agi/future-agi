@@ -2,8 +2,6 @@
 import React, { useState } from "react";
 import {
   Stack,
-  Card,
-  CardContent,
   Typography,
   TextField,
   MenuItem,
@@ -18,7 +16,9 @@ import {
   Divider,
   Slider,
   Alert,
+  Box,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import FallbackChainEditor from "./FallbackChainEditor";
 import { useAvailableModels } from "../hooks/useAvailableModels";
@@ -40,14 +40,9 @@ const ConfigSection = ({
 }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <Card variant="outlined">
-      <CardContent
-        sx={{
-          py: 1.5,
-          "&:last-child": { pb: 1.5 },
-          cursor: "pointer",
-          userSelect: "none",
-        }}
+    <Section variant="panel">
+      <Box
+        sx={{ cursor: "pointer", userSelect: "none" }}
         onClick={() => setOpen((v) => !v)}
       >
         <Stack
@@ -67,19 +62,19 @@ const ConfigSection = ({
             </Stack>
           </Stack>
           <Iconify
-            icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
             width={20}
             sx={{ color: "text.secondary" }}
           />
         </Stack>
-      </CardContent>
+      </Box>
       <Collapse in={open}>
         <Divider />
-        <CardContent sx={{ pt: 2 }} onClick={(e) => e.stopPropagation()}>
-          {children}
-        </CardContent>
+        <Box onClick={(e) => e.stopPropagation()}>{children}</Box>
       </Collapse>
-    </Card>
+    </Section>
   );
 };
 
@@ -362,7 +357,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Routing Strategy"
         subtitle="Select load balancing strategy and default model"
-        icon="mdi:swap-horizontal"
+        icon="solar:transfer-horizontal-linear"
         defaultOpen
       >
         <ToggleButtonGroup
@@ -420,7 +415,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:plus" width={18} />}
+          startIcon={<Iconify icon="solar:add-linear" width={20} />}
           onClick={handleAddChain}
         >
           Add Fallback Chain
@@ -428,14 +423,14 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       </Stack>
 
       {fallbackEntries.length === 0 && (
-        <Card variant="outlined">
-          <CardContent sx={{ textAlign: "center", py: 3 }}>
+        <Section variant="panel">
+          <Box sx={{ textAlign: "center" }}>
             <Typography variant="body2" color="text.secondary">
               No fallback chains configured. Add one to define model fallback
               behavior.
             </Typography>
-          </CardContent>
-        </Card>
+          </Box>
+        </Section>
       )}
 
       {fallbackEntries.map(([primary, fbs]) => (
@@ -458,7 +453,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Complexity Routing"
         subtitle="Route prompts to different models based on estimated complexity"
-        icon="mdi:chart-bell-curve-cumulative"
+        icon="solar:chart-2-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -531,14 +526,14 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                 <Button
                   size="small"
                   onClick={handleAddComplexityTier}
-                  startIcon={<Iconify icon="mdi:plus" width={16} />}
+                  startIcon={<Iconify icon="solar:add-linear" width={16} />}
                 >
                   Add Tier
                 </Button>
               </Stack>
 
               {Object.entries(complexityTiers).map(([name, tier]) => (
-                <Card key={name} variant="outlined" sx={{ p: 1.5 }}>
+                <Section variant="panel" key={name} sx={{ p: 1.5 }}>
                   <Stack
                     direction="row"
                     spacing={1.5}
@@ -603,13 +598,13 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                       onClick={() => handleRemoveComplexityTier(name)}
                     >
                       <Iconify
-                        icon="mdi:delete-outline"
-                        width={18}
+                        icon="solar:trash-bin-trash-linear"
+                        width={20}
                         color="error.main"
                       />
                     </IconButton>
                   </Stack>
-                </Card>
+                </Section>
               ))}
             </>
           )}
@@ -620,7 +615,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Fastest Response (Race Mode)"
         subtitle="Send request to multiple providers simultaneously, use first response"
-        icon="mdi:flash"
+        icon="solar:bolt-linear"
       >
         <Stack spacing={2}>
           <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
@@ -684,7 +679,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Scheduled Completions"
         subtitle="Queue requests for future execution at a specified time"
-        icon="mdi:clock-outline"
+        icon="solar:clock-circle-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -787,7 +782,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Adaptive Routing"
         subtitle="Automatically adjust provider weights based on real-time performance"
-        icon="mdi:auto-fix"
+        icon="solar:stars-minimalistic-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -917,7 +912,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Provider Locking"
         subtitle="Restrict which providers can be used for requests"
-        icon="mdi:lock-outline"
+        icon="solar:lock-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -1061,7 +1056,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Model Access Groups"
         subtitle="Define named groups of models that can be referenced by alias"
-        icon="mdi:account-group-outline"
+        icon="solar:users-group-rounded-linear"
       >
         <Stack spacing={2}>
           <Stack direction="row" spacing={1}>
@@ -1082,7 +1077,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
               size="small"
               variant="outlined"
               onClick={handleAddGroup}
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
             >
               Add Group
             </Button>
@@ -1096,7 +1091,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
           )}
 
           {Object.entries(accessGroups).map(([name, group]) => (
-            <Card key={name} variant="outlined" sx={{ p: 1.5 }}>
+            <Section variant="panel" key={name} sx={{ p: 1.5 }}>
               <Stack spacing={1.5}>
                 <Stack
                   direction="row"
@@ -1109,8 +1104,8 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                     onClick={() => handleRemoveGroup(name)}
                   >
                     <Iconify
-                      icon="mdi:delete-outline"
-                      width={18}
+                      icon="solar:trash-bin-trash-linear"
+                      width={20}
                       color="error.main"
                     />
                   </IconButton>
@@ -1166,7 +1161,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                   </Button>
                 </Stack>
               </Stack>
-            </Card>
+            </Section>
           ))}
         </Stack>
       </ConfigSection>
@@ -1178,7 +1173,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Conditional Routes"
         subtitle="Route requests to specific targets based on metadata field matching"
-        icon="mdi:source-branch"
+        icon="solar:git-branch-linear"
       >
         <Stack spacing={2}>
           <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
@@ -1194,7 +1189,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
           )}
 
           {conditionalRoutes.map((route, idx) => (
-            <Card key={idx} variant="outlined" sx={{ p: 1.5 }}>
+            <Section variant="panel" key={idx} sx={{ p: 1.5 }}>
               <Stack
                 direction="row"
                 spacing={1.5}
@@ -1267,20 +1262,20 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                   onClick={() => handleRemoveConditionalRoute(idx)}
                 >
                   <Iconify
-                    icon="mdi:delete-outline"
-                    width={18}
+                    icon="solar:trash-bin-trash-linear"
+                    width={20}
                     color="error.main"
                   />
                 </IconButton>
               </Stack>
-            </Card>
+            </Section>
           ))}
 
           <Button
             size="small"
             variant="outlined"
             onClick={handleAddConditionalRoute}
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
           >
             Add Route Rule
           </Button>
@@ -1421,7 +1416,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Retry Configuration"
         subtitle="Automatically retry failed requests with exponential backoff"
-        icon="mdi:refresh"
+        icon="solar:refresh-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -1569,7 +1564,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Traffic Mirroring"
         subtitle="Mirror requests to secondary providers for comparison and testing"
-        icon="mdi:content-copy"
+        icon="solar:copy-linear"
       >
         <Stack spacing={2}>
           <FormControlLabel
@@ -1606,7 +1601,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
               )}
 
               {mirrorRules.map((rule, idx) => (
-                <Card key={idx} variant="outlined" sx={{ p: 1.5 }}>
+                <Section variant="panel" key={idx} sx={{ p: 1.5 }}>
                   <Stack
                     direction="row"
                     spacing={1.5}
@@ -1680,20 +1675,20 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                       onClick={() => handleRemoveMirrorRule(idx)}
                     >
                       <Iconify
-                        icon="mdi:delete-outline"
-                        width={18}
+                        icon="solar:trash-bin-trash-linear"
+                        width={20}
                         color="error.main"
                       />
                     </IconButton>
                   </Stack>
-                </Card>
+                </Section>
               ))}
 
               <Button
                 size="small"
                 variant="outlined"
                 onClick={handleAddMirrorRule}
-                startIcon={<Iconify icon="mdi:plus" width={16} />}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
               >
                 Add Mirror Rule
               </Button>
@@ -1706,7 +1701,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <ConfigSection
         title="Model Timeouts"
         subtitle="Set per-model request timeout overrides"
-        icon="mdi:timer-outline"
+        icon="solar:clock-circle-linear"
       >
         <Stack spacing={2}>
           <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
@@ -1742,8 +1737,8 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                 onClick={() => handleRemoveModelTimeout(model)}
               >
                 <Iconify
-                  icon="mdi:delete-outline"
-                  width={18}
+                  icon="solar:trash-bin-trash-linear"
+                  width={20}
                   color="error.main"
                 />
               </IconButton>

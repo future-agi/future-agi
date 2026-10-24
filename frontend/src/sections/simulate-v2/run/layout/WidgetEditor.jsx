@@ -1,16 +1,30 @@
 import PropTypes from "prop-types";
 import { useMemo, useState, useEffect } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions,
-  Box, Stack, Typography, TextField, MenuItem, Button, IconButton,
-  Chip, Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Box,
+  Stack,
+  Typography,
+  TextField,
+  MenuItem,
+  Button,
+  IconButton,
+  Chip,
+  Autocomplete,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
-  DATA_SOURCES, METRICS, GROUP_BYS, CHART_TYPES,
-  FILTER_FIELDS, FILTER_OPS,
-  CustomWidgetBody, distinctValues,
+  DATA_SOURCES,
+  METRICS,
+  GROUP_BYS,
+  CHART_TYPES,
+  FILTER_FIELDS,
+  FILTER_OPS,
+  CustomWidgetBody,
+  distinctValues,
 } from "./customWidgetRenderer";
 
 /**
@@ -39,43 +53,71 @@ function newDraft() {
 
 const MATRIX_CHARTS = new Set(["heatmap", "stacked_bar"]);
 
-export default function WidgetEditor({ open, onClose, onSave, ctx, initial, restrictCharts }) {
+export default function WidgetEditor({
+  open,
+  onClose,
+  onSave,
+  ctx,
+  initial,
+  restrictCharts,
+}) {
   const [draft, setDraft] = useState(() => initial || newDraft());
   useEffect(() => {
-    if (open) setDraft(initial ? { ...initial, filters: initial.filters || [] } : newDraft());
+    if (open)
+      setDraft(
+        initial ? { ...initial, filters: initial.filters || [] } : newDraft(),
+      );
   }, [open, initial]);
 
-  const patch = (k, v) => setDraft((d) => {
-    const next = { ...d, [k]: v };
-    /* Keep the config internally consistent when the user pivots a
+  const patch = (k, v) =>
+    setDraft((d) => {
+      const next = { ...d, [k]: v };
+      /* Keep the config internally consistent when the user pivots a
        dimension — otherwise we ship configs that reference metrics
        or dims that no longer apply and the renderer's "no data"
        fallback fires for a bad reason. */
-    if (k === "source") {
-      const validMetrics = METRICS.filter((m) => (m.forSource || []).includes(v));
-      if (!validMetrics.some((m) => m.id === next.metric)) next.metric = validMetrics[0]?.id || "count";
-      const validGroup = GROUP_BYS.filter((g) => !g.forSource || g.forSource.includes(v));
-      if (!validGroup.some((g) => g.id === next.groupBy)) next.groupBy = validGroup[0]?.id || "persona";
-      if (next.subGroupBy && !validGroup.some((g) => g.id === next.subGroupBy)) next.subGroupBy = null;
-      next.filters = (next.filters || []).filter((f) => FILTER_FIELDS.some((ff) => ff.id === f.field));
-    }
-    if (k === "chart") {
-      if (v === "bignumber") { next.groupBy = null; next.subGroupBy = null; }
-      else if (!next.groupBy) next.groupBy = "persona";
-      if (MATRIX_CHARTS.has(v) && !next.subGroupBy) {
-        next.subGroupBy = pickSubGroupBy(next.groupBy);
+      if (k === "source") {
+        const validMetrics = METRICS.filter((m) =>
+          (m.forSource || []).includes(v),
+        );
+        if (!validMetrics.some((m) => m.id === next.metric))
+          next.metric = validMetrics[0]?.id || "count";
+        const validGroup = GROUP_BYS.filter(
+          (g) => !g.forSource || g.forSource.includes(v),
+        );
+        if (!validGroup.some((g) => g.id === next.groupBy))
+          next.groupBy = validGroup[0]?.id || "persona";
+        if (
+          next.subGroupBy &&
+          !validGroup.some((g) => g.id === next.subGroupBy)
+        )
+          next.subGroupBy = null;
+        next.filters = (next.filters || []).filter((f) =>
+          FILTER_FIELDS.some((ff) => ff.id === f.field),
+        );
       }
-      if (!MATRIX_CHARTS.has(v)) next.subGroupBy = null;
-    }
-    return next;
-  });
+      if (k === "chart") {
+        if (v === "bignumber") {
+          next.groupBy = null;
+          next.subGroupBy = null;
+        } else if (!next.groupBy) next.groupBy = "persona";
+        if (MATRIX_CHARTS.has(v) && !next.subGroupBy) {
+          next.subGroupBy = pickSubGroupBy(next.groupBy);
+        }
+        if (!MATRIX_CHARTS.has(v)) next.subGroupBy = null;
+      }
+      return next;
+    });
 
   const eligibleMetrics = useMemo(
     () => METRICS.filter((m) => (m.forSource || []).includes(draft.source)),
     [draft.source],
   );
   const eligibleGroups = useMemo(
-    () => GROUP_BYS.filter((g) => !g.forSource || g.forSource.includes(draft.source)),
+    () =>
+      GROUP_BYS.filter(
+        (g) => !g.forSource || g.forSource.includes(draft.source),
+      ),
     [draft.source],
   );
 
@@ -85,41 +127,68 @@ export default function WidgetEditor({ open, onClose, onSave, ctx, initial, rest
   /* ── filter editing ───────────────────────────────────────── */
   const addFilter = () => {
     const first = FILTER_FIELDS[0];
-    patch("filters", [...(draft.filters || []), { field: first.id, op: "is", values: [] }]);
+    patch("filters", [
+      ...(draft.filters || []),
+      { field: first.id, op: "is", values: [] },
+    ]);
   };
   const updateFilter = (idx, next) => {
-    patch("filters", draft.filters.map((f, i) => (i === idx ? { ...f, ...next } : f)));
+    patch(
+      "filters",
+      draft.filters.map((f, i) => (i === idx ? { ...f, ...next } : f)),
+    );
   };
   const removeFilter = (idx) => {
-    patch("filters", draft.filters.filter((_, i) => i !== idx));
+    patch(
+      "filters",
+      draft.filters.filter((_, i) => i !== idx),
+    );
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="lg">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+    >
       <DialogTitle sx={{ py: 1.75 }}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Iconify icon="solar:widget-add-linear" width={18} />
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+          <Iconify icon="solar:widget-add-linear" width={20} />
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {initial ? "Edit widget" : "New widget"}
           </Typography>
           <Box sx={{ flex: 1 }} />
           <IconButton size="small" onClick={onClose} aria-label="Close">
-            <Iconify icon="eva:close-fill" width={16} />
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Stack>
       </DialogTitle>
 
       <DialogContent dividers sx={{ p: 0 }}>
-        <Box sx={{
-          display: "grid", gridTemplateColumns: { xs: "1fr", md: "360px 1fr" },
-          minHeight: 520,
-        }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "360px 1fr" },
+            minHeight: 520,
+          }}
+        >
           {/* ── form ── */}
-          <Box sx={{ p: 2.5, borderRight: { md: "1px solid" }, borderColor: "divider", overflowY: "auto", maxHeight: 640 }}>
+          <Box
+            sx={{
+              p: 2.5,
+              borderRight: { md: "1px solid" },
+              borderColor: "divider",
+              overflowY: "auto",
+              maxHeight: 640,
+            }}
+          >
             <Stack spacing={2}>
               <Field label="Title">
                 <TextField
-                  size="small" fullWidth
+                  size="small"
+                  fullWidth
                   value={draft.title}
                   onChange={(e) => patch("title", e.target.value)}
                   placeholder="e.g. Pass rate by persona"
@@ -128,15 +197,23 @@ export default function WidgetEditor({ open, onClose, onSave, ctx, initial, rest
 
               <Field label="Data source" hint="Where the numbers come from">
                 <TextField
-                  size="small" fullWidth select
+                  size="small"
+                  fullWidth
+                  select
                   value={draft.source}
                   onChange={(e) => patch("source", e.target.value)}
                 >
                   {DATA_SOURCES.map((s) => (
                     <MenuItem key={s.id} value={s.id}>
                       <Stack>
-                        <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{s.label}</Typography>
-                        <Typography sx={{ fontSize: 11, color: "text.subtitle" }}>{s.hint}</Typography>
+                        <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+                          {s.label}
+                        </Typography>
+                        <Typography
+                          sx={{ fontSize: 12, color: "text.tertiary" }}
+                        >
+                          {s.hint}
+                        </Typography>
                       </Stack>
                     </MenuItem>
                   ))}
@@ -145,91 +222,148 @@ export default function WidgetEditor({ open, onClose, onSave, ctx, initial, rest
 
               <Field label="Metric">
                 <TextField
-                  size="small" fullWidth select
+                  size="small"
+                  fullWidth
+                  select
                   value={draft.metric}
                   onChange={(e) => patch("metric", e.target.value)}
                 >
                   {eligibleMetrics.map((m) => (
-                    <MenuItem key={m.id} value={m.id}>{m.label}</MenuItem>
+                    <MenuItem key={m.id} value={m.id}>
+                      {m.label}
+                    </MenuItem>
                   ))}
                 </TextField>
               </Field>
 
-              <Field label="Chart type" hint={restrictCharts ? "Some chart types are hidden to keep this widget's meaning intact. Use Customize a copy for full freedom." : undefined}>
+              <Field
+                label="Chart type"
+                hint={
+                  restrictCharts
+                    ? "Some chart types are hidden to keep this widget's meaning intact. Use Customize a copy for full freedom."
+                    : undefined
+                }
+              >
                 <TextField
-                  size="small" fullWidth select
+                  size="small"
+                  fullWidth
+                  select
                   value={draft.chart}
                   onChange={(e) => patch("chart", e.target.value)}
                 >
-                  {CHART_TYPES
-                    .filter((c) => !restrictCharts || restrictCharts.includes(c.id))
-                    .map((c) => (
-                      <MenuItem key={c.id} value={c.id}>
-                        <Stack>
-                          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{c.label}</Typography>
-                          <Typography sx={{ fontSize: 11, color: "text.subtitle" }}>{c.hint}</Typography>
-                        </Stack>
-                      </MenuItem>
-                    ))}
+                  {CHART_TYPES.filter(
+                    (c) => !restrictCharts || restrictCharts.includes(c.id),
+                  ).map((c) => (
+                    <MenuItem key={c.id} value={c.id}>
+                      <Stack>
+                        <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+                          {c.label}
+                        </Typography>
+                        <Typography
+                          sx={{ fontSize: 12, color: "text.tertiary" }}
+                        >
+                          {c.hint}
+                        </Typography>
+                      </Stack>
+                    </MenuItem>
+                  ))}
                 </TextField>
               </Field>
 
               {draft.chart !== "bignumber" && (
                 <Field label={isMatrix ? "Rows (Group by)" : "Group by"}>
                   <TextField
-                    size="small" fullWidth select
+                    size="small"
+                    fullWidth
+                    select
                     value={draft.groupBy || ""}
                     onChange={(e) => patch("groupBy", e.target.value)}
                   >
                     {eligibleGroups.map((g) => (
-                      <MenuItem key={g.id} value={g.id}>{g.label}</MenuItem>
+                      <MenuItem key={g.id} value={g.id}>
+                        {g.label}
+                      </MenuItem>
                     ))}
                   </TextField>
                 </Field>
               )}
 
               {isMatrix && (
-                <Field label="Columns (Split by)" hint="Each row gets segmented by this second dimension">
+                <Field
+                  label="Columns (Split by)"
+                  hint="Each row gets segmented by this second dimension"
+                >
                   <TextField
-                    size="small" fullWidth select
+                    size="small"
+                    fullWidth
+                    select
                     value={draft.subGroupBy || ""}
                     onChange={(e) => patch("subGroupBy", e.target.value)}
                   >
-                    {eligibleGroups.filter((g) => g.id !== draft.groupBy).map((g) => (
-                      <MenuItem key={g.id} value={g.id}>{g.label}</MenuItem>
-                    ))}
+                    {eligibleGroups
+                      .filter((g) => g.id !== draft.groupBy)
+                      .map((g) => (
+                        <MenuItem key={g.id} value={g.id}>
+                          {g.label}
+                        </MenuItem>
+                      ))}
                   </TextField>
                 </Field>
               )}
 
-              {(draft.chart === "bar" || draft.chart === "table" || draft.chart === "heatmap" || draft.chart === "stacked_bar") && (
+              {(draft.chart === "bar" ||
+                draft.chart === "table" ||
+                draft.chart === "heatmap" ||
+                draft.chart === "stacked_bar") && (
                 <Field label="Show top N">
                   <TextField
-                    size="small" fullWidth type="number"
+                    size="small"
+                    fullWidth
+                    type="number"
                     inputProps={{ min: 3, max: 30 }}
                     value={draft.limit || 8}
-                    onChange={(e) => patch("limit", Math.max(3, Math.min(30, Number(e.target.value) || 8)))}
+                    onChange={(e) =>
+                      patch(
+                        "limit",
+                        Math.max(3, Math.min(30, Number(e.target.value) || 8)),
+                      )
+                    }
                   />
                 </Field>
               )}
 
               {/* ── Filters ── */}
               <Box>
-                <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                  <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ mb: 1 }}
+                >
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      color: "text.tertiary",
+                      fontWeight: 600,
+                      letterSpacing: 0.4,
+                      textTransform: "none",
+                    }}
+                  >
                     Filters
                   </Typography>
                   <Box sx={{ flex: 1 }} />
                   <Button
-                    size="small" onClick={addFilter}
-                    startIcon={<Iconify icon="solar:add-circle-linear" width={13} />}
-                    sx={{ typography: "s3", fontWeight: 700, textTransform: "none", py: 0.25 }}
+                    size="small"
+                    onClick={addFilter}
+                    startIcon={
+                      <Iconify icon="solar:add-circle-linear" width={14} />
+                    }
                   >
                     Add filter
                   </Button>
                 </Stack>
                 {(!draft.filters || draft.filters.length === 0) && (
-                  <Typography sx={{ fontSize: 11.5, color: "text.subtitle" }}>
+                  <Typography sx={{ fontSize: 12, color: "text.tertiary" }}>
                     All rows included. Add a filter to narrow the data.
                   </Typography>
                 )}
@@ -249,26 +383,49 @@ export default function WidgetEditor({ open, onClose, onSave, ctx, initial, rest
           </Box>
 
           {/* ── live preview ── */}
-          <Box sx={{ p: 2.5, bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.02 : 0.015), overflowY: "auto" }}>
-            <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", mb: 1 }}>
+          <Box
+            sx={{ p: 2.5, bgcolor: "background.neutral", overflowY: "auto" }}
+          >
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.tertiary",
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "none",
+                mb: 1,
+              }}
+            >
               Live preview
             </Typography>
-            <Box sx={{
-              border: "1px solid", borderColor: "divider", borderRadius: 1.5,
-              bgcolor: "background.paper", overflow: "hidden",
-            }}>
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
+                bgcolor: "background.paper",
+                overflow: "hidden",
+              }}
+            >
               <Box sx={{ px: 3, pt: 2.5, pb: 1.5 }}>
-                <Typography sx={{ fontSize: 15, fontWeight: 700, color: "text.primary", letterSpacing: -0.1 }}>
+                <Typography
+                  sx={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "text.primary",
+                    letterSpacing: -0.1,
+                  }}
+                >
                   {draft.title || "Untitled widget"}
                 </Typography>
                 {draft.filters?.length > 0 && (
-                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}>
+                  <Stack
+                    direction="row"
+                    spacing={0.5}
+                    sx={{ mt: 0.75, flexWrap: "wrap", rowGap: 0.5 }}
+                  >
                     {draft.filters.map((f, i) => (
-                      <Chip
-                        key={i} size="small"
-                        label={filterSummary(f)}
-                        sx={{ fontSize: 10.5, height: 20 }}
-                      />
+                      <Chip key={i} size="small" label={filterSummary(f)} />
                     ))}
                   </Stack>
                 )}
@@ -284,8 +441,11 @@ export default function WidgetEditor({ open, onClose, onSave, ctx, initial, rest
         <Button
           variant="contained"
           disabled={!canSave}
-          onClick={() => { onSave(draft); onClose(); }}
-          startIcon={<Iconify icon="solar:check-circle-linear" width={15} />}
+          onClick={() => {
+            onSave(draft);
+            onClose();
+          }}
+          startIcon={<Iconify icon="solar:check-circle-linear" width={16} />}
         >
           {initial ? "Save changes" : "Add widget"}
         </Button>
@@ -303,7 +463,9 @@ WidgetEditor.propTypes = {
 };
 
 function pickSubGroupBy(groupBy) {
-  const candidates = ["use_case", "persona", "status", "sentiment"].filter((c) => c !== groupBy);
+  const candidates = ["use_case", "persona", "status", "sentiment"].filter(
+    (c) => c !== groupBy,
+  );
   return candidates[0] || null;
 }
 
@@ -317,61 +479,109 @@ function filterSummary(f) {
 function Field({ label, hint, children }) {
   return (
     <Box>
-      <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", mb: 0.75 }}>
+      <Typography
+        sx={{
+          fontSize: 12,
+          color: "text.tertiary",
+          fontWeight: 600,
+          letterSpacing: 0.4,
+          textTransform: "none",
+          mb: 0.75,
+        }}
+      >
         {label}
       </Typography>
       {children}
       {hint && (
-        <Typography sx={{ fontSize: 11, color: "text.subtitle", mt: 0.5 }}>{hint}</Typography>
+        <Typography sx={{ fontSize: 12, color: "text.tertiary", mt: 0.5 }}>
+          {hint}
+        </Typography>
       )}
     </Box>
   );
 }
-Field.propTypes = { label: PropTypes.string, hint: PropTypes.string, children: PropTypes.node };
+Field.propTypes = {
+  label: PropTypes.string,
+  hint: PropTypes.string,
+  children: PropTypes.node,
+};
 
 function FilterRow({ value, ctx, onChange, onRemove }) {
-  const options = useMemo(() => distinctValues(value.field, ctx), [value.field, ctx]);
+  const options = useMemo(
+    () => distinctValues(value.field, ctx),
+    [value.field, ctx],
+  );
   return (
-    <Box sx={{
-      p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1,
-      display: "grid", gridTemplateColumns: "1fr 100px", columnGap: 1, rowGap: 1,
-      alignItems: "start",
-    }}>
+    <Box
+      sx={{
+        p: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        display: "grid",
+        gridTemplateColumns: "1fr 100px",
+        columnGap: 1,
+        rowGap: 1,
+        alignItems: "start",
+      }}
+    >
       <TextField
-        size="small" select
+        size="small"
+        select
         value={value.field}
         onChange={(e) => onChange({ field: e.target.value, values: [] })}
-        inputProps={{ style: { fontSize: 12.5 } }}
+        inputProps={{ style: { fontSize: 13 } }}
       >
         {FILTER_FIELDS.map((f) => (
-          <MenuItem key={f.id} value={f.id}>{f.label}</MenuItem>
+          <MenuItem key={f.id} value={f.id}>
+            {f.label}
+          </MenuItem>
         ))}
       </TextField>
       <TextField
-        size="small" select
+        size="small"
+        select
         value={value.op}
         onChange={(e) => onChange({ op: e.target.value })}
-        inputProps={{ style: { fontSize: 12.5 } }}
+        inputProps={{ style: { fontSize: 13 } }}
       >
         {FILTER_OPS.map((o) => (
-          <MenuItem key={o.id} value={o.id}>{o.label}</MenuItem>
+          <MenuItem key={o.id} value={o.id}>
+            {o.label}
+          </MenuItem>
         ))}
       </TextField>
       <Autocomplete
-        multiple size="small" fullWidth freeSolo
+        multiple
+        size="small"
+        fullWidth
+        freeSolo
         options={options}
         value={value.values || []}
         onChange={(_e, next) => onChange({ values: next })}
-        renderInput={(params) => <TextField {...params} placeholder="Values…" size="small" />}
+        renderInput={(params) => (
+          <TextField {...params} placeholder="Values…" size="small" />
+        )}
         sx={{ gridColumn: "1 / -1" }}
         ChipProps={{ size: "small" }}
       />
-      <Box sx={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
-        <Button size="small" color="error" onClick={onRemove} sx={{ typography: "s3", textTransform: "none" }}>
+      <Box
+        sx={{
+          gridColumn: "1 / -1",
+          display: "flex",
+          justifyContent: "flex-end",
+        }}
+      >
+        <Button size="small" color="error" onClick={onRemove}>
           Remove filter
         </Button>
       </Box>
     </Box>
   );
 }
-FilterRow.propTypes = { value: PropTypes.object.isRequired, ctx: PropTypes.object.isRequired, onChange: PropTypes.func.isRequired, onRemove: PropTypes.func.isRequired };
+FilterRow.propTypes = {
+  value: PropTypes.object.isRequired,
+  ctx: PropTypes.object.isRequired,
+  onChange: PropTypes.func.isRequired,
+  onRemove: PropTypes.func.isRequired,
+};

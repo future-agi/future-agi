@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Chip,
   Stack,
   Table,
   TableBody,
@@ -14,7 +13,6 @@ import {
   Typography,
   CircularProgress,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useScoresForSource, useSpanNotes } from "src/api/scores/scores";
@@ -48,8 +46,6 @@ function normalizeEntityId(value) {
   if (typeof value === "object") return value.id || value.pk || null;
   return value;
 }
-
-
 
 export default function ScoresListSection({
   sourceType,
@@ -207,7 +203,7 @@ export default function ScoresListSection({
             <>
               <Iconify
                 icon="solar:clipboard-list-linear"
-                width={18}
+                width={20}
                 color="text.secondary"
               />
               <Typography variant="subtitle2" fontWeight={600}>
@@ -241,10 +237,10 @@ export default function ScoresListSection({
                 <TableCell
                   sx={{
                     fontWeight: 600,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     py: 1,
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -255,10 +251,10 @@ export default function ScoresListSection({
                 <TableCell
                   sx={{
                     fontWeight: 600,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     py: 1,
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -269,10 +265,10 @@ export default function ScoresListSection({
                 <TableCell
                   sx={{
                     fontWeight: 600,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     py: 1,
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -283,10 +279,10 @@ export default function ScoresListSection({
                 <TableCell
                   sx={{
                     fontWeight: 600,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     py: 1,
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -297,10 +293,10 @@ export default function ScoresListSection({
                 <TableCell
                   sx={{
                     fontWeight: 600,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "text.secondary",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
+                    textTransform: "none",
+                    letterSpacing: 0,
                     py: 1,
                     borderBottom: "1px solid",
                     borderColor: "divider",
@@ -339,21 +335,16 @@ export default function ScoresListSection({
                       arrow
                       disableHoverListener={!row.notes}
                     >
-                      <Chip
-                        label={formatScoreValue(row.labelType, row.value)}
-                        size="small"
+                      <Typography
+                        component="span"
                         sx={{
-                          height: 24,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          bgcolor: (theme) =>
-                            alpha(theme.palette.primary.main, 0.08),
-                          color: "primary.main",
-                          border: "1px solid",
-                          borderColor: (theme) =>
-                            alpha(theme.palette.primary.main, 0.2),
+                          fontSize: 13,
+                          color: "text.primary",
+                          fontVariantNumeric: "tabular-nums",
                         }}
-                      />
+                      >
+                        {formatScoreValue(row.labelType, row.value)}
+                      </Typography>
                     </Tooltip>
                   </TableCell>
                   <TableCell sx={{ py: 1 }}>
@@ -373,8 +364,8 @@ export default function ScoresListSection({
                         <Iconify
                           icon={
                             row.scoreSource === "human"
-                              ? "mdi:account"
-                              : "mdi:api"
+                              ? "solar:user-linear"
+                              : "solar:plug-circle-linear"
                           }
                           width={12}
                           color="text.secondary"
@@ -431,10 +422,10 @@ export default function ScoresListSection({
                       key={header}
                       sx={{
                         fontWeight: 600,
-                        fontSize: 11,
+                        fontSize: 12,
                         color: "text.secondary",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
+                        textTransform: "none",
+                        letterSpacing: 0,
                         py: 1,
                         borderBottom: "1px solid",
                         borderColor: "divider",
@@ -480,7 +471,7 @@ export default function ScoresListSection({
                           }}
                         >
                           <Iconify
-                            icon="mdi:account"
+                            icon="solar:user-linear"
                             width={12}
                             color="text.secondary"
                           />

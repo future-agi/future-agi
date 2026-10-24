@@ -1,16 +1,21 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, Checkbox, Chip, TextField, InputAdornment, Tab,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Checkbox,
+  Chip,
+  TextField,
+  InputAdornment,
+  Tab,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { SectionCard } from "../../components/primitives";
 import { proposedScenariosForBacking, twinById } from "../../_mock/twins";
 import { clickable, focusRing } from "../../components/clickable";
-
-const TWIN_TINT = "#7857FC";
 
 /**
  * The fifth Add Scenarios route — twin-aware scenario suggestions.
@@ -37,7 +42,10 @@ const TWIN_TINT = "#7857FC";
 export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
   const backing = envState?.twinBacking;
   const all = useMemo(() => proposedScenariosForBacking(backing), [backing]);
-  const existingIds = useMemo(() => new Set((selected || []).map((s) => s.id)), [selected]);
+  const existingIds = useMemo(
+    () => new Set((selected || []).map((s) => s.id)),
+    [selected],
+  );
   const [shape, setShape] = useState("all");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState({});
@@ -52,7 +60,9 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
     return true;
   });
 
-  const pickedRows = shown.filter((r) => picked[r.id] && !existingIds.has(r.id));
+  const pickedRows = shown.filter(
+    (r) => picked[r.id] && !existingIds.has(r.id),
+  );
   const canAdd = pickedRows.length > 0;
 
   const toggle = (id) => setPicked((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -71,15 +81,35 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
   if (!backing) {
     return (
       <SectionCard sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <Box sx={{ p: 4, textAlign: "center", flex: 1, display: "grid", placeItems: "center" }}>
+        <Box
+          sx={{
+            p: 4,
+            textAlign: "center",
+            flex: 1,
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
           <Box>
-            <Iconify icon="solar:server-square-linear" width={30} sx={{ color: "text.subtitle", mb: 1 }} />
-            <Typography sx={{ typography: "s1", fontWeight: 700, mb: 0.5 }}>
+            <Iconify
+              icon="solar:server-square-linear"
+              width={30}
+              sx={{ color: "text.tertiary", mb: 1 }}
+            />
+            <Typography sx={{ typography: "s1", fontWeight: 600, mb: 0.5 }}>
               This needs a sandboxed-apps environment
             </Typography>
-            <Typography sx={{ typography: "s2", color: "text.subtitle", maxWidth: 480, mx: "auto" }}>
-              Sandbox scenarios are written from the apps your environment sandboxes (Slack, Notion, …).{" "}
-              Build the environment as a SaaS sandbox to use this route.
+            <Typography
+              sx={{
+                typography: "s2",
+                color: "text.tertiary",
+                maxWidth: 480,
+                mx: "auto",
+              }}
+            >
+              Sandbox scenarios are written from the apps your environment
+              sandboxes (Slack, Notion, …). Build the environment as a SaaS
+              sandbox to use this route.
             </Typography>
           </Box>
         </Box>
@@ -91,23 +121,37 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
     <SectionCard
       title="Sandbox scenarios"
       subtitle={
-        <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap">
-          <Typography component="span" sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          flexWrap="wrap"
+        >
+          <Typography
+            component="span"
+            sx={{ typography: "s2", color: "text.tertiary" }}
+          >
             Written from your sandboxed apps —
           </Typography>
           {backing.services.map((sId) => {
             const t = twinById(sId);
             return (
               <Chip
-                key={sId} size="small"
-                icon={<Iconify icon={t?.icon || "solar:server-square-linear"} width={12} sx={{ ml: "6px !important" }} />}
+                key={sId}
+                size="small"
+                icon={
+                  <Iconify
+                    icon={t?.icon || "solar:server-square-linear"}
+                    width={12}
+                    sx={{ ml: "6px !important" }}
+                  />
+                }
                 label={t?.name || sId}
                 sx={{
-                  height: 20, fontSize: 11, fontWeight: 700,
-                  border: "1px solid", borderColor: "divider",
+                  border: "1px solid",
+                  borderColor: "divider",
                   bgcolor: "background.paper",
                   color: "text.primary",
-                  "& .MuiChip-label": { px: 0.75 },
                 }}
               />
             );
@@ -117,29 +161,52 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
       sx={{ flex: 1, display: "flex", flexDirection: "column" }}
     >
       <Stack
-        direction="row" alignItems="center" spacing={1}
-        sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
       >
         <TextField
-          size="small" placeholder="Search sandbox scenarios…"
-          value={query} onChange={(e) => setQuery(e.target.value)}
+          size="small"
+          placeholder="Search sandbox scenarios…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
           InputProps={{
             sx: { typography: "s2" },
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:magnifer-linear"
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
+                />
               </InputAdornment>
             ),
           }}
           sx={{ flex: 1, maxWidth: 360 }}
         />
-        <SegmentedTabs value={shape} onChange={(_, v) => setShape(v)} sx={{ flexShrink: 0 }}>
+        <SegmentedTabs
+          value={shape}
+          onChange={(_, v) => setShape(v)}
+          sx={{ flexShrink: 0 }}
+        >
           <Tab value="all" label={`All (${groupCount.all})`} />
           <Tab value="single" label={`Single (${groupCount.single})`} />
           <Tab value="combo" label={`Cross-service (${groupCount.combo})`} />
         </SegmentedTabs>
         <Box flex={1} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            whiteSpace: "nowrap",
+          }}
+        >
           {pickedRows.length} selected
         </Typography>
       </Stack>
@@ -147,79 +214,155 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {shown.length === 0 ? (
           <Box sx={{ p: 4, textAlign: "center" }}>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
               {all.length === 0
                 ? "No sandbox scenarios for these apps yet."
                 : "Nothing matches your filters."}
             </Typography>
           </Box>
         ) : (
-          <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
             {shown.map((row) => {
               const already = existingIds.has(row.id);
               const on = !!picked[row.id];
               return (
                 <Stack
-                  key={row.id} direction="row" alignItems="flex-start" spacing={1.5}
-                  {...clickable(() => !already && toggle(row.id), { role: "checkbox", checked: on || already, disabled: already })}
-                  sx={{ ...focusRing,
-                    px: 2, py: 1.5, cursor: already ? "not-allowed" : "pointer",
+                  key={row.id}
+                  direction="row"
+                  alignItems="flex-start"
+                  spacing={1.5}
+                  {...clickable(() => !already && toggle(row.id), {
+                    role: "checkbox",
+                    checked: on || already,
+                    disabled: already,
+                  })}
+                  sx={{
+                    ...focusRing,
+                    px: 2,
+                    py: 1,
+                    cursor: already ? "not-allowed" : "pointer",
                     opacity: already ? 0.55 : 1,
-                    bgcolor: on ? (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.08 : 0.04) : "transparent",
-                    "&:hover": already ? undefined : { bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.06 : 0.03) },
+                    bgcolor: on ? "status.discovery.bg" : "transparent",
+                    "&:hover": already
+                      ? undefined
+                      : { bgcolor: "status.discovery.bg" },
                   }}
                 >
                   <Checkbox
-                    size="small" checked={on || already} disabled={already} disableRipple tabIndex={-1} inputProps={{ "aria-hidden": true }}
+                    size="small"
+                    checked={on || already}
+                    disabled={already}
+                    disableRipple
+                    tabIndex={-1}
+                    inputProps={{ "aria-hidden": true }}
                     sx={{
-                      p: 0, mt: "1px", flexShrink: 0,
+                      p: 0,
+                      mt: "1px",
+                      flexShrink: 0,
                       color: "text.disabled",
                       "&.Mui-checked": { color: "text.primary" },
                       "&.MuiCheckbox-indeterminate": { color: "text.primary" },
                     }}
                   />
                   <Box flex={1} minWidth={0}>
-                    <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" useFlexGap>
-                      <Typography sx={{ typography: "s1", fontWeight: 700, color: "text.primary" }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={0.75}
+                      flexWrap="wrap"
+                      useFlexGap
+                    >
+                      <Typography
+                        sx={{
+                          typography: "s2_1",
+                          fontWeight: 500,
+                          color: "text.primary",
+                        }}
+                      >
                         {row.title}
                       </Typography>
                       {row.kind === "combo" && (
-                        <Chip size="small" label="cross-service" sx={{
-                          height: 16, fontSize: 9.5, fontWeight: 700,
-                          bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.18 : 0.09),
-                          color: TWIN_TINT, letterSpacing: 0.3, textTransform: "uppercase",
-                          "& .MuiChip-label": { px: 0.75 },
-                        }} />
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            fontWeight: 600,
+                            color: "text.tertiary",
+                            letterSpacing: 0.4,
+                            textTransform: "none",
+                          }}
+                        >
+                          cross-service
+                        </Typography>
                       )}
                       {already && (
-                        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            fontWeight: 600,
+                            color: "text.tertiary",
+                            textTransform: "none",
+                            letterSpacing: 0.4,
+                          }}
+                        >
                           Already added
                         </Typography>
                       )}
                     </Stack>
-                    <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.375 }}>
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        color: "text.secondary",
+                        mt: 0.375,
+                      }}
+                    >
                       {row.task}
                     </Typography>
-                    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 0.75 }} flexWrap="wrap" useFlexGap>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={0.5}
+                      sx={{ mt: 0.75 }}
+                      flexWrap="wrap"
+                      useFlexGap
+                    >
                       {row.services.map((sId) => {
                         const t = twinById(sId);
                         return (
-                          <Chip
-                            key={sId} size="small"
-                            icon={<Iconify icon={t?.icon || "solar:server-square-linear"} width={11} sx={{ ml: "6px !important" }} />}
-                            label={t?.name || sId}
-                            sx={{
-                              height: 18, fontSize: 10, fontWeight: 700,
-                              border: "1px solid", borderColor: "divider",
-                              bgcolor: "background.paper",
-                              color: "text.primary",
-                              "& .MuiChip-label": { px: 0.75 },
-                            }}
-                          />
+                          <Stack
+                            key={sId}
+                            direction="row"
+                            alignItems="center"
+                            spacing={0.5}
+                          >
+                            <Iconify
+                              icon={t?.icon || "solar:server-square-linear"}
+                              width={12}
+                              sx={{ color: "text.tertiary" }}
+                            />
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                fontWeight: 500,
+                                color: "text.secondary",
+                              }}
+                            >
+                              {t?.name || sId}
+                            </Typography>
+                          </Stack>
                         );
                       })}
                       {row.useCase && (
-                        <Typography sx={{ typography: "s3", color: "text.subtitle", ml: 0.5 }}>
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            ml: 0.5,
+                          }}
+                        >
                           · {row.useCase}
                         </Typography>
                       )}
@@ -233,22 +376,26 @@ export default function TwinScenarioPicker({ env, envState, selected, onAdd }) {
       </Box>
 
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
       >
-        <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
           {shown.length === 0
             ? "—"
             : `${shown.length} available for this backing · ${existingIds.size ? "already in the environment dimmed" : "none added yet"}`}
         </Typography>
         <Button
-          size="small" variant="contained" color="primary"
+          size="small"
+          variant="contained"
+          color="primary"
           disabled={!canAdd}
           onClick={add}
           startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-          sx={{ typography: "s2", fontWeight: 700 }}
         >
-          Add {pickedRows.length || ""} {pickedRows.length === 1 ? "scenario" : "scenarios"}
+          Add {pickedRows.length || ""}{" "}
+          {pickedRows.length === 1 ? "scenario" : "scenarios"}
         </Button>
       </Stack>
     </SectionCard>

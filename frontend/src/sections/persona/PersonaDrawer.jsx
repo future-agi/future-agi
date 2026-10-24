@@ -27,9 +27,10 @@ const PersonaListContent = ({
   /* Single mode starts on the persona already in use, if it came from the
      library — so what's being swapped out is visible. A selection carried
      over (from before Create persona, plus what was created) wins. */
-  const [selectedPersonas, setSelectedPersonas] = useState(() =>
-    carried
-      ?? (single
+  const [selectedPersonas, setSelectedPersonas] = useState(
+    () =>
+      carried ??
+      (single
         ? current?.libraryId != null
           ? [{ id: current.libraryId, name: current.name }]
           : []
@@ -116,7 +117,7 @@ const PersonaListContent = ({
           size="small"
           sx={{ color: "text.primary", mt: -0.25 }}
         >
-          <Iconify icon="akar-icons:cross" width={18} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </Box>
       <Box
@@ -136,7 +137,7 @@ const PersonaListContent = ({
           personaCreateEditType={personaCreateEditType}
           lockedFilters={lockedFilters}
           singleSelect={!!single}
-          currentId={single ? (current?.libraryId ?? null) : null}
+          currentId={single ? current?.libraryId ?? null : null}
         />
       </Box>
       <Divider flexItem orientation="horizontal" />
@@ -208,7 +209,7 @@ const PersonaCreateContent = ({ onCancel, onCreated, type }) => {
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <PersonaCreateEditForm
         onCancel={onCancel}

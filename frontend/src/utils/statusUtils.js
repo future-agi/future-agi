@@ -7,17 +7,17 @@ export const STATUS_TYPES = {
 export const STATUS_CONFIG = {
   [STATUS_TYPES.PASS]: {
     icon: "/assets/icons/status/success.svg",
-    color: "green.500",
-    bgColor: "green.o5",
-    borderColor: "green.500",
-    textColor: "green.500",
+    color: "status.success.fg",
+    bgColor: "status.success.bg",
+    borderColor: "status.success.border",
+    textColor: "status.success.fg",
   },
   [STATUS_TYPES.ERROR]: {
     icon: "/assets/icons/status/error.svg",
-    color: "red.500",
-    bgColor: "red.o5",
-    borderColor: "red.500",
-    textColor: "red.500",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
+    borderColor: "status.danger.border",
+    textColor: "status.danger.fg",
   },
   [STATUS_TYPES.UNSET]: {
     icon: "/assets/icons/status/unset.svg",

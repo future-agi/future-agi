@@ -18,7 +18,13 @@ const RankWithIndexRenderer = (props) => {
     >
       {value}
       {isFirstRank ? (
-        <Iconify icon="mdi:crown" sx={{ color: "#FFCC00" }} />
+        <Iconify
+          icon="solar:crown-bold"
+          sx={{
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+            color: "#FFCC00",
+          }}
+        />
       ) : (
         <></>
       )}

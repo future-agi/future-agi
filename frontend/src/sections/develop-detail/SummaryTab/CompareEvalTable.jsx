@@ -20,7 +20,7 @@ const RankCellRenderer = (params) => {
       >
         <Typography
           sx={{
-            fontSize: "14px",
+            fontSize: "13px",
             fontWeight: 400,
             color: "14px",
             textAlign: "center",
@@ -37,9 +37,10 @@ const RankCellRenderer = (params) => {
           }}
         >
           <Iconify
-            icon="mdi:crown"
+            icon="solar:crown-bold"
             width={20}
             height={20}
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             sx={{ color: "#FFD700" }}
           />
         </Box>
@@ -51,7 +52,7 @@ const RankCellRenderer = (params) => {
     <Typography
       sx={{
         width: "100%",
-        fontSize: "14px",
+        fontSize: "13px",
         fontWeight: 400,
         color: "14px",
         alignItems: "flex-start",
@@ -90,7 +91,7 @@ const CompareEvalTable = ({
           sx={{
             color: tagForeground,
             backgroundColor: tagBackground,
-            borderRadius: "5px",
+            borderRadius: "6px",
             height: "24px",
             width: "24px",
             fontSize: "12px",
@@ -105,7 +106,7 @@ const CompareEvalTable = ({
           {String.fromCharCode(65 + index)}
         </Typography>
         <Typography
-          sx={{ fontSize: "14px", fontWeight: 400, color: "text.primary" }}
+          sx={{ fontSize: "13px", fontWeight: 400, color: "text.primary" }}
         >
           {params.value}
         </Typography>
@@ -274,7 +275,7 @@ const CompareEvalTable = ({
         <Typography
           sx={{
             marginLeft: "49.9%",
-            fontSize: "14px",
+            fontSize: "13px",
             color: "text.primary",
             fontWeight: 500,
             borderTop: "1px solid var(--border-light)",

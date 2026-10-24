@@ -13,6 +13,7 @@ import {
   Button,
   ToggleButton,
   ToggleButtonGroup,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
@@ -426,23 +427,27 @@ const EditAgentDetails = ({
             <ShowComponent condition={provider === PROVIDER_CHOICES.RETELL}>
               <Stack
                 sx={{
-                  borderRadius: 0.5,
-                  bgcolor: "blue.o10",
+                  borderRadius: "4px",
+                  bgcolor: "status.info.bg",
                   border: "1px solid",
-                  borderColor: "blue.200",
+                  borderColor: "status.info.border",
                   p: 1,
                   alignItems: "center",
                 }}
                 direction={"row"}
                 gap={1}
               >
-                <Iconify icon="ci:info" sx={{ color: "blue.400" }} width={16} />
+                <Iconify
+                  icon="ci:info"
+                  sx={{ color: "status.info.fg" }}
+                  width={16}
+                />
                 <Stack direction={"row"} gap={0.5}>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
+                  <Typography typography={"s2_1"} color={"status.info.fg"}>
                     Please add
                   </Typography>
-                  <Typography
-                    typography={"s2_1"}
+                  <ButtonBase
+                    component="span"
                     onClick={() => {
                       copyToClipboard(`${HOST_API}/tracer/webhook`);
                       enqueueSnackbar({
@@ -450,17 +455,15 @@ const EditAgentDetails = ({
                         variant: "success",
                       });
                     }}
-                    color={"blue.500"}
                     sx={{
+                      typography: "s2_1",
+                      color: "status.info.fg",
                       textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
                     }}
                   >
                     {`${HOST_API}/tracer/webhook`}
-                  </Typography>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
+                  </ButtonBase>
+                  <Typography typography={"s2_1"} color={"status.info.fg"}>
                     to the Agent Level Webhook URL on Retell
                   </Typography>
                 </Stack>
@@ -532,7 +535,7 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 1,
-                      color: "blue.600",
+                      color: "status.info.fg",
                     }}
                   >
                     <SvgColor
@@ -558,12 +561,12 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 0.5,
-                      color: "green.600",
+                      color: "status.success.fg",
                     }}
                   >
                     <SvgColor
                       src="/assets/icons/ic_success_fill.svg"
-                      sx={{ width: 16, height: 16, color: "green.600" }}
+                      sx={{ width: 16, height: 16, color: "status.success.fg" }}
                     />
                     <Typography
                       typography={"s3"}
@@ -693,20 +696,18 @@ const EditAgentDetails = ({
                 }
                 sx={{
                   minWidth: 120,
-                  height: 40,
                   whiteSpace: "nowrap",
-                  fontSize: 13,
                   borderColor:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.border"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.border"
                         : "divider",
                   color:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.fg"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.fg"
                         : "text.secondary",
                 }}
               >
@@ -720,7 +721,11 @@ const EditAgentDetails = ({
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
-              <Typography typography="s3" color="error.main" sx={{ mt: -1 }}>
+              <Typography
+                typography="s3"
+                color="status.danger.fg"
+                sx={{ mt: -1 }}
+              >
                 {livekitValidationError}
               </Typography>
             )}
@@ -876,16 +881,10 @@ const EditAgentDetails = ({
                 }
               }}
             >
-              <ToggleButton
-                value={VOICE_TRANSPORT.WEBRTC}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
               </ToggleButton>
-              <ToggleButton
-                value={VOICE_TRANSPORT.TELEPHONY}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
               </ToggleButton>
             </ToggleButtonGroup>
@@ -1035,13 +1034,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1098,9 +1090,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: { sx: { maxWidth: "200px !important" } },
-                }}
               >
                 <Box>
                   <SwitchField

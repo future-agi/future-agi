@@ -43,8 +43,14 @@ import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
 */
 
 const SortableViewTab = ({ name, idx, ...tabProps }) => {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: name });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: name });
   return (
     <Box
       ref={setNodeRef}
@@ -74,7 +80,13 @@ SortableViewTab.propTypes = {
 
 /* Same menu as Observe's TabContextMenu, minus "Share with team" —
    analytics views live in this browser only. */
-const ViewContextMenu = ({ anchor, onClose, onRename, onDuplicate, onDelete }) => {
+const ViewContextMenu = ({
+  anchor,
+  onClose,
+  onRename,
+  onDuplicate,
+  onDelete,
+}) => {
   const [confirmOpen, setConfirmOpen] = useState(false);
   if (!anchor) return null;
   return (
@@ -84,24 +96,61 @@ const ViewContextMenu = ({ anchor, onClose, onRename, onDuplicate, onDelete }) =
         onClose={onClose}
         anchorReference="anchorPosition"
         anchorPosition={{ top: anchor.y, left: anchor.x }}
-        slotProps={{ paper: { sx: { minWidth: 180 } } }}
+        slotProps={{ paper: { sx: { minWidth: 200 } } }}
       >
-        <MenuItem dense onClick={() => { onClose(); onRename(anchor.name); }}>
-          <ListItemIcon><Iconify icon="mdi:pencil-outline" width={18} /></ListItemIcon>
-          <ListItemText primaryTypographyProps={{ variant: "body2" }}>Rename</ListItemText>
+        <MenuItem
+          dense
+          onClick={() => {
+            onClose();
+            onRename(anchor.name);
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:pen-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText primaryTypographyProps={{ variant: "body2" }}>
+            Rename
+          </ListItemText>
         </MenuItem>
-        <MenuItem dense onClick={() => { onClose(); onDuplicate(anchor.name); }}>
-          <ListItemIcon><Iconify icon="mdi:content-copy" width={18} /></ListItemIcon>
-          <ListItemText primaryTypographyProps={{ variant: "body2" }}>Duplicate</ListItemText>
+        <MenuItem
+          dense
+          onClick={() => {
+            onClose();
+            onDuplicate(anchor.name);
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:copy-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText primaryTypographyProps={{ variant: "body2" }}>
+            Duplicate
+          </ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem dense onClick={() => setConfirmOpen(true)} sx={{ color: "error.main" }}>
-          <ListItemIcon sx={{ color: "inherit" }}><Iconify icon="mdi:delete-outline" width={18} /></ListItemIcon>
-          <ListItemText primaryTypographyProps={{ variant: "body2" }}>Delete</ListItemText>
+        <MenuItem
+          dense
+          onClick={() => setConfirmOpen(true)}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
+        >
+          <ListItemIcon sx={{ color: "inherit" }}>
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText primaryTypographyProps={{ variant: "body2" }}>
+            Delete
+          </ListItemText>
         </MenuItem>
       </Menu>
 
-      <Dialog open={confirmOpen} onClose={() => { setConfirmOpen(false); onClose(); }} maxWidth="xs">
+      <Dialog
+        open={confirmOpen}
+        onClose={() => {
+          setConfirmOpen(false);
+          onClose();
+        }}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
+      >
         <DialogTitle>Delete &ldquo;{anchor.name}&rdquo;?</DialogTitle>
         <DialogContent>
           <DialogContentText>
@@ -109,10 +158,24 @@ const ViewContextMenu = ({ anchor, onClose, onRename, onDuplicate, onDelete }) =
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button size="small" onClick={() => { setConfirmOpen(false); onClose(); }}>Cancel</Button>
           <Button
-            size="small" color="error" variant="contained"
-            onClick={() => { onDelete(anchor.name); setConfirmOpen(false); onClose(); }}
+            size="small"
+            onClick={() => {
+              setConfirmOpen(false);
+              onClose();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            color="error"
+            variant="contained"
+            onClick={() => {
+              onDelete(anchor.name);
+              setConfirmOpen(false);
+              onClose();
+            }}
           >
             Delete
           </Button>
@@ -123,7 +186,11 @@ const ViewContextMenu = ({ anchor, onClose, onRename, onDuplicate, onDelete }) =
 };
 
 ViewContextMenu.propTypes = {
-  anchor: PropTypes.shape({ x: PropTypes.number, y: PropTypes.number, name: PropTypes.string }),
+  anchor: PropTypes.shape({
+    x: PropTypes.number,
+    y: PropTypes.number,
+    name: PropTypes.string,
+  }),
   onClose: PropTypes.func.isRequired,
   onRename: PropTypes.func.isRequired,
   onDuplicate: PropTypes.func.isRequired,
@@ -146,24 +213,32 @@ export default function ViewTabBar({
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [renaming, setRenaming] = useState(null);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
 
-  const handleSave = useCallback((name) => {
-    onSave(name);
-    enqueueSnackbar("View created", { variant: "success" });
-    setSaveAnchor(null);
-  }, [onSave]);
+  const handleSave = useCallback(
+    (name) => {
+      onSave(name);
+      enqueueSnackbar("View created", { variant: "success" });
+      setSaveAnchor(null);
+    },
+    [onSave],
+  );
 
-  const handleDragEnd = useCallback(({ active, over }) => {
-    if (!over || active.id === over.id) return;
-    const from = customNames.indexOf(active.id);
-    const to = customNames.indexOf(over.id);
-    if (from === -1 || to === -1) return;
-    const next = [...customNames];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    onReorder(next);
-  }, [customNames, onReorder]);
+  const handleDragEnd = useCallback(
+    ({ active, over }) => {
+      if (!over || active.id === over.id) return;
+      const from = customNames.indexOf(active.id);
+      const to = customNames.indexOf(over.id);
+      if (from === -1 || to === -1) return;
+      const next = [...customNames];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      onReorder(next);
+    },
+    [customNames, onReorder],
+  );
 
   /* 1 = Default, 2-9 = saved views — same scheme as Observe's tabs. */
   useEffect(() => {
@@ -182,12 +257,21 @@ export default function ViewTabBar({
   }, [onSwitch, defaultName, customNames]);
 
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: "4px", flex: 1, minWidth: 0, minHeight: 36 }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: "4px",
+        flex: 1,
+        minWidth: 0,
+        minHeight: 36,
+      }}
+    >
       <Box sx={{ flexShrink: 0 }}>
         <FixedTab
           tabKey={defaultName}
           label={defaultName}
-          icon="mdi:view-dashboard-outline"
+          icon="solar:widget-4-linear"
           shortcut="1"
           isActive={activeView === defaultName}
           onClick={onSwitch}
@@ -195,21 +279,37 @@ export default function ViewTabBar({
       </Box>
 
       {customNames.length > 0 && (
-        <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1, borderColor: "divider", flexShrink: 0 }} />
+        <Divider
+          orientation="vertical"
+          flexItem
+          sx={{ mx: 0.5, my: 1, borderColor: "divider", flexShrink: 0 }}
+        />
       )}
 
       <Box
         sx={{
-          display: "flex", alignItems: "center", gap: "4px", minWidth: 0,
-          overflowX: "auto", overflowY: "hidden", scrollbarWidth: "thin",
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          minWidth: 0,
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollbarWidth: "thin",
           "&::-webkit-scrollbar": { height: 6 },
           "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
           "&::-webkit-scrollbar-thumb": { bgcolor: "divider", borderRadius: 3 },
           "&::-webkit-scrollbar-thumb:hover": { bgcolor: "text.disabled" },
         }}
       >
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={customNames} strategy={horizontalListSortingStrategy}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={customNames}
+            strategy={horizontalListSortingStrategy}
+          >
             {customNames.map((name, idx) => (
               <SortableViewTab
                 key={name}
@@ -220,7 +320,10 @@ export default function ViewTabBar({
                 onClick={(tabKey) => onSwitch(tabKey.replace(/^view-/, ""))}
                 onClose={onDelete}
                 onContextMenu={(x, y, id) => setMenuAnchor({ x, y, name: id })}
-                onRenameSubmit={(from, to) => { onRename(from, to); setRenaming(null); }}
+                onRenameSubmit={(from, to) => {
+                  onRename(from, to);
+                  setRenaming(null);
+                }}
                 onRenameCancel={() => setRenaming(null)}
               />
             ))}
@@ -231,18 +334,32 @@ export default function ViewTabBar({
       <ButtonBase
         onClick={(e) => setSaveAnchor(e.currentTarget)}
         sx={{
-          display: "inline-flex", alignItems: "center", gap: 0.5,
-          height: 26, px: "8px", flexShrink: 0,
-          border: "1px solid", borderColor: "divider", borderRadius: "4px",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.5,
+          height: 26,
+          px: "8px",
+          flexShrink: 0,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "4px",
           bgcolor: "background.paper",
           "&:hover": { bgcolor: "background.neutral" },
         }}
       >
-        <Iconify icon="mdi:plus" width={16} sx={{ color: "text.primary" }} />
+        <Iconify
+          icon="solar:add-linear"
+          width={16}
+          sx={{ color: "text.primary" }}
+        />
         <Typography
           sx={{
-            fontSize: 13, fontWeight: 500, lineHeight: "20px", whiteSpace: "nowrap",
-            fontFamily: "'IBM Plex Sans', sans-serif", color: "text.primary",
+            fontSize: 13,
+            fontWeight: 500,
+            lineHeight: "20px",
+            whiteSpace: "nowrap",
+            fontFamily: "'IBM Plex Sans', sans-serif",
+            color: "text.primary",
           }}
         >
           Save view

@@ -39,7 +39,7 @@ const ConfirmDeleteUsers = ({ open, onClose, onConfirm, isLoading, count }) => {
             Are you sure you want delete {count} users?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

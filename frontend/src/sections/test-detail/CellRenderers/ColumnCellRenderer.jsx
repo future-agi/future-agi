@@ -23,7 +23,7 @@ const ColumnCellRenderer = (params) => {
       <CustomTooltip show size="small" arrow title={displayName}>
         <Typography
           fontWeight={500}
-          fontSize="14px"
+          fontSize="13px"
           color={"text.secondary"}
           sx={{
             textOverflow: "ellipsis",
@@ -36,7 +36,7 @@ const ColumnCellRenderer = (params) => {
       </CustomTooltip>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>

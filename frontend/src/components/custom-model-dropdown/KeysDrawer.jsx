@@ -33,6 +33,10 @@ import {
   useDeleteApiKey,
   DELETE_MODAL_TYPE,
 } from "src/hooks/use-delete-api-key";
+import {
+  COVERED_DRAWER_SX,
+  useDrawerCovered,
+} from "src/hooks/use-drawer-stack";
 
 const KeyConfigDrawerChild = ({
   onClose,
@@ -186,13 +190,12 @@ const KeyConfigDrawerChild = ({
           <IconButton
             onClick={onClose}
             sx={{
-              borderRadius: "4px",
               position: "absolute",
               top: "16px",
               right: "16px",
             }}
           >
-            <Iconify icon="mingcute:close-line" color="text.primary" />
+            <Iconify icon="solar:close-linear" color="text.primary" />
           </IconButton>
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             {filterOptions.map((button, index) => {
@@ -221,7 +224,8 @@ const KeyConfigDrawerChild = ({
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
+                        icon="solar:magnifier-linear"
+                        width={16}
                         sx={{ color: "text.disabled" }}
                       />
                     </InputAdornment>
@@ -245,17 +249,12 @@ const KeyConfigDrawerChild = ({
                 sx={{
                   minWidth: "90px",
                   border: "1px solid",
-                  borderRadius: "8px",
                   borderColor: "text.disabled",
-                  padding: "6px 16px",
                 }}
                 startIcon={
                   <SvgColor
-                    sx={{
-                      color: "text.primary",
-                      height: 16,
-                      width: 16,
-                    }}
+                    width={16}
+                    sx={{ color: "text.primary" }}
                     src={"/assets/icons/ic_add.svg"}
                   />
                 }
@@ -286,7 +285,7 @@ const KeyConfigDrawerChild = ({
                 width: "8px", // required
               },
               "&::-webkit-scrollbar-thumb": {
-                backgroundColor: "rgba(0, 0, 0, 0.3)",
+                backgroundColor: "border.hover",
                 borderRadius: "4px",
               },
               "&::-webkit-scrollbar-track": {
@@ -392,7 +391,8 @@ const KeyConfigDrawerChild = ({
             startIcon={
               <SvgColor
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                width={2}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }
@@ -418,6 +418,7 @@ KeyConfigDrawerChild.propTypes = {
 
 const KeysDrawer = ({ open, onClose, selectedModel, onAddCustomModel }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const covered = useDrawerCovered(open);
 
   const closeModal = () => {
     onClose();
@@ -433,10 +434,10 @@ const KeysDrawer = ({ open, onClose, selectedModel, onAddCustomModel }) => {
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "589px",
+          width: "640px",
           position: "fixed",
           // zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           pointerEvents: "auto", // allow interaction inside drawer
         },
@@ -449,6 +450,7 @@ const KeysDrawer = ({ open, onClose, selectedModel, onAddCustomModel }) => {
         disableEscapeKeyDown: true, // disables ESC key close
         sx: {
           pointerEvents: "none", // allow background interaction
+          ...(covered && COVERED_DRAWER_SX),
         },
       }}
     >

@@ -653,7 +653,7 @@ export const PROMPT_EDITOR_OPTIONS = [
     name: "delete",
     label: "Delete",
     icon: "/assets/icons/components/ic_delete.svg",
-    color: "red.600",
+    color: "status.danger.fg",
   },
 ];
 

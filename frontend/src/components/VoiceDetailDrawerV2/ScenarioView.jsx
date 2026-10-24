@@ -80,11 +80,11 @@ const prettyJson = (value) => {
 const SectionLabel = ({ children }) => (
   <Typography
     sx={{
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 600,
       color: "text.secondary",
-      textTransform: "uppercase",
-      letterSpacing: "0.04em",
+      textTransform: "none",
+      letterSpacing: 0,
       lineHeight: 1.4,
     }}
   >
@@ -116,11 +116,11 @@ const KeyValueRow = ({ label, value }) => {
       >
         <Typography
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             wordBreak: "break-word",
           }}
         >
@@ -134,14 +134,14 @@ const KeyValueRow = ({ label, value }) => {
             sx={{
               m: 0,
               p: 1,
-              fontSize: 11,
+              fontSize: 12,
               lineHeight: 1.5,
               fontFamily: "'JetBrains Mono', 'SF Mono', Consolas, monospace",
               color: "text.primary",
               bgcolor: "background.neutral",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "3px",
+              borderRadius: "4px",
               overflow: "auto",
               maxHeight: 280,
               whiteSpace: "pre-wrap",
@@ -153,7 +153,7 @@ const KeyValueRow = ({ label, value }) => {
         ) : (
           <Typography
             sx={{
-              fontSize: 12.5,
+              fontSize: 13,
               lineHeight: 1.5,
               color: value == null ? "text.disabled" : "text.primary",
               whiteSpace: "pre-wrap",
@@ -277,7 +277,11 @@ const ScenarioView = ({ data }) => {
           flexShrink: 0,
         }}
       >
-        <Iconify icon="mdi:magnify" width={13} color="text.disabled" />
+        <Iconify
+          icon="solar:magnifier-linear"
+          width={14}
+          color="text.disabled"
+        />
         <Box
           component="input"
           placeholder="Search scenario"
@@ -288,7 +292,7 @@ const ScenarioView = ({ data }) => {
             border: "none",
             outline: "none",
             bgcolor: "transparent",
-            fontSize: 11,
+            fontSize: 12,
             color: "text.primary",
             fontFamily: "inherit",
             py: 0.25,
@@ -297,7 +301,7 @@ const ScenarioView = ({ data }) => {
         />
         {query && (
           <Iconify
-            icon="mdi:close"
+            icon="solar:close-linear"
             width={12}
             onClick={() => setQuery("")}
             sx={{
@@ -318,7 +322,7 @@ const ScenarioView = ({ data }) => {
             minHeight: 120,
           }}
         >
-          <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             No matching scenario fields
           </Typography>
         </Box>
@@ -338,8 +342,8 @@ const ScenarioView = ({ data }) => {
         >
           <Stack direction="row" alignItems="center" gap={0.5}>
             <Iconify
-              icon="mdi:format-list-numbered"
-              width={13}
+              icon="solar:list-ordered-linear"
+              width={14}
               sx={{ color: "text.disabled" }}
             />
             <SectionLabel>Scenario</SectionLabel>
@@ -372,8 +376,8 @@ const ScenarioView = ({ data }) => {
         >
           <Stack direction="row" alignItems="center" gap={0.5}>
             <Iconify
-              icon="mdi:account-outline"
-              width={13}
+              icon="solar:user-linear"
+              width={14}
               sx={{ color: "text.disabled" }}
             />
             <SectionLabel>Persona</SectionLabel>

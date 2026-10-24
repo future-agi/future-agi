@@ -1,3 +1,4 @@
+import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
@@ -39,15 +40,25 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#7B56DB", // purple (primary)
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#1ABCFE", // cyan
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#FF6B6B", // coral red
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#2ECB71", // emerald green
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#F7B731", // amber
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#E84393", // magenta pink
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#0984E3", // ocean blue
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#FD7E14", // tangerine orange
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#00CEC9", // teal
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   "#A29BFE", // lavender
 ];
 
@@ -795,7 +806,7 @@ export default function WidgetChart({
                   textAlign: "left",
                   padding: "6px 10px",
                   fontWeight: 600,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   borderBottom: `2px solid ${theme.palette.divider}`,
                   position: "sticky",
@@ -815,7 +826,7 @@ export default function WidgetChart({
                     textAlign: "right",
                     padding: "6px 10px",
                     fontWeight: 500,
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: theme.palette.text.secondary,
                     borderBottom: `2px solid ${theme.palette.divider}`,
                     position: "sticky",
@@ -838,7 +849,7 @@ export default function WidgetChart({
                       sx={{
                         width: 8,
                         height: 8,
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
@@ -993,7 +1004,7 @@ export default function WidgetChart({
                 sx={{
                   width: 10,
                   height: 10,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
@@ -1029,7 +1040,7 @@ export default function WidgetChart({
               flexShrink: 0,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Metric
@@ -1040,7 +1051,7 @@ export default function WidgetChart({
               flex: 1,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Value
@@ -1096,10 +1107,8 @@ export default function WidgetChart({
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDark
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                      borderRadius: "3px",
+                      bgcolor: "background.neutral",
+                      borderRadius: "4px",
                       overflow: "hidden",
                     }}
                   >
@@ -1108,7 +1117,7 @@ export default function WidgetChart({
                         height: "100%",
                         width: `${Math.max(pct, 1)}%`,
                         bgcolor: color,
-                        borderRadius: "3px",
+                        borderRadius: "4px",
                         transition: "width 0.4s ease",
                       }}
                     />
@@ -1284,7 +1293,7 @@ export default function WidgetChart({
       tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         datetimeUTC: false,
         ...(!isHorizontal && {
           datetimeFormatter: {
@@ -1334,7 +1343,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: formatVal,
           },
         };
@@ -1364,7 +1373,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: makeFormatter(cfg),
           },
         };
@@ -1391,7 +1400,7 @@ export default function WidgetChart({
     markers: {
       size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
       strokeWidth: 2,
-      strokeColors: isDark ? theme.palette.background.paper : "#fff",
+      strokeColors: theme.palette.background.paper,
       hover: isLineChart
         ? { size: 8, sizeOffset: 2 }
         : { size: 6, sizeOffset: 3 },
@@ -1431,6 +1440,7 @@ export default function WidgetChart({
           intersect: isLineChart,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
+            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             const color = w.globals.colors[seriesIndex] || "#6366F1";
             const val = s[seriesIndex]?.[dataPointIndex];
             const prevVal =
@@ -1442,28 +1452,26 @@ export default function WidgetChart({
               ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
               : leftAxisFormatConfig;
             const fmtVal = makeFormatter(perSeriesCfg)(val);
-            const bg = isDark ? "#1e1e2e" : "#fff";
-            const _border = isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.06)";
-            const textPrimary = isDark ? "#fff" : "#1a1a2e";
-            const textSecondary = isDark
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(0,0,0,0.45)";
+            const bg = theme.palette.background.paper;
+            const border = theme.palette.divider;
+            const textPrimary = theme.palette.text.primary;
+            const textSecondary = theme.palette.text.secondary;
             let changeHtml = "";
             if (prevVal != null && prevVal !== 0 && val != null) {
               const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
               const sign = pct >= 0 ? "+" : "";
-              const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+              const changeColor = statusColors(
+                theme,
+                pct >= 0 ? "success" : "danger",
+              ).fg;
               changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
             }
-            return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-              <div style="width:4px;flex-shrink:0;background:${color}"></div>
-              <div style="padding:14px 16px;flex:1">
-                <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+            return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                            <div style="padding:14px 16px;flex:1">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                 <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                 <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                  <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                  <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                 </div>
                 ${changeHtml}
               </div>

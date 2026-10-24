@@ -6,7 +6,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
 } from "@mui/material";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
@@ -24,6 +23,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useParams } from "react-router";
 import { getUploadSourceItems, mapUploadedMedia } from "./uploadMediaMapping";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const tabItems = [
   { label: "Upload", value: "upload" },
@@ -43,8 +43,6 @@ const DescriptionMap = {
 };
 
 const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
-  const theme = useTheme();
-
   const [currentTab, setCurrentTab] = useState("upload");
 
   const links = useWatch({ control, name: "links" });
@@ -79,7 +77,7 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
           onClick={onClose}
           sx={{ position: "absolute", top: "10px", right: "12px" }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Box>
       <Box>
@@ -88,9 +86,6 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
           value={currentTab}
           onChange={(e, value) => {
             setCurrentTab(value);
-          }}
-          TabIndicatorProps={{
-            style: { backgroundColor: theme.palette.primary.main },
           }}
           sx={{ borderBottom: "1px solid", borderColor: "divider" }}
         >
@@ -103,12 +98,6 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
               sx={{
                 paddingLeft: "24px",
                 paddingRight: "24px",
-                ...theme.typography["s1"],
-                fontWeight: theme.typography["fontWeightSemiBold"],
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled", // Color for unselected tabs
-                  fontWeight: theme.typography["fontWeightMedium"],
-                },
                 ["&:not(:last-of-type)"]: {
                   marginRight: "4px",
                 },
@@ -215,6 +204,8 @@ const UploadMedia = ({ open, onClose, type, handleEmbedMedia }) => {
     },
   });
 
+  const covered = useDrawerCovered(open);
+
   const onFormSubmit = (data) => {
     uploadFile(data);
   };
@@ -224,13 +215,14 @@ const UploadMedia = ({ open, onClose, type, handleEmbedMedia }) => {
       anchor="right"
       open={open}
       onClose={handleConfirmClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          width: "570px",
-          borderRadius: "10px",
+          width: "640px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

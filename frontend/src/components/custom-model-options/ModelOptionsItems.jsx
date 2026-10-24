@@ -299,7 +299,7 @@ const ModelOptionsItems = ({
               },
               "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline":
                 {
-                  borderColor: "whiteScale.500",
+                  borderColor: "divider",
                 },
             }}
             options={voiceOptions?.voices || []}

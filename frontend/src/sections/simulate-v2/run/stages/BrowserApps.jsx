@@ -29,8 +29,14 @@ export const deriveState = (app, steps = []) => {
 
 const adminState = (steps) => {
   const s = {
-    screen: "login", email: "", password: "", filter: "",
-    workspace: null, retried: false, toast: false, exported: false,
+    screen: "login",
+    email: "",
+    password: "",
+    filter: "",
+    workspace: null,
+    retried: false,
+    toast: false,
+    exported: false,
   };
   steps.forEach((st) => {
     const t = st.target || "";
@@ -40,8 +46,14 @@ const adminState = (steps) => {
     if (st.action === "wait" && /dashboard/i.test(t)) s.screen = "dashboard";
     if (st.action === "click" && /billing/i.test(t)) s.screen = "billing";
     if (st.action === "type" && /search/i.test(t)) s.filter = st.value;
-    if (st.action === "click" && /northwind/i.test(t)) { s.screen = "workspace"; s.workspace = "Northwind Trading"; }
-    if (st.action === "click" && /retry/i.test(t)) { s.retried = true; s.toast = true; }
+    if (st.action === "click" && /northwind/i.test(t)) {
+      s.screen = "workspace";
+      s.workspace = "Northwind Trading";
+    }
+    if (st.action === "click" && /retry/i.test(t)) {
+      s.retried = true;
+      s.toast = true;
+    }
     if (st.action === "click" && /export/i.test(t)) s.exported = true;
   });
   return s;
@@ -49,26 +61,42 @@ const adminState = (steps) => {
 
 const TODO_SEED = [
   { id: "t1", text: "Renew SSL certificate", done: false, tag: "ops" },
-  { id: "t2", text: "Reply to Northwind support thread", done: true, tag: "support" },
+  {
+    id: "t2",
+    text: "Reply to Northwind support thread",
+    done: true,
+    tag: "support",
+  },
   { id: "t3", text: "Rotate staging API keys", done: false, tag: "ops" },
   { id: "t4", text: "Draft Q3 pricing note", done: true, tag: "finance" },
   { id: "t5", text: "Archive 2023 invoices", done: false, tag: "finance" },
 ];
 
 const todoState = (steps) => {
-  const s = { items: TODO_SEED.map((i) => ({ ...i })), filter: "all", draft: "", added: false, cleared: false };
+  const s = {
+    items: TODO_SEED.map((i) => ({ ...i })),
+    filter: "all",
+    draft: "",
+    added: false,
+    cleared: false,
+  };
   steps.forEach((st) => {
     const t = st.target || "";
     if (st.action === "click" && /active/i.test(t)) s.filter = "active";
     if (st.action === "type" && /new-task/i.test(t)) s.draft = st.value;
     if (st.action === "click" && /add/i.test(t) && s.draft) {
-      s.items = [...s.items, { id: "new", text: s.draft, done: false, tag: "inbox", fresh: true }];
+      s.items = [
+        ...s.items,
+        { id: "new", text: s.draft, done: false, tag: "inbox", fresh: true },
+      ];
       s.draft = "";
       s.added = true;
     }
     if (st.action === "click" && /checkbox/i.test(t)) {
       const name = (t.match(/has-text\('([^']+)'\)/) || [])[1];
-      s.items = s.items.map((i) => (i.text === name ? { ...i, done: true, justDone: true } : i));
+      s.items = s.items.map((i) =>
+        i.text === name ? { ...i, done: true, justDone: true } : i,
+      );
     }
     if (st.action === "click" && /clear completed/i.test(t)) {
       s.items = s.items.filter((i) => !i.done);
@@ -92,7 +120,10 @@ const slide = (row) => {
   const tiles = row.filter(Boolean);
   const out = [];
   for (let i = 0; i < tiles.length; i += 1) {
-    if (tiles[i] === tiles[i + 1]) { out.push(tiles[i] * 2); i += 1; } else out.push(tiles[i]);
+    if (tiles[i] === tiles[i + 1]) {
+      out.push(tiles[i] * 2);
+      i += 1;
+    } else out.push(tiles[i]);
   }
   while (out.length < 4) out.push(0);
   return out;
@@ -102,9 +133,11 @@ const rotate = (g) => g[0].map((_, c) => g.map((row) => row[c]));
 
 const move = (grid, dir) => {
   if (dir === "ArrowLeft") return grid.map(slide);
-  if (dir === "ArrowRight") return grid.map((r) => slide([...r].reverse()).reverse());
+  if (dir === "ArrowRight")
+    return grid.map((r) => slide([...r].reverse()).reverse());
   if (dir === "ArrowUp") return rotate(rotate(grid).map(slide));
-  if (dir === "ArrowDown") return rotate(rotate(grid).map((r) => slide([...r].reverse()).reverse()));
+  if (dir === "ArrowDown")
+    return rotate(rotate(grid).map((r) => slide([...r].reverse()).reverse()));
   return grid;
 };
 
@@ -117,13 +150,18 @@ const gameState = (steps, seedKey = "board") => {
     [16, 0, 2, 4],
     [0, 32, 0, 2],
   ];
-  let grid = start.map((row, r) => row.map((v, c) => (v && (h + r * 4 + c) % 9 === 0 ? v * 2 : v)));
+  let grid = start.map((row, r) =>
+    row.map((v, c) => (v && (h + r * 4 + c) % 9 === 0 ? v * 2 : v)),
+  );
   let moves = 0;
   let score = 0;
   steps.forEach((st) => {
     if (st.action !== "key") return;
     const next = move(grid, st.target);
-    score += next.flat().reduce((a, v) => a + v, 0) - grid.flat().reduce((a, v) => a + v, 0) + 4;
+    score +=
+      next.flat().reduce((a, v) => a + v, 0) -
+      grid.flat().reduce((a, v) => a + v, 0) +
+      4;
     grid = next;
     moves += 1;
   });
@@ -177,7 +215,8 @@ export const CURSOR = {
 export const urlFor = (app, state) => {
   if (app === "todo") return "app.taskly.dev/lists/inbox";
   if (app === "game") return "play.2048.io/seeded/4x4";
-  if (state.screen === "workspace") return "app.acme-admin.com/billing/northwind";
+  if (state.screen === "workspace")
+    return "app.acme-admin.com/billing/northwind";
   if (state.screen === "billing") return "app.acme-admin.com/billing";
   if (state.screen === "dashboard") return "app.acme-admin.com/dashboard";
   return "app.acme-admin.com/login";
@@ -194,6 +233,7 @@ export const urlFor = (app, state) => {
  * colour marks the target the way devtools does: unmistakable, and still
  * clearly part of the page underneath.
  */
+// eslint-disable-next-line no-restricted-syntax -- ds: data colour
 const FOCUS = "#7857FC";
 
 /*
@@ -231,16 +271,50 @@ export default function BrowserApp({ app, state, focus }) {
   return <AdminApp state={state} focus={focus} />;
 }
 
-BrowserApp.propTypes = { app: PropTypes.string, state: PropTypes.object, focus: PropTypes.string };
+BrowserApp.propTypes = {
+  app: PropTypes.string,
+  state: PropTypes.object,
+  focus: PropTypes.string,
+};
 
 /* ── admin console ───────────────────────────────────────────────────────── */
 
 const WORKSPACES = [
-  { name: "Northwind Trading", plan: "Scale", amount: "£1,248.00", status: "Past due", when: "2 days ago" },
-  { name: "Bluebird Labs", plan: "Growth", amount: "£420.00", status: "Past due", when: "4 days ago" },
-  { name: "Contoso Ltd", plan: "Scale", amount: "£1,900.00", status: "Paid", when: "yesterday" },
-  { name: "Fabrikam", plan: "Starter", amount: "£99.00", status: "Paid", when: "3 days ago" },
-  { name: "Tailspin Toys", plan: "Growth", amount: "£640.00", status: "Past due", when: "6 days ago" },
+  {
+    name: "Northwind Trading",
+    plan: "Scale",
+    amount: "£1,248.00",
+    status: "Past due",
+    when: "2 days ago",
+  },
+  {
+    name: "Bluebird Labs",
+    plan: "Growth",
+    amount: "£420.00",
+    status: "Past due",
+    when: "4 days ago",
+  },
+  {
+    name: "Contoso Ltd",
+    plan: "Scale",
+    amount: "£1,900.00",
+    status: "Paid",
+    when: "yesterday",
+  },
+  {
+    name: "Fabrikam",
+    plan: "Starter",
+    amount: "£99.00",
+    status: "Paid",
+    when: "3 days ago",
+  },
+  {
+    name: "Tailspin Toys",
+    plan: "Growth",
+    amount: "£640.00",
+    status: "Past due",
+    when: "6 days ago",
+  },
 ];
 
 function AdminApp({ state, focus }) {
@@ -250,15 +324,42 @@ function AdminApp({ state, focus }) {
         <Stack alignItems="center" justifyContent="center" sx={{ flex: 1 }}>
           <Stack
             spacing={1.25}
-            sx={{ width: 260, p: 2, borderRadius: 1.5, border: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}
+            sx={{
+              width: 260,
+              p: 2,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
           >
-            <Typography sx={{ typography: "s1", fontWeight: 700, textAlign: "center" }}>Acme Admin</Typography>
-            <Field label="Email" value={state.email} placeholder="you@company.com" focused={focus === "email"} />
-            <Field label="Password" value={state.password} placeholder="••••••••" focused={focus === "password"} />
+            <Typography
+              sx={{ typography: "s1", fontWeight: 600, textAlign: "center" }}
+            >
+              Acme Admin
+            </Typography>
+            <Field
+              label="Email"
+              value={state.email}
+              placeholder="you@company.com"
+              focused={focus === "email"}
+            />
+            <Field
+              label="Password"
+              value={state.password}
+              placeholder="••••••••"
+              focused={focus === "password"}
+            />
             <Box
               sx={{
-                mt: 0.5, py: 0.75, borderRadius: 0.75, textAlign: "center",
-                bgcolor: "#2563EB", color: "#fff", typography: "s2", fontWeight: 700,
+                mt: 0.5,
+                py: 0.75,
+                borderRadius: "4px",
+                textAlign: "center",
+                bgcolor: "status.info.solid",
+                color: "common.white",
+                typography: "s2",
+                fontWeight: 600,
                 ...ring(focus === "signin"),
               }}
             >
@@ -271,40 +372,76 @@ function AdminApp({ state, focus }) {
   }
 
   const rows = state.filter
-    ? WORKSPACES.filter((w) => w.status.toLowerCase().includes(state.filter.toLowerCase()))
+    ? WORKSPACES.filter((w) =>
+        w.status.toLowerCase().includes(state.filter.toLowerCase()),
+      )
     : WORKSPACES;
 
   return (
     <Shell>
       <Stack direction="row" sx={{ flex: 1, minHeight: 0 }}>
-        <Stack spacing={0.25} sx={{ width: 108, flexShrink: 0, p: 1, borderRight: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, px: 0.75, pb: 0.5 }}>Acme Admin</Typography>
-          {["Overview", "Customers", "Billing", "Usage", "Settings"].map((n) => (
-            <Box
-              key={n}
-              sx={{
-                px: 0.75, py: 0.5, borderRadius: 0.5, typography: "s3",
-                color: (state.screen !== "dashboard" && n === "Billing") ? "text.primary" : "text.subtitle",
-                bgcolor: (state.screen !== "dashboard" && n === "Billing") ? "action.selected" : "transparent",
-                ...ring(focus === "nav-billing" && n === "Billing"),
-              }}
-            >
-              {n}
-            </Box>
-          ))}
+        <Stack
+          spacing={0.25}
+          sx={{
+            width: 108,
+            flexShrink: 0,
+            p: 1,
+            borderRight: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{ typography: "s3", fontWeight: 600, px: 0.75, pb: 0.5 }}
+          >
+            Acme Admin
+          </Typography>
+          {["Overview", "Customers", "Billing", "Usage", "Settings"].map(
+            (n) => (
+              <Box
+                key={n}
+                sx={{
+                  px: 0.75,
+                  py: 0.5,
+                  borderRadius: "4px",
+                  typography: "s3",
+                  color:
+                    state.screen !== "dashboard" && n === "Billing"
+                      ? "text.primary"
+                      : "text.tertiary",
+                  bgcolor:
+                    state.screen !== "dashboard" && n === "Billing"
+                      ? "action.selected"
+                      : "transparent",
+                  ...ring(focus === "nav-billing" && n === "Billing"),
+                }}
+              >
+                {n}
+              </Box>
+            ),
+          )}
         </Stack>
 
         <Stack sx={{ flex: 1, minWidth: 0, p: 1.25 }} spacing={1}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1 }}>
-              {state.screen === "workspace" ? state.workspace : state.screen === "billing" ? "Billing" : "Overview"}
+            <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+              {state.screen === "workspace"
+                ? state.workspace
+                : state.screen === "billing"
+                  ? "Billing"
+                  : "Overview"}
             </Typography>
             {state.screen === "billing" && (
               <Box
                 sx={{
-                  width: 150, px: 1, py: 0.375, borderRadius: 0.75,
-                  border: "1px solid", borderColor: "divider", bgcolor: "background.paper",
-                  typography: "s3", color: state.filter ? "text.primary" : "text.disabled",
+                  width: 150,
+                  px: 1,
+                  py: 0.375,
+                  borderRadius: "4px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "background.paper",
+                  typography: "s3",
+                  color: state.filter ? "text.primary" : "text.disabled",
                   ...ring(focus === "search"),
                 }}
               >
@@ -313,8 +450,14 @@ function AdminApp({ state, focus }) {
             )}
             <Box
               sx={{
-                px: 1, py: 0.375, borderRadius: 0.75, border: "1px solid", borderColor: "divider",
-                typography: "s3", color: "text.secondary", ...ring(focus === "export"),
+                px: 1,
+                py: 0.375,
+                borderRadius: "4px",
+                border: "1px solid",
+                borderColor: "divider",
+                typography: "s3",
+                color: "text.secondary",
+                ...ring(focus === "export"),
               }}
             >
               {state.exported ? "Exported ✓" : "Export"}
@@ -328,9 +471,22 @@ function AdminApp({ state, focus }) {
                 { k: "Active workspaces", v: "1,284" },
                 { k: "Past due", v: "3" },
               ].map((c) => (
-                <Stack key={c.k} sx={{ flex: 1, p: 1, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{c.k}</Typography>
-                  <Typography sx={{ typography: "s1", fontWeight: 700 }}>{c.v}</Typography>
+                <Stack
+                  key={c.k}
+                  sx={{
+                    flex: 1,
+                    p: 1,
+                    borderRadius: 1,
+                    border: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {c.k}
+                  </Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                    {c.v}
+                  </Typography>
                 </Stack>
               ))}
             </Stack>
@@ -339,25 +495,72 @@ function AdminApp({ state, focus }) {
           {state.screen === "workspace" ? (
             <Stack spacing={0.75} sx={{ ...ring(focus === "list", "region") }}>
               {[
-                { id: "INV-2291", amount: "£1,248.00", state: state.retried ? "Paid" : "Failed", note: state.retried ? "retried just now" : "card declined" },
-                { id: "INV-2244", amount: "£1,248.00", state: "Paid", note: "last month" },
-                { id: "INV-2190", amount: "£1,180.00", state: "Paid", note: "two months ago" },
+                {
+                  id: "INV-2291",
+                  amount: "£1,248.00",
+                  state: state.retried ? "Paid" : "Failed",
+                  note: state.retried ? "retried just now" : "card declined",
+                },
+                {
+                  id: "INV-2244",
+                  amount: "£1,248.00",
+                  state: "Paid",
+                  note: "last month",
+                },
+                {
+                  id: "INV-2190",
+                  amount: "£1,180.00",
+                  state: "Paid",
+                  note: "two months ago",
+                },
               ].map((inv, i) => (
                 <Stack
                   key={inv.id}
-                  direction="row" alignItems="center" spacing={1}
-                  sx={{ px: 1, py: 0.75, borderRadius: 0.75, border: "1px solid", borderColor: "divider" }}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{
+                    px: 1,
+                    py: 0.75,
+                    borderRadius: "4px",
+                    border: "1px solid",
+                    borderColor: "divider",
+                  }}
                 >
-                  <Typography sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", width: 62 }}>{inv.id}</Typography>
-                  <Typography sx={{ typography: "s3", width: 62 }}>{inv.amount}</Typography>
-                  <Pill tone={inv.state === "Paid" ? "#16A34A" : "#DC2626"}>{inv.state}</Pill>
-                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>{inv.note}</Typography>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      width: 62,
+                    }}
+                  >
+                    {inv.id}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", width: 62 }}>
+                    {inv.amount}
+                  </Typography>
+                  {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
+                  <Pill tone={inv.state === "Paid" ? "#16A34A" : "#DC2626"}>
+                    {inv.state}
+                  </Pill>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+                  >
+                    {inv.note}
+                  </Typography>
                   {i === 0 && (
                     <Box
                       sx={{
-                        px: 1, py: 0.25, borderRadius: 0.75, typography: "s3", fontWeight: 700,
-                        bgcolor: state.retried ? "action.hover" : "#2563EB",
-                        color: state.retried ? "text.subtitle" : "#fff",
+                        px: 1,
+                        py: 0.25,
+                        borderRadius: "4px",
+                        typography: "s3",
+                        fontWeight: 600,
+                        bgcolor: state.retried
+                          ? "action.hover"
+                          : "status.info.solid",
+                        color: state.retried ? "text.tertiary" : "common.white",
                         ...ring(focus === "retry"),
                       }}
                     >
@@ -368,28 +571,69 @@ function AdminApp({ state, focus }) {
               ))}
             </Stack>
           ) : (
-            <Stack sx={{ borderRadius: 1, border: "1px solid", borderColor: "divider", overflow: "hidden" }}>
-              <Stack direction="row" spacing={1} sx={{ px: 1, py: 0.5, bgcolor: "background.neutral" }}>
+            <Stack
+              sx={{
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                overflow: "hidden",
+              }}
+            >
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ px: 1, py: 0.5, bgcolor: "background.neutral" }}
+              >
                 {["Workspace", "Plan", "Amount", "Status"].map((h) => (
-                  <Typography key={h} sx={{ typography: "s3", color: "text.subtitle", flex: h === "Workspace" ? 2 : 1 }}>{h}</Typography>
+                  <Typography
+                    key={h}
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      flex: h === "Workspace" ? 2 : 1,
+                    }}
+                  >
+                    {h}
+                  </Typography>
                 ))}
               </Stack>
               {rows.map((w) => (
                 <Stack
                   key={w.name}
-                  direction="row" alignItems="center" spacing={1}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
                   sx={{
-                    px: 1, py: 0.625, borderTop: "1px solid", borderColor: "divider",
+                    px: 1,
+                    py: 0.625,
+                    borderTop: "1px solid",
+                    borderColor: "divider",
                     ...ring(focus === "row" && w.name.startsWith("Northwind")),
                   }}
                 >
-                  <Typography noWrap sx={{ typography: "s3", flex: 2, fontWeight: w.name.startsWith("Northwind") ? 700 : 400 }}>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      flex: 2,
+                      fontWeight: w.name.startsWith("Northwind") ? 600 : 400,
+                    }}
+                  >
                     {w.name}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>{w.plan}</Typography>
-                  <Typography sx={{ typography: "s3", flex: 1 }}>{w.amount}</Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+                  >
+                    {w.plan}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", flex: 1 }}>
+                    {w.amount}
+                  </Typography>
                   <Box sx={{ flex: 1 }}>
-                    <Pill tone={w.status === "Paid" ? "#16A34A" : "#DC2626"}>{w.status}</Pill>
+                    {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
+                    <Pill tone={w.status === "Paid" ? "#16A34A" : "#DC2626"}>
+                      {w.status}
+                    </Pill>
                   </Box>
                 </Stack>
               ))}
@@ -399,6 +643,7 @@ function AdminApp({ state, focus }) {
       </Stack>
 
       {state.toast && (
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         <Toast icon="solar:check-circle-bold" tone="#16A34A">
           Payment retried — INV-2291 is paid
         </Toast>
@@ -412,28 +657,46 @@ AdminApp.propTypes = { state: PropTypes.object, focus: PropTypes.string };
 /* ── todo app ────────────────────────────────────────────────────────────── */
 
 function TodoApp({ state, focus }) {
-  const shown = state.filter === "active" ? state.items.filter((i) => !i.done) : state.items;
+  const shown =
+    state.filter === "active"
+      ? state.items.filter((i) => !i.done)
+      : state.items;
   const left = state.items.filter((i) => !i.done).length;
 
   return (
     <Shell>
       <Stack sx={{ flex: 1, minHeight: 0, p: 1.5 }} spacing={1}>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>Inbox</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          Inbox
+        </Typography>
 
         <Stack direction="row" spacing={1}>
           <Box
             sx={{
-              flex: 1, px: 1, py: 0.5, borderRadius: 0.75, border: "1px solid", borderColor: "divider",
-              typography: "s3", color: state.draft ? "text.primary" : "text.disabled",
-              bgcolor: "background.paper", ...ring(focus === "compose"),
+              flex: 1,
+              px: 1,
+              py: 0.5,
+              borderRadius: "4px",
+              border: "1px solid",
+              borderColor: "divider",
+              typography: "s3",
+              color: state.draft ? "text.primary" : "text.disabled",
+              bgcolor: "background.paper",
+              ...ring(focus === "compose"),
             }}
           >
             {state.draft || "What needs doing?"}
           </Box>
           <Box
             sx={{
-              px: 1.25, py: 0.5, borderRadius: 0.75, bgcolor: "#2563EB", color: "#fff",
-              typography: "s3", fontWeight: 700, ...ring(focus === "add"),
+              px: 1.25,
+              py: 0.5,
+              borderRadius: "4px",
+              bgcolor: "status.info.solid",
+              color: "common.white",
+              typography: "s3",
+              fontWeight: 600,
+              ...ring(focus === "add"),
             }}
           >
             Add
@@ -445,9 +708,20 @@ function TodoApp({ state, focus }) {
             <Box
               key={t}
               sx={{
-                px: 1, py: 0.25, borderRadius: 0.75, typography: "s3",
-                bgcolor: state.filter === t.toLowerCase() || (state.filter === "all" && t === "All") ? "action.selected" : "transparent",
-                color: state.filter === t.toLowerCase() || (state.filter === "all" && t === "All") ? "text.primary" : "text.subtitle",
+                px: 1,
+                py: 0.25,
+                borderRadius: "4px",
+                typography: "s3",
+                bgcolor:
+                  state.filter === t.toLowerCase() ||
+                  (state.filter === "all" && t === "All")
+                    ? "action.selected"
+                    : "transparent",
+                color:
+                  state.filter === t.toLowerCase() ||
+                  (state.filter === "all" && t === "All")
+                    ? "text.primary"
+                    : "text.tertiary",
               }}
             >
               {t}
@@ -455,51 +729,88 @@ function TodoApp({ state, focus }) {
           ))}
         </Stack>
 
-        <Stack spacing={0.5} sx={{ flex: 1, minHeight: 0, overflow: "hidden", ...ring(focus === "list", "region") }}>
+        <Stack
+          spacing={0.5}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            ...ring(focus === "list", "region"),
+          }}
+        >
           {shown.map((i) => (
             <Stack
               key={i.id}
-              direction="row" alignItems="center" spacing={1}
+              direction="row"
+              alignItems="center"
+              spacing={1}
               sx={{
-                px: 1, py: 0.625, borderRadius: 0.75, border: "1px solid",
-                borderColor: i.fresh ? alpha("#16A34A", 0.5) : "divider",
-                bgcolor: i.fresh ? (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.1 : 0.05) : "transparent",
+                px: 1,
+                py: 0.625,
+                borderRadius: "4px",
+                border: "1px solid",
+                borderColor: i.fresh ? "status.success.border" : "divider",
+                bgcolor: i.fresh ? "status.success.bg" : "transparent",
                 ...ring(focus === "check" && i.justDone),
               }}
             >
               <Box
                 sx={{
-                  width: 13, height: 13, borderRadius: 0.5, flexShrink: 0,
-                  border: "1.5px solid", borderColor: i.done ? "#16A34A" : "text.disabled",
-                  bgcolor: i.done ? "#16A34A" : "transparent",
-                  display: "grid", placeItems: "center",
+                  width: 13,
+                  height: 13,
+                  borderRadius: "4px",
+                  flexShrink: 0,
+                  border: "1.5px solid",
+                  borderColor: i.done
+                    ? "status.success.solid"
+                    : "text.disabled",
+                  bgcolor: i.done ? "status.success.solid" : "transparent",
+                  display: "grid",
+                  placeItems: "center",
                 }}
               >
-                {i.done && <Iconify icon="mingcute:check-fill" width={9} sx={{ color: "#fff" }} />}
+                {i.done && (
+                  <Iconify
+                    icon="solar:check-linear"
+                    width={9}
+                    sx={{ color: "common.white" }}
+                  />
+                )}
               </Box>
               <Typography
                 noWrap
                 sx={{
-                  typography: "s3", flex: 1,
+                  typography: "s3",
+                  flex: 1,
                   color: i.done ? "text.disabled" : "text.primary",
                   textDecoration: i.done ? "line-through" : "none",
                 }}
               >
                 {i.text}
               </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{i.tag}</Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {i.tag}
+              </Typography>
             </Stack>
           ))}
         </Stack>
 
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+          >
             {left} left · {state.items.length - left} done
           </Typography>
           <Box
             sx={{
-              px: 1, py: 0.25, borderRadius: 0.75, border: "1px solid", borderColor: "divider",
-              typography: "s3", color: "text.secondary", ...ring(focus === "clear"),
+              px: 1,
+              py: 0.25,
+              borderRadius: "4px",
+              border: "1px solid",
+              borderColor: "divider",
+              typography: "s3",
+              color: "text.secondary",
+              ...ring(focus === "clear"),
             }}
           >
             Clear completed
@@ -508,6 +819,7 @@ function TodoApp({ state, focus }) {
       </Stack>
 
       {state.cleared && (
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         <Toast icon="solar:trash-bin-trash-bold" tone="#7857FC">
           Completed tasks cleared
         </Toast>
@@ -522,6 +834,7 @@ TodoApp.propTypes = { state: PropTypes.object, focus: PropTypes.string };
 
 const TILE = {
   0: { bg: "rgba(120,120,130,.12)", fg: "transparent" },
+  /* eslint-disable no-restricted-syntax -- ds: data colour */
   2: { bg: "#EEE4DA", fg: "#776E65" },
   4: { bg: "#EDE0C8", fg: "#776E65" },
   8: { bg: "#F2B179", fg: "#FFF" },
@@ -531,26 +844,56 @@ const TILE = {
   128: { bg: "#EDCF72", fg: "#FFF" },
   256: { bg: "#EDCC61", fg: "#FFF" },
   512: { bg: "#EDC850", fg: "#FFF" },
+  /* eslint-enable no-restricted-syntax */
 };
 
 function GameApp({ state, focus }) {
   return (
     <Shell>
-      <Stack alignItems="center" justifyContent="center" sx={{ flex: 1, p: 1.5 }} spacing={1}>
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ flex: 1, p: 1.5 }}
+        spacing={1}
+      >
         <Stack direction="row" spacing={1} sx={{ width: 232 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 700, flex: 1 }}>2048</Typography>
-          {[{ k: "SCORE", v: state.score }, { k: "BEST", v: state.best }].map((c) => (
-            <Stack key={c.k} alignItems="center" sx={{ px: 1, py: 0.25, borderRadius: 0.75, bgcolor: "background.neutral" }}>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{c.k}</Typography>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>{c.v}</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>
+            2048
+          </Typography>
+          {[
+            { k: "SCORE", v: state.score },
+            { k: "BEST", v: state.best },
+          ].map((c) => (
+            <Stack
+              key={c.k}
+              alignItems="center"
+              sx={{
+                px: 1,
+                py: 0.25,
+                borderRadius: "4px",
+                bgcolor: "background.neutral",
+              }}
+            >
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {c.k}
+              </Typography>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                {c.v}
+              </Typography>
             </Stack>
           ))}
         </Stack>
 
         <Box
           sx={{
-            p: 0.75, borderRadius: 1.25, bgcolor: (t) => alpha("#BBADA0", t.palette.mode === "dark" ? 0.25 : 0.7),
-            display: "grid", gridTemplateColumns: "repeat(4, 52px)", gap: 0.75,
+            p: 0.75,
+            borderRadius: "8px",
+            bgcolor: (t) =>
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+              alpha("#BBADA0", t.palette.mode === "dark" ? 0.25 : 0.7),
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 52px)",
+            gap: 0.75,
             ...ring(focus === "board", "region"),
           }}
         >
@@ -560,12 +903,21 @@ function GameApp({ state, focus }) {
               <Box
                 key={i}
                 sx={{
-                  height: 52, borderRadius: 0.75, display: "grid", placeItems: "center",
+                  height: 52,
+                  borderRadius: "4px",
+                  display: "grid",
+                  placeItems: "center",
                   bgcolor: tone.bg,
-                  transition: "background-color .25s ease",
+                  transition: "background-color 200ms ease",
                 }}
               >
-                <Typography sx={{ typography: v > 64 ? "s2" : "s1", fontWeight: 800, color: tone.fg }}>
+                <Typography
+                  sx={{
+                    typography: v > 64 ? "s2" : "s1",
+                    fontWeight: 600,
+                    color: tone.fg,
+                  }}
+                >
                   {v || ""}
                 </Typography>
               </Box>
@@ -573,7 +925,7 @@ function GameApp({ state, focus }) {
           })}
         </Box>
 
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           {state.moves} moves · arrow keys to play
         </Typography>
       </Stack>
@@ -587,7 +939,14 @@ GameApp.propTypes = { state: PropTypes.object, focus: PropTypes.string };
 
 function Shell({ children }) {
   return (
-    <Stack sx={{ position: "absolute", inset: 0, bgcolor: "background.default", overflow: "hidden" }}>
+    <Stack
+      sx={{
+        position: "absolute",
+        inset: 0,
+        bgcolor: "background.default",
+        overflow: "hidden",
+      }}
+    >
       {children}
     </Stack>
   );
@@ -597,11 +956,18 @@ Shell.propTypes = { children: PropTypes.node };
 function Field({ label, value, placeholder, focused }) {
   return (
     <Box>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.25 }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 0.25 }}>
+        {label}
+      </Typography>
       <Box
         sx={{
-          px: 1, py: 0.5, borderRadius: 0.75, border: "1px solid", borderColor: "divider",
-          typography: "s3", color: value ? "text.primary" : "text.disabled",
+          px: 1,
+          py: 0.5,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          typography: "s3",
+          color: value ? "text.primary" : "text.disabled",
           fontFamily: "ui-monospace, Menlo, monospace",
           bgcolor: "background.default",
           ...ring(focused),
@@ -613,7 +979,10 @@ function Field({ label, value, placeholder, focused }) {
   );
 }
 Field.propTypes = {
-  label: PropTypes.string, value: PropTypes.string, placeholder: PropTypes.string, focused: PropTypes.bool,
+  label: PropTypes.string,
+  value: PropTypes.string,
+  placeholder: PropTypes.string,
+  focused: PropTypes.bool,
 };
 
 function Pill({ tone, children }) {
@@ -621,7 +990,12 @@ function Pill({ tone, children }) {
     <Typography
       component="span"
       sx={{
-        px: 0.625, py: 0.125, borderRadius: 0.5, typography: "s3", fontWeight: 700, color: tone,
+        px: 0.625,
+        py: 0.125,
+        borderRadius: "4px",
+        typography: "s3",
+        fontWeight: 600,
+        color: tone,
         bgcolor: (t) => alpha(tone, t.palette.mode === "dark" ? 0.18 : 0.1),
       }}
     >
@@ -634,18 +1008,34 @@ Pill.propTypes = { tone: PropTypes.string, children: PropTypes.node };
 function Toast({ icon, tone, children }) {
   return (
     <Stack
-      direction="row" alignItems="center" spacing={0.875}
+      direction="row"
+      alignItems="center"
+      spacing={0.875}
       sx={{
-        position: "absolute", right: 12, bottom: 12, zIndex: 4,
-        px: 1.25, py: 0.75, borderRadius: 1,
-        border: "1px solid", borderColor: alpha(tone, 0.4),
+        position: "absolute",
+        right: 12,
+        bottom: 12,
+        zIndex: 4,
+        px: 1.25,
+        py: 0.75,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: alpha(tone, 0.4),
         bgcolor: "background.paper",
-        boxShadow: (t) => `0 6px 20px ${alpha("#000", t.palette.mode === "dark" ? 0.5 : 0.12)}`,
+        boxShadow: (t) =>
+          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+          `0 6px 20px ${alpha("#000", t.palette.mode === "dark" ? 0.5 : 0.12)}`,
       }}
     >
       <Iconify icon={icon} width={14} sx={{ color: tone }} />
-      <Typography sx={{ typography: "s3", fontWeight: 600 }}>{children}</Typography>
+      <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+        {children}
+      </Typography>
     </Stack>
   );
 }
-Toast.propTypes = { icon: PropTypes.string, tone: PropTypes.string, children: PropTypes.node };
+Toast.propTypes = {
+  icon: PropTypes.string,
+  tone: PropTypes.string,
+  children: PropTypes.node,
+};

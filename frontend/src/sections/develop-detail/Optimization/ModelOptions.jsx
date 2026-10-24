@@ -8,7 +8,7 @@ import PropTypes from "prop-types";
 const ModelOptions = ({ control }) => {
   return (
     <Box sx={{ display: "flex", gap: 2, flexDirection: "column" }}>
-      <Typography color="text.secondary" fontSize="12px" fontWeight={700}>
+      <Typography color="text.secondary" fontSize="12px" fontWeight={600}>
         Model Options
       </Typography>
       <SliderRow

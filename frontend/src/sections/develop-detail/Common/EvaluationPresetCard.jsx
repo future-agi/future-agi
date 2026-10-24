@@ -24,7 +24,7 @@ const EvaluationPresetCard = React.forwardRef(
       >
         <Typography
           variant="body2"
-          fontSize={14}
+          fontSize={13}
           color={"text.primary"}
           fontWeight={500}
         >

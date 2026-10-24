@@ -150,10 +150,9 @@ const TestRunDetailHeader = () => {
                 onClick={() => exportLogs()}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/action_buttons/ic_download.svg"
                     sx={{
-                      width: 16,
-                      height: 16,
                       color: "text.primary",
                     }}
                   />
@@ -167,13 +166,12 @@ const TestRunDetailHeader = () => {
                   color="primary"
                   size="small"
                   sx={{
-                    borderRadius: "4px",
                     borderColor: "primary.main",
                   }}
                   onClick={() => setConfirmStop(true)}
                   startIcon={
                     <Iconify
-                      icon="bi:stop-circle"
+                      icon="solar:stop-circle-linear"
                       width="14px"
                       height="14px"
                       sx={{
@@ -227,8 +225,6 @@ const TestRunDetailHeader = () => {
                       variant="outlined"
                       sx={{
                         ...theme.typography.s2_1,
-                        fontWeight: 500,
-                        paddingX: 2,
                       }}
                       startIcon={
                         <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
@@ -356,7 +352,8 @@ const TestRunDetailHeader = () => {
                   {
                     id: "direction",
                     condition:
-                      agentType !== AGENT_TYPES.CHAT && kpis?.is_inbound != null,
+                      agentType !== AGENT_TYPES.CHAT &&
+                      kpis?.is_inbound != null,
                     value: kpis?.is_inbound === false ? "Outbound" : "Inbound",
                     variant: "chip",
                     iconSrc:

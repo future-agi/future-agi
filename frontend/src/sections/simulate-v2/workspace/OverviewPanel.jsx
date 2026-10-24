@@ -1,8 +1,14 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, Grid, Chip, Tooltip,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  Grid,
+  Chip,
+  Tooltip,
   CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -35,7 +41,10 @@ import { currentEnvVersion, scenariosInSet } from "../_mock/versions";
 import { runListCount } from "../_mock/runList";
 import { toolSettingOf } from "../_mock/toolEnv";
 import { unexplainedMoveOf } from "../_mock/resultDrift";
-import ConnectOnlyWorld, { ResultsMovedNote, EnvironmentKindNote } from "./ConnectOnlyWorld";
+import ConnectOnlyWorld, {
+  ResultsMovedNote,
+  EnvironmentKindNote,
+} from "./ConnectOnlyWorld";
 import { BlockingGapsInline } from "./SetupGapsPanel";
 import EnvAgentLine from "./EnvAgentLine";
 import useEnvViewAs from "./useEnvViewAs";
@@ -54,8 +63,18 @@ import { clickable, focusRing } from "../components/clickable";
 const seedBlurb = (rows) =>
   `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`;
 
-export default function OverviewPanel({ buildMode, env, envState, patch, onGo, agentConnected, locked = false, onFork, contractProgress, buildDone = null }) {
-
+export default function OverviewPanel({
+  buildMode,
+  env,
+  envState,
+  patch,
+  onGo,
+  agentConnected,
+  locked = false,
+  onFork,
+  contractProgress,
+  buildDone = null,
+}) {
   /* The agent lives in Agents; "Connect agent" here opens the picker in place. */
   const [pick, setPick] = useState(0);
   const go = (step) => (step === "agent" ? setPick(Date.now()) : onGo?.(step));
@@ -80,24 +99,31 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
      graph + the full downstream layout even before an agent is
      wired, so a scratch env's Overview reads like every other env's
      rather than a getting-started stub. */
-  const hasDerivedWorld = (env.rules?.length || 0) > 0
-    || (envState?.scenarios?.length || 0) > 0
-    || (env.tools?.length || 0) > 0;
+  const hasDerivedWorld =
+    (env.rules?.length || 0) > 0 ||
+    (envState?.scenarios?.length || 0) > 0 ||
+    (env.tools?.length || 0) > 0;
   const showRichOverview = agentConnected || hasDerivedWorld;
   /* Rules carry where they were found, and a rule found in prose is held back
      rather than graded — the badge is the only place that is visible here, so
      the card links through to the review queue. */
   const ruleProv = provenanceFor(env).rules;
-  const held = ruleProv.filter((r) => r.held && !(envState?.confirmedRules || []).includes(r.id));
+  const held = ruleProv.filter(
+    (r) => r.held && !(envState?.confirmedRules || []).includes(r.id),
+  );
   /* A connect-only agent has no world, and a result can move for reasons
      outside everything we version — the account it books under. */
   const connectOnly = isConnectOnly(env);
-  const moved = useMemo(() => (connectOnly ? unexplainedMoveOf(env, envState) : null), [connectOnly, env, envState]);
+  const moved = useMemo(
+    () => (connectOnly ? unexplainedMoveOf(env, envState) : null),
+    [connectOnly, env, envState],
+  );
   /* While it builds, the page fills in the order the build learns things:
      the agent first, then what it is as its tools are read, the capabilities
      as they stream, use cases once rules are found, the world once stores
      are, and the counts when the build is done. */
-  const inBuild = !!buildMode && Array.isArray(buildDone) && !buildDone.includes("build");
+  const inBuild =
+    !!buildMode && Array.isArray(buildDone) && !buildDone.includes("build");
   const prog = contractProgress || {};
   const understood = !!buildDone?.includes("understand");
   const showIntro = !inBuild || (prog.tools || 0) > 0 || understood;
@@ -121,31 +147,41 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       {!agentConnected && !inBuild && (
         <Box
           sx={{
-            p: 2, mb: 2, borderRadius: 1.5,
-            border: "1px solid", borderColor: "divider",
+            p: 2,
+            mb: 2,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
             bgcolor: "background.paper",
           }}
         >
-          <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={2}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            alignItems={{ sm: "center" }}
+            spacing={2}
+          >
             <Box flex={1}>
               {/* Its agent was deleted from Agents: say so, and that nothing here went with it. */}
-              <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
                 {envState?.removedAgent
                   ? `${envState.removedAgent.name || "Its agent"} was deleted — connect an agent to run again`
                   : "Connect your agent to start testing"}
               </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+              >
                 {envState?.removedAgent
                   ? "Scenarios, evaluations and past runs are all still here."
                   : `${surface.blurb} We handle the ${surface.transports.join(", ")} side — you point us at your agent.`}
               </Typography>
             </Box>
             <Button
+              size="small"
               variant="contained"
               color="primary"
               onClick={() => go("agent")}
               endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
-              sx={{ flexShrink: 0, typography: "s2", fontWeight: 700 }}
+              sx={{ flexShrink: 0 }}
             >
               Connect agent
             </Button>
@@ -160,26 +196,52 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         description it reads as what it is — a setting you change before a run.
       */}
       {showIntro && (
-      <FadeIn>
-      <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "flex-start" }} spacing={2}>
-        <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 820 }}>
-          {env.description}
-        </Typography>
-      </Stack>
+        <FadeIn>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            alignItems={{ sm: "flex-start" }}
+            spacing={2}
+          >
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", maxWidth: 820 }}
+            >
+              {env.description}
+            </Typography>
+          </Stack>
 
-      {/* Labels, not content — a strip rather than a column of its own. */}
-      <Stack
-        direction="row"
-        flexWrap="wrap"
-        divider={<Box sx={{ width: "1px", bgcolor: "divider", alignSelf: "stretch", mx: 2 }} />}
-        sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1 }}
-      >
-        <Fact label="Channel" value={surface.label} />
-        <Fact label="Domain" value={domain?.label || "—"} />
-        <Fact label="Transports" value={surface.transports.join(" · ")} />
-        <Fact label="Scenario packs" value={`${stats.packs} packs · ${envState?.scenarios?.length || stats.scenarios} scenarios`} />
-      </Stack>
-      </FadeIn>
+          {/* Labels, not content — a strip rather than a column of its own. */}
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            divider={
+              <Box
+                sx={{
+                  width: "1px",
+                  bgcolor: "divider",
+                  alignSelf: "stretch",
+                  mx: 2,
+                }}
+              />
+            }
+            sx={{
+              my: 2,
+              py: 1.25,
+              px: 2,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              rowGap: 1,
+            }}
+          >
+            <Fact label="Channel" value={surface.label} />
+            <Fact label="Domain" value={domain?.label || "—"} />
+            <Fact label="Transports" value={surface.transports.join(" · ")} />
+            <Fact
+              label="Scenario packs"
+              value={`${stats.packs} packs · ${envState?.scenarios?.length || stats.scenarios} scenarios`}
+            />
+          </Stack>
+        </FadeIn>
       )}
 
       {/*
@@ -199,14 +261,27 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       )}
 
       {/* The agent this environment tests, in one line — its detail is the Agent tab. */}
-      <EnvAgentLine env={env} envState={envState} patch={patch} locked={readOnly} onFork={onFork} openPick={pick} />
+      <EnvAgentLine
+        env={env}
+        envState={envState}
+        patch={patch}
+        locked={readOnly}
+        onFork={onFork}
+        openPick={pick}
+      />
 
-      {!readOnly && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
+      {!readOnly && (
+        <AgentRefreshBanner env={env} envState={envState} patch={patch} />
+      )}
 
       {/* State-of-the-env summary tiles + latest run — the "how's this
           env doing right now?" answer that used to be missing. Each
           tile jumps to the tab it summarises. */}
-      {showSummary && <FadeIn><StateSummary env={env} envState={envState} onGo={go} /></FadeIn>}
+      {showSummary && (
+        <FadeIn>
+          <StateSummary env={env} envState={envState} onGo={go} />
+        </FadeIn>
+      )}
       <ResultsMovedNote move={moved} sx={{ mt: -1.5, mb: 3 }} />
 
       {/*
@@ -231,132 +306,272 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         <TwinBackedSections env={env} envState={envState} onGo={go} />
       ) : (
         <>
-      {/*
+          {/*
         Formerly "The contract" — collided with the dedicated Contract
         tab (which holds the RL contract: adapter, spaces, dynamics,
         reward). This group is a capability inventory of the source
         agent, so the label now reflects that and the collision is
         gone.
       */}
-      <GroupHeading>Capabilities</GroupHeading>
-      {/* CapabilityGraph moved to the Contract tab — that's where the
+          <GroupHeading>Capabilities</GroupHeading>
+          {/* CapabilityGraph moved to the Contract tab — that's where the
           shape of the environment belongs. Overview keeps the summary,
           not the definition. */}
-      {/*
+          {/*
         The reviewability record — how the reader mapped source to
         sandbox. Every derived fact carries an origin and a sandbox
         target, side by side. This is the artifact someone comes
         back to three weeks later to see which decisions a human
         made and which the reader made itself.
       */}
-      {(showRichOverview || contractProgress?.streaming) && (
-        <SourceToSandboxMap env={env} envState={envState} progress={contractProgress} />
-      )}
-      {showUseCases && (
-      <FadeIn>
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <SectionCard title="Use cases" subtitle="What it is actually for">
-            <Stack sx={{ p: 2.5 }} spacing={1}>
-              {useCases.map((u) => (
-                <Stack key={u} direction="row" spacing={1.25} alignItems="flex-start">
-                  <Box sx={{ width: 4, height: 4, borderRadius: "50%", bgcolor: "text.subtitle", flexShrink: 0, mt: "7px" }} />
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{goalLabel(u)}</Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </SectionCard>
-        </Grid>
-
-        <Grid item xs={12} md={5}>
-          {!buildMode && (
-
-          <SectionCard title="Amendments" subtitle="Changed after reading, each with its reason">
-            <Stack sx={{ p: 2.5 }} spacing={1.25}>
-              {contract.amendments.map((a) => (
-                <Box
-                  key={a.subject}
-                  sx={{
-                    p: 1.5, borderRadius: 1,
-                    border: "1px solid", borderColor: "divider",
-                  }}
-                >
-                  <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
-                    {a.subject}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>{a.note}</Typography>
-                </Box>
-              ))}
-            </Stack>
-          </SectionCard>
+          {(showRichOverview || contractProgress?.streaming) && (
+            <SourceToSandboxMap
+              env={env}
+              envState={envState}
+              progress={contractProgress}
+            />
           )}
-        </Grid>
-      </Grid>
-      </FadeIn>
-      )}
-
-      {/* ── the world it acts on ── */}
-      {showWorld && (
-      <FadeIn>
-      <GroupHeading>The world</GroupHeading>
-      {/* Sealed or Live (RSI PRD) — said where the world is. */}
-      <EnvironmentKindNote env={env} envState={envState} sx={{ mb: 2 }} />
-      {connectOnly ? <ConnectOnlyWorld env={env} sx={{ mb: 3 }} /> : (
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
-          <SectionCard title="Seeded data" subtitle={seedBlurb(totalRows)}>
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {env.seed.tables.map((t) => (
-                <Stack key={t.name} direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1.25 }}>
-                  <Iconify icon="solar:database-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Box flex={1} minWidth={0}>
-                    <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: "ui-monospace, Menlo, monospace" }}>
-                      {t.name}
-                    </Typography>
-                    {t.note && (
-                      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{t.note}</Typography>
-                    )}
-                  </Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                    {t.rows.toLocaleString()}
-                  </Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </SectionCard>
-        </Grid>
-
-        <Grid item xs={12} md={5}>
-          <SectionCard title="What it depends on" subtitle="Built and torn down with the environment">
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {contract.dependsOn.map((d) => (
-                <Box key={d.name} sx={{ px: 2.5, py: 1.5 }}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
-                      {d.name}
-                    </Typography>
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{d.kind}</Typography>
-                  </Stack>
-                  <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{d.provides}</Typography>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.subtitle", mt: 0.5, fontFamily: "ui-monospace, Menlo, monospace" }}
+          {showUseCases && (
+            <FadeIn>
+              <Grid
+                container
+                spacing={2}
+                alignItems="flex-start"
+                sx={{ mb: 3 }}
+              >
+                <Grid item xs={12} md={7}>
+                  <SectionCard
+                    title="Use cases"
+                    subtitle="What it is actually for"
                   >
-                    used by {d.usedBy}
-                  </Typography>
-                </Box>
-              ))}
-            </Stack>
-          </SectionCard>
-        </Grid>
-      </Grid>
-      )}
-      </FadeIn>
-      )}
-      </>
-      )}
+                    <Stack sx={{ p: 2.5 }} spacing={1}>
+                      {useCases.map((u) => (
+                        <Stack
+                          key={u}
+                          direction="row"
+                          spacing={1.25}
+                          alignItems="flex-start"
+                        >
+                          <Box
+                            sx={{
+                              width: 4,
+                              height: 4,
+                              borderRadius: "50%",
+                              bgcolor: "text.tertiary",
+                              flexShrink: 0,
+                              mt: "7px",
+                            }}
+                          />
+                          <Typography
+                            sx={{ typography: "s2", color: "text.secondary" }}
+                          >
+                            {goalLabel(u)}
+                          </Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </SectionCard>
+                </Grid>
 
+                <Grid item xs={12} md={5}>
+                  {!buildMode && (
+                    <SectionCard
+                      title="Amendments"
+                      subtitle="Changed after reading, each with its reason"
+                    >
+                      <Stack sx={{ p: 2.5 }} spacing={1.25}>
+                        {contract.amendments.map((a) => (
+                          <Box
+                            key={a.subject}
+                            sx={{
+                              p: 1.5,
+                              borderRadius: 1,
+                              border: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          >
+                            <Typography
+                              sx={{
+                                typography: "s2",
+                                fontWeight: 500,
+                                fontFamily: "ui-monospace, Menlo, monospace",
+                              }}
+                            >
+                              {a.subject}
+                            </Typography>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.secondary",
+                                mt: 0.25,
+                              }}
+                            >
+                              {a.note}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Stack>
+                    </SectionCard>
+                  )}
+                </Grid>
+              </Grid>
+            </FadeIn>
+          )}
 
+          {/* ── the world it acts on ── */}
+          {showWorld && (
+            <FadeIn>
+              <GroupHeading>The world</GroupHeading>
+              {/* Sealed or Live (RSI PRD) — said where the world is. */}
+              <EnvironmentKindNote
+                env={env}
+                envState={envState}
+                sx={{ mb: 2 }}
+              />
+              {connectOnly ? (
+                <ConnectOnlyWorld env={env} sx={{ mb: 3 }} />
+              ) : (
+                <Grid
+                  container
+                  spacing={2}
+                  alignItems="flex-start"
+                  sx={{ mb: 3 }}
+                >
+                  <Grid item xs={12} md={7}>
+                    <SectionCard
+                      title="Seeded data"
+                      subtitle={seedBlurb(totalRows)}
+                    >
+                      <Stack
+                        divider={
+                          <Box
+                            sx={{
+                              borderBottom: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          />
+                        }
+                      >
+                        {env.seed.tables.map((t) => (
+                          <Stack
+                            key={t.name}
+                            direction="row"
+                            alignItems="center"
+                            spacing={2}
+                            sx={{ px: 2.5, py: 1 }}
+                          >
+                            <Iconify
+                              icon="solar:database-linear"
+                              width={16}
+                              sx={{ color: "text.tertiary", flexShrink: 0 }}
+                            />
+                            <Box flex={1} minWidth={0}>
+                              <Typography
+                                sx={{
+                                  typography: "s2",
+                                  fontWeight: 500,
+                                  fontFamily: "ui-monospace, Menlo, monospace",
+                                }}
+                              >
+                                {t.name}
+                              </Typography>
+                              {t.note && (
+                                <Typography
+                                  noWrap
+                                  sx={{
+                                    typography: "s3",
+                                    color: "text.tertiary",
+                                  }}
+                                >
+                                  {t.note}
+                                </Typography>
+                              )}
+                            </Box>
+                            <Typography
+                              sx={{
+                                typography: "s2",
+                                fontWeight: 600,
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                            >
+                              {t.rows.toLocaleString()}
+                            </Typography>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    </SectionCard>
+                  </Grid>
 
+                  <Grid item xs={12} md={5}>
+                    <SectionCard
+                      title="What it depends on"
+                      subtitle="Built and torn down with the environment"
+                    >
+                      <Stack
+                        divider={
+                          <Box
+                            sx={{
+                              borderBottom: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          />
+                        }
+                      >
+                        {contract.dependsOn.map((d) => (
+                          <Box key={d.name} sx={{ px: 2.5, py: 1 }}>
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              spacing={1}
+                            >
+                              <Typography
+                                sx={{
+                                  typography: "s2",
+                                  fontWeight: 500,
+                                  fontFamily: "ui-monospace, Menlo, monospace",
+                                }}
+                              >
+                                {d.name}
+                              </Typography>
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  color: "text.tertiary",
+                                }}
+                              >
+                                {d.kind}
+                              </Typography>
+                            </Stack>
+                            <Typography
+                              sx={{
+                                typography: "s2",
+                                color: "text.secondary",
+                                mt: 0.25,
+                              }}
+                            >
+                              {d.provides}
+                            </Typography>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                mt: 0.5,
+                                fontFamily: "ui-monospace, Menlo, monospace",
+                              }}
+                            >
+                              used by {d.usedBy}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Stack>
+                    </SectionCard>
+                  </Grid>
+                </Grid>
+              )}
+            </FadeIn>
+          )}
+        </>
+      )}
     </Box>
   );
 }
@@ -364,7 +579,15 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
 /* A block arriving while the environment builds. */
 function FadeIn({ children }) {
   return (
-    <Box sx={{ animation: "ov-in 360ms ease both", "@keyframes ov-in": { from: { opacity: 0, transform: "translateY(4px)" }, to: { opacity: 1, transform: "none" } } }}>
+    <Box
+      sx={{
+        animation: "ov-in 360ms ease both",
+        "@keyframes ov-in": {
+          from: { opacity: 0, transform: "translateY(4px)" },
+          to: { opacity: 1, transform: "none" },
+        },
+      }}
+    >
       {children}
     </Box>
   );
@@ -374,7 +597,7 @@ FadeIn.propTypes = { children: PropTypes.node };
 OverviewPanel.propTypes = {
   /* Build stages finished so far (build screen only) — paces the reveal. */
   buildDone: PropTypes.array,
-  "buildMode": PropTypes.bool,
+  buildMode: PropTypes.bool,
   env: PropTypes.object.isRequired,
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
@@ -397,16 +620,44 @@ OverviewPanel.propTypes = {
  * can't drift.
  */
 function StateSummary({ env, envState, onGo }) {
-  const scenarioCount = scenariosInSet(envState, currentEnvVersion(env, envState)?.label).length;
+  const scenarioCount = scenariosInSet(
+    envState,
+    currentEnvVersion(env, envState)?.label,
+  ).length;
   const evalCount = envState?.evals?.length || 0;
   const runCount = runListCount(env, envState);
   const ruleCount = rulesOf(env, envState).length;
 
   const tiles = [
-    { id: "scenarios", label: "Scenarios",     value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
-    { id: "evals",     label: "Evaluations",   value: evalCount,     icon: "solar:shield-check-linear",        to: "evals" },
-    { id: "runs",      label: "Runs",          value: runCount,      icon: "solar:play-circle-linear",         to: "runs", disabled: runCount === 0 },
-    { id: "rules",     label: "Rules",         value: ruleCount,     icon: "solar:shield-keyhole-linear",      to: "contract" },
+    {
+      id: "scenarios",
+      label: "Scenarios",
+      value: scenarioCount,
+      icon: "solar:layers-minimalistic-linear",
+      to: "scenarios",
+    },
+    {
+      id: "evals",
+      label: "Evaluations",
+      value: evalCount,
+      icon: "solar:shield-check-linear",
+      to: "evals",
+    },
+    {
+      id: "runs",
+      label: "Runs",
+      value: runCount,
+      icon: "solar:play-circle-linear",
+      to: "runs",
+      disabled: runCount === 0,
+    },
+    {
+      id: "rules",
+      label: "Rules",
+      value: ruleCount,
+      icon: "solar:shield-keyhole-linear",
+      to: "contract",
+    },
   ];
 
   return (
@@ -416,34 +667,64 @@ function StateSummary({ env, envState, onGo }) {
           <Box
             key={t.id}
             {...clickable(t.disabled ? undefined : () => onGo?.(t.to))}
-            sx={{ ...focusRing,
-              flex: 1, minWidth: 0, p: 1.75, borderRadius: 1.5,
-              border: "1px solid", borderColor: "divider",
+            sx={{
+              ...focusRing,
+              flex: 1,
+              minWidth: 0,
+              p: 1.75,
+              borderRadius: "8px",
+              border: "1px solid",
+              borderColor: "divider",
               bgcolor: "background.paper",
               cursor: t.disabled ? "default" : "pointer",
               transition: "border-color .12s ease, background-color .12s ease",
-              "&:hover": t.disabled ? {} : {
-                borderColor: "text.disabled",
-                bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.03 : 0.02),
-              },
+              "&:hover": t.disabled
+                ? {}
+                : {
+                    borderColor: "text.disabled",
+                    bgcolor: "action.hover",
+                  },
             }}
           >
             <Stack direction="row" alignItems="center" spacing={1}>
-              <Iconify icon={t.icon} width={14} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, flex: 1 }}>
+              <Iconify
+                icon={t.icon}
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  letterSpacing: 0.4,
+                  flex: 1,
+                }}
+              >
                 {t.label}
               </Typography>
               {!t.disabled && (
-                <Iconify icon="solar:alt-arrow-right-linear" width={12} sx={{ color: "text.disabled" }} />
+                <Iconify
+                  icon="solar:alt-arrow-right-linear"
+                  width={12}
+                  sx={{ color: "text.disabled" }}
+                />
               )}
             </Stack>
-            <Typography sx={{ typography: "h6", fontWeight: 700, mt: 0.5, fontVariantNumeric: "tabular-nums" }}>
+            <Typography
+              sx={{
+                typography: "h6",
+                fontWeight: 600,
+                mt: 0.5,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
               {t.value}
             </Typography>
           </Box>
         ))}
       </Stack>
-
     </Box>
   );
 }
@@ -457,8 +738,12 @@ function GroupHeading({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: 700, color: "text.primary",
-        textTransform: "uppercase", letterSpacing: .5, mb: 1.25,
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.primary",
+        textTransform: "none",
+        letterSpacing: 0.5,
+        mb: 1.25,
       }}
     >
       {children}
@@ -470,14 +755,27 @@ GroupHeading.propTypes = { children: PropTypes.node };
 function Fact({ label, value, color }) {
   return (
     <Box sx={{ minWidth: 0 }}>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
-      <Typography noWrap sx={{ typography: "s2", fontWeight: 600, color: color || "text.primary" }}>
+      <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+        {label}
+      </Typography>
+      <Typography
+        noWrap
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          color: color || "text.primary",
+        }}
+      >
         {value}
       </Typography>
     </Box>
   );
 }
-Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTypes.string };
+Fact.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.node,
+  color: PropTypes.string,
+};
 
 /* ── agent-moved-ahead banner ────────────────────────────────────────────────
    When the active agent version is newer than the version the environment was
@@ -487,10 +785,21 @@ Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTy
    new agent version against the existing world as-is (scenarios are shared
    across agent versions, so nothing forces a refresh). */
 function AgentRefreshBanner({ env, envState, patch }) {
-  return <ToolFitBanner env={env} envState={envState} patch={patch} sx={{ mt: -0.5, mb: 2 }} deferToCard />;
+  return (
+    <ToolFitBanner
+      env={env}
+      envState={envState}
+      patch={patch}
+      sx={{ mt: -0.5, mb: 2 }}
+      deferToCard
+    />
+  );
 }
-AgentRefreshBanner.propTypes = { env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func };
-
+AgentRefreshBanner.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+};
 
 /* ── twin backing surface panel ───────────────────────────────────────────── */
 
@@ -515,12 +824,13 @@ function activityForService(envState, service, index, totalServices) {
     recently in the last run. Rotates across services by run index so
     the live pulse doesn't sit on the same lane forever.
   */
-  const lastTouched = totalRuns > 0 && index === (totalRuns - 1) % Math.max(1, totalServices);
+  const lastTouched =
+    totalRuns > 0 && index === (totalRuns - 1) % Math.max(1, totalServices);
   const lastAt = totalRuns > 0 ? runs[0]?.finishedAt : null;
   const trend = Array.from({ length: 6 }, (_, i) => {
     if (totalRuns === 0) return 0;
     const runIdx = Math.max(0, totalRuns - 6 + i);
-    return (runIdx < totalRuns) ? ((hash(`${service}-${runIdx}`) % 5) + 1) : 0;
+    return runIdx < totalRuns ? (hash(`${service}-${runIdx}`) % 5) + 1 : 0;
   });
   return { writes: totalWrites, reads: totalReads, lastTouched, lastAt, trend };
 }
@@ -558,22 +868,29 @@ export function TwinSandboxSection({ env, envState }) {
   const [connectOpen, setConnectOpen] = useState(false);
   const activeTwin = twinById(activeServiceId);
   const SandboxMock = SANDBOX_MOCKS[activeServiceId] || null;
-  const SUCCESS = "#16A34A";
-  const TWIN_TINT = "#7857FC";
 
   return (
     <Box sx={{ mb: 2 }}>
       {/* service chip tabs — only shown when multi-service */}
       {services.length > 1 && (
-        <Stack direction="row" spacing={0.75} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{ mb: 1.5 }}
+          flexWrap="wrap"
+          useFlexGap
+        >
           {services.map((sId) => {
             const t = twinById(sId);
             const on = sId === activeServiceId;
             return (
               <Chip
-                key={sId} size="small"
+                key={sId}
+                size="small"
                 onClick={() => setActiveServiceId(sId)}
-                icon={<TwinLogo twin={t} width={11} sx={{ ml: "6px !important" }} />}
+                icon={
+                  <TwinLogo twin={t} width={11} sx={{ ml: "6px !important" }} />
+                }
                 label={t?.name || sId}
                 /*
                   Hover was inheriting MUI's default background darken/
@@ -585,25 +902,16 @@ export function TwinSandboxSection({ env, envState }) {
                   Notion "N" or Docs-blue icon still reads.
                 */
                 sx={{
-                  height: 24, borderRadius: 999, cursor: "pointer",
+                  cursor: "pointer",
                   border: "1px solid",
-                  borderColor: (th) => on
-                    ? alpha(TWIN_TINT, th.palette.mode === "dark" ? 0.6 : 0.35)
-                    : th.palette.divider,
-                  bgcolor: (th) => on
-                    ? alpha(TWIN_TINT, th.palette.mode === "dark" ? 0.22 : 0.08)
-                    : "background.paper",
-                  color: (th) => on
-                    ? (th.palette.mode === "dark" ? "#B7A6FC" : TWIN_TINT)
-                    : th.palette.text.primary,
-                  "& .MuiChip-label": { pl: 0.5, pr: 1, typography: "s2", fontWeight: 700 },
+                  borderColor: on ? "status.discovery.border" : "divider",
+                  bgcolor: on ? "status.discovery.bg" : "background.paper",
+                  color: on ? "status.discovery.fg" : "text.primary",
                   "&:hover": {
-                    bgcolor: (th) => on
-                      ? alpha(TWIN_TINT, th.palette.mode === "dark" ? 0.28 : 0.12)
-                      : alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.04),
-                    borderColor: (th) => on
-                      ? alpha(TWIN_TINT, th.palette.mode === "dark" ? 0.75 : 0.5)
-                      : th.palette.text.disabled,
+                    bgcolor: on ? "status.discovery.bg" : "action.hover",
+                    borderColor: on
+                      ? "status.discovery.border"
+                      : "text.disabled",
                   },
                 }}
               />
@@ -613,25 +921,47 @@ export function TwinSandboxSection({ env, envState }) {
       )}
 
       {/* sub-header — service name + endpoint + OpenAPI / Open surface */}
-      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ mb: 1.25 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        sx={{ mb: 1.25 }}
+      >
         <TwinLogo twin={activeTwin} width={22} />
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="baseline" spacing={0.75}>
-            <Typography sx={{ typography: "s1_2", fontWeight: 700 }}>
+            <Typography sx={{ typography: "s1_2", fontWeight: 600 }}>
               {activeTwin?.name || "Sandbox"}
             </Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: SUCCESS }} />
-              <Typography sx={{ typography: "s3", fontWeight: 700, color: SUCCESS }}>
+              <Box
+                sx={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  bgcolor: "status.success.solid",
+                }}
+              />
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "status.success.fg",
+                }}
+              >
                 Serving
               </Typography>
             </Stack>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Typography sx={{
-              typography: "s3", color: "text.subtitle",
-              fontFamily: "ui-monospace, Menlo, monospace",
-            }} noWrap>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                fontFamily: "ui-monospace, Menlo, monospace",
+              }}
+              noWrap
+            >
               {backing.endpoints?.[activeServiceId] || "—"}
             </Typography>
             {/*
@@ -654,47 +984,63 @@ export function TwinSandboxSection({ env, envState }) {
         {/* Connected = a real agent from Agents (not a template's placeholder);
             a SaaS-sandbox agent has no endpoint of its own, so that isn't the test. */}
         {envState?.agent && !envState.agent.seeded ? (
-          <Tooltip arrow title={`Connected: ${envState.agent.name || agentNameOf(envState.agent) || "your agent"}${envState.agent.values?.sdkEndpoint ? ` · ${envState.agent.values.sdkEndpoint}` : ""}`}>
+          <Tooltip
+            arrow
+            title={`Connected: ${envState.agent.name || agentNameOf(envState.agent) || "your agent"}${envState.agent.values?.sdkEndpoint ? ` · ${envState.agent.values.sdkEndpoint}` : ""}`}
+          >
             <Stack
-              direction="row" alignItems="center" spacing={0.75}
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
               {...clickable(() => setConnectOpen(true))}
-              sx={{ ...focusRing,
-                px: 1, height: 28, borderRadius: 999, cursor: "pointer",
-                border: (t) => `1px solid ${alpha("#16A34A", t.palette.mode === "dark" ? 0.35 : 0.28)}`,
-                bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.14 : 0.08),
-                color: "#16A34A",
+              sx={{
+                ...focusRing,
+                px: 1,
+                height: 28,
+                borderRadius: 999,
+                cursor: "pointer",
+                border: (t) => `1px solid ${t.palette.status.success.border}`,
+                bgcolor: "status.success.bg",
+                color: "status.success.fg",
                 "&:hover": {
-                  bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.2 : 0.12),
+                  bgcolor: "status.success.bg",
                 },
               }}
             >
               <Iconify icon="solar:check-circle-linear" width={12} />
-              <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.3 }}>
-                AGENT CONNECTED
+              <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                Agent connected
               </Typography>
             </Stack>
           </Tooltip>
         ) : (
-          <Button variant="contained" size="small"
+          <Button
+            variant="contained"
+            size="small"
             onClick={() => setConnectOpen(true)}
-            startIcon={<Iconify icon="solar:link-circle-linear" width={13} />}
-            sx={{ typography: "s2", fontWeight: 700 }}
+            startIcon={<Iconify icon="solar:link-circle-linear" width={14} />}
           >
             Connect agent
           </Button>
         )}
-        <Button variant="outlined" size="small"
+        <Button
+          variant="outlined"
+          size="small"
           onClick={() => setOpenApiOpen(true)}
-          startIcon={<Iconify icon="solar:code-square-linear" width={13} />}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+          startIcon={<Iconify icon="solar:code-square-linear" width={14} />}
+          sx={{ color: "text.primary", borderColor: "divider" }}
         >
           OpenAPI
         </Button>
         {activeTwin?.apiLevel === "api+ui" && (
-          <Button variant="outlined" size="small"
+          <Button
+            variant="outlined"
+            size="small"
             onClick={() => setSurfaceOpen(true)}
-            startIcon={<Iconify icon="solar:square-top-down-linear" width={13} />}
-            sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            startIcon={
+              <Iconify icon="solar:square-top-down-linear" width={14} />
+            }
+            sx={{ color: "text.primary", borderColor: "divider" }}
           >
             Open surface
           </Button>
@@ -710,11 +1056,17 @@ export function TwinSandboxSection({ env, envState }) {
           · api-only twin → an "API-only" panel that doesn't lie
             about a browsable surface. Reinforces the badge above.
       */}
-      {activeTwin?.apiLevel === "api"
-        ? <ApiOnlySandboxPanel twin={activeTwin} endpoint={backing.endpoints?.[activeServiceId] || ""} envState={envState} />
-        : SandboxMock
-          ? <SandboxMock workspace={env.name} envState={envState} />
-          : <GenericSandboxMock twin={activeTwin} />}
+      {activeTwin?.apiLevel === "api" ? (
+        <ApiOnlySandboxPanel
+          twin={activeTwin}
+          endpoint={backing.endpoints?.[activeServiceId] || ""}
+          envState={envState}
+        />
+      ) : SandboxMock ? (
+        <SandboxMock workspace={env.name} envState={envState} />
+      ) : (
+        <GenericSandboxMock twin={activeTwin} />
+      )}
 
       <OpenApiDialog
         open={openApiOpen}
@@ -739,7 +1091,10 @@ export function TwinSandboxSection({ env, envState }) {
     </Box>
   );
 }
-TwinSandboxSection.propTypes = { env: PropTypes.object, envState: PropTypes.object };
+TwinSandboxSection.propTypes = {
+  env: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 function TwinBackingPanel({ backing, envState }) {
   const services = backing.services || [];
@@ -749,29 +1104,50 @@ function TwinBackingPanel({ backing, envState }) {
   return (
     <Box sx={{ mb: 2 }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Iconify icon="solar:server-square-linear" width={14} sx={{ color: "primary.main" }} />
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary", letterSpacing: 0.5 }}>
-          COPIED SERVICES
+        <Iconify
+          icon="solar:server-square-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.primary",
+          }}
+        >
+          Copied services
         </Typography>
         <Chip
-          size="small" label={anyActivity ? "Active" : "Ready"}
+          size="small"
+          label={anyActivity ? "Active" : "Ready"}
           sx={{
-            height: 18, borderRadius: 0.75,
-            bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.18 : 0.1),
-            color: "#16A34A", border: "1px solid", borderColor: alpha("#16A34A", 0.35),
-            "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700, letterSpacing: 0.4 },
+            bgcolor: "status.success.bg",
+            color: "status.success.fg",
+            border: "1px solid",
+            borderColor: "status.success.border",
           }}
         />
         <Box flex={1} />
         {anyActivity && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {totalRuns} run{totalRuns === 1 ? "" : "s"} against this sandbox
           </Typography>
         )}
       </Stack>
       {backing.seedPrompt && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
-          Seeded from prompt: <Box component="span" sx={{ color: "text.primary", fontStyle: "italic" }}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
+          Seeded from prompt:{" "}
+          <Box
+            component="span"
+            sx={{ color: "text.primary", fontStyle: "italic" }}
+          >
             &ldquo;{backing.seedPrompt}&rdquo;
           </Box>
         </Typography>
@@ -780,22 +1156,38 @@ function TwinBackingPanel({ backing, envState }) {
         {services.map((sId, index) => {
           const t = twinById(sId);
           if (!t) return null;
-          const activity = activityForService(envState, sId, index, services.length);
+          const activity = activityForService(
+            envState,
+            sId,
+            index,
+            services.length,
+          );
           return (
-            <Box key={sId} sx={{
-              p: 1.5, borderRadius: 1.25, border: "1px solid",
-              borderColor: activity.lastTouched
-                ? alpha("#16A34A", 0.5)
-                : "divider",
-              bgcolor: "background.paper",
-              position: "relative",
-              transition: "border-color .3s ease",
-            }}>
+            <Box
+              key={sId}
+              sx={{
+                p: 1.5,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: activity.lastTouched
+                  ? "status.success.border"
+                  : "divider",
+                bgcolor: "background.paper",
+                position: "relative",
+                transition: "border-color 200ms ease",
+              }}
+            >
               <Stack direction="row" alignItems="center" spacing={1.5}>
-                <Box sx={{
-                  position: "relative", flexShrink: 0,
-                  width: 30, height: 30, display: "grid", placeItems: "center",
-                }}>
+                <Box
+                  sx={{
+                    position: "relative",
+                    flexShrink: 0,
+                    width: 30,
+                    height: 30,
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
                   <TwinLogo twin={t} width={22} />
                   {activity.lastTouched && (
                     /*
@@ -805,67 +1197,107 @@ function TwinBackingPanel({ backing, envState }) {
                       it costs nothing and stays smooth even while the
                       user is interacting with the surface.
                     */
-                    <Box sx={{
-                      position: "absolute", top: -2, right: -2,
-                      width: 8, height: 8, borderRadius: "50%",
-                      bgcolor: "#16A34A",
-                      boxShadow: "0 0 0 2px background.paper",
-                      "&::after": {
-                        content: '""', position: "absolute", inset: -3,
+                    <Box
+                      sx={{
+                        position: "absolute",
+                        top: -2,
+                        right: -2,
+                        width: 8,
+                        height: 8,
                         borderRadius: "50%",
-                        border: "2px solid #16A34A", opacity: 0.4,
-                        animation: "twin-pulse 1.8s ease-out infinite",
-                      },
-                      "@keyframes twin-pulse": {
-                        "0%": { transform: "scale(0.85)", opacity: 0.5 },
-                        "80%": { transform: "scale(1.9)", opacity: 0 },
-                        "100%": { transform: "scale(1.9)", opacity: 0 },
-                      },
-                    }} />
+                        bgcolor: "status.success.solid",
+                        "&::after": {
+                          content: '""',
+                          position: "absolute",
+                          inset: -3,
+                          borderRadius: "50%",
+                          border: "2px solid",
+                          borderColor: "status.success.solid",
+                          opacity: 0.4,
+                          animation: "twin-pulse 1.8s ease-out infinite",
+                        },
+                        "@keyframes twin-pulse": {
+                          "0%": { transform: "scale(0.85)", opacity: 0.5 },
+                          "80%": { transform: "scale(1.9)", opacity: 0 },
+                          "100%": { transform: "scale(1.9)", opacity: 0 },
+                        },
+                      }}
+                    />
                   )}
                 </Box>
                 <Box flex={1} minWidth={0}>
                   <Stack direction="row" alignItems="baseline" spacing={0.75}>
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>{t.name}</Typography>
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s2", fontWeight: 600 }}
+                    >
+                      {t.name}
+                    </Typography>
                     {activity.lastTouched && (
-                      <Typography sx={{
-                        typography: "s3", fontWeight: 700, color: "#16A34A",
-                        textTransform: "uppercase", letterSpacing: 0.4,
-                      }}>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          fontWeight: 600,
+                          color: "status.success.fg",
+                          textTransform: "none",
+                          letterSpacing: 0.4,
+                        }}
+                      >
                         just now
                       </Typography>
                     )}
                   </Stack>
-                  <Typography noWrap sx={{
-                    typography: "s3", color: "text.subtitle",
-                    fontFamily: "ui-monospace, Menlo, monospace",
-                  }}>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
                     {backing.endpoints?.[sId] || "—"}
                   </Typography>
                 </Box>
                 {anyActivity && (
                   <>
-                    <ActivityMetric label="writes" value={activity.writes} tint="#7857FC" />
+                    <ActivityMetric
+                      label="writes"
+                      value={activity.writes}
+                      tint="primary.main"
+                    />
                     <ActivityMetric label="reads" value={activity.reads} />
                     <TrendSparkline points={activity.trend} tint={t.color} />
-                    <Typography sx={{
-                      typography: "s3", color: "text.subtitle",
-                      minWidth: 56, textAlign: "right", flexShrink: 0,
-                      fontVariantNumeric: "tabular-nums",
-                    }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        minWidth: 56,
+                        textAlign: "right",
+                        flexShrink: 0,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {timeAgo(activity.lastAt)}
                     </Typography>
                   </>
                 )}
-                <Button size="small" variant="outlined"
-                  startIcon={<Iconify icon="solar:code-square-linear" width={12} />}
-                  sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", height: 26, px: 1 }}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <Iconify icon="solar:code-square-linear" width={12} />
+                  }
+                  sx={{ color: "text.primary", borderColor: "divider" }}
                 >
                   OpenAPI
                 </Button>
-                <Button size="small" variant="outlined"
-                  startIcon={<Iconify icon="solar:square-top-down-linear" width={12} />}
-                  sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", height: 26, px: 1 }}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <Iconify icon="solar:square-top-down-linear" width={12} />
+                  }
+                  sx={{ color: "text.primary", borderColor: "divider" }}
                 >
                   Open surface
                 </Button>
@@ -875,35 +1307,59 @@ function TwinBackingPanel({ backing, envState }) {
         })}
       </Stack>
       {!anyActivity && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1, fontStyle: "italic" }}>
-          Activity counters and per-service sparklines light up as soon as your first run lands.
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            mt: 1,
+            fontStyle: "italic",
+          }}
+        >
+          Activity counters and per-service sparklines light up as soon as your
+          first run lands.
         </Typography>
       )}
     </Box>
   );
 }
-TwinBackingPanel.propTypes = { backing: PropTypes.object, envState: PropTypes.object };
+TwinBackingPanel.propTypes = {
+  backing: PropTypes.object,
+  envState: PropTypes.object,
+};
 
 function ActivityMetric({ label, value, tint }) {
   return (
     <Box sx={{ minWidth: 44, flexShrink: 0, textAlign: "right" }}>
-      <Typography sx={{
-        typography: "s2", fontWeight: 700,
-        color: tint || "text.primary",
-        fontVariantNumeric: "tabular-nums", lineHeight: 1.1,
-      }}>
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          color: tint || "text.primary",
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.1,
+        }}
+      >
         {value}
       </Typography>
-      <Typography sx={{
-        typography: "s3", color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.3, lineHeight: 1.1,
-      }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          textTransform: "none",
+          letterSpacing: 0.3,
+          lineHeight: 1.1,
+        }}
+      >
         {label}
       </Typography>
     </Box>
   );
 }
-ActivityMetric.propTypes = { label: PropTypes.string, value: PropTypes.number, tint: PropTypes.string };
+ActivityMetric.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.number,
+  tint: PropTypes.string,
+};
 
 /**
  * Six-point sparkline of writes per run over the last six runs. SVG
@@ -912,21 +1368,43 @@ ActivityMetric.propTypes = { label: PropTypes.string, value: PropTypes.number, t
  * this to render dozens of times on one page without layout thrash.
  */
 function TrendSparkline({ points, tint }) {
-  const w = 60; const h = 22;
+  const theme = useTheme();
+  const stroke = tint || theme.palette.primary.main;
+  const w = 60;
+  const h = 22;
   const max = Math.max(1, ...points);
   const step = w / Math.max(1, points.length - 1);
   const d = points
-    .map((v, i) => `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(h - (v / max) * (h - 4) - 2).toFixed(1)}`)
+    .map(
+      (v, i) =>
+        `${i === 0 ? "M" : "L"}${(i * step).toFixed(1)},${(h - (v / max) * (h - 4) - 2).toFixed(1)}`,
+    )
     .join(" ");
   return (
-    <Box sx={{ flexShrink: 0, width: w, height: h, display: { xs: "none", md: "block" } }}>
+    <Box
+      sx={{
+        flexShrink: 0,
+        width: w,
+        height: h,
+        display: { xs: "none", md: "block" },
+      }}
+    >
       <svg width={w} height={h}>
-        <path d={d} fill="none" stroke={tint || "#7857FC"} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
+        <path
+          d={d}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={1.4}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
         {points.map((v, i) => (
           <circle
-            key={i} cx={i * step} cy={h - (v / max) * (h - 4) - 2}
+            key={i}
+            cx={i * step}
+            cy={h - (v / max) * (h - 4) - 2}
             r={i === points.length - 1 ? 2 : 1.2}
-            fill={tint || "#7857FC"}
+            fill={stroke}
           />
         ))}
       </svg>
@@ -966,9 +1444,18 @@ function TwinBackedSections({ env, envState, onGo }) {
 
   const evalPresets = env?.evalPreset || [];
   const evalLabels = {
-    task_success: { title: "Task success", body: "Did the run reach the expected outcome?" },
-    twin_end_state_match: { title: "End-state match", body: "Did the correct rows / messages / records actually land in the cloned services?" },
-    twin_no_extra_writes: { title: "No extra writes", body: "Did the agent write only what the task required — no spurious side effects?" },
+    task_success: {
+      title: "Task success",
+      body: "Did the run reach the expected outcome?",
+    },
+    twin_end_state_match: {
+      title: "End-state match",
+      body: "Did the correct rows / messages / records actually land in the cloned services?",
+    },
+    twin_no_extra_writes: {
+      title: "No extra writes",
+      body: "Did the agent write only what the task required — no spurious side effects?",
+    },
   };
 
   return (
@@ -981,22 +1468,36 @@ function TwinBackedSections({ env, envState, onGo }) {
             title="Sandboxed apps"
             subtitle={`${services.length} sandbox${services.length === 1 ? "" : "es"} provisioned for this environment`}
           >
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+            <Stack
+              divider={
+                <Box
+                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                />
+              }
+            >
               {services.map((sId) => {
                 const twin = twinById(sId);
                 return (
-                  <Stack key={sId} direction="row" alignItems="center" spacing={1.5}
-                    sx={{ px: 2.5, py: 1.25 }}
+                  <Stack
+                    key={sId}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1.5}
+                    sx={{ px: 2.5, py: 1 }}
                   >
                     <TwinLogo twin={twin} width={18} />
                     <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                         {twin?.name || sId}
                       </Typography>
-                      <Typography noWrap sx={{
-                        typography: "s3", color: "text.subtitle",
-                        fontFamily: "ui-monospace, Menlo, monospace",
-                      }}>
+                      <Typography
+                        noWrap
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          fontFamily: "ui-monospace, Menlo, monospace",
+                        }}
+                      >
                         {backing?.endpoints?.[sId] || "—"}
                       </Typography>
                     </Box>
@@ -1018,26 +1519,55 @@ function TwinBackedSections({ env, envState, onGo }) {
               {/* Connected = a real agent from Agents, named; its endpoint
                   only when it has one (a SaaS-sandbox agent doesn't). */}
               <Stack direction="row" alignItems="center" spacing={1}>
-                <Iconify icon="solar:link-circle-linear" width={13} sx={{ color: "primary.main" }} />
-                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0 }} noWrap>
-                  {agent && !agent.seeded ? agent.name || agentNameOf(agent) || "Your agent" : "Not connected"}
+                <Iconify
+                  icon="solar:link-circle-linear"
+                  width={14}
+                  sx={{ color: "primary.main" }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                  noWrap
+                >
+                  {agent && !agent.seeded
+                    ? agent.name || agentNameOf(agent) || "Your agent"
+                    : "Not connected"}
                 </Typography>
               </Stack>
               {agent && !agent.seeded && agent.values?.sdkEndpoint && (
                 <>
-                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
                     {agent.values.sdkEndpoint}
                   </Typography>
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Iconify icon="solar:key-linear" width={13} sx={{ color: "text.subtitle" }} />
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {agent.values.authToken ? "Auth token set" : "No auth header — endpoint is open"}
+                    <Iconify
+                      icon="solar:key-linear"
+                      width={14}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {agent.values.authToken
+                        ? "Auth token set"
+                        : "No auth header — endpoint is open"}
                     </Typography>
                   </Stack>
                 </>
               )}
               {agent?.connectedAt && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   Connected {timeAgo(agent.connectedAt)}
                 </Typography>
               )}
@@ -1056,15 +1586,22 @@ function TwinBackedSections({ env, envState, onGo }) {
           >
             <Box sx={{ p: 2.5 }}>
               {backing?.seedPrompt ? (
-                <Typography sx={{
-                  typography: "s2", color: "text.secondary", fontStyle: "italic",
-                  p: 1.5, borderRadius: 1, bgcolor: "background.neutral",
-                }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    fontStyle: "italic",
+                    p: 1.5,
+                    borderRadius: 1,
+                    bgcolor: "background.neutral",
+                  }}
+                >
                   &ldquo;{backing.seedPrompt}&rdquo;
                 </Typography>
               ) : (
-                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                  No seed prompt. Each service starts empty; scenarios can seed per-run.
+                <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                  No seed prompt. Each service starts empty; scenarios can seed
+                  per-run.
                 </Typography>
               )}
             </Box>
@@ -1077,21 +1614,39 @@ function TwinBackedSections({ env, envState, onGo }) {
             title="Resolves to"
             subtitle="Concrete state per service after seeding"
           >
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+            <Stack
+              divider={
+                <Box
+                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                />
+              }
+            >
               {services.map((sId) => {
                 const twin = twinById(sId);
                 return (
-                  <Stack key={sId} direction="row" alignItems="center" spacing={1.5}
-                    sx={{ px: 2.5, py: 1.25 }}
+                  <Stack
+                    key={sId}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1.5}
+                    sx={{ px: 2.5, py: 1 }}
                   >
                     <TwinLogo twin={twin} width={14} />
-                    <Typography sx={{ typography: "s3", fontWeight: 600, minWidth: 80 }}>
+                    <Typography
+                      sx={{ typography: "s3", fontWeight: 600, minWidth: 80 }}
+                    >
                       {twin?.name || sId}
                     </Typography>
-                    <Typography sx={{
-                      typography: "s3", color: "text.subtitle",
-                      fontFamily: "ui-monospace, Menlo, monospace", flex: 1, minWidth: 0,
-                    }} noWrap>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        fontFamily: "ui-monospace, Menlo, monospace",
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                      noWrap
+                    >
                       {seedSummary(sId)}
                     </Typography>
                   </Stack>
@@ -1109,36 +1664,55 @@ function TwinBackedSections({ env, envState, onGo }) {
             title="End-state graders"
             subtitle="Sandbox evals inspect what actually landed after each run — not just whether a tool was called"
             action={
-              <Button size="small" onClick={() => onGo?.("evals")}
-                sx={{ typography: "s3", fontWeight: 700 }}
-              >
+              <Button size="small" onClick={() => onGo?.("evals")}>
                 Configure
               </Button>
             }
           >
-            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+            <Stack
+              divider={
+                <Box
+                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+                />
+              }
+            >
               {evalPresets.map((k) => {
                 const meta = evalLabels[k];
                 if (!meta) return null;
                 return (
-                  <Stack key={k} direction="row" spacing={1.5} alignItems="flex-start"
+                  <Stack
+                    key={k}
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="flex-start"
                     sx={{ px: 2.5, py: 1.5 }}
                   >
-                    <Iconify icon="solar:target-linear" width={14}
-                      sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }} />
+                    <Iconify
+                      icon="solar:target-linear"
+                      width={14}
+                      sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }}
+                    />
                     <Box flex={1}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                         {meta.title}
                       </Typography>
-                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
                         {meta.body}
                       </Typography>
                     </Box>
-                    <Typography sx={{
-                      typography: "s3", fontWeight: 700, color: "text.subtitle",
-                      textTransform: "uppercase", letterSpacing: 0.3, flexShrink: 0,
-                      fontFamily: "ui-monospace, Menlo, monospace",
-                    }}>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        fontWeight: 600,
+                        color: "text.tertiary",
+                        textTransform: "none",
+                        letterSpacing: 0.3,
+                        flexShrink: 0,
+                        fontFamily: "ui-monospace, Menlo, monospace",
+                      }}
+                    >
                       {k}
                     </Typography>
                   </Stack>
@@ -1152,7 +1726,9 @@ function TwinBackedSections({ env, envState, onGo }) {
   );
 }
 TwinBackedSections.propTypes = {
-  env: PropTypes.object, envState: PropTypes.object, onGo: PropTypes.func,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  onGo: PropTypes.func,
 };
 
 /*
@@ -1165,21 +1741,31 @@ TwinBackedSections.propTypes = {
 function ApiSurfaceBadge({ apiLevel }) {
   const isUi = apiLevel === "api+ui";
   const label = isUi ? "API + UI" : "API only";
-  const tint = isUi ? "#7857FC" : "#6B7280";
+  const role = isUi ? "discovery" : "neutral";
   return (
-    <Tooltip arrow title={
-      isUi
-        ? "This sandbox exposes both an API for the agent to call and a browsable UI you can open to inspect state."
-        : "This sandbox exposes an API only. Inspect state via the OpenAPI viewer or the Raw requests tab in a run."
-    }>
-      <Typography sx={{
-        typography: "s3", fontWeight: 700, letterSpacing: 0.3,
-        px: 0.625, py: 0.125, borderRadius: 0.5,
-        color: tint,
-        bgcolor: (t) => alpha(tint, t.palette.mode === "dark" ? 0.16 : 0.08),
-        border: (t) => `1px solid ${alpha(tint, t.palette.mode === "dark" ? 0.35 : 0.25)}`,
-        flexShrink: 0,
-      }}>
+    <Tooltip
+      arrow
+      title={
+        isUi
+          ? "This sandbox exposes both an API for the agent to call and a browsable UI you can open to inspect state."
+          : "This sandbox exposes an API only. Inspect state via the OpenAPI viewer or the Raw requests tab in a run."
+      }
+    >
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          letterSpacing: 0.3,
+          px: 0.625,
+          py: 0.125,
+          borderRadius: "4px",
+          color: `status.${role}.fg`,
+          bgcolor: `status.${role}.bg`,
+          border: "1px solid",
+          borderColor: `status.${role}.border`,
+          flexShrink: 0,
+        }}
+      >
         {label}
       </Typography>
     </Tooltip>
@@ -1199,69 +1785,150 @@ ApiSurfaceBadge.propTypes = { apiLevel: PropTypes.string };
 function ApiOnlySandboxPanel({ twin, endpoint, envState }) {
   const requests = envState?.twinBacking?.activity?.[twin?.id]?.requests || 0;
   return (
-    <Box sx={{
-      borderRadius: 1.5, overflow: "hidden",
-      border: "1px solid", borderColor: "divider",
-      bgcolor: "background.paper",
-      height: 800, display: "flex", flexDirection: "column",
-    }}>
+    <Box
+      sx={{
+        borderRadius: "8px",
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        height: 800,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {/* header */}
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{
-        px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider",
-        bgcolor: "background.neutral",
-      }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.neutral",
+        }}
+      >
         <TwinLogo twin={twin} width={22} />
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
             {twin?.name} copy — API only
           </Typography>
-          <Typography sx={{
-            typography: "s3", color: "text.subtitle",
-            fontFamily: "ui-monospace, Menlo, monospace",
-          }} noWrap>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}
+            noWrap
+          >
             {endpoint}
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" spacing={0.5}>
-          <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "#16A34A" }} />
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "#16A34A" }}>Serving</Typography>
+          <Box
+            sx={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              bgcolor: "status.success.solid",
+            }}
+          />
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "status.success.fg",
+            }}
+          >
+            Serving
+          </Typography>
         </Stack>
       </Stack>
       {/* body */}
       <Stack sx={{ flex: 1, p: 3, gap: 2.5, overflow: "auto" }}>
         <Box>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+              mb: 1,
+            }}
+          >
             Modelled surfaces
           </Typography>
           <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
             {(twin?.depth || []).map((d) => (
-              <Typography key={d} sx={{
-                px: 1, py: 0.375, borderRadius: 0.75,
-                typography: "s2", fontWeight: 600,
-                bgcolor: "background.neutral",
-                border: "1px solid", borderColor: "divider",
-              }}>{d}</Typography>
+              <Typography
+                key={d}
+                sx={{
+                  px: 1,
+                  py: 0.375,
+                  borderRadius: "4px",
+                  typography: "s2",
+                  fontWeight: 600,
+                  bgcolor: "background.neutral",
+                  border: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                {d}
+              </Typography>
             ))}
           </Stack>
         </Box>
         <Box>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+              mb: 1,
+            }}
+          >
             How to inspect state
           </Typography>
           <Stack spacing={0.75}>
-            <InspectRow icon="solar:code-square-linear" title="OpenAPI viewer" body="Above · every endpoint the sandbox serves, with request/response shapes." />
-            <InspectRow icon="solar:list-linear" title="Raw requests tab" body="On any run drawer · chronological HTTP log with request + response payloads." />
-            <InspectRow icon="solar:pulse-2-linear" title="Sandbox state timeline" body="On any run drawer · semantic view of what the agent wrote to this sandbox." />
+            <InspectRow
+              icon="solar:code-square-linear"
+              title="OpenAPI viewer"
+              body="Above · every endpoint the sandbox serves, with request/response shapes."
+            />
+            <InspectRow
+              icon="solar:list-linear"
+              title="Raw requests tab"
+              body="On any run drawer · chronological HTTP log with request + response payloads."
+            />
+            <InspectRow
+              icon="solar:pulse-2-linear"
+              title="Sandbox state timeline"
+              body="On any run drawer · semantic view of what the agent wrote to this sandbox."
+            />
           </Stack>
         </Box>
         <Box>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              textTransform: "none",
+              letterSpacing: 0.4,
+              mb: 1,
+            }}
+          >
             Activity this session
           </Typography>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {requests} request{requests === 1 ? "" : "s"}
           </Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             Resets when you reset the sandbox state.
           </Typography>
         </Box>
@@ -1270,21 +1937,40 @@ function ApiOnlySandboxPanel({ twin, endpoint, envState }) {
   );
 }
 ApiOnlySandboxPanel.propTypes = {
-  twin: PropTypes.object, endpoint: PropTypes.string, envState: PropTypes.object,
+  twin: PropTypes.object,
+  endpoint: PropTypes.string,
+  envState: PropTypes.object,
 };
 
 function InspectRow({ icon, title, body }) {
   return (
-    <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{ py: 0.5 }}>
-      <Iconify icon={icon} width={13} sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      spacing={1.25}
+      alignItems="flex-start"
+      sx={{ py: 0.5 }}
+    >
+      <Iconify
+        icon={icon}
+        width={14}
+        sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }}
+      />
       <Box>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{body}</Typography>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {body}
+        </Typography>
       </Box>
     </Stack>
   );
 }
-InspectRow.propTypes = { icon: PropTypes.string, title: PropTypes.string, body: PropTypes.string };
+InspectRow.propTypes = {
+  icon: PropTypes.string,
+  title: PropTypes.string,
+  body: PropTypes.string,
+};
 
 /*
   Recent-activity ribbon that sits between the sub-header and the
@@ -1298,27 +1984,56 @@ function SandboxActivityRibbon({ envState, serviceId }) {
   const items = liveSandboxContentFor(envState, serviceId);
   if (!items.length) return null;
   const last = items[0];
-  const location = last.channel || last.page || last.thread || last.record || "sandbox";
+  const location =
+    last.channel || last.page || last.thread || last.record || "sandbox";
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{
-      mb: 1.25, px: 1.25, py: 0.75, borderRadius: 0.875,
-      border: (t) => `1px solid ${alpha("#7857FC", t.palette.mode === "dark" ? 0.4 : 0.28)}`,
-      bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.08 : 0.04),
-    }}>
-      <Iconify icon="solar:pulse-2-linear" width={13} sx={{ color: "#7857FC", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", fontWeight: 700, color: "#7857FC", letterSpacing: 0.3, flexShrink: 0 }}>
-        {items.length} WRITE{items.length === 1 ? "" : "S"} THIS SESSION
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{
+        mb: 1.25,
+        px: 1.25,
+        py: 0.75,
+        borderRadius: "6px",
+        border: (t) => `1px solid ${t.palette.status.discovery.border}`,
+        bgcolor: "status.discovery.bg",
+      }}
+    >
+      <Iconify
+        icon="solar:pulse-2-linear"
+        width={14}
+        sx={{ color: "primary.main", flexShrink: 0 }}
+      />
+      <Typography
+        sx={{
+          typography: "s3",
+          fontWeight: 600,
+          color: "primary.main",
+          letterSpacing: 0.3,
+          flexShrink: 0,
+        }}
+      >
+        {items.length} write{items.length === 1 ? "" : "s"} this session
       </Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+      <Typography
+        noWrap
+        sx={{ typography: "s3", color: "text.tertiary", flex: 1, minWidth: 0 }}
+      >
         · Latest: {last.author} — {location}
       </Typography>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+      <Typography
+        sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+      >
         {last.runLabel}
       </Typography>
     </Stack>
   );
 }
-SandboxActivityRibbon.propTypes = { envState: PropTypes.object, serviceId: PropTypes.string };
+SandboxActivityRibbon.propTypes = {
+  envState: PropTypes.object,
+  serviceId: PropTypes.string,
+};
 
 /*
   Getting-started checklist for a freshly minted env (usually the
@@ -1357,7 +2072,10 @@ function NextStepsChecklist({ env, envState, onGo }) {
       title: "Add scenarios",
       body: "Tasks the agent has to complete. Add a few concrete cases the run will grade against.",
       done: scenarioCount > 0,
-      cta: scenarioCount > 0 ? `${scenarioCount} added — add more` : "Add scenarios",
+      cta:
+        scenarioCount > 0
+          ? `${scenarioCount} added — add more`
+          : "Add scenarios",
       onClick: () => onGo?.("scenarios"),
       icon: "solar:list-check-linear",
     },
@@ -1391,41 +2109,58 @@ function NextStepsChecklist({ env, envState, onGo }) {
       subtitle={`${doneCount} of ${steps.length} complete — ${steps.length - doneCount} left to run your first simulation`}
       sx={{ mb: 3 }}
     >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
         {steps.map((s, i) => {
           const isCurrent = i === currentIdx;
           return (
-            <Stack key={s.id}
-              direction="row" alignItems="center" spacing={2}
+            <Stack
+              key={s.id}
+              direction="row"
+              alignItems="center"
+              spacing={2}
               sx={{
-                px: 2.5, py: 1.75,
-                bgcolor: (t) => isCurrent
-                  ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.02)
-                  : "transparent",
+                px: 2.5,
+                py: 1.75,
+                bgcolor: isCurrent ? "action.hover" : "transparent",
               }}
             >
-              <Box sx={{
-                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
-                display: "grid", placeItems: "center",
-                bgcolor: (t) => s.done
-                  ? alpha("#16A34A", t.palette.mode === "dark" ? 0.18 : 0.12)
-                  : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-                color: s.done ? "#16A34A" : "text.subtitle",
-              }}>
+              <Box
+                sx={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: s.done ? "status.success.bg" : "action.selected",
+                  color: s.done ? "status.success.fg" : "text.tertiary",
+                }}
+              >
                 <Iconify
-                  icon={s.done ? "solar:check-circle-bold" : (s.icon || "solar:circle-linear")}
+                  icon={
+                    s.done
+                      ? "solar:check-circle-bold"
+                      : s.icon || "solar:circle-linear"
+                  }
                   width={14}
                 />
               </Box>
               <Box flex={1} minWidth={0}>
-                <Typography sx={{
-                  typography: "s2", fontWeight: 700,
-                  color: s.done ? "text.subtitle" : "text.primary",
-                  textDecoration: s.done ? "line-through" : "none",
-                }}>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    color: s.done ? "text.tertiary" : "text.primary",
+                    textDecoration: s.done ? "line-through" : "none",
+                  }}
+                >
                   {s.title}
                 </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   {s.body}
                 </Typography>
               </Box>
@@ -1437,11 +2172,14 @@ function NextStepsChecklist({ env, envState, onGo }) {
                   disabled={s.disabled}
                   onClick={s.onClick}
                   sx={{
-                    typography: "s2", fontWeight: 700, flexShrink: 0,
-                    ...(isCurrent ? {} : {
-                      color: "text.primary", borderColor: "divider",
-                      "&:hover": { borderColor: "text.disabled" },
-                    }),
+                    flexShrink: 0,
+                    ...(isCurrent
+                      ? {}
+                      : {
+                          color: "text.primary",
+                          borderColor: "divider",
+                          "&:hover": { borderColor: "text.disabled" },
+                        }),
                   }}
                 >
                   {s.cta}
@@ -1455,7 +2193,9 @@ function NextStepsChecklist({ env, envState, onGo }) {
   );
 }
 NextStepsChecklist.propTypes = {
-  env: PropTypes.object, envState: PropTypes.object, onGo: PropTypes.func,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  onGo: PropTypes.func,
 };
 
 /* ─── Source → sandbox mapping ─────────────────────────────────────────────
@@ -1486,10 +2226,15 @@ function SourceToSandboxMap({ env, envState, progress }) {
   const allRules = provenanceFor(env).rules;
   const allTables = env?.seed?.tables || [];
   const tools = streaming ? allTools.slice(0, progress.tools || 0) : allTools;
-  const ruleProv = streaming ? allRules.slice(0, progress.rules || 0) : allRules;
-  const tables = streaming ? allTables.slice(0, progress.stores || 0) : allTables;
+  const ruleProv = streaming
+    ? allRules.slice(0, progress.rules || 0)
+    : allRules;
+  const tables = streaming
+    ? allTables.slice(0, progress.stores || 0)
+    : allTables;
   /* A group's count line: how far along it is while reading, what it holds after. */
-  const found = (shown, total, done) => (streaming && shown < total ? `${shown} of ${total} found` : done);
+  const found = (shown, total, done) =>
+    streaming && shown < total ? `${shown} of ${total} found` : done;
 
   /*
     Each tool's row reads its tier off the fidelity dial (PRD v6 Story 5) —
@@ -1497,12 +2242,13 @@ function SourceToSandboxMap({ env, envState, progress }) {
     tab. A connect-only agent's tools are answered by its own systems.
   */
   const connectOnly = isConnectOnly(env);
-  const targetForTier = (tier) => ({
-    stub: "stub · a canned response",
-    replay: "replay · a recorded response",
-    stateful: "stateful · reads and writes the world",
-    live: "live · the real tool, sandboxed",
-  }[tier] || "stateful · reads and writes the world");
+  const targetForTier = (tier) =>
+    ({
+      stub: "stub · a canned response",
+      replay: "replay · a recorded response",
+      stateful: "stateful · reads and writes the world",
+      live: "live · the real tool, sandboxed",
+    })[tier] || "stateful · reads and writes the world";
 
   /*
     Every tool renders with its tier — the side-effect default fills in the
@@ -1519,7 +2265,9 @@ function SourceToSandboxMap({ env, envState, progress }) {
       /* A tool added from an MCP server says so — it wasn't read from the agent's config. */
       origin: t.via?.kind === "mcp" ? "mcp" : "config",
       via: t.via,
-      target: connectOnly ? "answered by your systems" : targetForTier(setting.tier),
+      target: connectOnly
+        ? "answered by your systems"
+        : targetForTier(setting.tier),
       confirmed: !connectOnly && setting.confirmed,
     };
   });
@@ -1531,9 +2279,27 @@ function SourceToSandboxMap({ env, envState, progress }) {
   const viaMcp = allTools.filter((t) => t.via?.kind === "mcp").length;
   const surface = getSurface(env.surface);
   const actors = [
-    { key: "transfer", name: "transfer target", origin: "prompt", target: "Supervisor persona", mapped: true },
-    { key: "external", name: tools[0]?.name || "external_service", origin: "callGraph", target: `${env?.domain || "Backend"} service`, mapped: true },
-    { key: "caller", name: null, origin: null, target: `Caller — ${surface.blurb.split(" ")[0] || "the user"}`, mapped: false },
+    {
+      key: "transfer",
+      name: "transfer target",
+      origin: "prompt",
+      target: "Supervisor persona",
+      mapped: true,
+    },
+    {
+      key: "external",
+      name: tools[0]?.name || "external_service",
+      origin: "callGraph",
+      target: `${env?.domain || "Backend"} service`,
+      mapped: true,
+    },
+    {
+      key: "caller",
+      name: null,
+      origin: null,
+      target: `Caller — ${surface.blurb.split(" ")[0] || "the user"}`,
+      mapped: false,
+    },
     { key: "clock", name: null, origin: null, target: "Clock", mapped: false },
   ];
   const actorMapped = actors.filter((a) => a.mapped).length;
@@ -1541,20 +2307,43 @@ function SourceToSandboxMap({ env, envState, progress }) {
   return (
     <Box
       sx={{
-        mb: 3, borderRadius: 2, overflow: "hidden",
-        border: "1px solid", borderColor: "divider",
+        mb: 3,
+        borderRadius: "8px",
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
         bgcolor: "background.paper",
       }}
     >
       {/* Title band */}
-      <Box sx={{ px: MAP_PX, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+      <Box
+        sx={{
+          px: MAP_PX,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {streaming ? "Writing the contract" : "How the world was built"}
           </Typography>
-          {streaming && <CircularProgress size={12} thickness={5} sx={{ color: "text.disabled" }} />}
+          {streaming && (
+            <CircularProgress
+              size={12}
+              thickness={5}
+              sx={{ color: "text.disabled" }}
+            />
+          )}
         </Stack>
-        <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, maxWidth: 720 }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.tertiary",
+            mt: 0.25,
+            maxWidth: 720,
+          }}
+        >
           {streaming
             ? "Filling in as the builder reads your agent — tools first, then the rules, then the data the world is seeded with. Each carries where it was read from."
             : "Every derived fact carries where it was read from and what it became in the sandbox."}
@@ -1564,10 +2353,15 @@ function SourceToSandboxMap({ env, envState, progress }) {
       {/* Column headers, on the same tracks as rows */}
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
-          alignItems: "center", px: MAP_PX, py: 1.25,
-          borderBottom: "1px solid", borderColor: "divider",
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
+          display: "grid",
+          gridTemplateColumns: MAP_GRID,
+          columnGap: 2,
+          alignItems: "center",
+          px: MAP_PX,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.neutral",
         }}
       >
         <ColHead>Read from source</ColHead>
@@ -1577,11 +2371,15 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </Box>
 
       {/* Groups */}
-      <MapGroup label="Tools" hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
+      <MapGroup
+        label="Tools"
+        hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
         right={found(tools.length, allTools.length, `${tools.length} mapped`)}
         first
       >
-        {streaming && tools.length < allTools.length && <ReadingRow what="tool signatures" />}
+        {streaming && tools.length < allTools.length && (
+          <ReadingRow what="tool signatures" />
+        )}
         {toolRows.map((r, i) => (
           <MapRow
             key={r.key}
@@ -1595,29 +2393,69 @@ function SourceToSandboxMap({ env, envState, progress }) {
         ))}
       </MapGroup>
 
-      <MapGroup label="Rules" hint={fromDescription ? "from your description" : "from policy.yaml, enforced"}
-        right={found(ruleProv.length, allRules.length, `${ruleProv.length} mapped`)}
+      <MapGroup
+        label="Rules"
+        hint={
+          fromDescription
+            ? "from your description"
+            : "from policy.yaml, enforced"
+        }
+        right={found(
+          ruleProv.length,
+          allRules.length,
+          `${ruleProv.length} mapped`,
+        )}
       >
         {streaming && ruleProv.length < allRules.length && (
-          <ReadingRow what={tools.length < allTools.length ? "after the tools" : "rules from the code and prompt"} waiting={tools.length < allTools.length} />
+          <ReadingRow
+            what={
+              tools.length < allTools.length
+                ? "after the tools"
+                : "rules from the code and prompt"
+            }
+            waiting={tools.length < allTools.length}
+          />
         )}
         {ruleProv.map((r, i) => (
           <MapRow
             key={r.id}
             index={i}
             name={r.subject}
-            origin={fromDescription ? "description" : r.origin === "code" ? "policy" : r.origin}
+            origin={
+              fromDescription
+                ? "description"
+                : r.origin === "code"
+                  ? "policy"
+                  : r.origin
+            }
             target={ruleTarget(r.subject, r.origin, connectOnly)}
             mono
           />
         ))}
       </MapGroup>
 
-      <MapGroup label="Stores" hint={fromDescription ? "none yet — the world starts with no data" : "from your fixtures"}
-        right={found(tables.length, allTables.length, `${tables.length} mapped`)}
+      <MapGroup
+        label="Stores"
+        hint={
+          fromDescription
+            ? "none yet — the world starts with no data"
+            : "from your fixtures"
+        }
+        right={found(
+          tables.length,
+          allTables.length,
+          `${tables.length} mapped`,
+        )}
       >
         {streaming && tables.length < allTables.length && (
-          <ReadingRow what={ruleProv.length < allRules.length ? "once the rules are in" : "the data the world is seeded with"} waiting={ruleProv.length < allRules.length} />
+          <ReadingRow
+            what={
+              ruleProv.length < allRules.length
+                ? "once the rules are in"
+                : "the data the world is seeded with"
+            }
+            waiting={ruleProv.length < allRules.length}
+          />
         )}
         {tables.map((t, i) => (
           <MapRow
@@ -1632,37 +2470,56 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </MapGroup>
 
       {!streaming && !fromDescription && (
-      <MapGroup label="Other parties" hint="from the call-graph & prompt"
-        right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
-      >
-        {actors.map((a, i) => (
-          <MapRow
-            key={a.key}
-            index={i}
-            name={a.name}
-            origin={a.origin}
-            target={a.target}
-            mono={!!a.name}
-            derived={!a.mapped}
-          />
-        ))}
-      </MapGroup>
+        <MapGroup
+          label="Other parties"
+          hint="from the call-graph & prompt"
+          right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
+        >
+          {actors.map((a, i) => (
+            <MapRow
+              key={a.key}
+              index={i}
+              name={a.name}
+              origin={a.origin}
+              target={a.target}
+              mono={!!a.name}
+              derived={!a.mapped}
+            />
+          ))}
+        </MapGroup>
       )}
     </Box>
   );
 }
 SourceToSandboxMap.propTypes = {
-  env: PropTypes.object, envState: PropTypes.object, progress: PropTypes.object,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  progress: PropTypes.object,
 };
 
 /* The row a group shows while its items are still being read — or, for a
    group whose turn hasn't come, what it's waiting on. */
 function ReadingRow({ what, waiting }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ px: MAP_PX, py: 0.75 }}>
-      {waiting
-        ? <Iconify icon="solar:clock-circle-linear" width={13} sx={{ color: "text.disabled" }} />
-        : <CircularProgress size={11} thickness={5} sx={{ color: "text.disabled" }} />}
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ px: MAP_PX, py: 0.75 }}
+    >
+      {waiting ? (
+        <Iconify
+          icon="solar:clock-circle-linear"
+          width={14}
+          sx={{ color: "text.disabled" }}
+        />
+      ) : (
+        <CircularProgress
+          size={11}
+          thickness={5}
+          sx={{ color: "text.disabled" }}
+        />
+      )}
       <Typography sx={{ typography: "s3", color: "text.disabled" }}>
         {waiting ? `Next — ${what}` : `Reading ${what}…`}
       </Typography>
@@ -1675,9 +2532,11 @@ function ColHead({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: 700,
-        textTransform: "uppercase", letterSpacing: 0.6,
-        color: "text.subtitle",
+        typography: "s3",
+        fontWeight: 600,
+        textTransform: "none",
+        letterSpacing: 0.6,
+        color: "text.tertiary",
       }}
     >
       {children}
@@ -1692,10 +2551,8 @@ function ConfirmedChip() {
       size="small"
       label="you confirmed"
       sx={{
-        height: 18, borderRadius: 0.75,
-        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 700, letterSpacing: 0.2 },
         color: "primary.main",
-        bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1),
+        bgcolor: "status.discovery.bg",
       }}
     />
   );
@@ -1707,12 +2564,21 @@ function ruleTarget(subject, origin, live = false) {
      systems, so a rule is judged from the conversation, not enforced. */
   if (live) return "judged from the conversation";
   const s = subject.toLowerCase();
-  if (s.includes("double") || s.includes("overlap")) return "blocks overlapping slots";
-  if (s.includes("hour") || s.includes("time")) return "blocks off-hours attempts";
-  if (s.includes("cancel") || s.includes("window") || s.includes("return")) return "blocks late cancels";
-  if (s.includes("refund") || s.includes("supervisor") || s.includes("approval")) return "requires supervisor approval";
+  if (s.includes("double") || s.includes("overlap"))
+    return "blocks overlapping slots";
+  if (s.includes("hour") || s.includes("time"))
+    return "blocks off-hours attempts";
+  if (s.includes("cancel") || s.includes("window") || s.includes("return"))
+    return "blocks late cancels";
+  if (
+    s.includes("refund") ||
+    s.includes("supervisor") ||
+    s.includes("approval")
+  )
+    return "requires supervisor approval";
   if (s.includes("escalat")) return "routes to human handoff";
-  if (s.includes("disclose") || s.includes("identity") || s.includes("promise")) return "enforced at the sandbox boundary";
+  if (s.includes("disclose") || s.includes("identity") || s.includes("promise"))
+    return "enforced at the sandbox boundary";
   return "enforced at the sandbox boundary";
 }
 
@@ -1721,20 +2587,35 @@ function MapGroup({ label, hint, right, children, first }) {
     <Box>
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 2,
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          columnGap: 2,
           alignItems: "baseline",
-          px: MAP_PX, pt: first ? 2 : 2.25, pb: 1,
-          borderTop: first ? "none" : "1px solid", borderColor: "divider",
+          px: MAP_PX,
+          pt: first ? 2 : 2.25,
+          pb: 1,
+          borderTop: first ? "none" : "1px solid",
+          borderColor: "divider",
         }}
       >
-        <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{label}</Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
+        <Stack
+          direction="row"
+          alignItems="baseline"
+          spacing={1}
+          sx={{ minWidth: 0 }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {label}
+          </Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+            {hint}
+          </Typography>
         </Stack>
         <Typography
           sx={{
-            typography: "s3", fontWeight: 700,
-            color: "text.subtitle",
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.tertiary",
           }}
         >
           {right}
@@ -1745,21 +2626,24 @@ function MapGroup({ label, hint, right, children, first }) {
   );
 }
 MapGroup.propTypes = {
-  label: PropTypes.string, hint: PropTypes.string, right: PropTypes.string,
-  children: PropTypes.node, first: PropTypes.bool,
+  label: PropTypes.string,
+  hint: PropTypes.string,
+  right: PropTypes.string,
+  children: PropTypes.node,
+  first: PropTypes.bool,
 };
 
 function MapRow({ index, name, origin, target, mono, derived, trailing }) {
-  const rowBg = (t) => {
-    if (index % 2 === 1) return alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.025 : 0.015);
-    return "transparent";
-  };
+  const rowBg = index % 2 === 1 ? "background.neutral" : "transparent";
   return (
     <Box sx={{ position: "relative", bgcolor: rowBg }}>
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2.5,
-          alignItems: "center", minHeight: 40,
+          display: "grid",
+          gridTemplateColumns: MAP_GRID,
+          columnGap: 2.5,
+          alignItems: "center",
+          minHeight: 40,
           pl: MAP_PX,
           pr: MAP_PX,
         }}
@@ -1768,14 +2652,19 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
           <Typography
             noWrap
             sx={{
-              typography: "s2", fontWeight: 600,
+              // Row title: 13px/500 (mono for code identifiers), never bold.
+              fontSize: 13,
+              lineHeight: "20px",
+              fontWeight: 500,
               fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined,
-              color: derived ? "text.subtitle" : "text.primary",
+              color: derived ? "text.tertiary" : "text.primary",
             }}
           >
             {name}
           </Typography>
-        ) : <Box />}
+        ) : (
+          <Box />
+        )}
 
         <Box sx={{ justifySelf: "end", display: "flex" }}>
           {origin && <OriginChip origin={origin} showPath={false} />}
@@ -1784,16 +2673,24 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
         <Iconify
           icon="solar:arrow-right-linear"
           width={14}
-          sx={{ color: derived ? "text.disabled" : "text.subtitle", justifySelf: "center" }}
+          sx={{
+            color: derived ? "text.disabled" : "text.tertiary",
+            justifySelf: "center",
+          }}
         />
 
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ minWidth: 0 }}
+        >
           {target != null && (
             <Typography
               noWrap
               sx={{
                 typography: "s2",
-                color: derived ? "text.subtitle" : "text.primary",
+                color: derived ? "text.tertiary" : "text.primary",
                 fontStyle: derived ? "italic" : "normal",
                 minWidth: 0,
               }}
@@ -1808,7 +2705,11 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
   );
 }
 MapRow.propTypes = {
-  index: PropTypes.number, name: PropTypes.node, origin: PropTypes.string,
-  target: PropTypes.node, mono: PropTypes.bool,
-  derived: PropTypes.bool, trailing: PropTypes.node,
+  index: PropTypes.number,
+  name: PropTypes.node,
+  origin: PropTypes.string,
+  target: PropTypes.node,
+  mono: PropTypes.bool,
+  derived: PropTypes.bool,
+  trailing: PropTypes.node,
 };

@@ -127,7 +127,7 @@ const EvalDrawerSection = () => {
           {evalView?.metricDetail?.name}
         </Typography>
         <IconButton onClick={() => setEvalView(null)}>
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -144,7 +144,7 @@ const EvalDrawerSection = () => {
           </Typography>
           <Box>
             {isError ? (
-              <Box sx={{ color: theme.palette.error.main, fontSize: "14px" }}>
+              <Box sx={{ color: theme.palette.error.main, fontSize: "13px" }}>
                 Error
               </Box>
             ) : (
@@ -175,12 +175,13 @@ const EvalDrawerSection = () => {
                           label={"None"}
                           size="small"
                           sx={{
-                            backgroundColor: theme.palette.red.o10,
-                            color: theme.palette.red[500],
+                            backgroundColor: theme.palette.status.danger.bg,
+                            color: theme.palette.status.danger.fg,
                             marginRight: "10px",
                             transition: "none",
                             "&:hover": {
-                              backgroundColor: theme.palette.red[500], // Lock it to same color
+                              backgroundColor:
+                                theme.palette.status.danger.solid, // Lock it to same color
                               boxShadow: "none",
                             },
                           }}
