@@ -28,6 +28,18 @@ export function formatCost(value) {
   return "$0.00";
 }
 
+/**
+ * True when a request log is flagged unpriced (no model price known) and has zero/empty cost.
+ * A positive cost always wins, even if the tag is present.
+ */
+export function isUnpriced(log) {
+  if (!log) return false;
+  const source = log.metadata?.cost_source;
+  if (source !== "unpriced") return false;
+  const cost = Number(log.cost);
+  return !Number.isFinite(cost) || cost === 0;
+}
+
 // Axis ticks sit on round values, so zeros past the cents only widen the label
 export function formatCostTick(value) {
   return formatCost(value).replace(/(\.\d{2}\d*?)0+$/, "$1");
