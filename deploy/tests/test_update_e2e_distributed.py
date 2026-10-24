@@ -45,14 +45,6 @@ APP_SERVICES = tuple(s for s in dist.SERVICES if s != dist.BOOTSTRAP)
 DEFAULT_SERVICES = tuple(s for s in APP_SERVICES if s not in dist.PROFILE_SERVICES)
 LOCAL_NOTE = ("fi-collector is built from this checkout today (FI_COLLECTOR_VERSION unset); the update switches "
               "it to the published futureagi/fi-collector image of the release")
-def overlay_detected(version: str) -> str:
-    return ("this install runs the production overlay (check-only bootstrap jobs). Use `./bin/update --production "
-            f"check {release_options(version)}`, which uses deploy/.env.production and the overlay as deploy/setup.sh "
-            "does")
-
-
-NOT_PRODUCTION = ("--production was given, but this install was started without the production overlay (its "
-                  "bootstrap jobs apply migrations). Run bin/update without --production")
 # Why a running container of a service outside the active profiles blocks (plan._judge_strays); its
 # group is the command that removes it.
 STRAY_BLOCKS = (r"service worker-simulation-runner has containers on Future AGI images but is not in the active "
@@ -469,10 +461,12 @@ class DistributedUpdateE2E(unittest.TestCase):
             production.chmod(0o600)
             try:
                 staged = co.snapshot()
-                # apply prints check's plan, then refuses (one run: Docker is slow on a busy host).
+                # The ownership gate precedes planning: selecting an overlay
+                # absent from the containers' provenance cannot authorize apply.
                 result = co.bin_update("apply", "--production", *manifest(V52), "--allow-no-backup")
-                self.assertExit(result, 3, f"  ✗ {NOT_PRODUCTION}\n", "the update is blocked: ",
-                                f"  Installation  production (Compose project {co.project}, deploy/.env.production)")
+                self.assertExit(result, 2, f"cannot establish Compose project {co.project!r} ownership",
+                                "records different config_files", str(co.root / dist.DISTRIBUTED_FILE),
+                                "Refusing to use this project's containers", "original Compose files and env file")
                 self.assertUnchanged(co, staged)
             finally:
                 production.unlink()
@@ -489,11 +483,9 @@ class DistributedUpdateE2E(unittest.TestCase):
             try:
                 staged = co.snapshot()
                 result = co.bin_update("apply", *manifest(V52), "--allow-no-backup")
-                self.assertExit(result, 3, f"  Installation  standalone (Compose project {co.project}, .env)",
-                                "but .env selects the Standalone stack. bin/update never moves an install between "
-                                "stacks", "the update is blocked: ")
-                self.assertRegex(result.stderr, rf"  ✗ project '{re.escape(co.project)}' runs Distributed services "
-                                                r"\([^)]*backend[^)]*fi-collector[^)]*\)")
+                self.assertExit(result, 2, f"cannot establish Compose project {co.project!r} ownership",
+                                "records different config_files", str(co.root / dist.DISTRIBUTED_FILE),
+                                "Refusing to use this project's containers", "original Compose files and env file")
                 self.assertUnchanged(co, staged)
             finally:
                 co.env_path.write_bytes(original)
@@ -571,13 +563,16 @@ class DistributedUpdateE2E(unittest.TestCase):
             try:
                 staged = co.snapshot()
                 result = co.bin_update("apply", *manifest(V52), "--allow-no-backup")
-                self.assertExit(result, 3, f"  ✗ {overlay_detected(V52)}\n", "the update is blocked: ")
-                # apply prints its plan and reasons on stderr; the overlay
-                # reason is the only one (no .env remedy beside it).
+                self.assertExit(result, 2, f"cannot establish Compose project {co.project!r} ownership",
+                                "records different config_files", str(co.root / dist.PRODUCTION_OVERLAY),
+                                "Refusing to use this project's containers", "with its original env file")
+                # No planning against a different file set; retain the runnable
+                # production guidance and the exact release-option assertions.
                 self.assertNotIn(".env lacks settings", result.stderr, result.describe())
-                self.assertEqual(result.stderr.count("\n  ✗ "), 1, result.describe())
-                printed = re.search(r"Use `([^`]+)`, which uses", result.stderr)
+                self.assertEqual(result.stderr.count("cannot establish Compose project"), 1, result.describe())
+                printed = re.search(r"use `([^`]+)` with its original env file", result.stderr)
                 self.assertIsNotNone(printed, result.describe())
+                self.assertEqual(printed.group(1), f"./bin/update --production check {release_options(V52)}")
                 self.assertUnchanged(co, staged)
             finally:
                 co.dotenv_path.unlink()

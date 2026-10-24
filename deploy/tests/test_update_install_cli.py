@@ -1,9 +1,10 @@
 """bin/update: the installation model (deploy/update/install.py), the CLI
 (deploy/update/__main__.py) and the bin/update wrapper.
 
-Docker is never run: Compose and the Docker CLI are small fake runners that
-answer with canned `docker compose config` / `docker ps` / `docker inspect`
-output. Repository-consistency tests read the real compose files,
+By default Docker is never run: Compose and the Docker CLI are small fake
+runners that answer with canned `docker compose config` / `docker ps` /
+`docker inspect` output. Opt-in Compose tests only run daemon-free config
+commands (and version probes in the release matrix). Repository-consistency tests read the real compose files,
 deploy/setup.sh, bin/install and deploy/update/deployment-files.txt. The
 bin/update tests run the wrapper as a subprocess from a temporary copy of the
 checkout (bash, no Docker, no network).
@@ -17,12 +18,15 @@ import json
 import os
 import posixpath
 import re
+import runpy
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +39,7 @@ if str(ROOT) not in sys.path:
 from deploy.update import install  # noqa: E402
 from deploy.update.apply import (  # noqa: E402
     Blocked, FailedBeforeRollout, FailedDuringRollout, InterruptedRun, UpdateError)
+from deploy.update import envfile as envfile_module  # noqa: E402
 from deploy.update.envfile import EnvFileError  # noqa: E402
 from deploy.update.install import (  # noqa: E402
     COMPONENT_VARIABLES, DISTRIBUTED_FILE, DISTRIBUTED_ONLY_SERVICES, PRODUCTION_ENV, PRODUCTION_OVERLAY,
@@ -129,14 +134,40 @@ def image_record(image_id, *, version="", revision="", repo_digests=None, labels
     return record
 
 
-def docker_handler(config=None, containers=(), images=None, ps=None, inspect=None):
+def docker_handler(config=None, containers=(), images=None, ps=None, inspect=None, *, add_provenance=True):
     """Answers `docker compose config`, `docker ps`, `docker inspect` and `docker image inspect`."""
 
     images = images or {}
     config = {"name": "futureagi", "services": {}} if config is None else config
+    compose_args = []
+
+    def provenance(records, kwargs):
+        # Existing parsing fixtures model containers created by this invocation. Ownership-negative tests use
+        # their own raw inspect runner, so absent or malformed labels there are never filled in here.
+        if not add_provenance:
+            return records
+        root = Path(kwargs["cwd"])
+        files = [compose_args[i + 1] for i, arg in enumerate(compose_args[:-1]) if arg == "-f"]
+        if not files:
+            env = read_env(root / ".env")
+            selected = env.get("COMPOSE_FILE") or STANDALONE_FILE
+            separator = (kwargs.get("env") or {}).get("COMPOSE_PATH_SEPARATOR", env.get("COMPOSE_PATH_SEPARATOR"))
+            files = [str(root / part) for part in selected.split(separator or os.pathsep)]
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            labels = (record.get("Config") or {}).get("Labels")
+            if isinstance(labels, dict) and "com.docker.compose.project" in labels:
+                labels.setdefault("com.docker.compose.project.working_dir", str(root))
+                labels.setdefault("com.docker.compose.project.config_files", ",".join(files))
+                if "--env-file" in compose_args:
+                    labels.setdefault("com.docker.compose.project.environment_file",
+                                      compose_args[compose_args.index("--env-file") + 1])
+        return records
 
     def handle(args, kwargs):
         if args[:1] == ["docker"] and "config" in args and "--format" in args:
+            compose_args[:] = args
             return completed(0, json.dumps(config))
         if args[1:2] == ["ps"]:
             if ps is not None:
@@ -144,9 +175,15 @@ def docker_handler(config=None, containers=(), images=None, ps=None, inspect=Non
             return completed(0, "".join(c["Id"] + "\n" for c in containers))
         if args[1:2] == ["inspect"]:
             if inspect is not None:
+                try:
+                    records = json.loads(inspect.stdout)
+                except ValueError:
+                    return inspect
+                if isinstance(records, list):
+                    return completed(inspect.returncode, json.dumps(provenance(records, kwargs)), inspect.stderr)
                 return inspect
             wanted = args[2:]
-            return completed(0, json.dumps([c for c in containers if c["Id"] in wanted]))
+            return completed(0, json.dumps(provenance([c for c in containers if c["Id"] in wanted], kwargs)))
         if args[1:3] == ["image", "inspect"]:
             record = images.get(args[3])
             if record is None:
@@ -154,6 +191,14 @@ def docker_handler(config=None, containers=(), images=None, ps=None, inspect=Non
             return completed(0, json.dumps([record]))
         return completed(0)
 
+    def prepare(root):
+        if add_provenance:
+            # Local-parser fixtures model Compose-created containers, including real local config paths.
+            for name in (STANDALONE_FILE, DISTRIBUTED_FILE):
+                path = root / name
+                if not path.exists():
+                    path.write_text('services: {}\n')
+    handle.prepare = prepare
     return handle
 
 
@@ -176,7 +221,8 @@ def clean_environ():
     """The process environment minus anything that would steer bin/update."""
 
     drop = set(VERSION_VARIABLES) | {"COMPOSE_FILE", "COMPOSE_PATH_SEPARATOR", "COMPOSE_PROJECT_NAME",
-                                     "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"}
+                                     "COMPOSE_ENV_FILES", "COMPOSE_DISABLE_ENV_FILE", "PYTHONPATH", "PYTHONHOME",
+                                     "PYTHONSTARTUP"}
     return {k: v for k, v in os.environ.items() if k not in drop and not k.startswith("FUTURE_AGI_UPDATE_")}
 
 
@@ -195,6 +241,9 @@ class TempRootTest(unittest.TestCase):
     def install(self, env_text="", *, environ=None, runner=None, compose=COMPOSE, **kwargs):
         if env_text is not None:
             self.write(".env", env_text)
+        prepare = getattr(getattr(runner, 'handler', None), 'prepare', None)
+        if prepare is not None:
+            prepare(self.root)
         return Installation(self.root, environ={} if environ is None else environ,
                             runner=runner if runner is not None else Runner(), compose=compose, **kwargs)
 
@@ -436,6 +485,358 @@ class ShellOverrideTests(TempRootTest):
                 Installation(self.root, runner=Runner(), compose=COMPOSE)
         self.assertIn("FRONTEND_VERSION is exported", str(caught.exception))
 
+    def assert_project_remedies(self, message, env_name, project):
+        self.assertIn("If this checkout really belongs to the exported project", message)
+        self.assertIn(f"persist COMPOSE_PROJECT_NAME={project} in {env_name}", message)
+        self.assertIn("If this is an unrelated shell export, run `unset COMPOSE_PROJECT_NAME`", message)
+        self.assertIn("Unsetting it can select a different project", message)
+        self.assertIn("verify the resulting Compose project belongs to this checkout before applying", message)
+
+    def test_shell_project_name_without_one_in_env_is_refused(self):
+        for env_text, recorded in (("", "no COMPOSE_PROJECT_NAME"),
+                                   ("COMPOSE_PROJECT_NAME=\n", "COMPOSE_PROJECT_NAME is empty")):
+            with self.subTest(env_text=env_text):
+                with self.assertRaises(InstallError) as caught:
+                    self.install(env_text, environ={"COMPOSE_PROJECT_NAME": "other-install"})
+                message = str(caught.exception)
+                self.assertIn(f"instead of .env ({recorded})", message)
+                self.assertIn("restart project other-install", message)
+                self.assert_project_remedies(message, ".env", "other-install")
+
+    def test_shell_project_name_different_from_env_is_refused(self):
+        for env_text in ("COMPOSE_PROJECT_NAME=mine\n",
+                         "COMPOSE_FILE=docker-compose.distributed.yml\nCOMPOSE_PROJECT_NAME=mine\n"):
+            with self.subTest(env_text=env_text):
+                with self.assertRaises(InstallError) as caught:
+                    self.install(env_text, environ={"COMPOSE_PROJECT_NAME": "other-install"})
+                self.assertIn("instead of .env (COMPOSE_PROJECT_NAME=mine)", str(caught.exception))
+                self.assertIn("restart project other-install", str(caught.exception))
+                self.assert_project_remedies(str(caught.exception), ".env", "other-install")
+
+    def test_empty_shell_project_name_against_a_recorded_one_is_refused(self):
+        # Compose then falls back to the compose file's name: or the directory, not a project named '(empty)'.
+        with self.assertRaises(InstallError) as caught:
+            self.install("COMPOSE_PROJECT_NAME=mine\n", environ={"COMPOSE_PROJECT_NAME": ""})
+        message = str(caught.exception)
+        self.assertIn("COMPOSE_PROJECT_NAME is set but empty in your shell", message)
+        self.assertIn("ignores .env's COMPOSE_PROJECT_NAME=mine", message)
+        self.assertIn("compose file or the directory", message)
+        self.assertIn("persist its resolved, nonempty COMPOSE_PROJECT_NAME in .env", message)
+        self.assertIn("unset the empty shell export", message)
+        self.assertIn("If this is an unrelated shell export, run `unset COMPOSE_PROJECT_NAME`", message)
+        self.assertIn("verify the resulting Compose project belongs to this checkout before applying", message)
+        self.assertNotIn("(empty)", message)
+
+    def test_shell_project_name_equal_to_env_is_accepted(self):
+        inst = self.install("COMPOSE_PROJECT_NAME=mine\n", environ={"COMPOSE_PROJECT_NAME": "mine"})
+        self.assertEqual(inst.mode, "standalone")
+
+    def test_empty_shell_project_name_with_none_recorded_is_accepted(self):
+        for env_text in ("", "COMPOSE_PROJECT_NAME=\n"):
+            with self.subTest(env_text=env_text):
+                self.assertEqual(self.install(env_text, environ={"COMPOSE_PROJECT_NAME": ""}).mode, "standalone")
+
+    def test_shell_compose_env_files_is_refused(self):
+        for value in ("other.env", "other.env,more.env", " ", "\t"):
+            with self.subTest(value=value):
+                runner = Runner()
+                with self.assertRaises(InstallError) as caught:
+                    self.install("FUTURE_AGI_VERSION=v1.0.0\n", environ={"COMPOSE_ENV_FILES": value}, runner=runner)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"COMPOSE_ENV_FILES={value} is set in your shell, so Docker Compose would read those files "
+                    "instead of .env, the file bin/update updates. Run `unset COMPOSE_ENV_FILES` and try again")
+                self.assertEqual(runner.calls, [])
+                self.assertEqual((self.root / ".env").read_bytes(), b"FUTURE_AGI_VERSION=v1.0.0\n")
+
+    def test_empty_shell_compose_env_files_is_accepted_like_unset(self):
+        for mode, compose_file in (("standalone", STANDALONE_FILE), ("distributed", DISTRIBUTED_FILE)):
+            with self.subTest(mode=mode):
+                model = {"name": "mine", "services": {"app": {"image": "futureagi/standalone:v1.0.0"}}}
+                env_text = f"COMPOSE_FILE={compose_file}\nCOMPOSE_PROJECT_NAME=mine\nFUTURE_AGI_VERSION=v1.0.0\n"
+                unset = self.install(env_text, runner=Runner(docker_handler(config=model)))
+                empty = self.install(None, environ={"COMPOSE_ENV_FILES": ""}, runner=Runner(docker_handler(config=model)))
+                self.assertEqual(empty.mode, mode)
+                self.assertEqual(empty.config(), unset.config())
+                self.assertEqual(empty.config(), model)
+                self.assertEqual(empty.subprocess_env(), {"COMPOSE_ENV_FILES": ""})
+                self.assertEqual((self.root / ".env").read_bytes(), env_text.encode())
+
+    def test_empty_compose_env_files_does_not_bypass_other_shell_guards(self):
+        cases = [(key, "v1.0.0", f"{key} is exported") for key in VERSION_VARIABLES]
+        cases += [("COMPOSE_PROJECT_NAME", "other-install", "restart project other-install")]
+        cases += [("COMPOSE_DISABLE_ENV_FILE", value, "unset COMPOSE_DISABLE_ENV_FILE")
+                  for value in ("1", "true", "0", "")]
+        for key, value, reason in cases:
+            with self.subTest(key=key, value=value):
+                runner = Runner()
+                with self.assertRaises(InstallError) as caught:
+                    self.install("FUTURE_AGI_VERSION=v1.0.0\n", runner=runner,
+                                 environ={"COMPOSE_ENV_FILES": "", key: value})
+                self.assertIn(reason, str(caught.exception))
+                self.assertEqual(runner.calls, [])
+                self.assertEqual((self.root / ".env").read_bytes(), b"FUTURE_AGI_VERSION=v1.0.0\n")
+
+    def test_empty_compose_env_files_does_not_bypass_refused_compose_version(self):
+        runner = Runner()
+        with self.assertRaises(InstallError) as caught:
+            self.install("", runner=runner, environ={"COMPOSE_ENV_FILES": ""}, compose_version=(2, 25, 0))
+        self.assertIn("Docker Compose v2.25.0 cannot print its configuration as JSON", str(caught.exception))
+        self.assertEqual(runner.calls, [])
+
+    def test_shell_compose_disable_env_file_is_refused(self):
+        # A true value (1, true, ...) makes Compose skip .env: bin/update would write tags nothing reads, and stop
+        # only after the backup, at the config check. Any value is refused, before anything runs.
+        for value in ("1", "true", "0", ""):
+            with self.subTest(value=value):
+                runner = Runner()
+                with self.assertRaises(InstallError) as caught:
+                    self.install("FUTURE_AGI_VERSION=v1.0.0\n", environ={"COMPOSE_DISABLE_ENV_FILE": value},
+                                 runner=runner)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"COMPOSE_DISABLE_ENV_FILE={value} is set in your shell, and Docker Compose skips .env, the file "
+                    "bin/update updates, when it is true. Run `unset COMPOSE_DISABLE_ENV_FILE` and try again")
+                self.assertEqual(runner.calls, [])
+
+    def test_production_lets_its_env_file_win_over_compose_disable_env_file(self):
+        # Compose reads an --env-file it is given whatever COMPOSE_DISABLE_ENV_FILE says.
+        self.production_files()
+        inst = Installation(self.root, production=True, runner=Runner(), compose=COMPOSE,
+                            environ={"COMPOSE_DISABLE_ENV_FILE": "1"})
+        self.assertEqual(inst.compose_args("config")[:4], ["docker", "compose", "--env-file", str(inst.env_file)])
+
+
+class CliPreflightRefusalTests(TempRootTest):
+    """Real CLI construction must stop before state/recovery, backup, fetch or any subprocess."""
+
+    def snapshot(self):
+        return {str(path.relative_to(self.root)): (path.stat().st_mode, path.stat().st_mtime_ns,
+                                                  path.stat().st_ino, path.read_bytes() if path.is_file() else None)
+                for path in self.root.rglob("*")}
+
+    def refusal(self, env_name, env_text, environ, *, production=False):
+        self.write(DISTRIBUTED_FILE, "services: {}\n")
+        self.write(PRODUCTION_OVERLAY, "services: {}\n")
+        self.write(env_name, '# keep this comment\r\nFUTURE_AGI_VERSION="v1.0.0" # pinned\r\n' + env_text)
+        # Even an interrupted update must not be recovered before an ambiguous install is refused.
+        self.write(f"{STATE_DIR}/journal.json", '{"stage": "rewritten", "sentinel": "do not recover"}\n')
+        before = self.snapshot()
+        flags = ["--production", "--env-file", str(self.root / env_name)] if production else []
+        messages = []
+        for command in (("check",), ("apply", "--allow-no-backup"), ("rollback", "--yes")):
+            with self.subTest(command=command):
+                runner = Runner()
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+                    stack.enter_context(mock.patch.object(cli, "Installation",
+                                                          side_effect=functools.partial(Installation, runner=runner)))
+                    resolve = stack.enter_context(mock.patch.object(
+                        install, "resolve_compose_command", side_effect=AssertionError("preflight reached Compose")))
+                    state = stack.enter_context(mock.patch.object(cli, "StateDir"))
+                    updater = stack.enter_context(mock.patch.object(cli, "Updater"))
+                    fetch = stack.enter_context(mock.patch.object(cli, "fetch_manifest"))
+                    stack.enter_context(contextlib.redirect_stdout(stdout))
+                    stack.enter_context(contextlib.redirect_stderr(stderr))
+                    code = cli.main(["--root", str(self.root), *flags, *command])
+                self.assertEqual(code, 2, stderr.getvalue())
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertEqual(self.snapshot(), before)
+                self.assertEqual(runner.calls, [])
+                for operation in (resolve, state, updater, fetch):
+                    operation.assert_not_called()
+                messages.append(stderr.getvalue())
+        return messages
+
+    def test_project_refusal_gives_both_remedies_without_mutating_any_install(self):
+        for production, env_name, env_text in (
+                (False, ".env", ""),
+                (False, ".env", "COMPOSE_FILE=docker-compose.distributed.yml\n"),
+                (False, ".env", "COMPOSE_PROJECT_NAME=\n"),
+                (False, ".env", "COMPOSE_PROJECT_NAME=mine\n"),
+                (True, PRODUCTION_ENV, ""),
+                (True, "secrets/prod custom.env", "")):
+            with self.subTest(production=production, env_name=env_name, env_text=env_text):
+                for message in self.refusal(env_name, env_text,
+                                            {"COMPOSE_PROJECT_NAME": "fagi-b", "COMPOSE_ENV_FILES": ""},
+                                            production=production):
+                    ShellOverrideTests.assert_project_remedies(self, message, env_name, "fagi-b")
+
+    def test_empty_project_refusal_never_guesses_or_writes_a_fallback_name(self):
+        for message in self.refusal(".env", "COMPOSE_PROJECT_NAME=mine\n", {"COMPOSE_PROJECT_NAME": ""}):
+            self.assertIn("compose file or the directory", message)
+            self.assertIn("persist its resolved, nonempty COMPOSE_PROJECT_NAME in .env", message)
+            self.assertIn("verify the resulting Compose project belongs to this checkout before applying", message)
+            self.assertNotIn("(empty)", message)
+
+    def test_nonempty_env_files_refusal_does_not_mutate_or_recover(self):
+        for value in ("other.env", " ", "\t"):
+            with self.subTest(value=value):
+                for message in self.refusal(".env", "", {"COMPOSE_ENV_FILES": value}):
+                    self.assertIn("unset COMPOSE_ENV_FILES", message)
+
+
+@unittest.skipUnless(os.environ.get("FUTURE_AGI_UPDATE_COMPOSE_PREFLIGHT"),
+                     "set FUTURE_AGI_UPDATE_COMPOSE_PREFLIGHT to a Compose binary for daemon-free preflight tests")
+class ComposePreflightIntegrationTests(TempRootTest):
+    """Small opt-in regressions, not the full release matrix: only real `compose config` is executed."""
+
+    def setUp(self):
+        super().setUp()
+        self.binary = str(Path(os.environ["FUTURE_AGI_UPDATE_COMPOSE_PREFLIGHT"]).expanduser().resolve())
+        home = self.root / "home"
+        home.mkdir()
+        self.environ = {"HOME": str(home), "PATH": os.defpath}
+        if "DOCKER_CONTEXT" in os.environ:
+            self.environ["DOCKER_CONTEXT"] = os.environ["DOCKER_CONTEXT"]
+            # Older Compose initializes the named context even for config. Read its client metadata without
+            # changing the global config or contacting the engine; all Compose selection variables stay absent.
+            self.environ["DOCKER_CONFIG"] = os.environ.get("DOCKER_CONFIG", str(Path.home() / ".docker"))
+        for relative, service, image in ((STANDALONE_FILE, "app", "standalone"),
+                                         (DISTRIBUTED_FILE, "backend", "future-agi")):
+            self.write(relative, f"name: futureagi\nservices:\n  {service}:\n"
+                                 f"    image: futureagi/{image}:${{FUTURE_AGI_VERSION:-latest}}\n")
+        self.write(PRODUCTION_OVERLAY, "services: {}\n")
+
+    def fixture(self, mode, project="fromdotenv"):
+        self.production = mode.startswith("production")
+        self.service = "app" if mode == "standalone" else "backend"
+        self.env_file = self.root / {"production": PRODUCTION_ENV,
+                                     "production-custom": "secrets/prod custom.env"}.get(mode, ".env")
+        text = "FUTURE_AGI_VERSION=v1.0.0\n"
+        if mode == "distributed":
+            text += f"COMPOSE_FILE={DISTRIBUTED_FILE}\n"
+        if project is not None:
+            text += f"COMPOSE_PROJECT_NAME={project}\n"
+        if self.production:
+            self.write(".env", "COMPOSE_PROJECT_NAME=ignored-dotenv\nFUTURE_AGI_VERSION=v0.0.0\n")
+        self.write(str(self.env_file.relative_to(self.root)), text)
+
+    def args(self):
+        if self.production:
+            return [self.binary, "--env-file", str(self.env_file), "-f", str(self.root / DISTRIBUTED_FILE),
+                    "-f", str(self.root / PRODUCTION_OVERLAY)]
+        return [self.binary]
+
+    def run_compose(self, args, **kwargs):
+        self.assertEqual(args[0], self.binary)
+        self.assertIn(install.split_command(args)[1], (["config", "--format", "json"], ["config", "--services"]))
+        self.assertEqual(kwargs["cwd"], str(self.root))
+        return subprocess.run(args, timeout=60, **kwargs)
+
+    def plain(self, exports):
+        return self.run_compose([*self.args(), "config", "--format", "json"], cwd=str(self.root),
+                                env=dict(self.environ, **exports), text=True, capture_output=True, check=False)
+
+    def plain_config(self, exports):
+        result = self.plain(exports)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def installation(self, exports, runner=None):
+        return Installation(self.root, production=self.production, env_file=self.env_file if self.production else None,
+                            environ=dict(self.environ, **exports), compose=[self.binary],
+                            runner=self.run_compose if runner is None else runner)
+
+    def assert_model(self, model, project, tag):
+        self.assertEqual(model["name"], project)
+        repository = "standalone" if self.service == "app" else "future-agi"
+        self.assertEqual(model["services"][self.service]["image"], f"futureagi/{repository}:{tag}")
+
+    def test_empty_and_unset_env_files_read_the_same_dotenv_in_both_stacks(self):
+        for mode in ("standalone", "distributed"):
+            with self.subTest(mode=mode):
+                self.fixture(mode)
+                unset = self.plain_config({})
+                self.assertEqual(self.plain_config({"COMPOSE_ENV_FILES": ""}), unset)
+                self.assert_model(unset, "fromdotenv", "v1.0.0")
+                empty = self.installation({"COMPOSE_ENV_FILES": ""})
+                self.assertEqual(empty.config(), unset)
+                self.assertEqual(self.installation({}).config(), unset)
+                # An empty export must keep reading the file after an update changes the image tag.
+                self.env_file.write_text(self.env_file.read_text().replace("v1.0.0", "v1.1.0"), encoding="utf-8")
+                self.assert_model(empty.config(refresh=True), "fromdotenv", "v1.1.0")
+                self.assertEqual(empty.config(), self.installation({}).config())
+
+    def test_nonempty_env_files_replace_dotenv_and_whitespace_is_not_empty(self):
+        for mode in ("standalone", "distributed"):
+            with self.subTest(mode=mode):
+                self.fixture(mode)
+                other = self.write("other.env", self.env_file.read_text().replace("fromdotenv", "fromother")
+                                   .replace("v1.0.0", "v2.0.0"))
+                self.assert_model(self.plain_config({"COMPOSE_ENV_FILES": str(other)}), "fromother", "v2.0.0")
+                for value in (str(other), " ", "\t"):
+                    with self.subTest(value=value):
+                        if value != str(other):
+                            result = self.plain({"COMPOSE_ENV_FILES": value})
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertIn("env file", result.stderr.lower())
+                        before = self.env_file.read_bytes()
+                        runner = Runner()
+                        with self.assertRaisesRegex(InstallError, "unset COMPOSE_ENV_FILES"):
+                            self.installation({"COMPOSE_ENV_FILES": value}, runner=runner)
+                        self.assertEqual(runner.calls, [])
+                        self.assertEqual(self.env_file.read_bytes(), before)
+
+    def test_production_explicit_env_file_wins_over_env_file_controls(self):
+        other = self.write("other.env", "COMPOSE_PROJECT_NAME=fromother\nFUTURE_AGI_VERSION=v2.0.0\n")
+        for mode in ("production", "production-custom"):
+            for value in (None, "", str(other), " ", "\t"):
+                for disable in (None, "true", "", "invalid"):
+                    with self.subTest(mode=mode, env_files=value, disable=disable):
+                        self.fixture(mode, project="production-owner")
+                        exports = {} if value is None else {"COMPOSE_ENV_FILES": value}
+                        if disable is not None:
+                            exports["COMPOSE_DISABLE_ENV_FILE"] = disable
+                        expected = self.plain_config(exports)
+                        self.assert_model(expected, "production-owner", "v1.0.0")
+                        inst = self.installation(dict(exports, COMPOSE_PROJECT_NAME="unrelated",
+                                                      FUTURE_AGI_VERSION="v9.9.9"))
+                        self.assertEqual(inst.compose_args(), self.args())
+                        self.assertNotIn("COMPOSE_ENV_FILES", inst.subprocess_env())
+                        self.assertEqual(inst.config(), expected)
+
+    def test_persisting_the_exported_project_keeps_the_install_in_every_shell(self):
+        for mode in ("standalone", "distributed", "production", "production-custom"):
+            with self.subTest(mode=mode):
+                self.fixture(mode, project=None)
+                self.assert_model(self.plain_config({"COMPOSE_PROJECT_NAME": "fagi-b"}), "fagi-b", "v1.0.0")
+                # Unsetting alone selects the default project, which could belong to a different checkout.
+                self.assert_model(self.plain_config({}), "futureagi", "v1.0.0")
+                before = self.env_file.read_bytes()
+                runner = Runner()
+                with self.assertRaises(InstallError) as caught:
+                    self.installation({"COMPOSE_PROJECT_NAME": "fagi-b"}, runner=runner)
+                ShellOverrideTests.assert_project_remedies(self, str(caught.exception),
+                                                          str(self.env_file.relative_to(self.root)), "fagi-b")
+                self.assertEqual(runner.calls, [])
+                self.assertEqual(self.env_file.read_bytes(), before)
+                self.assertFalse((self.root / STATE_DIR).exists())
+                # This is the operator's explicit choice, never an automatic preflight write.
+                self.env_file.write_bytes(before + b"COMPOSE_PROJECT_NAME=fagi-b\n")
+                for exports in ({}, {"COMPOSE_PROJECT_NAME": "fagi-b"}):
+                    self.assert_model(self.installation(exports).config(), "fagi-b", "v1.0.0")
+
+    def test_empty_project_names_follow_compose_fallback_not_a_literal_empty_name(self):
+        for mode in ("standalone", "distributed", "production", "production-custom"):
+            with self.subTest(mode=mode):
+                self.fixture(mode, project="recorded")
+                self.assert_model(self.plain_config({"COMPOSE_PROJECT_NAME": ""}), "futureagi", "v1.0.0")
+                if self.production:
+                    # Production drops the export because its explicit env file records the name.
+                    self.assert_model(self.installation({"COMPOSE_PROJECT_NAME": ""}).config(), "recorded", "v1.0.0")
+                else:
+                    with self.assertRaisesRegex(InstallError, "compose file or the directory"):
+                        self.installation({"COMPOSE_PROJECT_NAME": ""}, runner=Runner())
+                for project in (None, ""):
+                    self.fixture(mode, project=project)
+                    for exports in ({}, {"COMPOSE_PROJECT_NAME": ""}):
+                        self.assert_model(self.installation(exports).config(), "futureagi", "v1.0.0")
+                if self.production:
+                    self.assert_model(self.installation({"COMPOSE_PROJECT_NAME": "fagi-b"}).config(),
+                                      "futureagi", "v1.0.0")
+
 
 # ========================================================= production ====
 
@@ -507,6 +908,21 @@ class ProductionTests(TempRootTest):
                                      "FRONTEND_VERSION": "v0.0.1"})
         self.assertEqual(inst.mode, "production")
 
+    def test_production_shell_project_name_its_env_file_lacks_is_refused(self):
+        self.production_files()
+        with self.assertRaises(InstallError) as caught:
+            Installation(self.root, production=True, runner=Runner(), compose=COMPOSE,
+                         environ={"COMPOSE_PROJECT_NAME": "other-install"})
+        self.assertIn("COMPOSE_PROJECT_NAME=other-install is set in your shell, and Docker Compose uses it instead "
+                      "of deploy/.env.production (no COMPOSE_PROJECT_NAME)", str(caught.exception))
+
+    def test_production_shell_project_name_its_env_file_sets_is_dropped(self):
+        self.production_files("FUTURE_AGI_VERSION=v1.0.0\nCOMPOSE_PROJECT_NAME=prod\n")
+        inst = Installation(self.root, production=True, runner=Runner(), compose=COMPOSE,
+                            environ={"COMPOSE_PROJECT_NAME": "other-install", "COMPOSE_ENV_FILES": "other.env"})
+        self.assertNotIn("COMPOSE_PROJECT_NAME", inst.subprocess_env())
+        self.assertNotIn("COMPOSE_ENV_FILES", inst.subprocess_env())
+
     def test_production_ignores_checkout_env_compose_file(self):
         self.production_files()
         self.write(".env", "COMPOSE_FILE=docker-compose.yml:docker-compose.distributed.yml\n")
@@ -519,19 +935,21 @@ class ProductionTests(TempRootTest):
 class SubprocessEnvTests(TempRootTest):
     def test_production_drops_secrets_env_file_keys_versions_and_compose_file(self):
         self.production_files("FUTURE_AGI_VERSION=v1.0.0\nONLY_IN_FILE=file\nPG_PASSWORD=from-file\n"
-                              "# COMMENTED_OUT=1\nexport EXPORTED_IN_FILE=1\n")
+                              "# COMMENTED_OUT=1\nexport EXPORTED_IN_FILE=1\nCOMPOSE_PROJECT_NAME=fileproj\n")
         environ = {name: "shell-" + name for name in SETUP_SECRET_NAMES}
         environ.update({name: "v0.0.1" for name in VERSION_VARIABLES})
         environ.update({"COMPOSE_FILE": "docker-compose.yml", "ONLY_IN_FILE": "shell", "EXPORTED_IN_FILE": "shell",
                         "COMMENTED_OUT": "shell", "PATH": "/usr/bin", "HOME": "/home/u",
-                        "DOCKER_HOST": "unix:///run/docker.sock", "COMPOSE_PROJECT_NAME": "shellproj"})
+                        "DOCKER_HOST": "unix:///run/docker.sock", "COMPOSE_PROJECT_NAME": "shellproj",
+                        "COMPOSE_ENV_FILES": "other.env"})
         inst = Installation(self.root, production=True, environ=environ, runner=Runner(), compose=COMPOSE)
         env = inst.subprocess_env()
-        for key in SETUP_SECRET_NAMES + VERSION_VARIABLES + ("COMPOSE_FILE", "ONLY_IN_FILE", "EXPORTED_IN_FILE"):
+        for key in SETUP_SECRET_NAMES + VERSION_VARIABLES + ("COMPOSE_FILE", "ONLY_IN_FILE", "EXPORTED_IN_FILE",
+                                                              "COMPOSE_PROJECT_NAME", "COMPOSE_ENV_FILES"):
             with self.subTest(dropped=key):
                 self.assertNotIn(key, env)
         self.assertEqual(env, {"COMMENTED_OUT": "shell", "PATH": "/usr/bin", "HOME": "/home/u",
-                               "DOCKER_HOST": "unix:///run/docker.sock", "COMPOSE_PROJECT_NAME": "shellproj"})
+                               "DOCKER_HOST": "unix:///run/docker.sock"})
         # The installation's own view of the shell is untouched.
         self.assertEqual(inst.environ, environ)
 
@@ -604,7 +1022,9 @@ class ComposeArgsTests(TempRootTest):
     def test_compose_run_and_docker_run_use_run(self):
         runner = Runner()
         inst = self.install("", runner=runner, docker=["docker", "--context", "remote"])
-        inst.compose_run("pull", "app", stream=True, timeout=12)
+        with mock.patch.object(inst, 'check_ownership') as ownership:
+            inst.compose_run("pull", "app", stream=True, timeout=12)
+        ownership.assert_called_once_with()
         inst.docker_run("ps", "-a", check=False)
         (first, first_kwargs), (second, second_kwargs) = runner.calls
         self.assertEqual(first, ["docker", "compose", "pull", "app"])
@@ -770,7 +1190,7 @@ class RunTests(TempRootTest):
             raise subprocess.TimeoutExpired(args, kwargs["timeout"])
         inst = self.install("", runner=Runner(handler))
         with self.assertRaises(InstallError) as caught:
-            inst.compose_run("up", "-d", "--wait", "--wait-timeout", "60", timeout=30.4)
+            inst.run(inst.compose_args("up", "-d", "--wait", "--wait-timeout", "60"), timeout=30.4)
         self.assertEqual(str(caught.exception), "`docker compose up -d ...` timed out after 30s")
         self.assertIsInstance(caught.exception.__cause__, subprocess.TimeoutExpired)
 
@@ -989,18 +1409,10 @@ class ContainersTests(TempRootTest):
              "command": ["python", "manage.py", "migrate", "--check", "--noinput"]},
         ])
 
-    def test_sparse_records_get_defaults(self):
-        sparse = {"Id": "abc"}
-        inst, _ = self.inst(ps=completed(0, "abc\n"), inspect=completed(0, json.dumps([sparse, {
-            "Id": "def", "Config": None, "State": None}, {"Id": "ghi", "Config": {"Labels": None, "Cmd": ["x"]},
-                                                          "State": {"Health": None}}])))
-        found = inst.containers()
-        self.assertEqual(found[0], {"id": "abc", "service": "", "image_id": "", "image": "", "status": "",
-                                    "exit_code": None, "restart_count": 0, "health": "none", "started_at": "",
-                                    "command": []})
-        self.assertEqual(found[1]["command"], [])
-        self.assertEqual(found[2]["command"], ["x"])
-        self.assertEqual(found[2]["health"], "none")
+    def test_sparse_records_cannot_establish_ownership(self):
+        inst, _ = self.inst(ps=completed(0, 'abc\n'), inspect=completed(0, json.dumps([{'Id': 'abc'}])))
+        with self.assertRaisesRegex(InstallError, 'ownership'):
+            inst.containers()
 
     def test_blank_lines_in_ps_output_are_ignored(self):
         app = container_record("app")
@@ -1597,17 +2009,14 @@ class MainTests(unittest.TestCase):
         self.assertEqual(json.loads(out), self.plan)
         self.assertTrue(out.endswith("}\n"))
 
-    def test_check_with_journal_notes_the_interrupted_run(self):
-        StateDir(self.root).write_journal({"kind": "apply", "target_version": "v1.2.0", "stage": "pulled"})
-        code, out, _ = self.main("check", "--format", "json")
-        self.assertEqual(code, 0)
-        self.assertIn("an interrupted bin/update run will be recovered by the next apply or rollback",
-                      json.loads(out)["notes"])
-        self.plan = plan_for()
-        _, text, _ = self.main("check")
-        self.assertIn("· an interrupted bin/update run will be recovered", text)
-        # check never recovers: the journal is still there.
-        self.assertIsNotNone(StateDir(self.root).read_journal())
+    def test_check_refuses_a_legacy_pre_rollout_journal_without_guessing(self):
+        state = StateDir(self.root)
+        state.write_journal({'kind': 'apply', 'target_version': 'v1.2.0', 'stage': 'pulled'})
+        before = state.journal_path.read_bytes()
+        code, _, err = self.main('check', '--format', 'json')
+        self.assertEqual(code, 2)
+        self.assertIn('exact env recovery', err)
+        self.assertEqual(state.journal_path.read_bytes(), before)
 
     def test_check_passes_inputs_to_build_plan(self):
         state = StateDir(self.root)
@@ -1909,6 +2318,77 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.main("check")[0], 0)  # fake_fetch asserts the workdir was gone
         self.assertFalse(self.workdir.exists())
 
+    def dead_pid(self):
+        """The pid of a process that has exited and been reaped."""
+
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        return child.pid
+
+    def test_workdirs_of_killed_runs_are_removed(self):
+        # A run killed outright (kill -9) leaves its verify-<pid>; the next verifying run removes it.
+        for command in ("check", "apply"):
+            with self.subTest(command=command):
+                stale = self.root / STATE_DIR / f"verify-{self.dead_pid()}"
+                stale.mkdir(parents=True)
+                (stale / "manifest.json").write_text("stale")
+                self.assertEqual(self.main(command)[0], 0)
+                self.assertFalse(stale.exists())
+
+    def test_workdirs_of_live_or_unknown_processes_and_other_entries_are_kept(self):
+        state = self.root / STATE_DIR
+        state.mkdir()
+        dead = self.dead_pid()
+        # A check running next to this one: a process of this test's own (waiting for its stdin to close), so a
+        # probe that sent a real signal would hit nothing else.
+        # It takes SIGHUP's default action even under nohup, and says so before the run starts.
+        neighbour = subprocess.Popen([sys.executable, "-c", "import signal, sys; "
+                                     "signal.signal(signal.SIGHUP, signal.SIG_DFL); print('ready', flush=True); "
+                                     "sys.stdin.read()"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.addCleanup(neighbour.wait)
+        self.addCleanup(neighbour.stdout.close)
+        self.addCleanup(neighbour.stdin.close)
+        self.assertEqual(neighbour.stdout.readline(), b"ready\n")
+        live = state / f"verify-{neighbour.pid}"
+        foreign = state / "verify-4242"  # alive under another user
+        kept_dirs = [live, foreign, state / "verify-0", state / f"verify-{10 ** 30}", state / "verify-abc",
+                     state / "verify-12x", state / "verify-", state / "receipts"]
+        for directory in kept_dirs:
+            directory.mkdir()
+            (directory / "keep").write_text("keep")
+        not_a_dir = state / f"verify-{dead}"
+        not_a_dir.write_text("a file, not a workdir")
+        target = self.root / "elsewhere"
+        target.mkdir()
+        (target / "keep").write_text("keep")
+        link = state / f"verify-{self.dead_pid()}"
+        link.symlink_to(target)
+        real_kill = os.kill
+
+        def kill(pid, sig):
+            if pid == 4242:
+                raise PermissionError(1, "Operation not permitted")
+            return real_kill(pid, sig)
+
+        with mock.patch.object(cli.os, "kill", side_effect=kill):
+            self.assertEqual(self.main("check")[0], 0)
+        neighbour.stdin.close()
+        self.assertEqual(neighbour.wait(), 0)  # probed for existence, never signalled
+        for directory in kept_dirs:
+            with self.subTest(kept=directory.name):
+                self.assertEqual((directory / "keep").read_text(), "keep")
+        self.assertEqual(not_a_dir.read_text(), "a file, not a workdir")
+        self.assertTrue(link.is_symlink())
+        self.assertEqual((target / "keep").read_text(), "keep")
+
+    def test_status_and_rollback_leave_workdirs_alone(self):
+        stale = self.root / STATE_DIR / f"verify-{self.dead_pid()}"
+        stale.mkdir(parents=True)
+        for argv in (("status",), ("rollback", "--yes")):
+            with self.subTest(argv=argv):
+                self.main(*argv)
+                self.assertTrue(stale.is_dir())
+
     def test_status_and_rollback_never_fetch(self):
         for argv in (("status",), ("rollback", "--yes")):
             with self.subTest(argv=argv):
@@ -1945,18 +2425,20 @@ class MainTests(unittest.TestCase):
         self.assertEqual(lines[-1], "Last run      none")
         self.assertFalse((self.root / STATE_DIR).exists())
 
-    def test_status_shows_journal_and_last_receipt(self):
+    def test_status_blocks_incomplete_journal_and_shows_last_receipt(self):
         state = StateDir(self.root)
         receipt = state.write_receipt({"kind": "apply", "target_version": "v1.2.0", "status": "succeeded",
                                        "finished_at": "2026-10-19T01:02:03Z"})
         state.write_journal({"kind": "rollback", "target_version": "v1.1.0", "stage": "env_written"})
-        code, out, _ = self.main("status")
-        self.assertEqual(code, 0)
-        self.assertIn("Interrupted   a rollback to v1.1.0 stopped at stage env_written; the next apply or rollback "
-                      "recovers it", out)
+        code, out, err = self.main("status")
+        self.assertEqual(code, 2)
+        self.assertIn('missing or invalid exact env recovery data', err)
+        self.assertNotIn('the next apply or rollback recovers it', out)
+        self.assertIsNotNone(state.read_journal())
         self.assertIn(f"Last run      apply to v1.2.0: succeeded (2026-10-19T01:02:03Z) {receipt}", out)
 
     def test_status_with_real_installation(self):
+        (self.root / STANDALONE_FILE).write_text("services: {}\n")
         app = container_record("app", image="futureagi/standalone:v1.0.0", image_id="sha256:app")
         runner = Runner(docker_handler(
             config={"name": "futureagi", "services": {"app": {"image": "futureagi/standalone:v1.0.0"},
@@ -2403,7 +2885,7 @@ class InstallDescribeFailureAdditions(unittest.TestCase):
 class InstallRunAdditions(TempRootTest):
     def timeout_message(self, inst, *args, timeout=30.4):
         with self.assertRaises(InstallError) as caught:
-            inst.compose_run(*args, timeout=timeout)
+            inst.run(inst.compose_args(*args), timeout=timeout)
         self.assertIsInstance(caught.exception.__cause__, subprocess.TimeoutExpired)
         return str(caught.exception)
 
@@ -2631,9 +3113,17 @@ class CliMainAdditions(unittest.TestCase):
         return seen
 
     def journal(self, **fields):
-        record = {"kind": "apply", "target_version": "v1.2.0", "stage": "pulled", "env_file": ".env",
-                  "production": False, "env_changes": {"FUTURE_AGI_VERSION": "v1.2.0"}}
+        record = {'kind': 'apply', 'target_version': 'v1.2.0', 'stage': 'pulled', 'env_file': '.env',
+                  'production': False, 'env_changes': {'FUTURE_AGI_VERSION': 'v1.2.0'}}
         record.update(fields)
+        if record['stage'] in ('prepare', 'env_written', 'pulled') and 'env_recovery' not in fields:
+            values = record.get('found_values', record.get('previous_values', {}))
+            path = self.root / record['env_file']
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(''.join(f'{key}={value}\n' for key, value in values.items() if value is not None))
+            record['env_changes'] = {key: record['env_changes'].get(key, 'v1.2.0') for key in values}
+            record['env_recovery'] = envfile_module.recovery_record(path, record['env_changes'])
+            envfile_module.write_changes(path, record['env_changes'], recovery=record['env_recovery'])
         StateDir(self.root).write_journal(record)
         return record
 
@@ -2725,6 +3215,8 @@ class CliMainAdditions(unittest.TestCase):
         import signal
         if not hasattr(signal, "SIGHUP"):
             self.skipTest("no SIGHUP on this platform")
+        # Under nohup the tests inherit SIGHUP ignored, and an ignored SIGHUP stays ignored: start from the default.
+        self.addCleanup(signal.signal, signal.SIGHUP, signal.signal(signal.SIGHUP, signal.SIG_DFL))
         before = signal.getsignal(signal.SIGHUP)
 
         def hang_up(inst):
@@ -2762,12 +3254,15 @@ class CliMainAdditions(unittest.TestCase):
         self.assertEqual((last["status"], last["target_version"]), ("interrupted_before_rollout", "v1.2.0"))
         self.assertIsNotNone(StateDir(self.root).read_journal())
 
-    def test_check_falls_back_to_previous_values_for_an_older_journal(self):
-        seen = self.with_overlay()
-        self.journal(stage="env_written", previous_values={"FUTURE_AGI_VERSION": "v1.0.0"})
-        self.main("check")
-        self.assertEqual(self.installations[0].overlays, [{"FUTURE_AGI_VERSION": "v1.0.0"}])
-        self.assertEqual(seen["env"]["FUTURE_AGI_VERSION"], "v1.0.0")
+    def test_check_refuses_a_legacy_journal_without_exact_recovery_data(self):
+        self.with_overlay()
+        self.journal(stage='env_written', previous_values={'FUTURE_AGI_VERSION': 'v1.0.0'}, env_recovery=None)
+        before = StateDir(self.root).journal_path.read_bytes()
+        code, _, err = self.main('check')
+        self.assertEqual(code, 2)
+        self.assertIn('exact env recovery', err)
+        self.assertEqual(self.installations[0].overlays, [])
+        self.assertEqual(StateDir(self.root).journal_path.read_bytes(), before)
 
     def test_check_with_nothing_to_put_back_overlays_nothing(self):
         self.with_overlay()
@@ -3904,7 +4399,7 @@ class CliIntegrationTests(unittest.TestCase):
     def test_status_names_the_install_another_installs_journal_belongs_to(self):
         self.journal(env_file="deploy/prod eu.env", production=True)
         code, out, err = self.main("status")
-        self.assertEqual(code, 0, err)
+        self.assertEqual(code, 2, err)
         cd = f"cd {shlex.quote(str(self.root))} && "  # bin/update ran from another directory (round 4, F2)
         theirs = f"{cd}./bin/update --production --env-file 'deploy/prod eu.env'"
         self.assertIn(f"Interrupted   an apply to v1.2.0 for deploy/prod eu.env stopped at stage pulled; this install "
@@ -4032,6 +4527,7 @@ class FakeEngine:
         self.records = []
         self.calls = []
         self.created = 0
+        self.owner_labels = {}
         # Set: the next `up` replaces only this service, then bin/update is killed outright (no handler runs).
         self.killed_after = None
         # The services the compose files define (name -> image template) and the profiles of those in one.
@@ -4097,7 +4593,7 @@ class FakeEngine:
             "Id": f"{self.created:064x}", "Image": self.tags[ref], "RestartCount": 0,
             "Config": {"Image": ref, "Entrypoint": None,
                        "Cmd": ["python", "bootstrap.py", "--check"] if bootstrap else [],
-                       "Labels": {"com.docker.compose.project": self.PROJECT,
+                       "Labels": {**self.owner_labels, "com.docker.compose.project": self.PROJECT,
                                   "com.docker.compose.service": service,
                                   "com.docker.compose.oneoff": "True" if oneoff else "False"}},
             "State": {"Status": "exited" if bootstrap else "running", "ExitCode": 0,
@@ -4215,6 +4711,10 @@ class FullStackProductionTests(unittest.TestCase):
         self.settings(manifest=self.NEW, backup=f"{shlex.quote(sys.executable)} {shlex.quote(str(hook))}")
 
         self.engine = FakeEngine()
+        self.engine.owner_labels = {
+            "com.docker.compose.project.working_dir": str(self.root),
+            "com.docker.compose.project.config_files": f"{self.root / DISTRIBUTED_FILE},{self.root / PRODUCTION_OVERLAY}",
+            "com.docker.compose.project.environment_file": str(self.env_file)}
         for version in (self.OLD, self.NEW, self.NEWER):
             for repo in self.REPOS:
                 self.engine.publish(f"{repo}:{version}", version)
@@ -4667,7 +5167,7 @@ class CliRound3MainTests(unittest.TestCase):
         self.journal(env_file="deploy/.env.production", production=True, kind="rollback", target_version="v1.0.0",
                      stage="env_written")
         code, out, err = self.main("status")
-        self.assertEqual(code, 0, err)
+        self.assertEqual(code, 2, err)
         cd = f"cd {shlex.quote(str(self.root))} && "  # bin/update ran from another directory (round 4, F2)
         # The journal is a rollback's: apply would not continue an update (round 4, F7 / S48).
         self.assertEqual([line for line in out.splitlines() if line.startswith("Interrupted")], [
@@ -4707,16 +5207,15 @@ class CliRound3FullStackTests(unittest.TestCase):
         env_text, other_text, ups = self.env_file.read_text(), other_env.read_text(), len(self.engine.up_calls())
 
         code, out, err = self.paste(f"{other} status")
-        self.assertEqual(code, 0, err)
+        self.assertEqual(code, 2, err)
+        self.assertIn("environment_file", err)
         from_status = self.printed(out, r"run `([^`]+)` \(without --yes it only recovers that run")
         code, out, err = self.paste(f"{other} check")
-        self.assertEqual(code, 3, err)
-        recover = self.printed(out, r"run `([^`]+)` \(without --yes it only recovers that run")
-        again = self.printed(out, r", then `([^`]+)` again;")
-        self.assertEqual((recover, from_status, again),
-                         ("./bin/update --production rollback", "./bin/update --production rollback", f"{other} check"))
-        self.assertIn("`./bin/update --production apply` would recover it too, but would also continue that "
-                      "install's update", out)
+        self.assertEqual(code, 2, err)
+        self.assertIn('environment_file', err)
+        # Status still prints the owning install's recovery command even when current provenance is refused.
+        recover, again = from_status, f"{other} check"
+        self.assertEqual(recover, './bin/update --production rollback')
 
         # Pasted as printed: the killed run is recovered, and nothing else changes. Round 4 (F7): that is a
         # success, and --yes is mentioned only as the optional way to roll that install back too.
@@ -4880,7 +5379,7 @@ class CliRound4MainTests(unittest.TestCase):
                 self.assertTrue(calls[-1]["journal_reason"].endswith(f"; `{theirs} apply` {apply_does}"),
                                 calls[-1]["journal_reason"])
                 code, out, err = self.main("status")
-                self.assertEqual(code, 0, err)
+                self.assertEqual(code, 2, err)
                 line = [line for line in out.splitlines() if line.startswith("Interrupted")]
                 self.assertEqual(len(line), 1, out)
                 self.assertTrue(line[0].endswith(f"run `{theirs} rollback` {self.RECOVER_ONLY}; `{theirs} apply` "
@@ -5552,6 +6051,7 @@ class InstallRound4CallerCwdTests(TempRootTest):
                     "this looks like a deploy/setup.sh production install. Add --production to the command, as in "
                     f"`{prefix}./bin/update --production check`"), str(caught.exception))
         (self.checkout / PRODUCTION_ENV).unlink()
+        (self.checkout / DISTRIBUTED_FILE).write_text("services: {}\n")
         bootstrap = container_record("postgres-schema-bootstrap", status="exited", cmd=["python", "bootstrap.py", "--check"])
         for caller, prefix in ((None, ""), (self.elsewhere, self.cd)):
             with self.subTest(caller=caller):
@@ -5615,6 +6115,9 @@ class InstallRound4ComposeMatrixTests(unittest.TestCase):
         self.base = Path(temporary.name).resolve()
         (self.base / "home").mkdir()
         self.environ = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(self.base / "home")}
+        if "DOCKER_CONTEXT" in os.environ:
+            self.environ["DOCKER_CONTEXT"] = os.environ["DOCKER_CONTEXT"]
+            self.environ["DOCKER_CONFIG"] = os.environ.get("DOCKER_CONFIG", str(Path.home() / ".docker"))
 
     def checkout(self, name, *, production=False, env_lines=(), override=None):
         root = self.base / name
@@ -5982,6 +6485,11 @@ class CliRound5GrammarTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.journal(**dict(CLI_IDENTITY, kind=kind, stage="rollout"))
                 code, out, err = self.main("status")
+                if kind is None:
+                    self.assertEqual(code, 2, err)
+                    self.assertIn('invalid or unknown', err)
+                    self.assertNotIn('Interrupted', out)
+                    continue
                 self.assertEqual(code, 0, err)
                 self.assertEqual(self.interrupted(out), f"Interrupted   {named} to v1.2.0 stopped at stage rollout; the "
                                                         "next apply or rollback recovers it")
@@ -5991,7 +6499,11 @@ class CliRound5GrammarTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.journal(env_file="deploy/.env.production", production=True, kind=kind, stage="env_written")
                 code, out, err = self.main("status")
-                self.assertEqual(code, 0, err)
+                self.assertEqual(code, 2, err)
+                if kind is None:
+                    self.assertIn('invalid or unknown', err)
+                    self.assertNotIn('Interrupted', out)
+                    continue
                 self.assertTrue(self.interrupted(out).startswith(
                     f"Interrupted   {named} to v1.2.0 for deploy/.env.production stopped at stage env_written; this "
                     "install cannot be updated until it is recovered: "), out)
@@ -6395,7 +6907,8 @@ class InstallRound5ComposeVersionTests(TempRootTest):
                                                 f"file. {V2_24_1_HINT}")
         # Only a config call: another command's failure is not Compose rejecting the files.
         with self.assertRaises(InstallError) as caught:
-            self.failing((2, 24, 1), "pull access denied\n").compose_run("pull", "app")
+            inst = self.failing((2, 24, 1), "pull access denied\n")
+            inst.run(inst.compose_args("pull", "app"))
         self.assertEqual(str(caught.exception), "`docker compose pull app` failed with exit code 15: pull access denied")
 
     def test_the_probe_failing_on_v2_24_1_names_the_release_not_the_placeholders(self):
@@ -6492,6 +7005,7 @@ class InstallRound5ActiveServicesTests(TempRootTest):
         # T49 (b): worker-default (workers profile, now off) still runs: on v2.24.7 it was in config(), so no stray.
         from deploy.update.plan import classify_strays
 
+        self.write(DISTRIBUTED_FILE, "services: {}\n")
         containers = [container_record("backend", image="futureagi/future-agi:v1.0.0", image_id="sha256:new"),
                       container_record("worker-default", image="futureagi/future-agi:v0.9.0", image_id="sha256:old")]
         images = {"sha256:new": image_record("sha256:new", version="v1.0.0"),
@@ -6738,6 +7252,7 @@ class IntegratorRound5CliTests(unittest.TestCase):
         self.stage()
         record = json.loads(Path(self.receipt_paths()[-1]).read_text(encoding="utf-8"))
         # Another run (its own id) of the same release: it never wrote its receipt.
+        record['env_recovery'] = envfile_module.recovery_record(self.env_file, record['env_changes'])
         StateDir.write_journal(StateDir(self.root), dict(record, status="running", run_id="another-run"))
         code, out, err = self.paste("./bin/update --production check")
         self.assertEqual(code, 0, err)
@@ -7000,7 +7515,7 @@ class CliRound6OverlayHintFullStackTests(unittest.TestCase):
     backups = FullStackProductionTests.backups
     running = FullStackProductionTests.running
 
-    HINT = r"this install runs the production overlay \(check-only bootstrap jobs\)\. Use `([^`]+)`"
+    HINT = r"If this is the checkout's production install, use `([^`]+)`"
 
     def setUp(self):
         FullStackProductionTests.setUp(self)
@@ -7037,8 +7552,8 @@ class CliRound6OverlayHintFullStackTests(unittest.TestCase):
     def test_check_names_the_production_check_with_its_release_options(self):
         manifest = str(self.manifests[self.NEW])  # its path has a space in it
         code, out, err = self.paste(f"./bin/update check --manifest {shlex.quote(manifest)} --policy minor")
-        self.assertEqual(code, 3, err)
-        hint = self.printed(out, self.HINT)
+        self.assertEqual(code, 2, err)
+        hint = self.printed(err, self.HINT)
         self.assertEqual(self.words(hint), ["./bin/update", "--production", "check", "--manifest", manifest,
                                             "--policy", "minor"])
         self.assert_plans_the_new_release(hint)
@@ -7048,10 +7563,10 @@ class CliRound6OverlayHintFullStackTests(unittest.TestCase):
         # own option, not a release option: the check command does not take it.
         manifest = str(self.manifests[self.NEW])
         code, out, err = self.paste(f"./bin/update apply --manifest {shlex.quote(manifest)} --allow-no-backup")
-        self.assertEqual(code, 3, err)
+        self.assertEqual(code, 2, err)
         # The plan apply printed and the refusal both give it.
         hints = re.findall(self.HINT, err)
-        self.assertEqual(len(hints), 2, err)
+        self.assertEqual(len(hints), 1, err)
         self.assertEqual(len(set(hints)), 1, err)
         hint = hints[0]
         self.assertEqual(self.words(hint), ["./bin/update", "--production", "check", "--manifest", manifest])
@@ -7067,8 +7582,8 @@ class CliRound6OverlayHintFullStackTests(unittest.TestCase):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = cli.main(["--root", str(self.root), "--cwd", str(elsewhere), "check", "--manifest", relative])
-        self.assertEqual(code, 3, stderr.getvalue())
-        hint = self.printed(stdout.getvalue(), self.HINT)
+        self.assertEqual(code, 2, stderr.getvalue())
+        hint = self.printed(stderr.getvalue(), self.HINT)
         words = shlex.split(hint)
         self.assertEqual(words[:3], ["cd", str(self.root), "&&"])
         command = " ".join(shlex.quote(word) for word in words[3:])
@@ -7224,6 +7739,1156 @@ class IntegratorRound6InterruptTests(unittest.TestCase):
         self.assertEqual(err, f"bin/update: interrupted before the apply finished; the next `{self.cd()}./bin/update "
                               f"apply` or `{self.cd()}./bin/update rollback` recovers it first "
                               f"(`{self.cd()}./bin/update status` shows where it stopped)\n")
+
+
+# ================================================================ round 7 ==
+
+class CliRound7EntryPointTests(unittest.TestCase):
+    """`python -m deploy.update` (the module's __main__ guard) exits with main()'s code."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        env_patch = mock.patch.dict(os.environ, clean_environ(), clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def run_module(self, *args):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict(sys.modules), mock.patch.object(sys, "argv", ["bin/update", *args]):
+            # Imported already (as `cli`): runpy would warn, and must run a fresh copy.
+            sys.modules.pop("deploy.update.__main__", None)
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as caught:
+                    runpy.run_module("deploy.update", run_name="__main__")
+        return caught.exception.code, stdout.getvalue(), stderr.getvalue()
+
+    def test_an_error_exits_2_with_its_message(self):
+        code, out, err = self.run_module("--root", str(self.root), "--cwd", str(self.root), "status")
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertEqual(err, f"bin/update: no .env in {self.root}: run bin/update from the checkout ./bin/install "
+                              "set up\n")
+        self.assertFalse((self.root / STATE_DIR).exists())
+
+    def test_help_exits_0(self):
+        code, out, err = self.run_module("--help")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("usage: bin/update", out)
+
+
+class CliRound7StaleWorkdirTests(unittest.TestCase):
+    """The verify-<pid> sweep is best effort: a state directory it cannot list never stops a run."""
+
+    setUp = MainTests.setUp
+    patch = MainTests.patch
+    main = MainTests.main
+    dead_pid = MainTests.dead_pid
+
+    def test_a_state_directory_that_cannot_be_listed_does_not_stop_check_or_apply(self):
+        state = self.root / STATE_DIR
+        stale = state / f"verify-{self.dead_pid()}"
+        stale.mkdir(parents=True)
+        (stale / "manifest.json").write_text("stale")
+        iterdir = Path.iterdir
+
+        def unlistable(path):
+            if path == state:
+                raise PermissionError(13, "Permission denied", str(path))
+            return iterdir(path)
+
+        for command in ("check", "apply"):
+            with self.subTest(command=command):
+                with mock.patch.object(Path, "iterdir", autospec=True, side_effect=unlistable):
+                    code, _, err = self.main(command)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(self.fetch_calls[-1]["workdir"], self.workdir)
+                # Nothing is removed on the strength of a listing that failed; the run's own workdir is.
+                self.assertEqual((stale / "manifest.json").read_text(), "stale")
+                self.assertFalse(self.workdir.exists())
+        self.assertEqual(len(self.fetch_calls), 2)
+
+    def test_every_dead_workdir_goes_whatever_order_the_directory_lists_them_in(self):
+        state = self.root / STATE_DIR
+        state.mkdir()
+        others = [state / "verify-abc", state / "verify-0", state / "notes.txt"]
+        others[0].mkdir()
+        others[1].mkdir()
+        others[2].write_text("keep")
+        iterdir = Path.iterdir
+        for first in ("others", "a dead one"):
+            with self.subTest(first=first):
+                dead = [state / f"verify-{self.dead_pid()}" for _ in range(2)]
+                for directory in dead:
+                    directory.mkdir()
+                    (directory / "manifest.json").write_text("stale")
+                order = others + dead if first == "others" else dead[:1] + others + dead[1:]
+
+                def listing(path, order=order):
+                    return iter(list(order)) if path == state else iterdir(path)
+
+                with mock.patch.object(Path, "iterdir", autospec=True, side_effect=listing):
+                    self.assertEqual(self.main("check")[0], 0)
+                self.assertEqual([directory.exists() for directory in dead], [False, False])
+                self.assertEqual([path.exists() for path in others], [True, True, True])
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bin/update needs bash")
+class CliRound7BinUpdateSymlinkTests(unittest.TestCase):
+    """A symlink to bin/update, or to the checkout's bin directory, runs the checkout the script belongs to."""
+
+    setUp = BinUpdateScriptTests.setUp
+    run_update = BinUpdateScriptTests.run_update
+
+    def assertRunsTheCheckout(self, script, **options):
+        result = self.run_update("status", script=script, **options)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, f"bin/update: no .env in {os.path.realpath(self.checkout)}: run "
+                                        "bin/update from the checkout ./bin/install set up\n")
+        self.assertEqual(result.stdout, "")
+
+    def test_an_absolute_symlink_in_another_directory(self):
+        links = self.base / "usr local bin"
+        links.mkdir()
+        (links / "fagi-update").symlink_to(self.checkout / "bin" / "update")
+        self.assertRunsTheCheckout(links / "fagi-update")
+
+    def test_a_chain_of_relative_and_absolute_symlinks(self):
+        first, second = self.base / "links" / "a", self.base / "links" / "b"
+        first.mkdir(parents=True)
+        second.mkdir()
+        (second / "update").symlink_to(self.checkout / "bin" / "update")
+        (first / "fagi-update").symlink_to(Path("..") / "b" / "update")  # relative to the link's own directory
+        self.assertRunsTheCheckout(first / "fagi-update")
+        # Run by a relative path from the caller's directory, too.
+        self.assertRunsTheCheckout(Path("..") / "links" / "a" / "fagi-update")
+
+    def test_a_symlinked_bin_directory(self):
+        # `..` of the bin directory is the checkout, not the directory that holds the link.
+        (self.base / "fagi-bin").symlink_to(self.checkout / "bin", target_is_directory=True)
+        self.assertRunsTheCheckout(self.base / "fagi-bin" / "update")
+        result = self.run_update("--help", script=self.base / "fagi-bin" / "update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("usage: bin/update", result.stdout)
+
+    def test_an_exported_cdpath_neither_breaks_nor_moves_the_checkout(self):
+        # `bin/update` typed in the checkout (no ./) makes bin/update `cd bin/..`, a relative path bash looks up
+        # in CDPATH first, printing the directory it found: "." finds the checkout, another entry another `bin`.
+        elsewhere = self.base / "elsewhere"
+        for name in ("bin", "links"):
+            (elsewhere / name).mkdir(parents=True)
+        (self.base / "links").mkdir()
+        (self.base / "links" / "fagi-update").symlink_to(self.checkout / "bin" / "update")
+        for cdpath in (".", str(elsewhere), ":" + str(elsewhere)):
+            with self.subTest(CDPATH=cdpath):
+                env = dict(self.env, CDPATH=cdpath)
+                self.assertRunsTheCheckout(Path("bin") / "update", cwd=self.checkout, env=env)
+                self.assertRunsTheCheckout(Path("links") / "fagi-update", cwd=self.base, env=env)
+
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bin/update needs bash")
+class CliRound7BinUpdateWrapperTests(unittest.TestCase):
+    """What the bash wrapper itself decides: the Python it accepts, the arguments it passes on, where Python runs."""
+
+    setUp = BinUpdateScriptTests.setUp
+    run_update = BinUpdateScriptTests.run_update
+
+    def python_reporting(self, version):
+        """A python3 that answers bin/update's version check as Python `version` would (and is the real one else)."""
+
+        wrapper = self.base / ("python " + ".".join(str(number) for number in version))
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "case \"$3\" in\n"
+            f"  *version_info*) exec '{sys.executable}' -I -c \"import sys; sys.version_info = "
+            f"{tuple(version) + ('final', 0)!r}\n$3\" ;;\n"
+            "esac\n"
+            f"exec '{sys.executable}' \"$@\"\n")
+        wrapper.chmod(0o755)
+        return wrapper
+
+    def test_python_3_9_is_accepted_and_3_8_refused(self):
+        result = self.run_update("--help", env=dict(self.env, PYTHON=str(self.python_reporting((3, 9, 0)))))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("usage: bin/update", result.stdout)
+        old = self.python_reporting((3, 8, 18))
+        result = self.run_update("--help", env=dict(self.env, PYTHON=str(old)))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertTrue(result.stderr.startswith(f"bin/update: needs Python 3.9 or newer; {old} is Python "),
+                        result.stderr)
+
+    def test_a_python_that_is_not_there_is_named(self):
+        missing = self.base / "no such dir" / "python3.11"
+        result = self.run_update("status", env=dict(self.env, PYTHON=str(missing)))
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, f"bin/update: needs Python 3.9 or newer on the Docker host ({missing} was not "
+                                        "found)\n")
+        # The default is python3 from PATH: here a PATH with the shell tools bin/update uses, and no python3.
+        tools = self.base / "no python"
+        tools.mkdir()
+        for tool in ("bash", "dirname", "readlink"):
+            (tools / tool).symlink_to(shutil.which(tool))
+        env = {key: value for key, value in self.env.items() if key != "PYTHON"}
+        for python in ({}, {"PYTHON": ""}):  # an empty PYTHON is no PYTHON
+            with self.subTest(python=python):
+                result = self.run_update("status", env=dict(env, PATH=str(tools), **python))
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stderr, "bin/update: needs Python 3.9 or newer on the Docker host (python3 "
+                                                "was not found)\n")
+
+    def test_a_relative_python_names_the_one_in_the_callers_directory_even_from_the_checkout(self):
+        # Python runs from the checkout: the interpreter bin/update checked must be the one it then starts.
+        (self.caller / "py").mkdir()
+        (self.caller / "py" / "python3").symlink_to(sys.executable)
+        impostor = self.checkout / "py" / "python3"
+        executable(impostor, f"#!/bin/sh\n: > '{self.marker}'\nexit 99\n")
+        result = self.run_update("status", env=dict(self.env, PYTHON=os.path.join("py", "python3")))
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertEqual(result.stderr, f"bin/update: no .env in {os.path.realpath(self.checkout)}: run "
+                                        "bin/update from the checkout ./bin/install set up\n")
+        self.assertFalse(self.marker.exists())
+        # One that is only in the checkout is not found where the caller named it.
+        (self.checkout / "py" / "python4").symlink_to(sys.executable)
+        result = self.run_update("status", env=dict(self.env, PYTHON=os.path.join(".", "py", "python4")))
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, "bin/update: needs Python 3.9 or newer on the Docker host "
+                                        f"({os.path.realpath(self.caller)}/./py/python4 was not found)\n")
+
+    def test_python_2_is_named_by_its_version_and_its_own_complaints_are_not_shown(self):
+        # Python 2 prints its version on stderr and refuses -I with a usage message of its own.
+        fake = self.base / "python2.7"
+        fake.write_text("#!/bin/sh\n"
+                        "case \"$1\" in\n"
+                        "  -V) echo 'Python 2.7.18' >&2; exit 0 ;;\n"
+                        "  -I) echo 'Unknown option: -I' >&2; echo 'usage: python2.7 [option] ...' >&2; exit 2 ;;\n"
+                        "esac\n"
+                        "exit 99\n")
+        fake.chmod(0o755)
+        result = self.run_update("status", env=dict(self.env, PYTHON=str(fake)))
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, f"bin/update: needs Python 3.9 or newer; {fake} is Python 2.7.18\n")
+
+    def test_arguments_with_spaces_reach_bin_update_whole(self):
+        (self.checkout / DISTRIBUTED_FILE).write_text("services: {}\n")
+        (self.checkout / PRODUCTION_OVERLAY).write_text("services: {}\n")
+        result = self.run_update("--production", "--env-file", "prod env/fagi prod.env", "status")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(result.stderr.startswith(
+            f"bin/update: {os.path.realpath(self.caller)}/prod env/fagi prod.env does not exist."), result.stderr)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "needs named pipes")
+    def test_sigterm_to_bin_update_reaches_python_which_exits_130(self):
+        # bin/update execs Python: a SIGTERM sent to the process that was started is handled by bin/update itself
+        # (exit 130, "interrupted ..."), never left to kill a shell while the update runs on unsupervised.
+        (self.checkout / ".env").write_text("FUTURE_AGI_VERSION=v1.0.0\n")
+        sync = self.base / "sync"
+        os.mkfifo(str(sync))
+        bindir = self.base / "fake bin"
+        bindir.mkdir()
+        executable(bindir / "docker", "#!/bin/sh\n"
+                   "if [ ! -e \"$SYNC.used\" ]; then : > \"$SYNC.used\"; echo started > \"$SYNC\"; read line; fi\n"
+                   "exit 1\n")
+        env = dict(self.env, SYNC=str(sync), PATH=str(bindir) + os.pathsep + self.env.get("PATH", os.defpath))
+        # Read end opened read-write, so opening it never waits; a second write end says when bin/update ended
+        # without reaching docker, so the wait below always ends.
+        reader = os.open(str(sync), os.O_RDWR)
+        self.addCleanup(os.close, reader)
+        writer = os.open(str(sync), os.O_WRONLY | os.O_NONBLOCK)
+        process = subprocess.Popen([str(self.checkout / "bin" / "update"), "status"], cwd=str(self.caller), env=env,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(process.kill)
+
+        def say_when_it_ends():
+            try:
+                process.wait()
+                os.write(writer, b"ended\n")
+            finally:
+                os.close(writer)
+
+        watcher = threading.Thread(target=say_when_it_ends, daemon=True)
+        watcher.start()
+        # The first docker call (`docker compose version`) is running.
+        self.assertEqual(os.read(reader, 64), b"started\n")
+        process.send_signal(signal.SIGTERM)
+        out, err = process.communicate(timeout=120)
+        watcher.join()
+        self.assertEqual((process.returncode, out, err), (130, "", "bin/update: interrupted before anything was "
+                                                                   "changed\n"))
+
+    def fake_tools(self):
+        """A docker whose Compose resolves a Standalone project with no containers, and a cosign v3 that verifies."""
+
+        bindir = self.base / "fake bin"
+        bindir.mkdir()
+        config = json.dumps({"name": "futureagi", "services": {"app": {"image": "futureagi/standalone:v1.1.0"}}})
+        (bindir / "docker").write_text(
+            "#!/bin/sh\n"
+            "case \"$*\" in\n"
+            "  'compose version --short') echo 2.29.1 ;;\n"
+            "  'compose config --services') echo app ;;\n"
+            "  'compose config --profiles') ;;\n"
+            f"  'compose config --format json') echo '{config}' ;;\n"
+            "  ps\\ *) ;;\n"
+            "  *) echo \"fake docker: unexpected $*\" >&2; exit 1 ;;\n"
+            "esac\n")
+        (bindir / "cosign").write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  version) echo '{\"gitVersion\": \"v3.1.3\"}' ;;\n"
+            "  verify-blob) exit 0 ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n")
+        for tool in ("docker", "cosign"):
+            (bindir / tool).chmod(0o755)
+        return dict(self.env, PATH=str(bindir) + os.pathsep + self.env.get("PATH", os.defpath))
+
+    def check_with_a_relative_key(self, key_directory):
+        (self.checkout / ".env").write_text("FUTURE_AGI_VERSION=v1.1.0\n")
+        (self.checkout / "update.conf").write_text("FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=keys/cosign.pub\n")
+        (key_directory / "keys").mkdir()
+        (key_directory / "keys" / "cosign.pub").write_text("-----BEGIN PUBLIC KEY-----\n")
+        (self.caller / "manifest.json").write_text(json.dumps(valid_manifest("v1.2.0")))
+        (self.caller / "future-agi-update-manifest.sigstore.json").write_text("{}")
+        return self.run_update("check", "--manifest", "manifest.json", env=self.fake_tools())
+
+    def test_a_relative_setting_names_a_file_in_the_checkout(self):
+        # update.conf lives in the checkout: Python runs there, whatever directory bin/update was started from.
+        result = self.check_with_a_relative_key(self.checkout)
+        # Blocked for this fake stack's own reasons (no containers, ...), never for the key.
+        self.assertEqual((result.returncode, result.stderr), (3, ""))
+        self.assertIn("  Signature     verified (public key: keys/cosign.pub)\n", result.stdout)
+        self.assertNotIn("cannot read FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY", result.stdout)
+
+    def test_a_relative_setting_never_names_a_file_in_the_callers_directory(self):
+        result = self.check_with_a_relative_key(self.caller)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("the release signature is not verified: cannot read FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY "
+                      "keys/cosign.pub: No such file or directory", result.stdout)
+        self.assertNotIn("  Signature     verified", result.stdout)
+
+
+
+class InstallRound7ComposeProbeProcessTests(TempRootTest):
+    """resolve_compose_command with real processes: fake docker / docker-compose executables (never Docker itself)."""
+
+    PLUGIN_MISSING = "echo \"docker: 'compose' is not a docker command.\" >&2\nexit 1\n"
+
+    def resolve(self, **tools):
+        bindir = self.root / "fake bin"
+        for name, script in tools.items():
+            executable(bindir / name.replace("_", "-"), "#!/bin/sh\n" + script)
+        bindir.mkdir(exist_ok=True)
+        # `docker` is run by name: only the fake one can be found.
+        with mock.patch.dict(os.environ, {"PATH": str(bindir)}):
+            return resolve_compose_command(which=lambda name: shutil.which(name, path=str(bindir))), bindir
+
+    def test_the_plugins_version_is_read_from_its_output(self):
+        command, _ = self.resolve(docker="[ \"$*\" = 'compose version --short' ] && echo 2.29.1 && exit 0\nexit 9\n",
+                                  docker_compose="echo v2.40.3\n")
+        self.assertEqual((command, command.version), (["docker", "compose"], (2, 29, 1)))
+
+    def test_a_standalone_binarys_version_is_read_from_its_output(self):
+        for output, version in (("v2.40.3", (2, 40, 3)), ("2.24.7", (2, 24, 7)), ("083f676", None)):
+            with self.subTest(output=output):
+                command, bindir = self.resolve(docker=self.PLUGIN_MISSING,
+                                               docker_compose=f"[ \"$*\" = 'version --short' ] && echo {output}\n")
+                self.assertEqual((command, command.version), ([str(bindir / "docker-compose")], version))
+
+    def test_a_standalone_binary_that_fails_or_is_v1_is_refused(self):
+        for script, shown in (("echo 'something broke' >&2\nexit 1\n", "(unknown version)"),
+                              ("echo 2.29.1\nexit 3\n", "2.29.1"), ("echo 1.29.2\n", "1.29.2")):
+            with self.subTest(shown=shown):
+                with self.assertRaises(InstallError) as caught:
+                    self.resolve(docker_compose=script)
+                self.assertEqual(str(caught.exception),
+                                 f"docker-compose {shown} is too old: bin/update needs Docker Compose v2")
+
+
+
+class CliRound7HelpTests(unittest.TestCase):
+    """Each command's --help lists exactly the options it takes, under the installation and release headings."""
+
+    INSTALLATION = ["--production", "--env-file"]
+    RELEASE = ["--manifest", "--bundle", "--policy", "--channel"]
+
+    def sections(self, *argv):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                cli.main([*argv, "--help"])
+        self.assertEqual(caught.exception.code, 0)
+        sections, title = {}, None
+        for line in stdout.getvalue().splitlines():
+            if line and not line[0].isspace() and line.endswith(":"):
+                title = line[:-1]
+                sections[title] = []
+            elif title is not None and re.match(r"^  -", line):
+                sections[title].append(re.match(r"^  (-[^\s,]+)", line).group(1))
+        # Python 3.9 heads the command's own options "optional arguments", later releases "options".
+        sections["options"] = sections.pop("optional arguments", None) or sections.pop("options")
+        sections.pop("positional arguments", None)
+        return sections
+
+    def test_each_command_shows_its_options_under_their_headings(self):
+        expected = {
+            ("check",): {"options": ["-h", "--format"], "installation": self.INSTALLATION, "release": self.RELEASE},
+            ("apply",): {"options": ["-h", "--backup-command", "--allow-no-backup", "--dry-run", "--stage"],
+                         "installation": self.INSTALLATION, "release": self.RELEASE},
+            ("rollback",): {"options": ["-h", "--receipt", "--yes"], "installation": self.INSTALLATION},
+            ("status",): {"options": ["-h"], "installation": self.INSTALLATION},
+            (): {"options": ["-h"], "installation": self.INSTALLATION},
+        }
+        for argv, sections in expected.items():
+            with self.subTest(argv=argv):
+                self.assertEqual(self.sections(*argv), sections)
+
+
+class CliRound7JournalWithoutEnvFileTests(unittest.TestCase):
+    """A journal that does not record its env file (written by hand, say) is recovered with that kind of install's
+    default env file: production's is deploy/.env.production, so its command needs no --env-file."""
+
+    setUp = MainTests.setUp
+    patch = MainTests.patch
+    main = MainTests.main
+    cd = CliRound4MainTests.cd
+
+    def test_another_installs_journal_names_its_default_command(self):
+        StateDir(self.root).write_journal({"kind": "apply", "target_version": "v1.2.0", "stage": "pulled",
+                                           "production": True})
+        theirs = f"{self.cd()}./bin/update --production"
+        recover = (f"run `{theirs} rollback` (without --yes it only recovers that run and changes nothing else)")
+        code, out, err = self.main("status")
+        self.assertEqual(code, 2, err)
+        self.assertIn('must be recovered before this install', err)
+        self.assertIn(f"this install cannot be updated until it is recovered: {recover}; `{theirs} apply` would "
+                      "recover it too, but would also continue that install's update", out)
+        self.assertNotIn("--env-file", out)
+        self.main("check")  # the plan (a stand-in here) blocks on this reason
+        self.assertEqual(self.build_plan.call_args[1]["journal_reason"].split(": ", 1)[1].split(", then ")[0], recover)
+
+
+
+class CliRound7InterruptTests(unittest.TestCase):
+    """What an interrupt says when the receipts could not be listed as the run started, or before any run started."""
+
+    setUp = MainTests.setUp
+    patch = MainTests.patch
+    main = MainTests.main
+    receipt = CliRound2MainTests.receipt
+    cd = CliRound4MainTests.cd
+
+    def test_receipts_unreadable_as_the_run_started_still_point_to_what_it_recorded(self):
+        listings = []
+        receipts = StateDir.receipts
+
+        def flaky(state):
+            listings.append(state)
+            if len(listings) == 1:
+                raise StateError("cannot read .futureagi-updates: Input/output error")
+            return receipts(state)
+
+        made = []
+
+        def stop(*args, **kwargs):
+            made.append(self.receipt(target_version="v1.2.0"))
+            raise KeyboardInterrupt()
+
+        self.Updater.return_value.apply.side_effect = stop
+        with mock.patch.object(StateDir, "receipts", autospec=True, side_effect=flaky):
+            code, _, err = self.main("apply")
+        self.assertEqual(code, 130)
+        self.assertEqual(err, f"bin/update: interrupted; what the run did is recorded in {made[0]} "
+                              f"(`{self.cd()}./bin/update status` shows it)\n")
+
+    def test_an_interrupt_before_the_run_is_not_blamed_on_earlier_receipts_or_journals(self):
+        self.receipt()
+        StateDir(self.root).write_journal({"kind": "apply", "target_version": "v1.2.0", "stage": "pulled",
+                                           **CLI_IDENTITY})
+        for name, argv, arrange in (
+                ("manifest download", ("check",), lambda: setattr(self, "fetch_error", KeyboardInterrupt())),
+                ("verification", ("apply",),
+                 lambda: setattr(self.Verifier.return_value.verify, "side_effect", cli.Interrupted("SIGTERM")))):
+            with self.subTest(name):
+                self.fetch_error = None
+                self.Verifier.return_value.verify.side_effect = None
+                arrange()
+                code, _, err = self.main(*argv)
+                self.assertEqual((code, err), (130, "bin/update: interrupted before anything was changed\n"))
+                self.Updater.return_value.apply.assert_not_called()
+
+    def test_an_earlier_runs_receipt_does_not_make_an_interrupted_run_finished(self):
+        earlier = self.receipt(target_version="v1.1.0", run_id="earlier-run")
+
+        def stop(*args, **kwargs):
+            StateDir(self.root).write_journal({"kind": "apply", "target_version": "v1.2.0", "stage": "pulled",
+                                               "run_id": "this-run", **CLI_IDENTITY})
+            raise KeyboardInterrupt()
+
+        self.Updater.return_value.apply.side_effect = stop
+        code, _, err = self.main("apply")
+        self.assertEqual(code, 130)
+        cd = self.cd()
+        self.assertEqual(err, f"bin/update: interrupted before the apply finished; the next `{cd}./bin/update apply` "
+                              f"or `{cd}./bin/update rollback` recovers it first (`{cd}./bin/update status` shows where "
+                              "it stopped)\n")
+        self.assertNotIn(earlier, err)
+
+
+class CliRound7OutputTests(unittest.TestCase):
+    """Each output stream is made tolerant on its own: one that cannot be reconfigured does not stop the other."""
+
+    setUp = MainTests.setUp
+    patch = MainTests.patch
+
+    def test_a_stdout_without_reconfigure_still_leaves_stderr_tolerant(self):
+        self.Updater.return_value.apply.side_effect = Blocked("the release \u201cv1.2.0\u201d is blocked \u2026")
+        stdout = io.StringIO()  # no reconfigure()
+        stderr = io.TextIOWrapper(io.BytesIO(), encoding="latin-1", errors="strict")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = cli.main(["--root", str(self.root), "--cwd", str(self.cwd), "apply"])
+        stderr.flush()
+        self.assertEqual(code, 3)
+        self.assertEqual(stderr.errors, "backslashreplace")
+        self.assertEqual(stderr.buffer.getvalue(),
+                         b"bin/update: the release \\u201cv1.2.0\\u201d is blocked \\u2026\n")
+
+    def test_the_fallback_note_reaches_stderr_before_verification_starts(self):
+        # Verification can take minutes (or fail): the note is out first, even on a block-buffered stderr.
+        self.fetched.note = CliMainAdditions.NOTE
+        stderr = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", line_buffering=False)
+        seen = []
+
+        def verify(fetched):
+            seen.append(stderr.buffer.getvalue())
+            return self.verification
+
+        self.Verifier.return_value.verify.side_effect = verify
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            code = cli.main(["--root", str(self.root), "--cwd", str(self.cwd), "check"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [f"Note: {CliMainAdditions.NOTE}\n".encode("utf-8")])
+
+
+class InstallRound7RunTests(TempRootTest):
+    """Installation.run's default and messages, and reload_env (after a run writes the env file), which drops what
+    check overlaid: Compose then sees the file's values."""
+
+    def test_a_timeout_of_exactly_four_words_shows_them_all(self):
+        inst = self.install("", runner=Runner(InstallRunAdditions.timing_out))
+        with self.assertRaises(InstallError) as caught:
+            inst.run(inst.compose_args("up", "-d"), timeout=60)
+        self.assertEqual(str(caught.exception), "`docker compose up -d` timed out after 60s")
+        with self.assertRaises(InstallError) as caught:
+            inst.run(inst.compose_args("up", "-d", "app"), timeout=60)
+        self.assertEqual(str(caught.exception), "`docker compose up -d ...` timed out after 60s")
+
+    def test_run_raises_on_a_failure_unless_told_not_to(self):
+        runner = Runner(lambda args, kwargs: completed(1, "", "Error response from daemon: pull access denied"))
+        inst = self.install(runner=runner)
+        with self.assertRaises(InstallError) as caught:
+            inst.run(["docker", "compose", "pull"])
+        self.assertEqual(str(caught.exception), "`docker compose pull` failed with exit code 1: Error response from "
+                                                "daemon: pull access denied")
+        self.assertEqual(inst.run(["docker", "compose", "pull"], check=False).returncode, 1)
+
+    def test_docker_run_raises_on_a_failure_unless_told_not_to(self):
+        # apply re-tags a rolled-back image with docker_run's default: a failed `docker tag` must stop it.
+        runner = Runner(lambda args, kwargs: completed(1, "", "Error response from daemon: No such image: sha256:ab"))
+        inst = self.install(runner=runner, docker=["docker", "--context", "fagi"])
+        with self.assertRaises(InstallError) as caught:
+            inst.docker_run("tag", "sha256:ab", "futureagi/standalone:v1.1.0")
+        self.assertEqual(str(caught.exception), "`docker tag sha256:ab futureagi/standalone:v1.1.0` failed with exit "
+                                                "code 1: Error response from daemon: No such image: sha256:ab")
+        self.assertEqual(runner.calls[-1][0], ["docker", "--context", "fagi", "tag", "sha256:ab",
+                                               "futureagi/standalone:v1.1.0"])
+        self.assertEqual(inst.docker_run("tag", "sha256:ab", "x:y", check=False).returncode, 1)
+
+    def test_a_failing_up_help_is_no_and_is_not_asked_again(self):
+        runner = Runner(lambda args, kwargs: completed(1, UP_HELP_WITH_PULL, "unknown flag: --help"))
+        inst = self.install("", runner=runner)
+        self.assertIs(inst.supports_up_pull_never(), False)
+        self.assertIs(inst.supports_up_pull_never(), False)
+        self.assertEqual(runner.commands(), [["docker", "compose", "up", "--help"]])
+
+    def test_a_docker_command_of_only_global_options_has_no_arguments(self):
+        # What describe_failure and a timeout message split: nothing after the options is no IndexError.
+        self.assertEqual(install.split_command(["docker", "--context", "colima"]), (["docker"], []))
+        self.assertEqual(install.split_command(["docker"]), (["docker"], []))
+        self.assertEqual(Installation.describe_failure(CommandResult(["docker", "--context", "colima"], 125, "", "")),
+                         "`docker` failed with exit code 125 (output above)")
+
+    def test_the_overlay_is_gone_after_a_reload(self):
+        runner = Runner(docker_handler())
+        inst = self.install("FUTURE_AGI_VERSION=v1.0.0\nFRONTEND_VERSION=v1.0.0\n", runner=runner)
+        inst.overlay_env({"FUTURE_AGI_VERSION": "v0.9.0", "FRONTEND_VERSION": None})
+        self.assertEqual({key: inst.subprocess_env()[key] for key in ("FUTURE_AGI_VERSION", "FRONTEND_VERSION")},
+                         {"FUTURE_AGI_VERSION": "v0.9.0", "FRONTEND_VERSION": ""})
+        self.write(".env", "FUTURE_AGI_VERSION=v1.2.0\nFRONTEND_VERSION=v1.2.0\n")
+        inst.reload_env()
+        self.assertEqual(inst.env, {"FUTURE_AGI_VERSION": "v1.2.0", "FRONTEND_VERSION": "v1.2.0"})
+        inst.config()
+        for args, kwargs in runner.calls:
+            with self.subTest(args=args):
+                self.assertNotIn("FUTURE_AGI_VERSION", kwargs["env"])
+                self.assertNotIn("FRONTEND_VERSION", kwargs["env"])
+
+
+
+class InstallRound7UnknownServicesTests(TempRootTest):
+    """The refusal of a service list the JSON does not define names the Compose this run uses and five services."""
+
+    def refusal(self, unknown, compose=COMPOSE):
+        model = {"name": "futureagi", "services": {"app": {"image": "futureagi/standalone:v1.0.0"}}}
+
+        def handle(args, kwargs):
+            if "--services" in args:
+                return completed(0, "".join(f"{name}\n" for name in ["app", *unknown]))
+            return completed(0, json.dumps(model))
+
+        inst = self.install("", runner=Runner(handle), compose=compose)
+        with self.assertRaises(InstallError) as caught:
+            inst.config()
+        return str(caught.exception)
+
+    def test_five_are_named_and_more_are_cut_short(self):
+        rest = ", which its `config --format json` does not define, so bin/update cannot tell which services Compose " \
+               "runs. Upgrade Docker Compose and run bin/update again"
+        five = [f"ghost{n}" for n in range(1, 6)]
+        self.assertEqual(self.refusal(five), f"`docker compose config --services` lists {', '.join(five)}{rest}")
+        self.assertEqual(self.refusal([*five, "ghost6"]),
+                         f"`docker compose config --services` lists {', '.join(five)} ...{rest}")
+        self.assertEqual(self.refusal(["ghost1"], compose=["/opt/bin/docker-compose"]),
+                         f"`docker-compose config --services` lists ghost1{rest}")
+
+
+
+class InstallRound7BuildableTests(TempRootTest):
+    """service_model's "buildable": a build section in either model counts, for an inactive service too."""
+
+    def test_a_build_section_seen_by_only_one_model_makes_the_service_buildable(self):
+        active = {"name": "futureagi", "services": {
+            "app": {"image": "futureagi/standalone:v1.0.0"},
+            "worker": {"image": "futureagi/future-agi:v1.0.0", "build": {"context": "."}}}}
+        probed = {"name": "futureagi", "services": {
+            "app": {"image": "futureagi/standalone:bin-update-probe-FUTURE_AGI_VERSION"},
+            "serving": {"image": "futureagi/serving:bin-update-probe-SERVING_VERSION", "build": {"context": "serving"},
+                        "profiles": ["ml"]}}}
+
+        def handle(args, kwargs):
+            if "--profiles" in args:
+                return completed(0, "ml\n")
+            if "--services" in args:
+                return completed(0, "app\nworker\n")
+            probe = kwargs["env"].get("FUTURE_AGI_VERSION", "").startswith("bin-update-probe-")
+            return completed(0, json.dumps(probed if probe else active))
+
+        model = self.install("", runner=Runner(handle)).service_model()
+        self.assertFalse(model["complete"])  # the probe did not see worker
+        self.assertEqual({name: (entry["active"], entry["buildable"]) for name, entry in model["services"].items()},
+                         {"app": (True, False), "worker": (True, True), "serving": (False, True)})
+
+
+
+class InstallRound7FutureAgiServicesTests(TempRootTest):
+    """futureagi_services looks at every service: one without an image, or with an image it cannot parse, is skipped
+    and the services after it (in name order) are still found."""
+
+    def test_services_after_one_without_an_image_or_with_an_odd_one_are_found(self):
+        config = {"name": "futureagi", "services": {
+            "a-builder": {"build": {"context": "."}},
+            "app": {"image": "futureagi/standalone:v1.0.0"},
+            "b-odd": {"image": "Not A Reference!"},
+            "c-third-party": {"image": "redis:7"},
+            "frontend": {"image": "futureagi/frontend:v1.0.0", "build": {"context": "frontend"}}}}
+        inst = self.install("", runner=Runner(docker_handler(config)))
+        self.assertEqual([(entry["service"], entry["component"], entry["buildable"])
+                          for entry in inst.futureagi_services()],
+                         [("app", "standalone", False), ("frontend", "frontend", True)])
+
+
+# ================================================================ round 8 ==
+
+class CliRound8StaleWorkdirProbeTests(unittest.TestCase):
+    """The verify-<pid> sweep asks only about the processes its directories name: never pid 0 (kill(0, ...)
+    addresses this whole process group) and never this run itself."""
+
+    setUp = MainTests.setUp
+    patch = MainTests.patch
+    main = MainTests.main
+    dead_pid = MainTests.dead_pid
+
+    def test_pid_0_and_its_own_pid_are_never_probed(self):
+        state = self.root / STATE_DIR
+        state.mkdir()
+        dead = self.dead_pid()
+        group = [state / "verify-0", state / "verify-00"]
+        for directory in [*group, state / f"verify-{dead}", self.workdir]:
+            directory.mkdir()
+            (directory / "manifest.json").write_text("stale")
+        probed = []
+        real_kill = os.kill
+
+        def kill(pid, sig):
+            probed.append((pid, sig))
+            return real_kill(pid, sig)
+
+        for command in ("check", "apply"):
+            with self.subTest(command=command):
+                del probed[:]
+                with mock.patch.object(cli.os, "kill", side_effect=kill):
+                    self.assertEqual(self.main(command)[0], 0)
+                self.assertEqual(probed, [(dead, 0)] if command == "check" else [])
+                self.assertEqual([(directory / "manifest.json").read_text() for directory in group], ["stale"] * 2)
+                self.assertFalse((state / f"verify-{dead}").exists())
+                self.assertFalse(self.workdir.exists())
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bin/update needs bash")
+class CliRound8BinUpdateLoaderTests(unittest.TestCase):
+    """The rest of the loader's paths: links met inside linked directories, a linked checkout, a link found on
+    PATH, names that start with a dash, each bash on this host, and the interpreters it does not accept."""
+
+    setUp = BinUpdateScriptTests.setUp
+    run_update = BinUpdateScriptTests.run_update
+    assertRunsTheCheckout = CliRound7BinUpdateSymlinkTests.assertRunsTheCheckout
+
+    def link_farm(self):
+        """opt/tools -> "real links", whose "fagi update" -> ../hop/update -> ../check out/bin/update.
+
+        Both links are relative: the kernel reads each from the directory that holds it. The second link is met
+        under "real links/..", which is the base directory, while opt/tools/.. is opt, which holds decoys: a hop
+        directory and a "check out" with no bin/update run in it.
+        """
+
+        real = self.base / "real links"
+        real.mkdir()
+        (self.base / "opt").mkdir()
+        (self.base / "opt" / "tools").symlink_to(real, target_is_directory=True)
+        (self.base / "hop").mkdir()
+        (self.base / "hop" / "update").symlink_to(Path("..") / "check out" / "bin" / "update")
+        (real / "fagi update").symlink_to(Path("..") / "hop" / "update")
+        (self.base / "opt" / "hop").mkdir()
+        (self.base / "opt" / "check out" / "bin").mkdir(parents=True)
+        return self.base / "opt" / "tools" / "fagi update"
+
+    def test_a_relative_link_met_inside_a_linked_directory_is_read_where_the_link_really_is(self):
+        self.assertRunsTheCheckout(self.link_farm())
+        self.assertRunsTheCheckout(Path("opt") / "tools" / "fagi update", cwd=self.base)
+
+    def test_a_linked_checkout(self):
+        (self.base / "fagi").symlink_to(self.checkout, target_is_directory=True)
+        (self.base / "links").mkdir()
+        (self.base / "links" / "fagi rel").symlink_to(Path("..") / "check out", target_is_directory=True)
+        for checkout in (self.base / "fagi", self.base / "links" / "fagi rel"):
+            with self.subTest(checkout=checkout.name):
+                self.assertRunsTheCheckout(checkout / "bin" / "update")
+                self.assertRunsTheCheckout(Path("bin") / "update", cwd=checkout)
+                result = self.run_update("--help", script=checkout / "bin" / "update")
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertIn("usage: bin/update", result.stdout)
+
+    def test_a_link_found_on_path(self):
+        # Installed as a command: bash is given the path PATH found, here through a relative link.
+        links = self.base / "usr local bin"
+        links.mkdir()
+        (links / "fagi-update").symlink_to(Path("..") / "check out" / "bin" / "update")
+        env = dict(self.env, PATH=str(links) + os.pathsep + self.env.get("PATH", os.defpath))
+        self.assertRunsTheCheckout("fagi-update", env=env)
+        self.assertRunsTheCheckout("fagi-update", env=env, cwd=self.checkout / "bin")
+
+    def test_names_that_start_with_a_dash(self):
+        # `bash -- -co/bin/update`: a path that starts with a dash reaches dirname, readlink and cd as an operand,
+        # never as an option.
+        (self.base / "-co").symlink_to(self.checkout, target_is_directory=True)
+        (self.base / "-links").mkdir()
+        (self.base / "-links" / "-fagi").symlink_to(Path("..") / "-co" / "bin" / "update")
+        for script in ("-co/bin/update", "-links/-fagi"):
+            with self.subTest(script=script):
+                result = subprocess.run([shutil.which("bash"), "--", script, "status"], cwd=str(self.base),
+                                        env=self.env, capture_output=True, text=True, timeout=120)
+                self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+                self.assertEqual(result.stderr, f"bin/update: no .env in {os.path.realpath(self.checkout)}: run "
+                                                "bin/update from the checkout ./bin/install set up\n")
+
+    def test_each_bash_on_this_host_finds_the_checkout(self):
+        # macOS keeps bash 3.2 at /bin/bash; the bash on PATH may be another.
+        shells = sorted({os.path.realpath(path) for path in ("/bin/bash", "/usr/bin/bash", shutil.which("bash"))
+                         if path and os.access(path, os.X_OK)})
+        (self.base / "fagi-bin").symlink_to(self.checkout / "bin", target_is_directory=True)
+        (self.base / "abs").mkdir()
+        (self.base / "abs" / "fagi-update").symlink_to(self.checkout / "bin" / "update")
+        scripts = [self.checkout / "bin" / "update", self.base / "fagi-bin" / "update",
+                   self.base / "abs" / "fagi-update", self.link_farm()]
+        for shell in shells:
+            for script in scripts:
+                with self.subTest(shell=shell, script=str(script.relative_to(self.base))):
+                    result = subprocess.run([shell, str(script), "status"], cwd=str(self.caller), env=self.env,
+                                            capture_output=True, text=True, timeout=120)
+                    self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+                    self.assertEqual(result.stderr, f"bin/update: no .env in {os.path.realpath(self.checkout)}: "
+                                                    "run bin/update from the checkout ./bin/install set up\n")
+
+    def test_a_python_that_is_a_directory_or_not_executable_is_not_found(self):
+        not_executable = self.base / "python3 copy"
+        not_executable.write_text(f"#!/bin/sh\nexec '{sys.executable}' \"$@\"\n")  # mode 0644: not executable
+        for python in (not_executable, self.base / "python dir"):
+            with self.subTest(python=python.name):
+                if python.name == "python dir":
+                    python.mkdir()
+                result = self.run_update("status", env=dict(self.env, PYTHON=str(python)))
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertEqual(result.stderr, f"bin/update: needs Python 3.9 or newer on the Docker host ({python} "
+                                                "was not found)\n")
+
+    def test_a_python_named_without_a_slash_is_found_on_path_not_in_a_directory(self):
+        shim = self.base / "shim dir"
+        shim.mkdir()
+        (shim / "fagi-python").symlink_to(sys.executable)
+        for directory in (self.caller, self.checkout):  # never run from where bin/update was started, or from ROOT
+            executable(directory / "fagi-python", f"#!/bin/sh\n: > '{self.marker}'\nexit 99\n")
+        env = dict(self.env, PYTHON="fagi-python", PATH=str(shim) + os.pathsep + self.env.get("PATH", os.defpath))
+        for cwd in (self.caller, self.checkout):
+            with self.subTest(cwd=cwd.name):
+                self.assertRunsTheCheckout(self.checkout / "bin" / "update", env=env, cwd=cwd)
+                self.assertFalse(self.marker.exists())
+
+    def test_python3_found_through_a_relative_path_entry_is_the_one_that_runs(self):
+        # PATH=venv/bin:... (or an empty entry, the current directory) names directories in the caller's
+        # directory; Python then runs from the checkout, whose files of the same names must never run.
+        impostor = f"#!/bin/sh\n: > '{self.marker}'\nexit 99\n"
+        system_path = self.env.get("PATH", os.defpath)
+        env = {key: value for key, value in self.env.items() if key != "PYTHON"}
+        for entry, directory in (("py bin", Path("py bin")), ("", Path("."))):
+            with self.subTest(entry=entry):
+                (self.caller / directory).mkdir(exist_ok=True)
+                (self.caller / directory / "python3").symlink_to(sys.executable)
+                executable(self.checkout / directory / "python3", impostor)
+                self.assertRunsTheCheckout(self.checkout / "bin" / "update",
+                                           env=dict(env, PATH=entry + os.pathsep + system_path))
+                self.assertFalse(self.marker.exists())
+                (self.caller / directory / "python3").unlink()
+                # Only the checkout has one there: python3 is found further down PATH, and that one runs, not the
+                # checkout's file that a second lookup from the checkout would find first.
+                self.assertRunsTheCheckout(self.checkout / "bin" / "update",
+                                           env=dict(env, PATH=entry + os.pathsep + system_path))
+                self.assertFalse(self.marker.exists())
+                (self.checkout / directory / "python3").unlink()
+
+    def test_a_python_whose_name_starts_with_a_dash_is_looked_up_as_a_name(self):
+        shim = self.base / "shim dir"
+        shim.mkdir()
+        (shim / "-fagi-python").symlink_to(sys.executable)
+        env = dict(self.env, PYTHON="-fagi-python", PATH=str(shim) + os.pathsep + self.env.get("PATH", os.defpath))
+        self.assertRunsTheCheckout(self.checkout / "bin" / "update", env=env)
+        result = self.run_update("status", env=dict(env, PYTHON="-no-such-python"))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, "", "bin/update: needs Python 3.9 or newer on the Docker host (-no-such-python was not "
+                                 "found)\n"))
+
+    def test_relative_paths_start_in_the_callers_directory_reached_through_a_link(self):
+        # A shell in a linked directory exports PWD as the link; bin/update passes it on as --cwd.
+        (self.checkout / DISTRIBUTED_FILE).write_text("services: {}\n")
+        (self.checkout / PRODUCTION_OVERLAY).write_text("services: {}\n")
+        caller = self.base / "caller link"
+        caller.symlink_to(self.caller, target_is_directory=True)
+        result = self.run_update("--production", "--env-file", "prod.env", "status", cwd=caller,
+                                 env=dict(self.env, PWD=str(caller)))
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertTrue(result.stderr.startswith(f"bin/update: {os.path.realpath(self.caller)}/prod.env does not "
+                                                 "exist."), result.stderr)
+
+
+# ================================================= checkout ownership ====
+
+
+def ownership_labels(root, *, files=None, env_file=None):
+    """Compose v2 provenance: absolute paths, comma-separated files; implicit .env has no env-file label."""
+
+    labels = {"com.docker.compose.project.working_dir": str(root),
+              "com.docker.compose.project.config_files": ",".join(str(p) for p in
+                  (files if files is not None else [root / STANDALONE_FILE]))}
+    if env_file is not None:
+        labels["com.docker.compose.project.environment_file"] = str(env_file)
+    return labels
+
+
+class CheckoutOwnershipTests(TempRootTest):
+    def setUp(self):
+        super().setUp()
+        self.write(".env", "FUTURE_AGI_VERSION=v1.0.0\n")
+        self.write(STANDALONE_FILE, "services: {}\n")
+        self.other = self.root / "other checkout"
+        self.other.mkdir()
+        (self.other / STANDALONE_FILE).write_text("services: {}\n")
+        (self.other / ".env").write_bytes((self.root / ".env").read_bytes())
+
+    def record(self, service="app", *, owner=None, **kwargs):
+        record = container_record(service, **kwargs)
+        record["Config"]["Labels"].update(ownership_labels(owner or self.root))
+        return record
+
+    def installation(self, records, **kwargs):
+        config = {"name": "futureagi", "services": {"app": {"image": "futureagi/standalone:v1.0.0"}}}
+        runner = Runner(docker_handler(config=config, containers=records, add_provenance=False))
+        inst = Installation(self.root, environ={}, compose=COMPOSE, runner=runner, **kwargs)
+        return inst, runner
+
+    def assertRefused(self, records, *needles, **kwargs):
+        inst, runner = self.installation(records, **kwargs)
+        before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        with self.assertRaises(InstallError) as caught:
+            inst.containers()
+        message = str(caught.exception)
+        self.assertIn("ownership", message)
+        for needle in needles:
+            self.assertIn(needle, message)
+        self.assertEqual({p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}, before)
+        self.assertFalse(any("up" in cmd or "pull" in cmd for cmd in runner.commands()))
+        return message
+
+    def test_unset_export_selecting_another_checkout_is_not_an_install_here(self):
+        # Real Compose's name fallback is exercised below; this is the actual inspect result it selects.
+        record = self.record(owner=self.other)
+        message = self.assertRefused([record], "futureagi", str(self.other), str(self.root), "COMPOSE_PROJECT_NAME")
+        self.assertIn("persist", message)
+        self.assertIn("--env-file", message)
+
+    def test_same_owner_is_accepted_and_all_containers_remain_visible(self):
+        records = [self.record(), self.record("postgres", status="exited")]
+        inst, _ = self.installation(records)
+        self.assertEqual([(c["id"], c["status"]) for c in inst.containers()],
+                         [(r["Id"], r["State"]["Status"]) for r in records])
+        self.assertEqual(inst.check_stack(inst.containers()), [])
+        inst.check_ownership()
+
+    def test_symlink_equivalent_checkout_files_and_env_are_the_same_owner(self):
+        alias = self.root / "checkout link"
+        alias.symlink_to(self.root, target_is_directory=True)
+        record = self.record(owner=alias)
+        record["Config"]["Labels"].update(ownership_labels(alias, env_file=alias / ".env"))
+        inst, _ = self.installation([record])
+        self.assertEqual([c["id"] for c in inst.containers()], [record["Id"]])
+        inst.check_ownership()
+
+    def test_conflicting_owners_are_not_filtered_even_for_stopped_or_oneoff_containers(self):
+        for state in ("running", "exited", "created", "restarting"):
+            for oneoff in ("True", "False"):
+                with self.subTest(state=state, oneoff=oneoff):
+                    foreign = self.record("postgres-schema-bootstrap", owner=self.other, status=state)
+                    foreign["Config"]["Labels"]["com.docker.compose.oneoff"] = oneoff
+                    self.assertRefused([self.record(), foreign], foreign["Id"][:12])
+                    self.assertRefused([foreign, self.record()], foreign["Id"][:12])
+
+    def test_same_owner_init_jobs_are_checked_but_not_used_as_stack_versions(self):
+        job = self.record("app", cid="b" * 64, image="futureagi/standalone:v9.0.0", status="exited")
+        job["Config"]["Labels"]["com.docker.compose.oneoff"] = "True"
+        inst, _ = self.installation([self.record(), job])
+        self.assertTrue(inst.containers()[1]["oneoff"])
+        self.assertEqual(inst.check_stack(inst.containers()), [])
+        inst.check_ownership()
+
+    def test_missing_or_malformed_labels_never_establish_ownership(self):
+        for key in ("com.docker.compose.project", "com.docker.compose.project.working_dir",
+                    "com.docker.compose.project.config_files"):
+            for value in (None, "", [], {}, 3, "relative/path", "bad\x00path", "\n"):
+                with self.subTest(key=key, value=value):
+                    record = self.record()
+                    if value is None:
+                        del record["Config"]["Labels"][key]
+                    else:
+                        record["Config"]["Labels"][key] = value
+                    self.assertRefused([record])
+        for labels in (None, [], "malformed", 4):
+            with self.subTest(labels=labels):
+                record = self.record()
+                record["Config"]["Labels"] = labels
+                self.assertRefused([record])
+
+    def test_matching_workdir_cannot_hide_foreign_missing_or_conflicting_config_files(self):
+        override = self.write("docker-compose.override.yml", "services: {}\n")
+        for value in (str(self.other / STANDALONE_FILE), str(self.root / "gone.yml"), str(self.root),
+                      str(self.root / STANDALONE_FILE) + ",", "," + str(self.root / STANDALONE_FILE)):
+            with self.subTest(files=value):
+                record = self.record()
+                record["Config"]["Labels"]["com.docker.compose.project.config_files"] = value
+                self.assertRefused([record])
+        # Two otherwise local owners disagree about the files used to create this project.
+        record = self.record("postgres")
+        record["Config"]["Labels"].update(ownership_labels(self.root, files=[self.root / STANDALONE_FILE, override]))
+        self.assertRefused([self.record(), record], "config_files")
+
+    def test_symlink_to_foreign_config_is_not_local_provenance(self):
+        linked = self.root / "foreign.yml"
+        linked.symlink_to(self.other / STANDALONE_FILE)
+        record = self.record()
+        record["Config"]["Labels"].update(ownership_labels(self.root, files=[linked]))
+        self.assertRefused([record], "config_files")
+
+    def test_missing_or_relocated_paths_require_manual_recovery_not_adoption(self):
+        record = self.record(owner=self.root / "old location")
+        message = self.assertRefused([record], "working_dir")
+        self.assertIn("restore", message.lower())
+        self.assertIn("manual", message.lower())
+        # Restoring the original path as an operator-controlled symlink to this same checkout proves equivalence.
+        (self.root / "old location").symlink_to(self.root, target_is_directory=True)
+        inst, _ = self.installation([record])
+        inst.check_ownership()
+
+    def test_production_requires_its_actual_env_file_and_accepts_a_custom_file(self):
+        self.production_files()
+        custom = self.write("secrets/prod custom.env", "FUTURE_AGI_VERSION=v1.0.0\n")
+        for env_file in (self.root / PRODUCTION_ENV, custom):
+            with self.subTest(env_file=env_file):
+                record = self.record("backend")
+                record["Config"]["Labels"].update(ownership_labels(
+                    self.root, files=[self.root / DISTRIBUTED_FILE, self.root / PRODUCTION_OVERLAY], env_file=env_file))
+                inst, _ = self.installation([record], production=True, env_file=env_file)
+                inst.check_ownership()
+                for value in (None, "", str(self.root / ".env"), str(self.root / "missing.env"),
+                              str(env_file) + "," + str(self.root / ".env")):
+                    with self.subTest(label=value):
+                        bad = json.loads(json.dumps(record))
+                        labels = bad["Config"]["Labels"]
+                        if value is None:
+                            labels.pop("com.docker.compose.project.environment_file")
+                        else:
+                            labels["com.docker.compose.project.environment_file"] = value
+                        self.assertRefused([bad], "environment_file", production=True, env_file=env_file)
+
+    def test_explicitly_selected_project_is_valid_only_with_matching_owner(self):
+        self.write(".env", "FUTURE_AGI_VERSION=v1.0.0\nCOMPOSE_PROJECT_NAME=fagi-b\n")
+        record = self.record(project="fagi-b")
+        runner = Runner(docker_handler(config={"name": "fagi-b", "services": {}}, containers=[record], add_provenance=False))
+        inst = Installation(self.root, environ={"COMPOSE_PROJECT_NAME": "fagi-b"}, compose=COMPOSE, runner=runner)
+        inst.check_ownership()
+        self.assertTrue(any("label=com.docker.compose.project=fagi-b" in cmd for cmd in runner.commands()))
+        record["Config"]["Labels"].update(ownership_labels(self.other))
+        with self.assertRaisesRegex(InstallError, "ownership"):
+            inst.check_ownership()  # not cached after a successful check
+
+    def test_no_container_proof_refuses_mutation_but_config_and_status_still_work(self):
+        inst, runner = self.installation([])
+        self.assertEqual(inst.project, "futureagi")
+        self.assertEqual(inst.containers(), [])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertIsNone(cli._status(inst, StateDir(self.root)))
+        self.assertIn("Last run      none", out.getvalue())
+        with self.assertRaisesRegex(InstallError, "ownership"):
+            inst.check_ownership()
+        self.assertFalse((self.root / STATE_DIR).exists())
+
+    def test_compose_mutation_rechecks_ownership_and_never_runs_for_a_foreign_project(self):
+        record = self.record()
+        inst, runner = self.installation([record])
+        inst.check_ownership()
+        record["Config"]["Labels"].update(ownership_labels(self.other))
+        for args in (("up", "-d"), ("pull", "app")):
+            with self.subTest(args=args):
+                with self.assertRaisesRegex(InstallError, "ownership"):
+                    inst.compose_run(*args, check=False)
+                self.assertNotIn([*COMPOSE, *args], runner.commands())
+        inst.compose_run("logs", "--tail", "10", "app", check=False)
+        self.assertIn([*COMPOSE, "logs", "--tail", "10", "app"], runner.commands())
+
+
+class CliCheckoutOwnershipTests(unittest.TestCase):
+    """Real Installation/CLI/Updater/state, with only inspect/config/health/signature I/O faked."""
+
+    OLD, NEW, NEWER = FullStackProductionTests.OLD, FullStackProductionTests.NEW, FullStackProductionTests.NEWER
+    REPOS = FullStackProductionTests.REPOS
+    manifest = FullStackProductionTests.manifest
+    settings = FullStackProductionTests.settings
+    paste = FullStackProductionTests.paste
+    versions = FullStackProductionTests.versions
+    receipts = FullStackProductionTests.receipts
+    receipt_paths = FullStackProductionTests.receipt_paths
+    backups = FullStackProductionTests.backups
+    stage = FullStackProductionTests.stage
+
+    def setUp(self):
+        FullStackProductionTests.setUp(self)
+        self.owner = self.root / "another checkout"
+        (self.owner / "deploy").mkdir(parents=True)
+        for path in (DISTRIBUTED_FILE, PRODUCTION_OVERLAY, PRODUCTION_ENV):
+            (self.owner / path).write_bytes((self.root / path).read_bytes())
+        self.set_owner(self.root)
+
+    def set_owner(self, root):
+        for record in self.engine.records:
+            record["Config"]["Labels"].update(ownership_labels(
+                root, files=[root / DISTRIBUTED_FILE, root / PRODUCTION_OVERLAY], env_file=root / PRODUCTION_ENV))
+
+    def snapshot(self):
+        state = StateDir(self.root)
+        return {"env": self.env_file.read_bytes(), "foreign_env": (self.owner / PRODUCTION_ENV).read_bytes(),
+                "containers": json.loads(json.dumps(self.engine.records)),
+                "journal": state.journal_path.read_bytes() if state.journal_path.exists() else None,
+                "receipts": [(p.name, p.read_bytes()) for p in state.receipts()],
+                "backup": self.backup_log.read_bytes() if self.backup_log.exists() else None,
+                "up": list(self.engine.up_calls())}
+
+    def refused(self, command):
+        before = self.snapshot()
+        calls = len(self.engine.calls)
+        code, out, err = self.paste(command)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("ownership", err)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(any(install.split_command(c)[1][:1] in (["pull"], ["up"], ["tag"])
+                             for c in self.engine.calls[calls:]))
+        return out, err
+
+    def test_fresh_apply_and_stage_cannot_use_another_checkouts_project(self):
+        self.set_owner(self.owner)
+        for command in ("check", "apply", "apply --stage", "apply --dry-run", "rollback --yes"):
+            with self.subTest(command=command):
+                self.refused("./bin/update --production " + command)
+
+    def test_staged_finish_and_quiet_rollback_cannot_use_a_foreign_owner(self):
+        self.stage()
+        self.set_owner(self.owner)
+        for command in ("apply", "apply --stage", "rollback --yes", "rollback"):
+            with self.subTest(command=command):
+                self.refused("./bin/update --production " + command)
+
+    def test_recovery_leaves_env_journal_and_receipts_untouched_for_foreign_owner(self):
+        self.stage()
+        state = StateDir(self.root)
+        state.write_journal(dict(kind="apply", stage="env_written", target_version=self.NEW,
+                                 project=self.engine.PROJECT, mode="production", production=True,
+                                 env_file=PRODUCTION_ENV, found_values={"FUTURE_AGI_VERSION": self.OLD},
+                                 run_id="ownership-interrupted"))
+        self.set_owner(self.owner)
+        for command in ("apply", "apply --dry-run", "rollback", "rollback --yes"):
+            with self.subTest(command=command):
+                self.refused("./bin/update --production " + command)
+
+    def test_status_reports_ownership_problem_and_keeps_local_pending_state_visible(self):
+        self.stage()
+        self.set_owner(self.owner)
+        before = self.snapshot()
+        code, out, err = self.paste("./bin/update --production status")
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("ownership", out + err)
+        self.assertIn("running: unknown", out)
+        self.assertIn("Last run      apply", out)
+        self.assertIn("staged", out)
+        self.assertIn("FUTURE_AGI_VERSION=" + self.NEW, out)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_same_owner_can_stage_finish_and_rollback(self):
+        self.stage()
+        for command, version in (("apply", self.NEW), ("rollback --yes", self.OLD)):
+            code, out, err = self.paste("./bin/update --production " + command)
+            self.assertEqual(code, 0, out + err)
+            self.assertEqual(self.versions(), (version, version))
+            self.assertEqual(self.engine.running()["backend"], version)
+        self.assertEqual(self.backups(), 1)
+        self.assertEqual([r["status"] for r in self.receipts()], ["staged", "succeeded", "rolled_back"])
 
 
 if __name__ == "__main__":

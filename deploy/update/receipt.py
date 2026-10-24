@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,6 +28,12 @@ JOURNAL = "journal.json"
 LOCK = "update.lock"
 RECEIPT_SCHEMA = 2
 IDENTITY_FIELDS = ("mode", "production", "env_file", "project")
+# Public schema: new private transaction fields must never become receipts by
+# accident. This is an allowlist, not a blacklist of known secret-bearing keys.
+_PUBLIC_RECEIPT_FIELDS = frozenset((*IDENTITY_FIELDS, "kind", "status", "stage", "started_at", "finished_at",
+    "run_id", "target_version", "from_version", "from_versions", "manifest_hash", "manifest_source", "channel",
+    "signature", "components", "env_changes", "found_values", "previous_values", "previous_images", "backup",
+    "resumes", "rolls_back", "restarted", "target_image_ids", "error", "message", "note"))
 _SECRET_KEY_RE = re.compile(r"(PASSWORD|SECRET|TOKEN|_KEY|KEY_|CREDENTIAL|DSN|PRIVATE|LICENSE)", re.I)
 _RECEIPT_NAME_RE = re.compile(r"^receipt-\d{8}T\d{6}Z-\d+\.json$")
 # Fields of a journal or receipt whose text came from a command or an exception (and may quote the env
@@ -124,8 +131,15 @@ def _write_json(path: Path, value: Mapping[str, Any], state_dir: Optional[Path] 
             json.dump(value, handle, sort_keys=True, indent=2)
             handle.write("\n")
             handle.flush()
-            os.fsync(handle.fileno())
+            from .envcommit import sync_file
+            sync_file(handle.fileno())
         os.replace(temp, path)
+        _fsync_dir(path.parent)
+        # Persist a newly created state directory too, before an env mutation.
+        _fsync_dir(path.parent.parent)
+        if sys.platform == "darwin":
+            with path.open("rb") as handle:
+                sync_file(handle.fileno())
     except BaseException as exc:
         try:
             os.unlink(temp)
@@ -136,10 +150,18 @@ def _write_json(path: Path, value: Mapping[str, Any], state_dir: Optional[Path] 
         raise
 
 
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _read_json(path: Path, state_dir: Optional[Path] = None) -> Dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeError) as exc:
         raise StateError(f"cannot read {path}: {exc}") from exc
     except OSError as exc:
         raise StateError(f"cannot read {path}: {exc}{ownership_hint(path, state_dir or path.parent)}") from exc
@@ -273,7 +295,7 @@ class StateDir:
             text = self.journal_path.read_text(encoding="utf-8")
         except (FileNotFoundError, NotADirectoryError):
             return None
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             raise StateError(f"cannot read {self.journal_path}: {exc}{self._hint(self.journal_path)}") from exc
         try:
             value = json.loads(text)
@@ -290,12 +312,40 @@ class StateDir:
     def clear_journal(self) -> None:
         try:
             self.journal_path.unlink()
+            _fsync_dir(self.path)
         except FileNotFoundError:
             pass
         except OSError as exc:
             raise StateError(f"cannot remove {self.journal_path}: {exc}{self._hint(self.journal_path)}") from exc
 
     # -------------------------------------------------------- receipts --
+    def _retain_env_reference(self, record: Mapping[str, Any]) -> List[str]:
+        recovery = record.get("env_recovery")
+        if record.get("journal_version") != 2 or not isinstance(recovery, Mapping) or not recovery.get("commit"):
+            return []
+        from . import envcommit
+        ref = recovery["commit"]
+        envcommit.validate_reference(ref)
+        # Metadata-only discovery survives journal removal and a target on
+        # another volume. It contains no env bytes or full-file digests.
+        index = self.path / ("env-retained-" + ref["forward"] + ".json")
+        _write_json(index, {"target": recovery["target"], "commit": ref}, self.path)
+        return [ref["forward"], ref["restore"]]
+
+    def sync_finished(self, record: Mapping[str, Any], path: Path) -> None:
+        """A visible receipt may have been killed just before its namespace barrier."""
+        from .envcommit import sync_file
+        self.load_receipt(path)  # Require this state's valid receipt before syncing it.
+        self._retain_env_reference(record)
+        try:
+            with path.open("rb") as handle:
+                sync_file(handle.fileno())
+                _fsync_dir(self.path)
+                if sys.platform == "darwin":
+                    sync_file(handle.fileno())
+        except OSError as exc:
+            raise StateError(f"cannot make completed receipt durable: {path}") from exc
+
     def write_receipt(self, record: Mapping[str, Any]) -> Path:
         self.ensure()
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -304,9 +354,11 @@ class StateDir:
         existing = self.receipts()
         number = max(time.time_ns(), _receipt_number(existing[-1]) + 1 if existing else 0)
         path = self.path / f"receipt-{stamp}-{number}.json"
-        body = dict(record)
+        body = {key: value for key, value in record.items() if key in _PUBLIC_RECEIPT_FIELDS}
         body["schema_version"] = RECEIPT_SCHEMA
-        body.pop("_path", None)
+        ids = self._retain_env_reference(record)
+        if ids:
+            body["env_commit_ids"] = ids
         _write_json(path, scrub_record(body, self.secrets), self.path)
         return path
 

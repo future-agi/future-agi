@@ -27,7 +27,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from deploy.update.install import COMPONENT_VARIABLES, VERSION_VARIABLES, Installation, component_for  # noqa: E402
+from deploy.update.install import (  # noqa: E402
+    COMPONENT_VARIABLES, VERSION_VARIABLES, InstallError, Installation, component_for,
+)
 from deploy.update.manifest import (  # noqa: E402
     COMPONENT_REPOSITORIES, ManifestError, deployment_hashes, is_version, manifest_hash, parse_image_ref,
     validate_manifest,
@@ -2096,7 +2098,68 @@ class RealInstallationTests(PlanTestCase):
 
     def installation(self, docker: FakeDocker, *, env: str, production: bool = False) -> Installation:
         self.write("deploy/.env.production" if production else ".env", env)
-        return Installation(self.root, production=production, environ={}, runner=docker, compose=["docker", "compose"])
+        installation = Installation(self.root, production=production, environ={}, runner=docker,
+                                    compose=["docker", "compose"])
+        # These fixtures model local Compose containers; keep any deliberately conflicting labels intact.
+        if production:
+            files = ["docker-compose.distributed.yml", "deploy/docker-compose.production.yml"]
+        elif "COMPOSE_FILE=docker-compose.distributed.yml" in env:
+            files = ["docker-compose.distributed.yml"]
+        else:
+            files = ["docker-compose.yml"]
+        provenance = {
+            "com.docker.compose.project.working_dir": str(self.root),
+            "com.docker.compose.project.config_files": ",".join(str(self.root / path) for path in files),
+        }
+        if production:
+            provenance["com.docker.compose.project.environment_file"] = str(installation.env_file)
+        for record in docker.records:
+            for key, value in provenance.items():
+                record["Config"]["Labels"].setdefault(key, value)
+        return installation
+
+    def test_plan_refuses_missing_compose_provenance(self):
+        for field in ("working_dir", "config_files"):
+            with self.subTest(field=field):
+                docker = FakeDocker({"name": "futureagi", "services": {
+                    "app": {"image": f"futureagi/standalone:{PREVIOUS}"}}})
+                docker.container("app", f"futureagi/standalone:{PREVIOUS}", PREVIOUS)
+                installation = self.installation(docker, env=f"FUTURE_AGI_VERSION={PREVIOUS}\nSECRET_KEY=abc\n")
+                del docker.records[0]["Config"]["Labels"][f"com.docker.compose.project.{field}"]
+
+                with self.assertRaisesRegex(InstallError, f"ownership.*{field}"):
+                    self.plan(installation)
+
+    def test_plan_refuses_another_checkouts_provenance(self):
+        foreign_config = self.write("other-checkout/docker-compose.yml", "services: {}\n")
+        for field, path in (("working_dir", foreign_config.parent), ("config_files", foreign_config)):
+            with self.subTest(field=field):
+                docker = FakeDocker({"name": "futureagi", "services": {
+                    "app": {"image": f"futureagi/standalone:{PREVIOUS}"}}})
+                docker.container("app", f"futureagi/standalone:{PREVIOUS}", PREVIOUS)
+                docker.records[0]["Config"]["Labels"][f"com.docker.compose.project.{field}"] = str(path)
+                installation = self.installation(docker, env=f"FUTURE_AGI_VERSION={PREVIOUS}\nSECRET_KEY=abc\n")
+
+                with self.assertRaisesRegex(InstallError, f"ownership.*{field}"):
+                    self.plan(installation)
+
+    def test_production_plan_requires_its_explicit_environment_file(self):
+        env = f"FUTURE_AGI_VERSION={PREVIOUS}\nFRONTEND_VERSION={PREVIOUS}\nPG_PASSWORD=pw-value\n"
+        foreign_env = self.write("deploy/other.env", env)
+        key = "com.docker.compose.project.environment_file"
+        for recorded in (None, str(foreign_env)):
+            with self.subTest(recorded=recorded):
+                docker = FakeDocker({"name": "fagi-prod", "services": {
+                    "backend": {"image": f"futureagi/future-agi:{PREVIOUS}"}}})
+                docker.container("backend", f"futureagi/future-agi:{PREVIOUS}", PREVIOUS)
+                if recorded is not None:
+                    docker.records[0]["Config"]["Labels"][key] = recorded
+                installation = self.installation(docker, production=True, env=env)
+                if recorded is None:
+                    del docker.records[0]["Config"]["Labels"][key]
+
+                with self.assertRaisesRegex(InstallError, "ownership.*environment_file"):
+                    self.plan(installation)
 
     def test_standalone_latest_install_reads_the_running_label(self):
         docker = FakeDocker({"name": "futureagi", "services": {
@@ -3390,6 +3453,32 @@ class StrayContainerTests(PlanTestCase):
         # F1: the service model (every profile's services) is asked only when there is a container to classify.
         self.assertEqual((strays, installation.model_calls), ({"inactive": [], "orphans": []}, 0))
 
+    def test_containers_sharing_an_image_inspect_its_version_label_once(self):
+        from deploy.update.plan import classify_strays
+
+        installation = self.install()
+        image_id = "sha256:shared-stray-image"
+        image = f"futureagi/future-agi:{PREVIOUS}"
+        first = installation.run("worker-default", PREVIOUS, image_id=image_id, image=image)
+        first_id = first._containers[-1]["id"]
+        second_id = first.run("worker-default", PREVIOUS, image_id=image_id, image=image)._containers[-1]["id"]
+
+        entries = classify_strays(installation, installation.containers(), installation.config()["services"])[
+            "inactive"]
+
+        self.assertEqual(entries, [{"service": "worker-default", "ids": [first_id, second_id], "running": True,
+                                    "state": "running", "image": f"futureagi/future-agi:{PREVIOUS}",
+                                    "version": PREVIOUS}])
+        self.assertEqual(installation.image_calls.count(image_id), 1)
+
+    def test_stray_target_check_accepts_the_gpu_tag_of_the_target_release(self):
+        from deploy.update.plan import _stray_on_target
+
+        self.assertTrue(_stray_on_target({"image": f"futureagi/serving:{TARGET}-gpu", "version": ""},
+                                         "serving_gpu", TARGET))
+        self.assertFalse(_stray_on_target({"image": f"futureagi/serving:{PREVIOUS}-gpu", "version": ""},
+                                          "serving_gpu", TARGET))
+
     def test_an_orphan_never_blocks_and_is_named_once_with_its_removal(self):
         installation = self.install()
         supervisor = self.stray(installation, "property-catalog-supervisor", "v1.41.1")
@@ -3653,8 +3742,7 @@ class RealServiceModelTests(PlanTestCase):
     """F1 with a real Installation: a Compose whose `config --no-interpolate` fails still plans."""
 
     def installation(self, docker: FakeDocker, *, env: str, production: bool = False) -> Installation:
-        self.write("deploy/.env.production" if production else ".env", env)
-        return Installation(self.root, production=production, environ={}, runner=docker, compose=["docker", "compose"])
+        return RealInstallationTests.installation(self, docker, env=env, production=production)
 
     def docker(self) -> FakeDocker:
         docker = FakeDocker({"name": "futureagi", "services": {
@@ -5118,6 +5206,34 @@ class IntegratorRound5GitEdgeTests(PlanTestCase):
                 mock.patch.object(Path, "resolve", side_effect=RuntimeError("Symlink loop")):
             self.assertIsNone(plan_module._git_drift(self.root, ["docker-compose.yml"], TARGET))
 
+    def test_a_deleted_tracked_file_is_reported_as_drift_at_the_target(self):
+        self.release()
+        (self.root / "docker-compose.yml").unlink()
+
+        found = plan_module._git_drift(self.root, ["docker-compose.yml"], TARGET)
+
+        self.assertEqual(found["changed"], ["docker-compose.yml"])
+        self.assertEqual(found["local_changed"], ["docker-compose.yml"])
+        self.assertEqual(found["gone"], [])
+        reason = plan_module._drift_reason(self.standalone(PREVIOUS), ["docker-compose.yml"], TARGET, None)
+        self.assertIn("git checkout v1.52.0 -- docker-compose.yml", reason)
+
+    def test_a_missing_git_hidden_listing_falls_back_to_the_general_diagnosis(self):
+        self.release()
+        original_git = plan_module._git
+
+        def git_without_listing(root, *args):
+            if args and args[0] == "ls-files":
+                return None
+            return original_git(root, *args)
+
+        with mock.patch.object(plan_module, "_git", side_effect=git_without_listing):
+            reason = plan_module._drift_reason(self.standalone(PREVIOUS), ["docker-compose.yml"], TARGET, None)
+
+        self.assertIn("Possible causes: git converts their line endings", reason)
+        self.assertIn("git ls-files -v -- docker-compose.yml", reason)
+        self.assertNotIn("git does not compare docker-compose.yml", reason)
+
     def test_without_the_diff_the_changes_git_status_shows_count(self):
         (self.root / ".git").mkdir()
 
@@ -5627,6 +5743,336 @@ class Round6DriftGitTests(PlanTestCase):
         result = self.run_printed("git checkout -q v1.52.0")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.plan_now()["deployment_drift"], [])
+
+
+class MutationCornerTests(PlanTestCase):
+    """Boundary cases for planner helpers and unfinished-update safety rules."""
+
+    def git(self, *args: str) -> str:
+        result = subprocess.run(["git", "-c", "commit.gpgsign=false", "-C", str(self.root), *args],
+                                capture_output=True, text=True, env=_git_env(), check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_without_manifest_keeps_options_before_the_first_flag(self):
+        from deploy.update.plan import _without_manifest
+
+        self.assertEqual(_without_manifest(["--policy", "major", "--manifest", "release.json", "--channel", "beta"]),
+                         ["--policy", "major", "--channel", "beta"])
+
+    def test_image_name_preserves_registry_ports_and_removes_tags_or_digests(self):
+        from deploy.update.plan import _image_name
+
+        self.assertEqual(_image_name("registry.example:5000/futureagi/backend:v1.52.0"),
+                         "registry.example:5000/futureagi/backend")
+        self.assertEqual(_image_name("registry.example:5000/futureagi/backend@sha256:" + "a" * 64),
+                         "registry.example:5000/futureagi/backend")
+
+    def test_unmergeable_env_scan_continues_after_comments(self):
+        self.write(".env.example", ENV_EXAMPLE + "NEW_SETTING=on\n")
+        self.write(".env", "# comments are allowed before definitions\nexport SECRET_KEY=abc\n")
+
+        plan = self.plan(self.standalone(PREVIOUS))
+
+        self.assertBlocked(plan)
+        self.assertReasonContaining(plan, "Copy them from .env.example into .env by hand")
+        self.assertReasonContaining(plan, "written with an export prefix")
+
+    def test_explicit_manifest_source_wins_over_latest_download_setting(self):
+        from deploy.update.plan import _manifest_of
+
+        latest = ("https://github.com/future-agi/future-agi/releases/latest/download/"
+                  "future-agi-update-manifest.json")
+        explicit = "/srv/releases/v1.51.0/manifest.json"
+        settings = self.settings(environ={"FUTURE_AGI_UPDATE_MANIFEST_URL": latest})
+
+        self.assertEqual(_manifest_of({"target_version": PREVIOUS, "manifest_source": explicit}, settings), explicit)
+        self.assertEqual(_manifest_of({"manifest_source": explicit}, settings), "")
+
+    def test_stray_groups_sort_by_state_then_image_not_input_or_container_id(self):
+        from deploy.update.plan import classify_strays
+
+        installation = self.distributed(PREVIOUS)
+        installation.profile_services["worker-default"] = WORKER_RAW
+        same_id = "sha256:shared-stray-image"
+        image = f"futureagi/future-agi:{PREVIOUS}"
+        installation.run("worker-default", PREVIOUS, image=image, image_id=same_id, status="paused")
+        installation._containers[-1]["id"] = "paused-container"
+        installation.run("worker-default", PREVIOUS, image=image, image_id=same_id, status="running")
+        installation._containers[-1]["id"] = "running-container"
+        installation.run("worker-default", PREVIOUS, image=image, image_id=same_id, status="exited")
+        installation._containers[-1]["id"] = "stopped-container"
+        entries = classify_strays(installation, installation.containers(), installation.config()["services"])["inactive"]
+        self.assertEqual([entry["state"] for entry in entries], ["running", "paused", "stopped"])
+
+        installation = self.distributed(PREVIOUS)
+        installation.profile_services["worker-default"] = WORKER_RAW
+        for image, container_id in (("futureagi/future-agi:z", "a-container"),
+                                    ("futureagi/future-agi:a", "z-container")):
+            installation.run("worker-default", PREVIOUS, image=image, image_id="sha256:" + container_id,
+                             status="running")
+            installation._containers[-1]["id"] = container_id
+        entries = classify_strays(installation, installation.containers(), installation.config()["services"])[
+            "inactive"]
+        self.assertEqual([entry["image"] for entry in entries],
+                         ["futureagi/future-agi:a", "futureagi/future-agi:z"])
+
+    def test_stray_state_fallback_uses_the_running_flag(self):
+        from deploy.update.plan import stray_states
+
+        self.assertEqual(stray_states([{"service": "worker-default", "running": True, "version": PREVIOUS}]),
+                         f"worker-default (running, {PREVIOUS})")
+
+    def test_unknown_inactive_stray_removal_uses_a_twelve_character_id(self):
+        installation = self.distributed(PREVIOUS)
+        installation.model_complete = False
+        installation.run("worker-default", PREVIOUS, image=f"futureagi/future-agi:{PREVIOUS}")
+        installation._containers[-1]["id"] = "0123456789abcdef" * 4
+
+        reason = self.assertReasonContaining(self.plan(installation), "service worker-default has containers")
+
+        self.assertIn("docker rm -f 0123456789ab`", reason)
+
+    def test_orphan_removal_uses_a_twelve_character_id(self):
+        installation = self.distributed(PREVIOUS)
+        installation.run("retired-worker", PREVIOUS, image=f"futureagi/future-agi:{PREVIOUS}")
+        installation._containers[-1]["id"] = "0123456789abcdef" * 4
+
+        plan = self.plan(installation)
+
+        note = next(note for note in plan["notes"] if "retired-worker" in note)
+        self.assertIn("docker rm -f 0123456789ab`", note)
+
+    def test_resumed_apply_checks_strays_for_every_previously_changed_key(self):
+        installation = self.distributed(TARGET)
+        installation.profile_services["worker-default"] = WORKER_RAW
+        # The frontend is the only active service still on an old image; FUTURE_AGI_VERSION has no active change left,
+        # but it is still among the keys the staged apply selected.
+        installation.run("frontend", PREVIOUS, image=f"futureagi/frontend:{TARGET}")
+        installation.run("worker-default", PREVIOUS, image=f"futureagi/future-agi:{PREVIOUS}")
+        record = receipt("1", status="failed_during_rollout", target_version=TARGET,
+                         previous_values=dict(ALL_PREVIOUS), env_changes=dict(EVERY_KEY))
+
+        plan = self.plan(installation, history=[record])
+
+        self.assertReasonContaining(plan, "service worker-default has containers")
+
+    def test_resume_without_previous_values_uses_currently_selected_keys(self):
+        installation = self.distributed(TARGET)
+        installation.model_complete = True
+        installation._containers[0]["status"] = "exited"
+        installation._containers[0]["exit_code"] = 1
+        installation.profile_services["worker-default"] = WORKER_RAW
+        installation.run("worker-default", PREVIOUS, image=f"futureagi/future-agi:{PREVIOUS}")
+        record = receipt("1", status=STAGED, target_version=TARGET, previous_values={}, env_changes=dict(EVERY_KEY))
+
+        plan = self.plan(installation, history=[record])
+
+        self.assertReasonContaining(plan, "service worker-default has containers")
+
+    def test_service_runs_requires_every_live_container_to_match(self):
+        from deploy.update.plan import _service_runs
+
+        containers = [
+            {"id": "new", "status": "running", "health": "healthy",
+             "image": f"futureagi/standalone:{TARGET}"},
+            {"id": "old", "status": "running", "health": "healthy",
+             "image": f"futureagi/standalone:{PREVIOUS}"},
+        ]
+        self.assertIsNone(_service_runs(containers, {"new": TARGET, "old": PREVIOUS}, TARGET))
+
+        exited = [dict(item, status="exited", exit_code=0) for item in containers]
+        exited[1]["exit_code"] = 1
+        self.assertIsNone(_service_runs(exited, {"new": TARGET, "old": PREVIOUS}, TARGET))
+
+    def test_rollback_with_a_digest_pin_is_not_treated_as_settled(self):
+        from deploy.update.plan import _settled_rollback
+
+        ref = parse_image_ref(f"futureagi/standalone:{PREVIOUS}@sha256:{'a' * 64}")
+        services = [{"service": "app", "component": "standalone", "ref": ref}]
+        running = {"app": [{"id": "container", "status": "running", "health": "healthy",
+                             "image": f"futureagi/standalone:{PREVIOUS}"}]}
+        record = {"env_changes": {"FUTURE_AGI_VERSION": PREVIOUS}}
+
+        self.assertIsNone(_settled_rollback(record, services, running, {"container": PREVIOUS},
+                                            {"FUTURE_AGI_VERSION": PREVIOUS}))
+
+    def test_legacy_staged_receipt_without_kind_is_recognized_as_already_running(self):
+        installation = self.standalone(TARGET, label=TARGET)
+        record = receipt("1", status=STAGED, target_version=TARGET)
+        del record["kind"]
+
+        plan = self.plan(installation, history=[record])
+
+        self.assertEqual((plan["decision"], plan["resume"], plan["staged_version"]), (UP_TO_DATE, False, None))
+        self.assertTrue(any("already runs" in note for note in plan["notes"]))
+
+    def test_dropped_update_is_detected_when_any_container_still_runs_its_release(self):
+        installation = self.standalone(PREVIOUS, label=TARGET)
+        installation.run("app", PREVIOUS)
+        record = receipt("1", status="failed_during_rollout", target_version=TARGET,
+                         env_changes={"FUTURE_AGI_VERSION": TARGET})
+
+        plan = self.plan(installation, history=[record])
+
+        self.assertReasonContaining(plan, "left app running v1.52.0")
+
+    def test_dropped_update_does_not_trust_an_unlabelled_active_image_tag(self):
+        installation = FakeInstallation(self.root, services={"app": f"futureagi/standalone:{PREVIOUS}",
+                                                              "postgres": "postgres:16-alpine"},
+                                        env={"FUTURE_AGI_VERSION": PREVIOUS, "SECRET_KEY": "x"})
+        installation.run("app", "", image=f"futureagi/standalone:{TARGET}", inspectable=False)
+        installation.run("postgres", "16.4", image="postgres:16-alpine")
+        record = receipt("1", status="failed_during_rollout", target_version=TARGET,
+                         env_changes={"FUTURE_AGI_VERSION": TARGET})
+
+        plan = self.plan(installation, history=[record])
+
+        self.assertFalse([reason for reason in plan["reasons"] if "Finish that update rather than" in reason])
+        self.assertTrue(any("is abandoned" in note for note in plan["notes"]))
+
+    def test_staged_version_is_not_also_reported_as_a_stopped_version(self):
+        plan = self.plan(self.standalone(PREVIOUS, label=PREVIOUS), history=[receipt("1", status=STAGED)])
+
+        self.assertEqual((plan["staged_version"], plan["stopped_version"], plan["stopped_kind"]),
+                         (TARGET, None, None))
+
+    def test_unfinished_row_uses_the_oldest_version_still_running(self):
+        for status in ("running", "paused"):
+            with self.subTest(status=status):
+                installation = self.standalone(TARGET, label=TARGET)
+                installation._containers[0]["status"] = status
+                installation.run("app", PREVIOUS, status=status, image=f"futureagi/standalone:{TARGET}")
+                record = receipt("1", status="failed_during_rollout", target_version=TARGET,
+                                 env_changes={"FUTURE_AGI_VERSION": TARGET})
+
+                plan = self.plan(installation, history=[record])
+
+                self.assertEqual(self.component(plan, "standalone")["current_version"], PREVIOUS)
+
+    def test_unrelated_version_key_does_not_replace_the_resolved_service_image_in_a_reason(self):
+        installation = self.distributed(PREVIOUS)
+        installation._config["services"]["manual-service"] = {"image": "example.com/opaque:v1.51.0"}
+        installation.raw_images["manual-service"] = "example.com/opaque:${FRONTEND_VERSION:-latest}"
+        plan = self.plan(installation)
+
+        reason = self.assertReasonContaining(plan, "service manual-service takes its image from FRONTEND_VERSION")
+
+        self.assertIn("that resolves to example.com/opaque:v1.51.0", reason)
+
+    def test_invalid_shared_key_suggestion_comes_from_a_component_that_uses_it(self):
+        installation = self.distributed(PREVIOUS, tags={"AGENTCC_GATEWAY_VERSION": "v1.51.1"},
+                                        extra_env={"FUTURE_AGI_VERSION": "${VERSION}"})
+        reason = self.assertReasonContaining(self.plan(installation),
+                                             "FUTURE_AGI_VERSION in .env is ${VERSION}")
+
+        self.assertIn("Set FUTURE_AGI_VERSION=v1.51.0", reason)
+        self.assertNotIn("Set FUTURE_AGI_VERSION=v1.51.1", reason)
+
+    def test_invalid_tag_suggestions_come_from_tags_the_key_actually_selects(self):
+        installation = self.standalone(PREVIOUS, extra_env={"FUTURE_AGI_VERSION": "${VERSION}"})
+        installation._config["services"]["app-shadow"] = {"image": "futureagi/standalone:v1.51.1"}
+        installation.raw_images["app-shadow"] = "futureagi/standalone:${FUTURE_AGI_VERSION:-latest}"
+        installation.run("app-shadow", "v1.51.1", image="futureagi/standalone:v1.51.1")
+        reason = self.assertReasonContaining(self.plan(installation),
+                                             "FUTURE_AGI_VERSION in .env is ${VERSION}")
+        self.assertIn("Set FUTURE_AGI_VERSION=v1.51.0", reason)
+        self.assertNotIn("Set FUTURE_AGI_VERSION=v1.51.1", reason)
+
+        installation = FakeInstallation(self.root, services={
+            "app": f"futureagi/standalone:{PREVIOUS}", "backend": "futureagi/future-agi:v1.51.1"},
+            env={"FUTURE_AGI_VERSION": "${VERSION}", "SECRET_KEY": "x"}, mode="distributed")
+        installation.run("app", PREVIOUS).run("backend", "v1.51.1")
+        reason = self.assertReasonContaining(self.plan(installation),
+                                             "FUTURE_AGI_VERSION in .env is ${VERSION}")
+        self.assertIn("Set FUTURE_AGI_VERSION=v1.51.1", reason)
+        self.assertNotIn("Set FUTURE_AGI_VERSION=v1.51.0", reason)
+
+    def test_handmade_plan_text_keeps_release_options_when_it_builds_the_command(self):
+        plan = self.plan(self.standalone(PREVIOUS))
+        plan["next_command"] = None
+        plan["command_options"] = ["--manifest", "/srv/releases/v1.52.0/manifest.json"]
+
+        self.assertIn("run ./bin/update apply --manifest /srv/releases/v1.52.0/manifest.json", plan_text(plan))
+
+    def test_named_path_limit_is_inclusive(self):
+        from deploy.update.plan import _named
+
+        paths = [f"file-{index}" for index in range(8)]
+        self.assertEqual(_named(paths), ", ".join(paths))
+        self.assertEqual(_named(paths + ["file-8"]), f"{', '.join(paths)} and 1 more")
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_eight_changed_files_are_named_without_the_many_file_hint(self):
+        directory = "futureagi/eight-files"
+        paths = [f"{directory}/file-{index}.txt" for index in range(8)]
+        for path in paths:
+            self.write(path, "before\n")
+        self.git("init", "-q")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", TARGET)
+        self.git("tag", TARGET)
+        for path in paths:
+            self.write(path, "after\n")
+
+        reason = plan_module._drift_reason(self.standalone(PREVIOUS), [directory], TARGET, None)
+
+        for path in paths:
+            self.assertIn(path, reason)
+        command = reason.split("git checkout v1.52.0 -- ", 1)[1].split("`", 1)[0]
+        self.assertEqual(command, " ".join(paths))
+        self.assertNotIn("and 0 more", reason)
+        self.assertNotIn("git status --untracked-files=all --ignored", reason)
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_many_changes_across_directories_name_each_restore_entry(self):
+        paths = ["docker-compose.yml"] + [f"deploy/alpha/file-{index}.txt" for index in range(4)] + [
+            f"deploy/beta/file-{index}.txt" for index in range(4)]
+        self.write("deploy/unrelated.txt", "unchanged\n")
+        for path in paths:
+            self.write(path, "before\n")
+        self.git("init", "-q")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", TARGET)
+        self.git("tag", TARGET)
+        for path in paths:
+            self.write(path, "after\n")
+
+        reason = plan_module._drift_reason(self.standalone(PREVIOUS),
+                                           ["docker-compose.yml", "deploy/alpha", "deploy/beta",
+                                            "deploy/unrelated.txt"], TARGET, None)
+
+        command = reason.split("git checkout v1.52.0 -- ", 1)[1].split("`", 1)[0]
+        self.assertEqual(command, "docker-compose.yml deploy/alpha deploy/beta")
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_git_query_ignores_an_exported_git_dir(self):
+        self.git("init", "-q")
+
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(self.root / "not-a-repository")}):
+            top = plan_module._git(self.root, "rev-parse", "--show-toplevel")
+
+        self.assertEqual(Path(top.strip()).resolve(), self.root.resolve())
+
+    def test_git_record_parser_keeps_short_paths_and_advances_across_diff_records(self):
+        self.assertEqual(plan_module._git_records("?? x\0", renames=True), [("??", "x")])
+        self.assertEqual(plan_module._git_records("M\0first\0D\0second\0", renames=False),
+                         [("M", "first"), ("D", "second")])
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_hidden_one_character_file_is_named_when_git_does_not_compare_it(self):
+        self.write("x", "before\n")
+        self.git("init", "-q")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", TARGET)
+        self.git("tag", TARGET)
+        self.git("update-index", "--assume-unchanged", "x")
+        self.write("x", "after\n")
+
+        reason = plan_module._drift_reason(self.standalone(PREVIOUS), ["x"], TARGET, None)
+
+        self.assertIn("git does not compare x with the file here", reason)
+        self.assertIn("git update-index --no-assume-unchanged -- x", reason)
 
 
 if __name__ == "__main__":

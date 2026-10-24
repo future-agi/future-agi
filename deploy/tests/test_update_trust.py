@@ -7,6 +7,7 @@ subprocess runner are replaced by small fakes that record what they were asked.
 import errno
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import socket
@@ -3534,6 +3535,240 @@ class TrustRound6VersionNumberLengthTests(TrustTestCase):
         verifier = self.verifier(probe=FakeProbe("v3." + "1" * 18 + ".0"))
         self.assertEqual(verifier.cosign_version(COSIGN)[0], (3, int("1" * 18), 0))
         self.assertEqual(verifier.verify(self.local_fetch()).tool, COSIGN)
+
+
+# ================================================================ round 7 ==
+
+class TrustRound7WithoutUserDatabaseTests(TrustTestCase):
+    """trust.py imports where the pwd module does not exist (it guards the import for platforms without one)."""
+
+    def load_without_pwd(self):
+        """A fresh copy of trust.py, imported while `import pwd` fails."""
+
+        with mock.patch.dict(sys.modules, {"pwd": None}):
+            spec = importlib.util.spec_from_file_location("deploy.update._trust_without_pwd", trust.__file__)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+        return module
+
+    def test_without_pwd_the_docker_config_is_found_only_through_home(self):
+        module = self.load_without_pwd()
+        self.assertIsNone(module.pwd)
+        self.assertIsNone(module._docker_config_file({}))
+        self.assertEqual(module._docker_config_file({"HOME": "/home/op"}), Path("/home/op/.docker/config.json"))
+        # Without HOME and a user database, no config.json gives containers a proxy: the host's is forwarded.
+        runner = FakeRunner()
+        verification = module.Verifier(self.settings(), runner=runner, which=self.docker_only(),
+                                       environ={"HTTPS_PROXY": "http://proxy.corp:3128"}).verify(self.local_fetch())
+        self.assertTrue(verification.verified, verification.error)
+        self.assertEqual(CosignContainerProxyTests.forwarded(self, runner.argv), ["HOME=/tmp", "HTTPS_PROXY"])
+
+
+class TrustRound7DockerFailureLineTests(TrustTestCase):
+    """Which line of a failed `docker run` is named: never a warning printed before the error."""
+
+    run_docker = DockerRunFailureTests.run_docker
+    ADVICE = DockerRunFailureTests.ADVICE
+    PODMAN_NOT_FOUND = ("Error: crun: executable file `cosign` not found in $PATH: No such file or directory: OCI "
+                        "runtime attempted to invoke a command that was not found")
+    PODMAN_WARNING = 'WARN[0000] "/" is not a shared mount, this could cause issues or missing mounts with rootless containers'
+
+    def assertDockerFailure(self, verification, detail):
+        self.assertFalse(verification.verified)
+        self.assertEqual(verification.error, f"could not run cosign from {PINNED_IMAGE}: {detail}. {self.ADVICE}")
+
+    def test_exit_127_without_a_docker_prefix_is_dockers_own_failure(self):
+        # Podman (as docker) exits 127 when the image has no cosign to run; no line starts with "docker: ".
+        self.assertDockerFailure(self.run_docker(127, self.PODMAN_NOT_FOUND + "\n"), self.PODMAN_NOT_FOUND)
+        self.assertDockerFailure(self.run_docker(127, ""), "docker run exited with status 127")
+        # Every other status is cosign's answer.
+        for returncode in (1, 124, 128):
+            with self.subTest(returncode=returncode):
+                verification = self.run_docker(returncode, self.PODMAN_NOT_FOUND + "\n")
+                self.assertEqual(verification.error, f"signature verification failed: {self.PODMAN_NOT_FOUND}")
+
+    def test_a_warning_before_the_error_is_not_named_as_the_cause(self):
+        warnings = (self.PODMAN_WARNING,
+                    "WARNING: The requested image's platform (linux/amd64) does not match the detected host platform "
+                    "(linux/arm64/v8) and no specific platform was requested",
+                    'time="2026-10-22T10:00:00Z" level=warning msg="cgroupv2 manager is set to systemd"')
+        for warning in warnings:
+            with self.subTest(warning=warning[:30]):
+                verification = self.run_docker(127, f"{warning}\n{self.PODMAN_NOT_FOUND}\n")
+                self.assertDockerFailure(verification, self.PODMAN_NOT_FOUND)
+        # A warning that is all there is still says something.
+        self.assertDockerFailure(self.run_docker(126, self.PODMAN_WARNING + "\n"), self.PODMAN_WARNING)
+
+    def test_the_first_of_several_errors_is_named(self):
+        first = "Error: initializing source docker://ghcr.io/sigstore/cosign/cosign:v3.1.3: pinging container registry"
+        stderr = f"Trying to pull ghcr.io/sigstore/cosign/cosign:v3.1.3...\n{first}\nError: exit status 125\n"
+        self.assertDockerFailure(self.run_docker(125, stderr), first)
+
+
+class TrustRound7ReadLocalWithoutNonblockTests(TrustTestCase):
+    """Where os.O_NONBLOCK is missing, a manifest and its bundle are still read (and only read)."""
+
+    def test_a_local_release_is_read(self):
+        nonblock = os.O_NONBLOCK
+        del os.O_NONBLOCK
+        try:
+            fetched = self.local_fetch()
+        finally:
+            os.O_NONBLOCK = nonblock
+        self.assertEqual(json.loads(fetched.manifest_path.read_bytes()), make_manifest())
+        self.assertEqual(fetched.bundle_path.read_bytes(), BUNDLE_BYTES)
+        self.assertEqual((self.tmp / "release" / BUNDLE_ASSET).read_bytes(), BUNDLE_BYTES)
+
+
+class TrustRound7CosignVersionOnStderrTests(TrustTestCase):
+    """A cosign that prints its version text on stderr (and has no --json) is still recognised."""
+
+    def test_the_git_version_line_on_stderr_is_read(self):
+        def probe(command, **kwargs):
+            probe.calls.append(list(command))
+            if command[1:] == ["version", "--json"]:
+                return subprocess.CompletedProcess(list(command), 1, "", "Error: unknown flag: --json\n")
+            return subprocess.CompletedProcess(list(command), 0, "", cosign_version_text("v3.0.2"))
+        probe.calls = []
+
+        verifier = self.verifier(probe=probe)
+        self.assertEqual(verifier.cosign_version(COSIGN), ((3, 0, 2), "v3.0.2"))
+        verification = verifier.verify(self.local_fetch())
+        self.assertTrue(verification.verified, verification.error)
+        self.assertEqual(verification.tool, COSIGN)
+        self.assertEqual(self.runner.argv[0], COSIGN)
+        self.assertEqual(probe.calls, [[COSIGN, "version", "--json"], [COSIGN, "version"]])
+
+
+class TrustRound7OldCosignWithDockerOptionsTests(TrustTestCase):
+    """An old cosign on PATH falls back to the image through the installation's docker words, options and all."""
+
+    def test_the_docker_program_is_looked_up_not_its_last_option(self):
+        which = FakeWhich({"cosign": COSIGN, "/usr/local/bin/docker": "/usr/local/bin/docker"})
+        verification = self.verifier(which=which, probe=FakeProbe("v2.4.1"),
+                                     docker=["/usr/local/bin/docker", "--context", "colima"]).verify(self.local_fetch())
+        self.assertTrue(verification.verified, verification.error)
+        self.assertEqual(self.runner.argv[:4], ["/usr/local/bin/docker", "--context", "colima", "run"])
+        self.assertEqual(verification.tool, PINNED_IMAGE)
+        self.assertEqual(which.calls, ["cosign", "/usr/local/bin/docker"])
+
+
+class TrustRound7LoopbackProxyLastErrorTests(TrustTestCase):
+    """With a loopback proxy left out, the last network error cosign printed is the one named (as for the others)."""
+
+    def test_the_last_network_error_is_named(self):
+        first = ("Error: getting trusted root: Get \"https://tuf-repo-cdn.sigstore.dev/timestamp.json\": dial tcp: "
+                 "lookup tuf-repo-cdn.sigstore.dev: i/o timeout")
+        last = ("main.go:74: error during command execution: Get \"https://tuf-repo-cdn.sigstore.dev/timestamp.json\": "
+                "dial tcp: lookup tuf-repo-cdn.sigstore.dev: no such host")
+        runner = FakeRunner(returncode=1, stderr=f"{first}\n{last}\n")
+        verification = self.verifier(which=self.docker_only(), runner=runner,
+                                     environ={"HTTPS_PROXY": "http://127.0.0.1:3128"}).verify(self.local_fetch())
+        self.assertFalse(verification.verified)
+        self.assertTrue(verification.error.startswith(
+            f"cosign, run from {PINNED_IMAGE}, could not reach Sigstore: {last}. HTTPS_PROXY on this host points at a "
+            "loopback address"), verification.error)
+        self.assertNotIn(first, verification.error)
+
+
+class TrustRound7UnencodableContextTests(_TrustRound4ProxyCase):
+    """A context name no context can have (invalid bytes in DOCKER_CONTEXT, a lone surrogate in config.json) is no
+    context: the "default" proxies entry applies, and verification goes on instead of crashing."""
+
+    ALL = TrustRound4DockerProxyEntryTests.ALL
+    held = TrustRound4DockerProxyEntryTests.held
+    PROXIES = TrustRound5DockerContextHostTests.PROXIES
+
+    def test_an_unencodable_context_name_picks_the_default_entry(self):
+        self.docker_config({"proxies": self.PROXIES})
+        # What os.environ holds for DOCKER_CONTEXT=$'fagi\xff' under a UTF-8 locale.
+        self.assertEqual(self.held(dict(self.ALL, DOCKER_CONTEXT="fagi\udcff")), ["HTTPS_PROXY", "https_proxy"])
+        self.docker_config({"currentContext": "fagi\ud800", "proxies": self.PROXIES})
+        self.assertEqual(self.held(self.ALL), ["HTTPS_PROXY", "https_proxy"])
+        self.assertTrue(self.run_docker(self.ALL).verified)
+
+
+class TrustRound7PublicKeyFileTests(TrustTestCase):
+    """FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY is read like the manifest: a pipe or device never hangs bin/update."""
+
+    write_key = KeyVerificationTests.write_key
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "needs named pipes")
+    def test_a_key_that_is_a_named_pipe_is_refused_without_hanging(self):
+        fifo = self.tmp / "keys" / "cosign.pub"
+        fifo.parent.mkdir()
+        os.mkfifo(str(fifo))
+        fetched = self.local_fetch()
+        outcome = {}
+        error = finishes(self, lambda: outcome.update(
+            verification=self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(fifo)).verify(fetched)))
+        self.assertIsNone(error)
+        verification = outcome["verification"]
+        self.assertFalse(verification.verified)
+        self.assertEqual(verification.error, f"cannot read FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {fifo}: it is a named "
+                                             "pipe, not a regular file")
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse((fetched.directory / "trusted-key.pub").exists())
+
+    def test_a_key_larger_than_the_cap_is_refused(self):
+        key = self.write_key(b"k" * (MAX_DOWNLOAD_BYTES + 1))
+        fetched = self.local_fetch()
+        verification = self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).verify(fetched)
+        self.assertFalse(verification.verified)
+        self.assertEqual(verification.error,
+                         f"FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key} is larger than {MAX_DOWNLOAD_BYTES} bytes")
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse((fetched.directory / "trusted-key.pub").exists())
+
+    def test_a_link_planted_where_the_key_copy_goes_is_never_written_through(self):
+        key = self.write_key()
+        fetched = self.local_fetch()
+        target = self.tmp / "elsewhere" / "planted.pub"
+        (fetched.directory / "trusted-key.pub").symlink_to(target)
+        verification = self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).verify(fetched)
+        self.assertFalse(verification.verified)
+        # The key itself was read: what failed is bin/update's copy of it.
+        self.assertEqual(verification.error, f"cannot copy FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key} to "
+                                             f"{fetched.directory / 'trusted-key.pub'}: File exists")
+        self.assertFalse(target.exists())
+        self.assertFalse(target.parent.exists())
+        self.assertEqual(self.runner.calls, [])
+
+    def test_a_copy_that_cannot_be_written_is_not_blamed_on_the_key(self):
+        # A full disk under the state directory: the operator must not go looking at a key file that is fine.
+        key = self.write_key(b"the key")
+        fetched = self.local_fetch()
+        full = OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        for name, error in (("a full disk", full), ("an error without a reason", OSError("short write"))):
+            with self.subTest(name):
+                with mock.patch.object(trust, "_write_private", side_effect=error) as write:
+                    verification = self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).verify(fetched)
+                self.assertFalse(verification.verified)
+                self.assertEqual(verification.error, f"cannot copy FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key} to "
+                                                     f"{fetched.directory / 'trusted-key.pub'}: "
+                                                     f"{error.strerror or error}")
+                write.assert_called_once_with(fetched.directory / "trusted-key.pub", b"the key")
+                self.assertEqual(self.runner.calls, [])
+
+    def test_errors_reading_the_key_name_the_key_and_why(self):
+        directory = self.tmp / "keys"
+        directory.mkdir()
+        missing = directory / "absent.pub"
+        fetched = self.local_fetch()
+        for key, why in ((missing, "No such file or directory"), (directory, "it is a directory, not a regular file")):
+            with self.subTest(why=why):
+                verification = self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).verify(fetched)
+                self.assertFalse(verification.verified)
+                self.assertEqual(verification.error, f"cannot read FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key}: {why}")
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse((fetched.directory / "trusted-key.pub").exists())
+
+    def test_the_copy_holds_the_keys_bytes(self):
+        key = self.write_key(b"k" * MAX_DOWNLOAD_BYTES)
+        fetched = self.local_fetch()
+        self.assertTrue(self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).verify(fetched).verified)
+        self.assertEqual((fetched.directory / "trusted-key.pub").read_bytes(), b"k" * MAX_DOWNLOAD_BYTES)
 
 
 if __name__ == "__main__":

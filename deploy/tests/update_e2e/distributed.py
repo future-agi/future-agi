@@ -779,7 +779,7 @@ class DistributedHarness(e2e.Harness):
         self.build_local_collector()
         specs = list(dist_releases)
         if specs:
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=2) as pool:
                 for future in [pool.submit(self.dist_release, version, signer=signer) for version, signer in specs]:
                     future.result()
         return self

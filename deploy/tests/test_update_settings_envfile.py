@@ -8,6 +8,7 @@ The expected dotenv semantics are Docker Compose's (envfile.read_env promises
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 from unittest import mock
 
 from deploy.update import envfile
@@ -816,7 +817,9 @@ class ReadEnvTests(_EnvCase):
         self.assertEqual(self.parse("A=a=b==\n")["A"], "a=b==")
 
     def test_unparseable_lines_are_ignored(self) -> None:
-        self.assertEqual(self.parse("garbage\n1A=x\nA-B=y\n=z\nA B=c\nOK=1\n"), {"OK": "1"})
+        # A bare word (Compose takes it from the environment), an empty key and a key with a space
+        # (Compose rejects that file) define nothing; 1A and A-B are keys Compose reads.
+        self.assertEqual(self.parse("garbage\n1A=x\nA-B=y\n=z\nA B=c\nOK=1\n"), {"1A": "x", "A-B": "y", "OK": "1"})
 
     def test_last_line_without_newline(self) -> None:
         self.assertEqual(self.parse("A=1\nB=2"), {"A": "1", "B": "2"})
@@ -870,8 +873,9 @@ class ExampleKeysTests(_EnvCase):
         self.assertEqual(example_keys(path), ["B", "A", "C"])
 
     def test_commented_and_unparseable_lines_are_skipped(self) -> None:
+        # 1BAD is a key to Compose (the app container gets it), so it is one here too.
         path = self.write("# OPTIONAL=1\n   #ALSO=2\nnot a pair\n1BAD=x\nexport REAL=1\n  SPACED = 2\n", ".env.example")
-        self.assertEqual(example_keys(path), ["REAL", "SPACED"])
+        self.assertEqual(example_keys(path), ["1BAD", "REAL", "SPACED"])
 
     def test_crlf_example(self) -> None:
         path = self.write("A=1\r\n# B=2\r\nC=3\r\n", ".env.example")
@@ -1033,14 +1037,17 @@ class WriteChangesTests(_EnvCase):
     VERSION = "FUTURE_AGI_VERSION"
 
     def spy_replace(self):
+        # Observe the actual env exchange, excluding metadata publication and probes.
         calls = []
-        real = os.replace
-
-        def replace(src, dst, *args, **kwargs):
-            calls.append((str(src), str(dst)))
-            return real(src, dst, *args, **kwargs)
-
-        return calls, mock.patch.object(envfile.os, "replace", replace)
+        real = envfile.envcommit.exchange
+        def exchange(a, b, c, d):
+            if b == 'slot':
+                op = next(p for p in self.dir.glob('**/env-commits/*/*')
+                          if p.stat().st_ino == os.fstat(a).st_ino)
+                body = json.loads((op / 'manifest.json').read_text())
+                calls.append((str(op / b), body['target']))
+            return real(a, b, c, d)
+        return calls, mock.patch.object(envfile.envcommit, 'exchange', side_effect=exchange)
 
     # ------------------------------------------------------------ basics --
     def test_writes_the_change(self) -> None:
@@ -1092,31 +1099,35 @@ class WriteChangesTests(_EnvCase):
         self.assertEqual(len(calls), 1)
         temp, destination = calls[0]
         self.assertEqual(Path(destination), path.resolve())
-        self.assertEqual(Path(temp).parent, path.resolve().parent)
+        self.assertEqual(Path(temp).parent.parents[3], path.resolve().parent)
 
-    def test_temp_file_name_and_private_mode(self) -> None:
+    def test_candidate_starts_private_and_is_contained_after_mode_preservation(self):
         path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o644)
         seen = []
-        real_chmod = os.chmod
-
-        def chmod(target, mode, *args, **kwargs):
-            seen.append((str(target), stat.S_IMODE(os.stat(target).st_mode), mode))
-            return real_chmod(target, mode, *args, **kwargs)
-
+        real = os.fchmod
+        def chmod(fd, mode):
+            seen.append((stat.S_IMODE(os.fstat(fd).st_mode), mode))
+            return real(fd, mode)
         calls, patch = self.spy_replace()
-        with patch, mock.patch.object(envfile.os, "chmod", chmod):
-            write_changes(path, {self.VERSION: "1.1.0"})
-        temp = Path(calls[0][0])
-        self.assertTrue(temp.name.startswith(".env.futureagi-update-"), temp.name)
-        self.assertTrue(temp.name.endswith(".tmp"), temp.name)
-        self.assertEqual(seen, [(str(temp), 0o600, 0o644)])
+        with patch, mock.patch.object(envfile.os, 'fchmod', side_effect=chmod):
+            write_changes(path, {self.VERSION: '1.1.0'})
+        slot = Path(calls[0][0])
+        self.assertEqual(slot.name, 'slot')
+        self.assertEqual(stat.S_IMODE(slot.parent.stat().st_mode), 0o700)
+        self.assertEqual(seen, [(0o600, 0o644)])
+        self.assertEqual(stat.S_IMODE((slot.parent / 'manifest.json').stat().st_mode), 0o600)
 
-    def test_no_temp_files_left_after_success(self) -> None:
+    def test_success_retains_each_displaced_file_and_candidate(self):
         path = self.write(f"{self.VERSION}=1.0.0\nA=1\n")
-        before = self.listing(self.dir)
-        write_changes(path, {self.VERSION: "1.1.0"})
-        write_changes(path, {"A": None, "NEW": "x"})
-        self.assertEqual(self.listing(self.dir), before)
+        before = path.read_bytes()
+        write_changes(path, {self.VERSION: '1.1.0'})
+        middle = path.read_bytes()
+        write_changes(path, {'A': None, 'NEW': 'x'})
+        slots = list(self.dir.glob('.futureagi-updates/env-commits/*/*/slot'))
+        self.assertEqual(len(slots), 2)
+        self.assertCountEqual([p.read_bytes() for p in slots], [before, middle])
+        self.assertEqual(len(list(self.dir.glob('.futureagi-updates/env-commits/*/*/candidate'))), 2)
+        self.assertFalse(list(self.dir.glob('.env.futureagi-update-*.tmp')))
 
     # ------------------------------------------------------ mode / owner --
     def test_keeps_file_mode(self) -> None:
@@ -1137,33 +1148,25 @@ class WriteChangesTests(_EnvCase):
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o664)
 
     @unittest.skipUnless(hasattr(os, "chown"), "no chown on this platform")
-    def test_keeps_owner_when_permitted(self) -> None:
+    def test_keeps_owner_when_permitted(self):
         path = self.write(f"{self.VERSION}=1.0.0\n")
-        info = os.stat(path)
-        calls = []
-        real_chown = os.chown
-
-        def chown(target, uid, gid, *args, **kwargs):
-            calls.append((Path(target).name, uid, gid))
-            return real_chown(target, uid, gid, *args, **kwargs)
-
-        with mock.patch.object(envfile.os, "chown", chown):
-            write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0][0].startswith(".env.futureagi-update-"))
-        self.assertEqual(calls[0][1:], (info.st_uid, info.st_gid))
-        after = os.stat(path)
-        self.assertEqual((after.st_uid, after.st_gid), (info.st_uid, info.st_gid))
+        before = path.stat()
+        real = os.fchown
+        with mock.patch.object(envfile.os, 'fchown', wraps=real) as chown:
+            write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(chown.call_count, 1)
+        self.assertEqual(chown.call_args.args[1:], (before.st_uid, before.st_gid))
+        self.assertEqual((path.stat().st_uid, path.stat().st_gid), (before.st_uid, before.st_gid))
 
     @unittest.skipUnless(hasattr(os, "chown"), "no chown on this platform")
-    def test_chown_permission_error_is_tolerated(self) -> None:
+    def test_owner_preservation_failure_is_refused_before_exchange(self):
         path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o640)
-        before = self.listing(self.dir)
-        with mock.patch.object(envfile.os, "chown", side_effect=PermissionError(1, "Operation not permitted")):
-            write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(read_env(path)[self.VERSION], "1.1.0")
-        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
-        self.assertEqual(self.listing(self.dir), before)
+        original = path.read_bytes()
+        with mock.patch.object(envfile.os, 'fchown', side_effect=PermissionError(1, 'fixture')):
+            with self.assertRaises(EnvFileError):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
 
     # ----------------------------------------------------------- symlinks --
     def test_symlink_target_is_edited_and_link_kept(self) -> None:
@@ -1180,9 +1183,9 @@ class WriteChangesTests(_EnvCase):
         self.assertEqual(os.readlink(link), os.path.join("..", "shared", "real.env"))
         self.assertEqual(target.read_bytes(), f"A=1\n{self.VERSION}=1.1.0\n".encode())
         self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o640)
-        self.assertEqual(Path(calls[0][0]).parent, target.resolve().parent)
+        self.assertEqual(Path(calls[0][0]).parent.parents[3], target.resolve().parent)
         self.assertEqual(self.listing(checkout), before_checkout)
-        self.assertEqual(self.listing(target.parent), before_shared)
+        self.assertEqual(self.listing(target.parent), sorted(before_shared + ['.futureagi-updates']))
 
     def test_symlink_chain_is_followed(self) -> None:
         target = self.write(f"{self.VERSION}=1.0.0\n", name="real.env")
@@ -1229,46 +1232,41 @@ class WriteChangesTests(_EnvCase):
         self.assertEqual(path.read_text(encoding="utf-8"), f"{self.VERSION}=1.0.0\nSECRET_KEY=x\n")
         self.assertEqual(self.listing(self.dir), listing)
 
-    def test_failed_replace_leaves_original_and_no_temp_file(self) -> None:
-        original = f"A=1\n{self.VERSION}=1.0.0\n"
-        path = self.write(original, mode=0o600)
-        listing = self.listing(self.dir)
-        with mock.patch.object(envfile.os, "replace", side_effect=OSError(28, "No space left on device")):
-            with self.assertRaises(Exception):
-                write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(path.read_text(encoding="utf-8"), original)
-        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        self.assertEqual(self.listing(self.dir), listing)
+    def test_failed_replace_leaves_original_and_retains_private_evidence(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o600)
+        before = path.read_bytes()
+        with mock.patch.object(envfile.envcommit, 'exchange', side_effect=OSError(28, 'fixture')):
+            with self.assertRaises(EnvFileError):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue((self.dir / '.futureagi-updates').is_dir())
 
-    def test_failed_fsync_leaves_original_and_no_temp_file(self) -> None:
-        original = f"{self.VERSION}=1.0.0\n"
-        path = self.write(original)
-        listing = self.listing(self.dir)
-        with mock.patch.object(envfile.os, "fsync", side_effect=OSError(5, "Input/output error")):
-            with self.assertRaises(Exception):
-                write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(path.read_text(encoding="utf-8"), original)
-        self.assertEqual(self.listing(self.dir), listing)
+    def test_failed_fsync_leaves_original_and_retains_private_evidence(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o600)
+        before = path.read_bytes()
+        with mock.patch.object(envfile.envcommit, 'sync_file', side_effect=OSError(28, 'fixture')):
+            with self.assertRaises(EnvFileError):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue((self.dir / '.futureagi-updates').is_dir())
 
-    def test_failed_chmod_leaves_original_and_no_temp_file(self) -> None:
-        original = f"{self.VERSION}=1.0.0\n"
-        path = self.write(original)
-        listing = self.listing(self.dir)
-        with mock.patch.object(envfile.os, "chmod", side_effect=OSError(1, "Operation not permitted")):
-            with self.assertRaises(Exception):
-                write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(path.read_text(encoding="utf-8"), original)
-        self.assertEqual(self.listing(self.dir), listing)
+    def test_failed_chmod_preserves_original_and_private_candidate(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        before = path.read_bytes()
+        with mock.patch.object(envfile.os, 'fchmod', side_effect=OSError(1, 'fixture')):
+            with self.assertRaises(EnvFileError):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(len(list(self.dir.glob('.futureagi-updates/env-commits/*/*/candidate'))), 1)
 
-    def test_ctrl_c_during_write_removes_temp_and_propagates(self) -> None:
-        original = f"{self.VERSION}=1.0.0\n"
-        path = self.write(original)
-        listing = self.listing(self.dir)
-        with mock.patch.object(envfile.os, "fsync", side_effect=KeyboardInterrupt):
+    def test_ctrl_c_during_write_retains_evidence_and_propagates(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        before = path.read_bytes()
+        with mock.patch.object(envfile.envcommit, 'sync_file', side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
-                write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertEqual(path.read_text(encoding="utf-8"), original)
-        self.assertEqual(self.listing(self.dir), listing)
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue((self.dir / '.futureagi-updates').is_dir())
 
     def test_failed_rewrite_is_an_env_file_error(self) -> None:
         # bin/update reports EnvFileError cleanly (exit 2); a raw OSError from
@@ -1304,7 +1302,7 @@ class WriteChangesTests(_EnvCase):
         past = 1_000_000_000
         os.utime(path, ns=(past * 10**9, past * 10**9))
         before = os.stat(path)
-        with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=AssertionError("must not write")):
+        with mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")):
             write_changes(path, changes)
         after = os.stat(path)
         self.assertEqual((after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns))
@@ -1329,13 +1327,13 @@ class WriteChangesTests(_EnvCase):
     def test_temp_names_are_ignored_by_the_repository(self) -> None:
         if shutil.which("git") is None:
             self.skipTest("git is not installed")
-        probe = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--is-inside-work-tree"],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-        if probe.returncode != 0 or probe.stdout.strip() != "true":
-            self.skipTest(f"{ROOT} is not a git work tree")
+        # The helper installs its own ignore file in private retention. Exercise
+        # that actual runtime layout, including a nested production env target.
+        subprocess.run(["git", "init", "-q", str(self.dir)], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         def check_ignore(relative: str) -> int:
-            return subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", relative],
+            return subprocess.run(["git", "-C", str(self.dir), "check-ignore", "-q", relative],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode
 
         # The check itself works: a plain source path is not ignored.
@@ -1347,8 +1345,8 @@ class WriteChangesTests(_EnvCase):
                 with patch:
                     write_changes(path, {self.VERSION: "1.1.0"})
                 temp = Path(calls[0][0])
-                self.assertEqual(temp.parent, path.resolve().parent)
-                in_repo = (Path(relative).parent / temp.name).as_posix()
+                self.assertEqual(temp.parent.parents[3], path.resolve().parent)
+                in_repo = (Path(relative).parent / temp.relative_to(path.parent)).as_posix()
                 self.assertEqual(check_ignore(in_repo), 0, f"{in_repo} is not ignored by .gitignore")
 
 
@@ -1479,8 +1477,10 @@ class EnvFileParsingAdditions(_EnvCase):
         values = self.parse('KEY="-----BEGIN\nFUTURE_AGI_VERSION=evil\n-----END"\nA=1\n')
         self.assertEqual(values, {"KEY": "-----BEGIN\nFUTURE_AGI_VERSION=evil\n-----END", "A": "1"})
 
-    def test_crlf_inside_a_multi_line_value_reads_as_lf(self) -> None:
-        self.assertEqual(self.parse('C="a\r\nb"\r\nD=1\r\n'), {"C": "a\nb", "D": "1"})
+    def test_crlf_inside_a_multi_line_value_stays_crlf(self) -> None:
+        # Every Compose release from v2.24.0 to v5.6.0 keeps the CR of a quoted value's line break.
+        self.assertEqual(self.parse('C="a\r\nb"\r\nD=1\r\n'), {"C": "a\r\nb", "D": "1"})
+        self.assertEqual(self.parse("C='a\r\nb'\r\nD=\"x\\\r\ny\"\r\n"), {"C": "a\r\nb", "D": "x\\\r\ny"})
 
     def test_unterminated_quote_does_not_swallow_the_file(self) -> None:
         # Compose rejects the file; read_env keeps the quote in the value and
@@ -1659,58 +1659,37 @@ class EnvFileWriteAdditions(_EnvCase):
         path = self.dir / ".env"
         path.write_bytes(f"PG_PASSWORD=caf\xe9\n{self.VERSION}=1.0.0\n".encode("latin-1"))
         before = os.stat(path)
-        with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=AssertionError("must not write")):
+        with mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")):
             write_changes(path, {self.VERSION: "1.0.0"})
         self.assertEqual(os.stat(path).st_mtime_ns, before.st_mtime_ns)
 
-    def test_failed_temp_file_creation_is_an_env_file_error(self) -> None:
-        original = f"{self.VERSION}=1.0.0\n"
-        path = self.write(original)
-        with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=PermissionError(13, "Permission denied")):
+    def test_failed_candidate_creation_is_an_env_file_error(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        real = os.open
+        def opening(name, *args, **kwargs):
+            if name == 'candidate':
+                raise PermissionError(13, 'fixture')
+            return real(name, *args, **kwargs)
+        with mock.patch.object(envfile.os, 'open', side_effect=opening):
             with self.assertRaises(EnvFileError) as caught:
-                write_changes(path, {self.VERSION: "1.1.0"})
-        self.assertIn(f"cannot write {path}", str(caught.exception))
-        self.assertEqual(path.read_text(encoding="utf-8"), original)
-        self.assertEqual(self.listing(self.dir), [".env"])
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertIn(str(path), str(caught.exception))
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
 
-    def test_every_failed_step_is_an_env_file_error_and_leaves_no_temp_file(self) -> None:
-        real_fdopen = os.fdopen
-
-        class FullDisk:
-            def __init__(self, fd: int, *args, **kwargs) -> None:
-                self.handle = real_fdopen(fd, *args, **kwargs)
-
-            def __enter__(self) -> "FullDisk":
-                return self
-
-            def __exit__(self, *exc) -> None:
-                self.handle.close()
-
-            def write(self, data: bytes) -> int:
-                raise OSError(28, "No space left on device")
-
-        failures = (
-            ("fdopen", FullDisk),
-            ("fsync", mock.Mock(side_effect=OSError(5, "Input/output error"))),
-            ("chmod", mock.Mock(side_effect=OSError(1, "Operation not permitted"))),
-            ("replace", mock.Mock(side_effect=OSError(18, "Invalid cross-device link"))),
-        )
-        for name, replacement in failures:
-            with self.subTest(step=name):
-                original = f"A=1\n{self.VERSION}=1.0.0\n"
-                path = self.write(original)
-                with mock.patch.object(envfile.os, name, replacement):
-                    with self.assertRaises(EnvFileError) as caught:
-                        write_changes(path, {self.VERSION: "1.1.0"})
-                self.assertIn(f"cannot write {path}", str(caught.exception))
-                self.assertIsInstance(caught.exception.__cause__, OSError)
-                self.assertEqual(path.read_bytes(), original.encode())
-                self.assertEqual(self.listing(self.dir), [".env"])
+    def test_every_failed_step_retains_evidence_and_reports_an_env_file_error(self):
+        for operation in ('fdopen', 'fsync', 'fchmod', 'replace', 'link'):
+            with self.subTest(step=operation):
+                path = self.write(f"{self.VERSION}=1.0.0\n", name=operation + '/.env')
+                before = path.read_bytes()
+                with mock.patch.object(envfile.os, operation, side_effect=OSError(28, 'fixture')):
+                    with self.assertRaises(EnvFileError):
+                        write_changes(path, {self.VERSION: '1.1.0'})
+                self.assertEqual(path.read_bytes(), before)
 
     def test_invalid_key_leaves_the_file_untouched(self) -> None:
         original = f"{self.VERSION}=1.0.0\n"
         path = self.write(original)
-        with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=AssertionError("must not write")):
+        with mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")):
             with self.assertRaises(EnvFileError):
                 write_changes(path, {self.VERSION: "1.1.0", "COMPOSE_FILE=evil.yml\nX": "1"})
         self.assertEqual(path.read_bytes(), original.encode())
@@ -1733,36 +1712,38 @@ class EnvFileRound2VerbatimRenderTests(_EnvCase):
         yield f"A=1\n{line}"
         yield f"﻿{line}\n"
 
-    def test_interpolated_value_round_trips_byte_for_byte_only_with_verbatim(self) -> None:
+    def test_interpolated_values_require_a_lexical_record_not_last_value_reencoding(self):
         for value in self.INTERPOLATED:
             for form in self.FORMS:
                 for text in self.texts(form.format(value)):
                     with self.subTest(text=text):
-                        found = self.parse(text)["V"]
-                        self.assertEqual(found, value)
-                        written = render_changes(text, {"V": "v1.1.0"})
-                        self.assertEqual(self.parse(written)["V"], "v1.1.0")
-                        with self.assertRaises(EnvFileError) as caught:
-                            render_changes(written, {"V": found})
-                        self.assertIn("refusing", str(caught.exception))
-                        self.assertEqual(render_changes(written, {"V": found}, verbatim=True), text)
+                        path = self.write(text)
+                        found = read_env(path)['V']
+                        recovery = envfile.recovery_record(path, {'V': 'v1.1.0'})
+                        write_changes(path, {'V': 'v1.1.0'}, recovery=recovery)
+                        with self.assertRaises(EnvFileError):
+                            render_changes(path.read_text(), {'V': found}, verbatim=True)
+                        envfile.restore_changes(path, recovery)
+                        self.assertEqual(path.read_bytes(), text.encode())
 
-    def test_the_two_reported_setups_round_trip(self) -> None:
-        # Finding 11: FUTURE_AGI_VERSION=${RELEASE}; finding 5: FRONTEND_VERSION=${FUTURE_AGI_VERSION}.
-        for text in ("RELEASE=v1.0.0\nFUTURE_AGI_VERSION=${RELEASE}\n",
-                     "FUTURE_AGI_VERSION=v1.0.0\nFRONTEND_VERSION=${FUTURE_AGI_VERSION}\n"):
+    def test_the_two_reported_setups_round_trip_with_exact_records(self):
+        for text in ('RELEASE=v1.0.0\nFUTURE_AGI_VERSION=${RELEASE}\n',
+                     'FUTURE_AGI_VERSION=v1.0.0\nFRONTEND_VERSION=${FUTURE_AGI_VERSION}\n'):
             with self.subTest(text=text):
-                found = {key: value for key, value in self.parse(text).items() if key != "RELEASE"}
-                written = render_changes(text, {key: "v1.1.0" for key in found})
-                self.assertNotEqual(written, text)
-                self.assertEqual(render_changes(written, found, verbatim=True), text)
+                path = self.write(text)
+                changes = {key: 'v1.1.0' for key in read_env(path) if key != 'RELEASE'}
+                recovery = envfile.recovery_record(path, changes)
+                write_changes(path, changes, recovery=recovery)
+                self.assertNotEqual(path.read_bytes(), text.encode())
+                envfile.restore_changes(path, recovery)
+                self.assertEqual(path.read_bytes(), text.encode())
 
-    def test_verbatim_writing_the_value_already_there_changes_nothing(self) -> None:
+    def test_verbatim_dollar_is_ambiguous_even_if_the_last_value_matches(self):
         for value in self.INTERPOLATED:
             for form in self.FORMS:
                 for text in self.texts(form.format(value)):
-                    with self.subTest(text=text):
-                        self.assertEqual(render_changes(text, {"V": value}, verbatim=True), text)
+                    with self.subTest(text=text), self.assertRaises(EnvFileError):
+                        render_changes(text, {'V': value}, verbatim=True)
 
     def test_verbatim_still_refuses_line_breaks_and_nul(self) -> None:
         for bad in ("${X}\nSECRET_KEY=x", "v1\n", "\n", "v1\r", "\r", "v1\r\nX=1", "\x00", "v1\x00", "${X}\x00"):
@@ -1777,7 +1758,7 @@ class EnvFileRound2VerbatimRenderTests(_EnvCase):
                     "1ABC", "A-B", "# A", "export A", 5, None):
             with self.subTest(key=bad):
                 with self.assertRaises(EnvFileError) as caught:
-                    render_changes("A=1\n", {"GOOD": "${RELEASE}", bad: "${RELEASE}"}, verbatim=True)
+                    render_changes("A=1\n", {"GOOD": "v1", bad: "v1"}, verbatim=True)
                 self.assertIn("refusing to write unexpected key", str(caught.exception))
 
     def test_verbatim_still_refuses_values_that_are_not_strings(self) -> None:
@@ -1814,9 +1795,9 @@ class EnvFileRound2VerbatimRenderTests(_EnvCase):
             render_changes(text, {"V": '"x'}, verbatim=True)
         self.assertIn("refusing to write back V", str(caught.exception))
 
-    def test_verbatim_appends_a_missing_key_bare(self) -> None:
-        self.assertEqual(render_changes("A=1\r\n", {"V": "${RELEASE}"}, verbatim=True), "A=1\r\nV=${RELEASE}\r\n")
-        self.assertEqual(self.parse(render_changes("A=1", {"V": "${R:-v1}"}, verbatim=True))["V"], "${R:-v1}")
+    def test_verbatim_dollar_cannot_be_appended_from_a_logical_value(self):
+        with self.assertRaises(EnvFileError):
+            render_changes('A=1\r\n', {'V': '${RELEASE}'}, verbatim=True)
 
     def test_verbatim_accepts_what_the_default_accepts_and_renders_it_the_same(self) -> None:
         text = "A=1\nV='v1.0.0' # c\nexport W=x\r\nR=gone\n"
@@ -1846,13 +1827,15 @@ class EnvFileRound2VerbatimWriteTests(_EnvCase):
         found["AGENT_VERSION"] = None  # absent before the run: the restore removes it
         self.assertEqual(found["FUTURE_AGI_VERSION"], "${RELEASE}")
         self.assertEqual(found["FRONTEND_VERSION"], "${FUTURE_AGI_VERSION:-v1}")
-        write_changes(path, {"FUTURE_AGI_VERSION": "v1.1.0", "FRONTEND_VERSION": "v1.1.0", "AGENT_VERSION": "v1.1.0"})
+        changes = {"FUTURE_AGI_VERSION": "v1.1.0", "FRONTEND_VERSION": "v1.1.0", "AGENT_VERSION": "v1.1.0"}
+        recovery = envfile.recovery_record(path, changes)
+        write_changes(path, changes, recovery=recovery)
         written = path.read_bytes()
         self.assertNotEqual(written, self.RAW)
         with self.assertRaises(EnvFileError):
             write_changes(path, found)
         self.assertEqual(path.read_bytes(), written)
-        write_changes(path, found, verbatim=True)
+        envfile.restore_changes(path, recovery)
         self.assertEqual(path.read_bytes(), self.RAW)
 
     def test_refused_verbatim_write_leaves_the_file_untouched(self) -> None:
@@ -1863,7 +1846,7 @@ class EnvFileRound2VerbatimWriteTests(_EnvCase):
                         {"FUTURE_AGI_VERSION": "${RELEASE}", "BAD KEY": "${RELEASE}"},
                         {"FRONTEND_VERSION": 'a"b'}):
             with self.subTest(changes=changes):
-                with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=AssertionError("must not write")):
+                with mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")):
                     with self.assertRaises(EnvFileError):
                         write_changes(path, changes, verbatim=True)
                 self.assertEqual(path.read_bytes(), self.RAW)
@@ -1873,17 +1856,20 @@ class EnvFileRound2VerbatimWriteTests(_EnvCase):
         path = self.dir / ".env"
         path.write_bytes(self.RAW)
         before = os.stat(path)
-        with mock.patch.object(envfile.tempfile, "mkstemp", side_effect=AssertionError("must not write")):
+        with mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")), \
+                self.assertRaises(EnvFileError):
             write_changes(path, {"FUTURE_AGI_VERSION": "${RELEASE}", "FRONTEND_VERSION": "${FUTURE_AGI_VERSION:-v1}",
                                  "AGENT_VERSION": None}, verbatim=True)
         self.assertEqual(os.stat(path).st_mtime_ns, before.st_mtime_ns)
         self.assertEqual(path.read_bytes(), self.RAW)
 
     def test_verbatim_write_keeps_the_mode_and_follows_a_symlink(self) -> None:
-        target = self.write("FUTURE_AGI_VERSION=v1.1.0\n", "real.env", mode=0o640)
+        target = self.write("FUTURE_AGI_VERSION=${RELEASE}\n", "real.env", mode=0o640)
         link = self.dir / ".env"
         link.symlink_to(target.name)
-        write_changes(link, {"FUTURE_AGI_VERSION": "${RELEASE}"}, verbatim=True)
+        recovery = envfile.recovery_record(link, {"FUTURE_AGI_VERSION": "v1.1.0"})
+        write_changes(link, {"FUTURE_AGI_VERSION": "v1.1.0"}, recovery=recovery)
+        envfile.restore_changes(link, recovery)
         self.assertTrue(link.is_symlink())
         self.assertEqual(target.read_bytes(), b"FUTURE_AGI_VERSION=${RELEASE}\n")
         self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o640)
@@ -1986,6 +1972,1061 @@ class TrustRound5VerifySettingsTests(_SettingsCase):
         self.assertIs(self.load_for(False).boolean(OFFLINE), False)
         with self.assertRaises(TypeError):
             load_settings(self.root, None, {}, False)  # type: ignore[misc]
+
+
+# ================================================= hardening: Compose parsing ==
+
+
+class EnvFileHardeningComposeParsingTests(_EnvCase):
+    """More of Compose's dotenv rules, each checked against `docker-compose config` v5.1.4."""
+
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_octal_escapes_decode_up_to_0377(self) -> None:
+        # \0 and three octal digits up to 377 is one character; 400 and above stays as written without its 0.
+        self.assertEqual(self.parse('A="x\\0377y"\nB="x\\0376y"\nC="x\\0350\\0400"\nD="\\0101\\0177"\n'),
+                         {"A": "x\xffy", "B": "x\xfey", "C": "x\xe8\\400", "D": "A\x7f"})
+
+    def test_a_leading_blank_line_defines_nothing_and_ends_at_the_newline(self) -> None:
+        for text in ("\nA=1\nB=2 # c\n", "\r\nA=1\r\nB=2 # c\r\n", "\n\nA=1\nB=2 # c"):
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), {"A": "1", "B": "2"})
+                self.assertEqual(example_keys(self.write(text, name=".env.example")), ["A", "B"])
+                self.assertEqual(render_changes(text, {"A": "v9"}), text.replace("A=1", "A=v9"))
+                self.assertEqual(render_changes(text, {"B": None}), text[:text.index("B=")])
+
+    def test_a_colon_separates_a_key_from_its_value_like_an_equals_sign(self) -> None:
+        # Compose also reads the YAML-like KEY: value. The first '=' or ':' ends the key.
+        text = ("A: v1\nB:v2\nexport C : 'x y' # c\nD:=1\nE::1\nF=x:y\nG:\nH: \"multi\nline\"\n"
+                "http://example.com/a\nI=2\nI: 3\n")
+        self.assertEqual(self.parse(text), {"A": "v1", "B": "v2", "C": "x y", "D": "=1", "E": ":1", "F": "x:y",
+                                            "G": "", "H": "multi\nline", "http": "//example.com/a", "I": "3"})
+        self.assertEqual(example_keys(self.write(text, name=".env.example")),
+                         ["A", "B", "C", "D", "E", "F", "G", "H", "http", "I"])
+
+    def test_a_colon_definition_is_the_one_compose_reads_and_the_one_rewritten(self) -> None:
+        # An `=` line followed by a `:` line of the same key: Compose reads the second.
+        path = self.write(f"{self.VERSION}=v1.0.0\nA=1\nexport {self.VERSION}: 'v1.0.1'  # hotfix\n")
+        self.assertEqual(read_env(path)[self.VERSION], "v1.0.1")
+        write_changes(path, {self.VERSION: "v1.1.0"})
+        self.assertEqual(path.read_bytes(),
+                         f"{self.VERSION}=v1.1.0\nA=1\nexport {self.VERSION}: 'v1.1.0'  # hotfix\n".encode())
+        self.assertEqual(read_env(path)[self.VERSION], "v1.1.0")
+        write_changes(path, {self.VERSION: "v1.0.1"})
+        write_changes(path, {self.VERSION: None})
+        self.assertEqual(path.read_bytes(), b"A=1\n")
+
+    def test_a_colon_only_definition_is_replaced_in_place_not_appended(self) -> None:
+        text = f"{self.VERSION}: v1.0.0  # pinned\r\nA=1\r\n"
+        rendered = render_changes(text, {self.VERSION: "v1.1.0"})
+        self.assertEqual(rendered, f"{self.VERSION}: v1.1.0  # pinned\r\nA=1\r\n")
+        self.assertEqual(render_changes(rendered, {self.VERSION: "v1.0.0"}, verbatim=True), text)
+
+    def test_compose_reads_another_definition_after_a_closing_quote(self) -> None:
+        # Compose does not skip the rest of a line after a closing quote: a definition there counts.
+        cases = (
+            ('A="x" B=1\n', {"A": "x", "B": "1"}),
+            ('A="x"B=1\n', {"A": "x", "B": "1"}),
+            ("A='x' export B=1\n", {"A": "x", "B": "1"}),
+            ('A="x"\tB="y" C=2 # c\nD=4\n', {"A": "x", "B": "y", "C": "2", "D": "4"}),
+            ('A="x" B="multi\nline" C=3\nD=4\n', {"A": "x", "B": "multi\nline", "C": "3", "D": "4"}),
+            ('A="x" B=1\r\nC=3\r\n', {"A": "x", "B": "1", "C": "3"}),
+            ('A="x" B:1\n', {"A": "x", "B": "1"}),
+            # The last line, without a line ending.
+            ('A="x" B=1', {"A": "x", "B": "1"}),
+            ("C=3\nA='x' B=\"y\"", {"C": "3", "A": "x", "B": "y"}),
+            # A comment or a word that defines nothing still ends the line.
+            ('A="x" # B=1\nC=3\n', {"A": "x", "C": "3"}),
+            ('A="x" junk\nB=2\n', {"A": "x", "B": "2"}),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), expected)
+                self.assertEqual(example_keys(self.write(text, name=".env.example")), list(expected))
+
+    def test_a_version_key_after_a_closing_quote_is_the_one_compose_reads_and_is_rewritten(self) -> None:
+        path = self.write(f"{self.VERSION}=v1.0.0\nNAME=\"fagi\" {self.VERSION}=v1.0.1 # hotfix\nA=1\n")
+        self.assertEqual(read_env(path)[self.VERSION], "v1.0.1")
+        write_changes(path, {self.VERSION: "v1.1.0"})
+        self.assertEqual(path.read_bytes(),
+                         f"{self.VERSION}=v1.1.0\nNAME=\"fagi\" {self.VERSION}=v1.1.0 # hotfix\nA=1\n".encode())
+        write_changes(path, {self.VERSION: "v0.9.0"}, verbatim=True)
+        self.assertEqual(read_env(path), {self.VERSION: "v0.9.0", "NAME": "fagi", "A": "1"})
+        write_changes(path, {self.VERSION: None})
+        # Only the definition goes: the quoted value before it, the comment and the line ending stay.
+        self.assertEqual(path.read_bytes(), b'NAME="fagi" # hotfix\nA=1\n')
+        self.assertEqual(read_env(path), {"NAME": "fagi", "A": "1"})
+
+    def test_removing_definitions_that_share_a_line_keeps_the_others_and_the_line_ending(self) -> None:
+        text = 'A="x" B=1 # c\r\nC=\'y\' D="z"\r\nE=5\r\n'
+        cases = (
+            ({"B": None}, 'A="x" # c\r\nC=\'y\' D="z"\r\nE=5\r\n', {"A": "x", "C": "y", "D": "z", "E": "5"}),
+            ({"A": None}, ' B=1 # c\r\nC=\'y\' D="z"\r\nE=5\r\n', {"B": "1", "C": "y", "D": "z", "E": "5"}),
+            ({"D": None}, 'A="x" B=1 # c\r\nC=\'y\'\r\nE=5\r\n', {"A": "x", "B": "1", "C": "y", "E": "5"}),
+            ({"C": None}, 'A="x" B=1 # c\r\n D="z"\r\nE=5\r\n', {"A": "x", "B": "1", "D": "z", "E": "5"}),
+            ({"C": None, "D": None}, 'A="x" B=1 # c\r\n\r\nE=5\r\n', {"A": "x", "B": "1", "E": "5"}),
+        )
+        for changes, expected_text, expected_values in cases:
+            with self.subTest(changes=changes):
+                rendered = render_changes(text, changes)
+                self.assertEqual(rendered, expected_text)
+                self.assertEqual(self.parse(rendered), expected_values)
+        self.assertEqual(render_changes(text, {"B": "v2", "D": "v3"}),
+                         'A="x" B=v2 # c\r\nC=\'y\' D="v3"\r\nE=5\r\n')
+        # The same on a last line without a line ending.
+        self.assertEqual(render_changes('E=5\nC=\'y\' D="z"', {"D": None}), "E=5\nC='y'")
+        self.assertEqual(render_changes('E=5\nC=\'y\' D="z"', {"C": None}), 'E=5\n D="z"')
+
+    def test_a_definition_alone_on_the_first_line_is_removed_whole_when_the_file_ends_with_a_quote(self) -> None:
+        # The first line follows no closing quote, whatever the file's last character is.
+        for text, expected in (('A=1\nB="x"', 'B="x"'), ('A="1"\nB=\'x\'', "B='x'"), ('A=1 # c\nB="x"', 'B="x"')):
+            with self.subTest(text=text):
+                self.assertEqual(render_changes(text, {"A": None}), expected)
+
+    def test_a_verbatim_value_that_would_start_a_definition_after_its_quote_is_refused(self) -> None:
+        path = self.write(f'{self.VERSION}="v1.0.0"\nA=1\n')
+        with self.assertRaises(EnvFileError) as caught:
+            write_changes(path, {self.VERSION: f'v1" {self.VERSION}=evil'}, verbatim=True)
+        self.assertTrue(str(caught.exception).startswith(f"refusing to write back {self.VERSION}: "),
+                        str(caught.exception))
+        self.assertEqual(path.read_bytes(), f'{self.VERSION}="v1.0.0"\nA=1\n'.encode())
+
+
+# =================================================== hardening: render_changes ==
+
+
+class EnvFileHardeningRenderTests(_EnvCase):
+    def test_append_after_a_crlf_blank_first_line_keeps_crlf(self) -> None:
+        self.assertEqual(render_changes("\r\nA=1", {"B": "2"}), "\r\nA=1\r\nB=2\r\n")
+        self.assertEqual(render_changes("\r\n", {"B": "2"}), "\r\nB=2\r\n")
+        self.assertEqual(render_changes("\n", {"B": "2"}), "\nB=2\n")
+        self.assertEqual(render_changes("\nA=1", {"B": "2"}), "\nA=1\nB=2\n")
+
+    def test_verbatim_refusal_names_the_key_that_would_read_back_differently(self) -> None:
+        # Only B's value cannot go back inside its double quotes; A, listed first, can.
+        text = 'A=v1.1.0\nB="v1.1.0"\nC=1\n'
+        for changes in ({"A": "v0", "B": 'a"b'}, {"A": "v0", "B": 'a"b', "C": None},
+                        {"C": None, "A": "v0", "B": 'a"b'}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(EnvFileError) as caught:
+                    render_changes(text, changes, verbatim=True)
+                self.assertEqual(str(caught.exception),
+                                 "refusing to write back B: 'a\"b' would not read back as the same value where B is "
+                                 "defined. Set B in the env file by hand")
+
+    def test_verbatim_refusal_names_the_first_of_several_keys_in_the_order_given(self) -> None:
+        text = 'A="v1.1.0"\nB="v1.1.0"\n'
+        for first, second in (("A", "B"), ("B", "A")):
+            with self.subTest(first=first):
+                with self.assertRaises(EnvFileError) as caught:
+                    render_changes(text, {first: 'p"q', second: 'a"b'}, verbatim=True)
+                self.assertTrue(str(caught.exception).startswith(f"refusing to write back {first}: 'p\"q' "),
+                                str(caught.exception))
+
+
+# ============================================ hardening: write_changes edges ==
+
+
+class EnvFileHardeningWriteEdgeTests(_EnvCase):
+    """The rarely taken paths of write_changes and _fsync_dir: a file that vanishes, a
+    platform without chown, a failed clean-up, and a directory that cannot be synced."""
+
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_a_file_removed_after_it_was_read_is_an_env_file_error_naming_the_given_path(self) -> None:
+        target = self.write(f"A=1\n{self.VERSION}=1.0.0\n", name="real.env")
+        link = self.dir / ".env"
+        link.symlink_to(target.name)
+        real_read = envfile._read_text
+
+        def read_then_vanish(path: Path, shown: Path) -> str:
+            text = real_read(path, shown)
+            os.unlink(path)  # another process removes it between the read and the stat
+            return text
+
+        with mock.patch.object(envfile, "_read_text", read_then_vanish), \
+                mock.patch.object(envfile.envcommit, "commit", side_effect=AssertionError("must not write")):
+            with self.assertRaises(EnvFileError) as caught:
+                write_changes(link, {self.VERSION: "1.1.0"})
+        self.assertTrue(str(caught.exception).startswith(f"cannot write {link}: "), str(caught.exception))
+        self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
+        self.assertFalse(target.exists())
+        self.assertEqual(self.listing(self.dir), [".env"])
+
+    def test_a_platform_without_chown_still_writes_the_file_with_its_mode(self) -> None:
+        path = self.write(f"A=1\n{self.VERSION}=1.0.0\n", mode=0o640)
+        saved = getattr(os, "chown", None)
+        if saved is not None:
+            del os.chown
+        try:
+            self.assertFalse(hasattr(envfile.os, "chown"))
+            write_changes(path, {self.VERSION: "1.1.0"})
+        finally:
+            if saved is not None:
+                os.chown = saved
+        self.assertEqual(path.read_bytes(), f"A=1\n{self.VERSION}=1.1.0\n".encode())
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o640)
+        self.assertEqual(self.listing(self.dir), ['.env', '.futureagi-updates'])
+
+    def test_ctrl_c_after_exchange_keeps_both_inodes_and_propagates(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o640)
+        real = envfile.envcommit.exchange
+        def exchange(a, b, c, d):
+            real(a, b, c, d)
+            if b == 'slot':
+                raise KeyboardInterrupt
+        with mock.patch.object(envfile.envcommit, 'exchange', side_effect=exchange):
+            with self.assertRaises(KeyboardInterrupt):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.1.0\n".encode())
+        slot, = self.dir.glob('.futureagi-updates/env-commits/*/*/slot')
+        self.assertEqual(slot.read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
+
+    def test_exchange_error_never_unlinks_displaced_data(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        real = envfile.envcommit.exchange
+        def exchange(a, b, c, d):
+            real(a, b, c, d)
+            if b == 'slot':
+                raise OSError(5, 'fixture after syscall')
+        with mock.patch.object(envfile.envcommit, 'exchange', side_effect=exchange):
+            with self.assertRaises(EnvFileError):
+                write_changes(path, {self.VERSION: '1.1.0'})
+        slot, = self.dir.glob('.futureagi-updates/env-commits/*/*/slot')
+        self.assertEqual(slot.read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.1.0\n".encode())
+
+    def test_directory_open_failure_is_reported_after_replace(self) -> None:
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        real_open = os.open
+        refused = []
+
+        def open_(name, flags, *args, **kwargs):
+            if os.path.realpath(str(name)) == os.path.realpath(str(self.dir)):
+                refused.append(flags)
+                raise PermissionError(13, "Permission denied")
+            return real_open(name, flags, *args, **kwargs)
+
+        with mock.patch.object(envfile.os, "open", open_), self.assertRaises(EnvFileError):
+            write_changes(path, {self.VERSION: "1.1.0"})
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
+        self.assertEqual(self.listing(self.dir), [".env"])
+
+    def test_directory_fsync_failure_is_reported_and_fd_is_closed(self) -> None:
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        real_fsync, real_close = os.fsync, os.close
+        directory_fds, closed = [], []
+
+        def fsync(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                directory_fds.append(fd)
+                raise OSError(22, "Invalid argument")  # some file systems cannot sync a directory
+            return real_fsync(fd)
+
+        def close(fd):
+            closed.append(fd)
+            return real_close(fd)
+
+        with mock.patch.object(envfile.os, "fsync", fsync), mock.patch.object(envfile.os, "close", close), \
+                self.assertRaises(EnvFileError):
+            write_changes(path, {self.VERSION: "1.1.0"})
+        self.assertEqual(len(directory_fds), 1)
+        self.assertIn(directory_fds[0], closed)
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
+        self.assertEqual(self.listing(self.dir), ['.env', '.futureagi-updates'])
+
+    def test_both_directories_are_synced_after_exchange_and_closed(self):
+        path = self.write(f"{self.VERSION}=1.0.0\n")
+        events = []
+        real_sync, real_exchange, real_close = os.fsync, envfile.envcommit.exchange, os.close
+        def sync(fd):
+            events.append(('sync-dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'sync-file', fd))
+            return real_sync(fd)
+        def exchange(a, b, c, d):
+            result = real_exchange(a, b, c, d)
+            if b == 'slot':
+                events.append(('exchange', (a, c)))
+            return result
+        def close(fd):
+            events.append(('close', fd))
+            return real_close(fd)
+        with mock.patch.object(envfile.os, 'fsync', side_effect=sync), \
+                mock.patch.object(envfile.envcommit, 'exchange', side_effect=exchange), \
+                mock.patch.object(envfile.os, 'close', side_effect=close):
+            write_changes(path, {self.VERSION: '1.1.0'})
+        boundary = next(i for i, event in enumerate(events) if event[0] == 'exchange')
+        for fd in events[boundary][1]:
+            self.assertIn(('sync-dir', fd), events[boundary + 1:])
+            self.assertIn(('close', fd), events[boundary + 1:])
+
+    def test_fsync_dir_of_a_missing_directory_reports_failure(self):
+        with self.assertRaises(FileNotFoundError):
+            envfile._fsync_dir(self.dir / 'missing')
+
+    def test_the_new_bytes_are_in_the_temporary_file_when_it_is_synced(self) -> None:
+        # A crash after the rename must find the whole new file on disk, not a buffered part of it.
+        path = self.write(f"A=1\n{self.VERSION}=1.0.0\n")
+        synced = []
+        real_fsync = os.fsync
+
+        def fsync(fd):
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                try:
+                    synced.append(os.pread(fd, 1 << 16, 0))
+                except OSError as exc:
+                    if exc.errno != 9:
+                        raise  # Metadata files are opened write-only; candidate is read/write.
+            return real_fsync(fd)
+
+        with mock.patch.object(envfile.os, "fsync", fsync):
+            write_changes(path, {self.VERSION: "1.1.0"})
+        expected = f"A=1\n{self.VERSION}=1.1.0\n".encode()
+        self.assertIn(expected, synced)
+        self.assertEqual(path.read_bytes(), expected)
+
+    def test_every_permission_bit_of_the_original_mode_is_kept(self) -> None:
+        for mode in (0o400, 0o600, 0o601, 0o640, 0o645, 0o711, 0o755):
+            with self.subTest(mode=oct(mode)):
+                path = self.write(f"{self.VERSION}=1.0.0\n", name=f"env-{mode:o}", mode=mode)
+                write_changes(path, {self.VERSION: "1.1.0"})
+                self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.1.0\n".encode())
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), mode)
+
+
+# ============================================== hardening: Compose's spaces ==
+
+
+class EnvFileHardeningComposeSpacesTests(_EnvCase):
+    """Compose's white space is Go's, not Python's: \\s and str.strip also take \\x1c-\\x1f and more."""
+
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_export_must_be_followed_by_a_tab_space_form_feed_or_carriage_return(self) -> None:
+        # Compose's `^export\s+` is Go's \s: a vertical tab, NEL or no-break space makes `export\vA` the key.
+        # \u3000 may not be part of a key: Compose rejects that line.
+        text = ("export\vA=1\nexport\x85B=2\nexport\xa0C=3\nexport\fD=4\nexport\rE=5\nexport \vF=6\n"
+                "export\t\x85\xa0G=7\nexport\u3000H=8\n")
+        self.assertEqual(self.parse(text), {"export\vA": "1", "export\x85B": "2", "export\xa0C": "3",
+                                            "D": "4", "E": "5", "F": "6", "G": "7"})
+        self.assertEqual(render_changes(text, {"A": "v9"}), text + "A=v9\n")
+        self.assertEqual(render_changes(text, {"G": "v9"}), text.replace("G=7", "G=v9"))
+
+    def test_a_version_key_after_a_vertical_tab_export_is_appended_not_rewritten(self) -> None:
+        path = self.write(f"export\v{self.VERSION}=v1.0.0\n")
+        self.assertEqual(read_env(path), {f"export\v{self.VERSION}": "v1.0.0"})
+        write_changes(path, {self.VERSION: "v1.1.0"})
+        self.assertEqual(path.read_bytes(), f"export\v{self.VERSION}=v1.0.0\n{self.VERSION}=v1.1.0\n".encode())
+        self.assertEqual(read_env(path), {f"export\v{self.VERSION}": "v1.0.0", self.VERSION: "v1.1.0"})
+
+    def test_only_gos_white_space_starts_a_line_or_separates_a_key(self) -> None:
+        # Compose rejects a line starting with \x1c or a key followed by \u3000: neither is a definition here.
+        text = ("\x1cA=1\n\x1fB=2\nC\u3000=3\nD\x1c=4\n\vE=5\n\x85F=6\n\xa0G=7\n\u3000H=8\n\u2028I=9\n\u2003J=10\n"
+                "K\x85=11\nL\xa0:12\nM\v\f\r=13\n")
+        self.assertEqual(self.parse(text), {"E": "5", "F": "6", "G": "7", "H": "8", "I": "9", "J": "10",
+                                            "K": "11", "L": "12", "M": "13"})
+
+    def test_an_unquoted_value_keeps_trailing_separator_controls(self) -> None:
+        # Go's unicode.IsSpace trims \u3000, NEL and the like, but not \x1c-\x1f (str.rstrip would).
+        text = "A=v1\x1c\nB=v2\x1d \nC=v3\x1e\t\nD=v4\x1f\nE=v5\u3000\nF=v6\x85\nG=v7\xa0\u2028\nH=v8 \x1f # c\n"
+        self.assertEqual(self.parse(text), {"A": "v1\x1c", "B": "v2\x1d", "C": "v3\x1e", "D": "v4\x1f",
+                                            "E": "v5", "F": "v6", "G": "v7", "H": "v8 \x1f"})
+        rendered = render_changes(text, {"A": "w1", "B": "w2", "E": "w5", "H": "w8"})
+        self.assertEqual(rendered, "A=w1\nB=w2 \nC=v3\x1e\t\nD=v4\x1f\nE=w5\u3000\nF=v6\x85\nG=v7\xa0\u2028\n"
+                                   "H=w8 # c\n")
+
+    def test_a_definition_after_a_closing_quote_may_follow_any_go_white_space(self) -> None:
+        text = 'A="x"\vB=1\nC=\'y\'\u3000D=2\nE="z" \x85 F=3\nG="w"\xa0H=4\n'
+        self.assertEqual(self.parse(text), {"A": "x", "B": "1", "C": "y", "D": "2", "E": "z", "F": "3", "G": "w",
+                                            "H": "4"})
+        # Compose rejects \x1c there; it does not start a definition here either.
+        self.assertEqual(self.parse('G="w"\x1cH=4\n'), {"G": "w"})
+
+
+# ================================= hardening: every key Compose reads ==
+
+
+class EnvFileComposeKeyTests(_EnvCase):
+    """Every key Compose reads is a definition, so its value is read past even where no variable can name it.
+
+    Compose's key ends at the first '=' or ':' and may hold letters and digits
+    of any script, '_', '.', '-', '[', ']' and spaces other than ' ' (checked
+    against docker-compose v2.24.0 and v5.6.0).
+    """
+
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_keys_no_variable_can_name_are_read_like_any_other(self) -> None:
+        text = "a.b=1\nmy-key=2\n1A=3\nÄ=4\nA[0]=5\nA\tB=6\nexport\vX=7\nexport\xa0Y: 8\nOK=9\n"
+        expected = {"a.b": "1", "my-key": "2", "1A": "3", "Ä": "4", "A[0]": "5", "A\tB": "6",
+                    "export\vX": "7", "export\xa0Y": "8", "OK": "9"}
+        self.assertEqual(self.parse(text), expected)
+        self.assertEqual(example_keys(self.write(text, name=".env.example")), list(expected))
+
+    def test_a_quoted_value_of_such_a_key_is_not_read_line_by_line(self) -> None:
+        # What looks like a definition inside the value is part of the value: rewriting the
+        # version key must leave it alone.
+        for key, quote in (("a.b", '"'), ("my-key", "'"), ("1A", '"'), ("Ä", "'"), ("A[0]", '"'),
+                           ("A\tB", '"'), ("export\vX", "'")):
+            inner = f"\n{self.VERSION}=v0\n"
+            text = f"{key}={quote}{inner}{quote}\n{self.VERSION}=v1\n"
+            with self.subTest(key=key):
+                self.assertEqual(self.parse(text), {key: inner, self.VERSION: "v1"})
+                self.assertEqual(render_changes(text, {self.VERSION: "v9"}),
+                                 f"{key}={quote}{inner}{quote}\n{self.VERSION}=v9\n")
+                self.assertEqual(render_changes(text, {self.VERSION: None}), f"{key}={quote}{inner}{quote}\n")
+
+    def test_a_definition_after_such_a_keys_closing_quote_is_the_one_rewritten(self) -> None:
+        text = f'export\vX="v1" {self.VERSION}=v2 # c\nA=1\n'
+        self.assertEqual(self.parse(text), {"export\vX": "v1", self.VERSION: "v2", "A": "1"})
+        self.assertEqual(render_changes(text, {self.VERSION: "v9"}), f'export\vX="v1" {self.VERSION}=v9 # c\nA=1\n')
+        self.assertEqual(render_changes(text, {self.VERSION: None}), 'export\vX="v1" # c\nA=1\n')
+
+    def test_an_empty_key_defines_nothing_but_its_value_is_read_past(self) -> None:
+        # export, then a space, then '=' or ':' is an empty key too (v2.24 rejects the file, v5.6 ignores it).
+        for prefix in ("=", " = ", "export =", "export\t:", "export :"):
+            text = f'{prefix}"\n{self.VERSION}=v0\n"\n{self.VERSION}=v1\n'
+            with self.subTest(prefix=prefix):
+                self.assertEqual(self.parse(text), {self.VERSION: "v1"})
+                self.assertEqual(render_changes(text, {self.VERSION: "v9"}),
+                                 f'{prefix}"\n{self.VERSION}=v0\n"\n{self.VERSION}=v9\n')
+        self.assertEqual(self.parse("export=1\nexport:2\nexport =3\n"), {"export": "2"})
+
+    def test_a_bare_key_defines_nothing_and_the_next_line_is_read(self) -> None:
+        # Compose takes a bare KEY from the environment, which bin/update never passes a version key in.
+        text = f'{self.VERSION}\nB="\n{self.VERSION}=v0\n"\n{self.VERSION}=v1\n'
+        self.assertEqual(self.parse(text), {"B": f"\n{self.VERSION}=v0\n", self.VERSION: "v1"})
+        self.assertEqual(render_changes(text, {self.VERSION: "v9"}), text.replace("=v1\n", "=v9\n"))
+
+
+class EnvFileUnterminatedVerbatimTests(_EnvCase):
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_a_verbatim_value_that_opens_a_quote_it_never_closes_is_refused(self) -> None:
+        # Bare, it would read back as itself here, but Compose rejects a quote that is never closed.
+        for original in (f"{self.VERSION}=v1.0.0\nA=1\n", f"A=1\n{self.VERSION}=v1.0.0", f"{self.VERSION}= \nA=1\n"):
+            for value in ('"v1', "'v1", '"', "'v1 B=2"):
+                with self.subTest(original=original, value=value):
+                    path = self.write(original)
+                    with self.assertRaises(EnvFileError) as caught:
+                        write_changes(path, {self.VERSION: value}, verbatim=True)
+                    self.assertTrue(str(caught.exception).startswith(f"refusing to write back {self.VERSION}: "))
+                    self.assertEqual(path.read_bytes(), original.encode())
+
+    def test_a_file_that_already_has_an_unterminated_quote_elsewhere_can_still_be_restored(self) -> None:
+        path = self.write(f'{self.VERSION}=v1.1.0\nB="open\n')
+        write_changes(path, {self.VERSION: "v0.9.0"}, verbatim=True)
+        self.assertEqual(path.read_bytes(), f'{self.VERSION}=v0.9.0\nB="open\n'.encode())
+
+
+class EnvFileHardeningFileEndTests(_EnvCase):
+    """Where a file starts or ends in the middle of what the parser looks for (checked against Compose)."""
+
+    VERSION = "FUTURE_AGI_VERSION"
+
+    def test_go_white_space_ends_at_u200a(self) -> None:
+        # U+2000 to U+200A are trimmed off an unquoted value; U+1FFF and U+200B (no white space) are not.
+        text = "A=v1῿\nB=v2 \nC=v3 \nD=v4​\nE=v5 \n"
+        self.assertEqual(self.parse(text), {"A": "v1῿", "B": "v2", "C": "v3", "D": "v4​", "E": "v5"})
+
+    def test_a_last_comment_without_a_line_ending_ends_the_file(self) -> None:
+        for text in (f"{self.VERSION}=v1\n# trailing comment ", f"{self.VERSION}=v1\n#", f"{self.VERSION}=v1 # c\n  # x\t"):
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), {self.VERSION: "v1"})
+                self.assertEqual(render_changes(text, {self.VERSION: "v2"}), text.replace("=v1", "=v2"))
+
+    def test_an_export_that_ends_the_file_defines_nothing(self) -> None:
+        # Compose rejects such a file ("zero length string"); here it simply ends.
+        for text in ("A=1\nexport ", "A=1\nexport\t", "A=1\nexport \t\v"):
+            with self.subTest(text=text):
+                self.assertEqual(self.parse(text), {"A": "1"})
+                self.assertEqual(render_changes(text, {"B": "v1"}), text + "\nB=v1\n")
+
+    def test_removing_the_first_definition_after_a_blank_first_line_keeps_that_line(self) -> None:
+        for text, expected in ((f"\n{self.VERSION}=v1\nB=2\n", "\nB=2\n"),
+                               (f"\r\n{self.VERSION}='v1'\r\nB=2\r\n", "\r\nB=2\r\n"),
+                               (f"\n\n  {self.VERSION}: v1 # c\nB=2", "\n\nB=2")):
+            with self.subTest(text=text):
+                self.assertEqual(render_changes(text, {self.VERSION: None}), expected)
+
+    def test_removing_a_quoted_definition_on_the_last_line_without_a_line_ending(self) -> None:
+        for text in (f'A=1\n{self.VERSION}="v1"', f"A=1\n{self.VERSION}='v1' # c", f'A=1\n  {self.VERSION}="v1"\t'):
+            with self.subTest(text=text):
+                self.assertEqual(render_changes(text, {self.VERSION: None}), "A=1\n")
+                self.assertEqual(self.parse(render_changes(text, {self.VERSION: None})), {"A": "1"})
+
+
+class ExactEnvRecoveryTests(_EnvCase):
+    """The private inverse is byte-exact, idempotent and never merges an operator edit."""
+
+    def transaction(self, raw, changes):
+        path = self.dir / '.env'
+        path.write_bytes(raw)
+        path.chmod(0o640)
+        record = envfile.recovery_record(path, changes)
+        # Exercise the durable JSON representation, not a Python-only object.
+        record = json.loads(json.dumps(record, sort_keys=True))
+        envfile.write_changes(path, changes, recovery=record)
+        return path, record
+
+    def test_every_definition_append_remove_and_unrelated_byte_round_trips(self):
+        cases = (
+            (b'\xef\xbb\xbf# top\r\nSECRET_KEY=keep-secret-123\xff\r\n'
+             b' export V : "v0" # first\r\nMIDDLE=${V}\r\nV= v1 # last', {'V': 'v2', 'NEW': 'v3'}),
+            (b'A="x" V="\\$X" W=one\r\nV=\'literal$X\' # comment\r\nTAIL=no-newline', {'V': None, 'NEW': 'v3'}),
+            (b'V="multi\r\nline\\n\\${X" # comment\r\nZ=x\r', {'V': 'v2', 'NEW': 'v3'}),
+            (b'V=v1', {'V': None, 'NEW': 'v3'}),
+            (b'\xef\xbb\xbf', {'V': 'v2'}),
+            (b'', {'V': 'v2'}),
+        )
+        for raw, changes in cases:
+            with self.subTest(raw=raw, changes=changes):
+                path, record = self.transaction(raw, changes)
+                self.assertNotIn('keep-secret-123', json.dumps(record))
+                envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), raw)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
+                envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), raw)
+                self.assertFalse(list(self.dir.glob('.env.futureagi-update-*')))
+
+    def test_record_before_write_is_recoverable_without_mutating_bytes(self):
+        path = self.write('V="\\$X"\nV=v1\n', mode=0o600)
+        before = path.read_bytes()
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        envfile.restore_changes(path, record)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_concurrent_bytes_mode_and_symlink_edits_are_preserved(self):
+        for change in ('version', 'unrelated', 'mode', 'symlink'):
+            with self.subTest(change=change):
+                path, record = self.transaction(b'V=v1\nSECRET_KEY=secret-original\n', {'V': 'v2'})
+                if change == 'mode':
+                    path.chmod(0o600)
+                elif change == 'symlink':
+                    target = self.write('V=v2\nSECRET_KEY=secret-original\n', name='operator.env', mode=0o640)
+                    path.unlink()
+                    path.symlink_to(target)
+                else:
+                    path.write_bytes(path.read_bytes() + (b'V=v9\n' if change == 'version' else b'OPERATOR=kept\n'))
+                before, mode = path.read_bytes(), path.stat().st_mode
+                with self.assertRaises(EnvFileError):
+                    envfile.restore_changes(path, record)
+                self.assertEqual((path.read_bytes(), path.stat().st_mode), (before, mode))
+                if path.is_symlink():
+                    path.unlink()
+
+    def test_symlink_target_is_preserved_on_write_and_recovery(self):
+        path = self.write('V="\\$X"\n', name='actual.env', mode=0o600)
+        alias = self.dir / '.env'
+        alias.symlink_to(path)
+        before = path.read_bytes()
+        record = envfile.recovery_record(alias, {'V': 'v2'})
+        envfile.write_changes(alias, {'V': 'v2'}, recovery=record)
+        envfile.restore_changes(alias, record)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_changed_file_after_record_preparation_never_gets_written(self):
+        path = self.write('V=v1\n')
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        path.write_bytes(b'V=v9\nOPERATOR=kept\n')
+        before = path.read_bytes()
+        with self.assertRaisesRegex(EnvFileError, 'changed'):
+            envfile.write_changes(path, {'V': 'v2'}, recovery=record)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_malformed_inverse_is_refused_before_or_after_env_write(self):
+        path, record = self.transaction(b'V=v1\n', {'V': 'v2'})
+        corrupt = [None, {}, dict(record, format=True), dict(record, format=2), dict(record, mode=-1),
+                   dict(record, edits=[None]), dict(record, edits=[{'offset': True, 'before': 'v1', 'after': 'v2'}]),
+                   dict(record, edits=[{'offset': 99, 'before': 'v1', 'after': 'v2'}]),
+                   dict(record, edits=[{'offset': 2, 'before': 'wrong', 'after': 'v2'}]),
+                   dict(record, edits=[]), dict(record, after_sha256='x' * 64)]
+        for raw in (b'V=v1\n', b'V=v2\n'):
+            for bad in corrupt:
+                with self.subTest(raw=raw, record=bad):
+                    path.write_bytes(raw)
+                    with self.assertRaises(EnvFileError):
+                        envfile.restore_changes(path, bad)
+                    self.assertEqual(path.read_bytes(), raw)
+
+    def test_recovery_exchange_and_durability_failures_reconcile_without_toggle(self):
+        for after in (False, True):
+            with self.subTest(after=after):
+                path, record = self.transaction(b'V=v1\n', {'V': 'v2'})
+                real = envfile.envcommit.exchange
+                def exchange(a, b, c, d):
+                    if b == 'slot':
+                        if after:
+                            real(a, b, c, d)
+                        raise OSError(28, 'fixture')
+                    return real(a, b, c, d)
+                with mock.patch.object(envfile.envcommit, 'exchange', side_effect=exchange):
+                    with self.assertRaises(EnvFileError):
+                        envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), b'V=v1\n' if after else b'V=v2\n')
+                envfile.restore_changes(path, record)
+                envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), b'V=v1\n')
+
+    def test_edit_during_temp_write_is_not_overwritten(self):
+        path, record = self.transaction(b'V=v1\n', {'V': 'v2'})
+        fsync = envfile.os.fsync
+        def edit(fd):
+            fsync(fd)
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                path.write_bytes(b'V=v9\nOPERATOR=kept\n')
+        with mock.patch.object(envfile.os, 'fsync', side_effect=edit):
+            with self.assertRaisesRegex(EnvFileError, 'changed'):
+                envfile.restore_changes(path, record)
+        self.assertEqual(path.read_bytes(), b'V=v9\nOPERATOR=kept\n')
+        self.assertFalse(list(self.dir.glob('.env.futureagi-update-*')))
+
+    def test_logical_dollar_values_are_never_used_as_lexical_proof(self):
+        for token in ('"\\$X"', '"$X"', "'$X'", '$X'):
+            with self.subTest(token=token):
+                path = self.write('V=' + token + '\n')
+                self.assertEqual(read_env(path)['V'], '$X')
+                with self.assertRaises(EnvFileError):
+                    render_changes('V=v2\n', {'V': read_env(path)['V']}, verbatim=True)
+
+    def test_recovery_text_rejects_invalid_edits_at_both_hash_endpoints(self):
+        path = self.write('V=v1\nPRIVATE=not-for-diagnostics\n', mode=0o600)
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        # Test the lexical validator directly: physical commit checks otherwise
+        # reject a changed inode before these independently necessary checks.
+        for raw, field in ((b'V=v1\nPRIVATE=not-for-diagnostics\n', 'after_sha256'),
+                           (b'V=v2\nPRIVATE=not-for-diagnostics\n', 'before_sha256')):
+            path.write_bytes(raw)
+            for edits in ([{'offset': 999, 'before': 'v1', 'after': 'v2'}],
+                          [{'offset': 2, 'before': 'wrong', 'after': 'wrong'}], []):
+                with self.subTest(raw=raw, edits=edits), self.assertRaises(EnvFileError) as caught:
+                    envfile.recovery_text(path, dict(record, edits=edits))
+                self.assertNotIn('not-for-diagnostics', str(caught.exception))
+                self.assertEqual(path.read_bytes(), raw)
+            with self.assertRaisesRegex(EnvFileError, 'file hash'):
+                envfile.recovery_text(path, dict(record, **{field: '0' * 64}))
+            self.assertEqual(path.read_bytes(), raw)
+        path.write_bytes(b'V=operator\n')
+        with self.assertRaisesRegex(EnvFileError, 'changed since the interrupted run'):
+            envfile.recovery_text(path, record)
+        self.assertEqual(path.read_bytes(), b'V=operator\n')
+
+    def test_legacy_reference_path_uses_exact_lexical_recovery(self):
+        path = self.write('V=v1\n', mode=0o600)
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        del record['commit']
+        self.assertEqual(envfile.check_commit(path, record), 'legacy')
+        path.write_bytes(b'V=v2\n')
+        envfile.restore_changes(path, record)
+        self.assertEqual(path.read_bytes(), b'V=v1\n')
+        slots = list(self.dir.glob('.futureagi-updates/env-commits/*/*/slot'))
+        self.assertEqual([slot.read_bytes() for slot in slots], [b'V=v2\n'])
+
+    def test_mode_change_after_journal_preparation_prevents_write(self):
+        path = self.write('V=v1\n', mode=0o600)
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        path.chmod(0o640)
+        with self.assertRaisesRegex(EnvFileError, 'mode changed since the journal'):
+            envfile.write_changes(path, {'V': 'v2'}, recovery=record)
+        self.assertEqual(path.read_bytes(), b'V=v1\n')
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
+        self.assertFalse((self.dir / '.futureagi-updates').exists())
+
+    def test_record_stat_failure_after_read_is_not_a_recovery_record(self):
+        path = self.write('V=v1\n')
+        real = envfile.render_changes
+
+        def removed(*args, **kwargs):
+            result = real(*args, **kwargs)
+            path.unlink()
+            return result
+
+        with mock.patch.object(envfile, 'render_changes', side_effect=removed):
+            with self.assertRaisesRegex(EnvFileError, 'cannot read'):
+                envfile.recovery_record(path, {'V': 'v2'})
+        self.assertFalse(path.exists())
+        self.assertFalse((self.dir / '.futureagi-updates').exists())
+
+    def test_noop_rechecks_bytes_after_stat_before_returning_success(self):
+        path = self.write('V=v1\n')
+        real = Path.stat
+        changed = []
+
+        def stat_and_edit(target, *args, **kwargs):
+            result = real(target, *args, **kwargs)
+            if target == path and not changed:
+                path.write_bytes(b'V=operator\n')
+                changed.append(True)
+            return result
+
+        with mock.patch.object(Path, 'stat', stat_and_edit):
+            with self.assertRaisesRegex(EnvFileError, 'changed during the write'):
+                envfile.write_changes(path, {})
+        self.assertEqual(changed, [True])
+        self.assertEqual(path.read_bytes(), b'V=operator\n')
+        self.assertFalse((self.dir / '.futureagi-updates').exists())
+
+    def test_two_real_reads_with_intervening_editor_restore_do_not_authorize_write(self):
+        path = self.write('V=v1\n')
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        del record['commit']  # A supported legacy lexical journal has no sidecar to inspect.
+        path.write_bytes(b'V=operator\n')
+        real = envfile._read_text
+        reads = []
+
+        def read_and_edit(*args):
+            text = real(*args)
+            reads.append(text)
+            if len(reads) == 1:
+                path.write_bytes(b'V=v2\n')
+            return text
+
+        with mock.patch.object(envfile, '_read_text', side_effect=read_and_edit):
+            with self.assertRaisesRegex(EnvFileError, 'changed during recovery'):
+                envfile.restore_changes(path, record)
+        self.assertEqual(reads, ['V=operator\n', 'V=v2\n'])
+        self.assertEqual(path.read_bytes(), b'V=v2\n')
+        self.assertFalse((self.dir / '.futureagi-updates').exists())
+
+    def test_failed_durable_cancel_does_not_claim_untouched_forward_is_finished(self):
+        path = self.write('V=v1\n')
+        record = envfile.recovery_record(path, {'V': 'v2'})
+        real = envfile.envcommit.exchange
+
+        def stop(a, b, c, d):
+            if b == 'slot':
+                raise SystemExit(137)
+            return real(a, b, c, d)
+
+        with mock.patch.object(envfile.envcommit, 'exchange', side_effect=stop):
+            with self.assertRaises(SystemExit):
+                envfile.write_changes(path, {'V': 'v2'}, recovery=record)
+        publish = envfile.envcommit._json
+
+        def fail_cancel(fd, name, body):
+            if body.get('phase') == 'not_applied':
+                raise OSError(5, 'private-cancel-fault')
+            return publish(fd, name, body)
+
+        with mock.patch.object(envfile.envcommit, '_json', side_effect=fail_cancel):
+            with self.assertRaises(envfile.EnvCommitError) as caught:
+                envfile.restore_changes(path, record)
+        self.assertNotIn('private-cancel-fault', str(caught.exception))
+        self.assertEqual(path.read_bytes(), b'V=v1\n')
+        operation = envfile.envcommit.directory(path, record['commit']['forward'])
+        self.assertEqual(json.loads((operation / 'manifest.json').read_text())['phase'], 'armed')
+        self.assertEqual((operation / 'candidate').read_bytes(), b'V=v2\n')
+        envfile.restore_changes(path, record)
+        self.assertEqual(json.loads((operation / 'manifest.json').read_text())['phase'], 'not_applied')
+
+    def test_older_unicode_table_preserves_new_letters_quote_boundaries(self):
+        import unicodedata
+        for char in ('\u0870', '\U0001e030', '\U00031350'):
+            with self.subTest(char=char), mock.patch.object(envfile, 'unicodedata', unicodedata.ucd_3_2_0):
+                raw = ('V=v1\n' + char + '=\'first\nV=not-a-definition\nlast\'\n').encode()
+                path, record = self.transaction(raw, {'V': 'v2'})
+                self.assertEqual(path.read_bytes(), raw.replace(b'V=v1', b'V=v2'))
+                envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), raw)
+
+
+# ============================================ conformance: real Compose ==
+
+# Compose reads .env with its own Go parser. `config` runs it on each file
+# below (no daemon, no network), and envfile must read, rewrite and remove
+# exactly what Compose sees. FUTURE_AGI_UPDATE_COMPOSE_BINARY names the
+# docker-compose binary to check (run once per Compose release); without it,
+# `docker compose` is used when it runs, else the tests are skipped.
+COMPOSE_BINARY = "FUTURE_AGI_UPDATE_COMPOSE_BINARY"
+UNSET = "<unset>"
+# Every file here is one Compose accepts. It has no "$" outside single quotes
+# (Compose expands it, read_env does not) and no name the subprocess environment
+# sets, as Compose prefers that environment to the env file.
+COMPOSE_CORPUS = (
+    "A=1\nB = 2\n  C=3  \nexport D=4\nexport\tE=5\n  export   F=6\nexportG=7\nexport=8\nexport  export=9\n",
+    "A: v1\nB:v2\nexport C : 'x y' # c\nD:=1\nE::1\nF=x:y\nG:\nH: \"multi\nline\"\nhttp://example.com/a\nI=2\nI: 3\n",
+    "export\vA=1\nexport \vB=2\nexport\x85C=3\nexport \x85D=4\nexport\xa0E=5\nexport\fF=6\nexport\rG=7\n"
+    "export\t\x85\xa0H=8\n",
+    "\vA=1\n\fB=2\n\x85C=3\n\xa0D=4\n\u3000E=5\n\u2028F=6\nG\x85=7\nH\xa0:8\nI\v=9\nJ=\v\x85 10\n\u2003K=11\n",
+    "A=v1\x1c\nB=v2\x1f \nC=v3\u3000\nD=v4\x85\nE=v5 \t\nF=v6\xa0\nG=v7\x1d\x1e\t\nH=v8 \x1f # c\n",
+    "# A=1\n  # B=2\nC=3 # c\nD=4#c\nE=5\t#c\nF= #c\nG='x' # c\nH=\"y\"#c\n#\nI=a #b #c\nJ=http://h/#frag\n",
+    "A=1\r\nB='x'\r\nC=\"y\" # c\r\nD=v # c\r\nexport E=e\r\n\r\nF: \"multi\r\nline\"\r\nG=\r\n",
+    "\ufeffA=1\nB=2\n",
+    "\ufeffexport A: 'x'\r\n",
+    'A="x" B=1\n',
+    'A="x"B=1\n',
+    "A='x' export B=1\n",
+    'A="x"\tB="y" C=2 # c\nD=4\n',
+    'A="x" B="multi\nline" C=3\nD=4\n',
+    'A="x" B=1\r\nC=3\r\n',
+    'A="x" B:1\n',
+    'A="x" B=1',
+    "C=3\nA='x' B=\"y\"",
+    'A="x" # B=1\nC=3\n',
+    'A="x" junk\nB=2\n',
+    "A='x'junk\nB=2\n",
+    'A="x"\vB=1\nC=\'y\'\u3000D=2\nE="z" \x85 F=3\nG="w"\xa0H=4\n',
+    'A="x" B="y"C=\'z\' D: "w" # E=5\nF=6\n',
+    'A="x"   \n B=1\n',
+    'A="x" B= # c\nC="y" D=1 E=2\nF="z" G=\n',
+    "A=\"a\\\"b\"\nB=\"\\\"q\\\"\"\nC=\"a\\\\b\"\nD=\"a\\\\\\\"b\"\nE='it\\'s'\nF=\"x\\\\\" # c\n",
+    'A="x\\0377y"\nB="\\0101\\0400\\0"\nC="t\\tn\\nr\\rv\\vf\\fb\\ba\\a"\nD="\\c\\d\\q"\nE="a\\$b"\nF=\'a\\nb\'\n',
+    "A='$X ${Y}'\nB='\\$Z'\n",
+    "A=ünïcødé\nB='日本語'\nC=\"emoji 🎉 \"\nD=ü # c\n",
+    "A=\nB=''\nC=\"\"\nD= \nE:\nF=  \t\nG\t=\t''\n",
+    "A=1\nB=2",
+    "A='x'",
+    "A='line1\nline2' B=2\nC=3\n",
+    'A="line1\nline2 \\" still"\nB=2\n',
+    'A="cr\r\nlf\\\r\nx"\r\nB=1\r\n',
+    "V=1\nexport V: 2\nV:3 # c\nW=1\nW=\n",
+    "garbage\n1A=x\nA-B=y\nA.B=z\nA[0]=w\nOK=1\n",
+    "A=it's\nB=say \"hi\"\nC=x'y'z\nD=a=b==\nE=v\t# c\n",
+    "A= 'x' \nB=\v\"y\"\nC=\x85'z' # c\n",
+    "FUTURE_AGI_VERSION=v1.0.0\nNAME=\"fagi\" FUTURE_AGI_VERSION=v1.0.1 # hotfix\nA=1\n",
+    "FUTURE_AGI_VERSION: v1.0.0  # pinned\r\nA=1\r\nexport FRONTEND_VERSION : 'v1.0.0' # c\r\n",
+    "FUTURE_AGI_VERSION=v1.0.0\nexport FUTURE_AGI_VERSION: \"v1.0.1\"  # hotfix\nFRONTEND_VERSION=v1.0.0\n",
+    # Keys no variable can name, whose quoted values hold what looks like a definition.
+    'a.b="\nFUTURE_AGI_VERSION=v0\n"\nFUTURE_AGI_VERSION=v1\n',
+    "my-key='\nFRONTEND_VERSION=v0\n' FRONTEND_VERSION=v1\n\u00c4=\"x\nFUTURE_AGI_VERSION=v0\"\n",
+    'export\vX="v1" FUTURE_AGI_VERSION=v2 # c\nA[0]="x\ny"\n1A=\'\nB=2\'\nA\tB: "\nC=3\n" C=4\n',
+    # Only "\n" ends a line, and Go's white space (trimmed off a value) ends at U+200A, without \x1c-\x1f or \x7f.
+    "A=1\rB=2\nC=3\r\r\n",
+    "A=v1῿\nB=v2 \nC=v3 \nD=v4​\nE=v5 \nF=v6\x7f\n",
+    # Files that define nothing, and ones whose last line has no line ending.
+    "", "\n", "\r\n", "﻿", "﻿# c\r\nA=1\r\n", "\n\nA=1\nB=2 # c",
+    "FUTURE_AGI_VERSION=v1\n# trailing comment ",
+    "A=1\nFUTURE_AGI_VERSION='v1' # c",
+    'A="\\0\\01\\012\\08"\nB="\\0350\\0400"\n',
+    # A bare KEY is looked up in the (empty) environment: an earlier definition of it stands.
+    "A=1\nA\nB\nC=\"x\" D\n",
+    # Bytes that are not UTF-8, as their surrogate escapes (envfile reads them so; config prints U+FFFD).
+    "A=x\udcff\udcfe\nB='\udce2\udc82'\nC=\"\udcc3\" # c\nFUTURE_AGI_VERSION=v1\udcff\n",
+)
+
+
+def _printed(values: Mapping[str, str]) -> Dict[str, str]:
+    """`values` as `config --format json` prints them: each byte that is not UTF-8 as U+FFFD."""
+
+    return {re.sub("[\udc80-\udcff]", "�", key): re.sub("[\udc80-\udcff]", "�", value)
+            for key, value in values.items()}
+
+
+def _compose_environment() -> Dict[str, str]:
+    # PATH and HOME find the binary and its plugins; a dead DOCKER_HOST keeps any daemon out of it.
+    environment = {"PATH": os.environ.get("PATH", os.defpath),
+                   "DOCKER_HOST": "unix:///nonexistent/future-agi-update-test.sock"}
+    if "HOME" in os.environ:
+        environment["HOME"] = os.environ["HOME"]
+    return environment
+
+
+def _compose_command() -> Optional[List[str]]:
+    configured = os.environ.get(COMPOSE_BINARY)
+    if configured:
+        return [configured]
+    docker = shutil.which("docker")
+    if docker is None:
+        return None
+    try:
+        probe = subprocess.run([docker, "compose", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               env=_compose_environment(), timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return [docker, "compose"] if probe.returncode == 0 else None
+
+
+class EnvFileComposeConformanceTests(_EnvCase):
+    """read_env, example_keys, render_changes and write_changes against Compose itself."""
+
+    command: Optional[List[str]] = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.command = _compose_command()
+        if cls.command is None:
+            raise unittest.SkipTest(f"no Compose: set {COMPOSE_BINARY} to a docker-compose binary")
+
+    def write(self, text: str, name: str = ".env", mode: Optional[int] = None) -> Path:
+        path = self.dir / name
+        path.write_bytes(text.encode("utf-8", "surrogateescape"))
+        return path
+
+    @staticmethod
+    def names(text: str) -> list:
+        return sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)))
+
+    def compose_reads(self, data: bytes, names: list) -> Dict[str, str]:
+        """Every key Compose reads from `data` as its --env-file.
+
+        `names` are interpolated (what image tags see); the same file as the
+        service's env_file adds the keys no variable can name (a.b, 1A).
+        """
+
+        assert self.command is not None
+        directory = Path(tempfile.mkdtemp(dir=self.dir))
+        (directory / ".env").write_bytes(data)
+        project = {"name": "envcheck", "services": {"probe": {
+            "image": "example.invalid/probe", "env_file": [".env"],
+            "environment": {name: f"${{{name}-{UNSET}}}" for name in names}}}}
+        (directory / "compose.json").write_text(json.dumps(project))
+        result = subprocess.run(
+            [*self.command, "--project-directory", str(directory), "-f", str(directory / "compose.json"),
+             "--env-file", str(directory / ".env"), "config", "--format", "json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_compose_environment(), timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        environment = json.loads(result.stdout.decode("utf-8"))["services"]["probe"].get("environment") or {}
+        # config writes a "$" in a value as "$$", so its output interpolates to the same value. A bare
+        # KEY line Compose looks up in the (empty) environment comes out as null.
+        return {name: value.replace("$$", "$") for name, value in environment.items()
+                if value is not None and value != UNSET}
+
+    @staticmethod
+    def variables(values: Mapping[str, str]) -> list:
+        """The keys bin/update may write: the ones a variable can name."""
+
+        return sorted(key for key in values if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key))
+
+    def test_the_corpus_is_read_as_compose_reads_it(self) -> None:
+        reserved = set(_compose_environment())
+        for text in COMPOSE_CORPUS:
+            with self.subTest(text=text):
+                names = self.names(text)
+                self.assertFalse(reserved & set(names))
+                path = self.write(text)
+                expected = self.compose_reads(path.read_bytes(), names)
+                self.assertEqual(_printed(read_env(path)), expected)
+                self.assertEqual(sorted(example_keys(self.write(text, name=".env.example"))), sorted(expected))
+
+    def test_rewriting_and_removing_keys_changes_only_what_compose_reads_for_them(self) -> None:
+        # Per file, one third of the keys get a new tag, one third are removed and one third are kept.
+        for number, text in enumerate(COMPOSE_CORPUS):
+            with self.subTest(text=text):
+                names = self.names(text)
+                before = read_env(self.write(text))
+                keys = self.variables(before)
+                changes: Dict[str, Optional[str]] = {}
+                for index, key in enumerate(keys):
+                    group = (index + number) % 3
+                    if group < 2:
+                        changes[key] = f"v9.{index}.{group}" if group == 0 else None
+                rendered = render_changes(text, changes)
+                expected = {key: value for key, value in before.items() if key not in changes}
+                expected.update((key, value) for key, value in changes.items() if value is not None)
+                self.assertEqual(self.compose_reads(rendered.encode("utf-8", "surrogateescape"), names),
+                                 _printed(expected))
+                path = self.write(text, name="written.env")
+                write_changes(path, changes)
+                self.assertEqual(path.read_bytes(), rendered.encode("utf-8", "surrogateescape"))
+                self.assertEqual(read_env(path), expected)
+
+    def test_a_new_version_key_appended_to_each_file_is_read_by_compose(self) -> None:
+        for text in COMPOSE_CORPUS:
+            with self.subTest(text=text):
+                names = self.names(text) + ["NEW_VERSION"]
+                rendered = render_changes(text, {"NEW_VERSION": "v9.9.9"})
+                expected = dict(read_env(self.write(text)), NEW_VERSION="v9.9.9")
+                self.assertEqual(self.compose_reads(rendered.encode("utf-8", "surrogateescape"), names),
+                                 _printed(expected))
+
+    def test_a_value_put_back_verbatim_is_read_back_by_compose(self) -> None:
+        for text in COMPOSE_CORPUS:
+            with self.subTest(text=text):
+                names = self.names(text)
+                before = read_env(self.write(text))
+                keys = self.variables(before)
+                rewritten = render_changes(text, {key: "v9.9.9" for key in keys})
+                # Not a value with "$": read_env gives "a$b" for "a\$b", which Compose would expand once
+                # written back, but neither is ever an image tag.
+                found = {key: before[key] for key in keys if "$" not in before[key]}
+                try:
+                    restored = render_changes(rewritten, found, verbatim=True)
+                except EnvFileError:
+                    continue  # refused: nothing is written
+                expected = dict(before, **{key: "v9.9.9" for key in keys if key not in found})
+                self.assertEqual(self.compose_reads(restored.encode("utf-8", "surrogateescape"), names),
+                                 _printed(expected))
+
+    def compose_reads_each(self, files: List[str]) -> List[Dict[str, str]]:
+        """What Compose reads from each of `files` as a service's env_file, all in one `config`."""
+
+        assert self.command is not None
+        directory = Path(tempfile.mkdtemp(dir=self.dir))
+        services = {}
+        for index, text in enumerate(files):
+            (directory / f"{index}.env").write_bytes(text.encode("utf-8", "surrogateescape"))
+            services[f"s{index}"] = {"image": "example.invalid/probe", "env_file": [f"{index}.env"]}
+        (directory / "compose.json").write_text(json.dumps({"name": "envcheck", "services": services}))
+        result = subprocess.run(
+            [*self.command, "--project-directory", str(directory), "-f", str(directory / "compose.json"),
+             "config", "--format", "json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_compose_environment(), timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        services = json.loads(result.stdout.decode("utf-8"))["services"]
+        return [{name: value for name, value in (services[f"s{index}"].get("environment") or {}).items()
+                 if value is not None} for index in range(len(files))]
+
+    def test_any_value_put_back_verbatim_is_refused_or_read_back_by_compose_as_itself(self) -> None:
+        # A restore puts back whatever read_env found on one line. Wherever the key is defined (or appended),
+        # each value is refused, or Compose reads exactly that value for it and every other value as before.
+        version, other = "FUTURE_AGI_VERSION", "FRONTEND_VERSION"
+        files = (f"{version}=v1\n{other}=v2\n", f"{version}='v1' # c\n{other}=v2\n", f'{version}="v1"\n{other}=v2\n',
+                 f'NAME="n" {version}=v1 # c\n{other}=v2\n', f"NAME='n' {version}=\"v1\" {other}=v2\n",
+                 f"export {version} : v1\r\n{other}=v2\r\n", f"{version}=\n{other}=v2", f"{other}=v2\n",
+                 f'a.b="\n{version}=v0\n" {version}=v1\n')
+        values = ('"abc', "'abc", 'a"b', "a'b", " lead", "trail ", "x #y", "x#y", "x # y", "a\\", "a\\\\b", '\\"',
+                  "\\0101", "a\\nb", "\x1f", "\xa0", "x\xa0", " x", "x ", "\x85", '"x" ' + other + "=v9",
+                  "'x' " + other + "=v9", '"x"' + other + "=v9", "#c", "=", ":", "= x", "é", "\udcff", "''", '""',
+                  "'a' b", '"a\\"', "'a'#c", "x'", 'x"')
+        cases = []
+        for text in files:
+            for value in values:
+                try:
+                    cases.append((text, value, render_changes(text, {version: value}, verbatim=True)))
+                except EnvFileError:
+                    continue
+        self.assertGreater(len(cases), len(files) * 3)
+        read = self.compose_reads_each(list(files) + [rendered for _, _, rendered in cases])
+        originals = dict(zip(files, read))
+        for (text, value, rendered), after in zip(cases, read[len(files):]):
+            with self.subTest(text=text, value=value):
+                self.assertEqual(after, _printed(dict(originals[text], **{version: value})))
+                self.assertEqual(read_env(self.write(rendered)), dict(read_env(self.write(text)), **{version: value}))
+
+
+    def test_new_unicode_letters_keep_quote_boundaries_with_an_old_python_table(self):
+        import unicodedata
+        for char in ('ࡰ', '\U0001e030', '\U00031350'):
+            with self.subTest(char=char):
+                raw = ('V=v1\n' + char + '="first\nV=hidden\nlast"\n').encode()
+                original = self.compose_reads(raw, ['V'])
+                self.assertEqual(original['V'], 'v1')
+                path = self.dir / '.env'
+                path.write_bytes(raw)
+                with mock.patch.object(envfile, 'unicodedata', unicodedata.ucd_3_2_0):
+                    record = envfile.recovery_record(path, {'V': 'v2'})
+                    write_changes(path, {'V': 'v2'}, recovery=record)
+                    self.assertEqual(path.read_bytes(), raw.replace(b'V=v1', b'V=v2'))
+                    envfile.restore_changes(path, record)
+                self.assertEqual(self.compose_reads(path.read_bytes(), ['V']), original)
+
+    def test_compose_interpolation_and_literal_dollars_survive_exact_recovery(self):
+        for token in ('"\\$X"', '"v\\${X"', "'literal$X'", '"${X}"'):
+            with self.subTest(token=token):
+                raw = ('﻿X=v9\r\nV=v0\r\nMIDDLE=${V}\r\nV=' + token + ' # last').encode()
+                path = self.dir / '.env'
+                path.write_bytes(raw)
+                original = self.compose_reads(raw, ['V', 'MIDDLE'])
+                self.assertEqual(original['MIDDLE'], 'v0')
+                changes = {'V': 'v2', 'Z_ADDED': 'v3', 'A_ADDED': 'v4'}
+                record = json.loads(json.dumps(envfile.recovery_record(path, changes), sort_keys=True))
+                write_changes(path, changes, recovery=record)
+                self.assertEqual(self.compose_reads(path.read_bytes(), ['V', 'MIDDLE'])['MIDDLE'], 'v2')
+                envfile.restore_changes(path, record)
+                self.assertEqual(path.read_bytes(), raw)
+                self.assertEqual(self.compose_reads(path.read_bytes(), ['V', 'MIDDLE']), original)
 
 
 if __name__ == "__main__":

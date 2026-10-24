@@ -855,7 +855,7 @@ class StandaloneUpdateE2E(StandaloneE2EHelpers, unittest.TestCase):
         result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup")
         self.assertEqual(co.env_value(VERSION_KEY), V52, result.describe())
         self.assertExit(result, 0, f"Recovered an interrupted apply to {V52}: it stopped before restarting anything; "
-                                   "its version settings were put back (receipt ", f"Updated to {V52}")
+                                   "its version settings were put back exactly (receipt ", f"Updated to {V52}")
         self.assertIn(f"  Installed     {V51}\n", result.stderr, result.describe())
         self.assertEqual(co.env_text(), with_version(original, V52))
         self.assertRuns(co, V52)
@@ -1988,6 +1988,244 @@ class StandaloneRoundFiveE2E(StandaloneE2EHelpers, unittest.TestCase):
         self.assertExit(result, 0, f"Updated to {V52}. Receipt: ")
         self.assertRuns(co, V52)
         self.assertEqual(co.receipts()[-1]["status"], "succeeded")
+
+class StandaloneRecoveryOwnershipE2E(StandaloneE2EHelpers, unittest.TestCase):
+    """Real Docker provenance and a genuinely SIGKILLed transaction; no application mocks."""
+
+    def test_sigkill_restores_exact_duplicate_lexical_bytes(self):
+        from update_e2e.faults import FaultDocker
+
+        assert H is not None
+        registry = self.own_registry('exact-recovery-registry', V51, V52)
+        co = self.checkout('exact-recovery', version=V51, registry=registry.host)
+        raw = co.env_bytes().replace(
+            f'{VERSION_KEY}={V51}'.encode(),
+            (f'export {VERSION_KEY}: "v0.9.0" # first\n'
+             f'MIDDLE=${{{VERSION_KEY}}}\n{VERSION_KEY}=\'{V51}\' # last').encode())
+        raw = b'\xef\xbb\xbf' + raw.rstrip(b'\n').replace(b'\n', b'\r\n')
+        co.env_path.write_bytes(raw)
+        co.env_path.chmod(0o640)
+        co.install()
+        co.exec_app('sh', '-c', 'printf exact-sentinel > /data/operator-sentinel')
+        before = self.containers_as_started(co)
+        config = json.loads(co.compose('config', '--format', 'json').stdout)
+        fd = FaultDocker(H.hook_dir('exact-kill') / 'docker')
+        proc = co.spawn('apply', *self.manifest_args(release(V52, registry=registry.host)),
+                        '--allow-no-backup', env=fd.env(at=1, match='*pull*', action='sigkill'))
+        self.addCleanup(proc.kill_group)
+        result = proc.wait(timeout=180)
+        self.assertEqual(result.code, -signal.SIGKILL, result.describe())
+        self.assertTrue(fd.signalled(), 'the wrapper must prove this was SIGKILL, not a timeout')
+        self.assertNotIn('[harness] killed after', result.stderr)
+        self.assertEqual(co.journal()['stage'], 'env_written')
+        self.assertIn('env_recovery', co.journal())
+        self.assertNotEqual(co.env_bytes(), raw)
+        self.assertEqual(self.containers_as_started(co), before)
+        recovered = co.bin_update('rollback')  # without --yes still performs recovery
+        self.assertExit(recovered, 0, 'Recovered an interrupted apply', stream='both')
+        self.assertEqual(co.env_bytes(), raw)
+        self.assertEqual(stat.S_IMODE(co.env_path.stat().st_mode), 0o640)
+        self.assertIsNone(co.journal())
+        self.assertEqual(self.containers_as_started(co), before)
+        self.assertEqual(json.loads(co.compose('config', '--format', 'json').stdout), config)
+        self.assertEqual(co.exec_app('cat', '/data/operator-sentinel').stdout, 'exact-sentinel')
+        self.assertNotIn('env_recovery', co.receipts()[-1])
+        self.assertNotIn(co.secret, ''.join(p.read_text() for p in co.receipt_paths()))
+
+    def test_sigkill_after_forward_and_inverse_exchange_reconciles_without_toggle(self):
+        assert H is not None
+        registry = self.own_registry('native-exchange-kills', V51, V52)
+        co = self.checkout('native-exchange-kills', version=V51, registry=registry.host)
+        co.install()
+        original = co.env_bytes()
+        before = self.containers_as_started(co)
+        source = co.root / 'deploy/update/envcommit.py'
+        marker = co.root / '.test-exchange-kill-count'
+        source.write_text(source.read_text() + '\n' + '\n'.join((
+            'import signal',
+            '_kill_exchange = exchange',
+            'def exchange(a, b, c, d):',
+            '    result = _kill_exchange(a, b, c, d)',
+            '    if b == "slot":',
+            f'        marker = Path({str(marker)!r})',
+            '        count = int(marker.read_text()) if marker.exists() else 0',
+            '        if count < 2:',
+            '            marker.write_text(str(count + 1))',
+            '            os.kill(os.getpid(), signal.SIGKILL)',
+            '    return result',
+            '')))
+        commands = [('apply', *self.manifest_args(release(V52, registry=registry.host)), '--allow-no-backup'),
+                    ('rollback',)]
+        for number, command in enumerate(commands, 1):
+            proc = co.spawn(*command)
+            self.addCleanup(proc.kill_group)
+            result = proc.wait(timeout=180)
+            self.assertEqual(result.code, -signal.SIGKILL, result.describe())
+            self.assertEqual(marker.read_text(), str(number))
+            self.assertTrue(co.journal())
+            self.assertFalse(co.receipts())
+            self.assertEqual(self.containers_as_started(co), before)
+        self.assertEqual(co.env_bytes(), original)
+        result = co.bin_update('rollback')
+        self.assertExit(result, 0, 'Recovered an interrupted apply', stream='both')
+        self.assertEqual(co.env_bytes(), original)
+        self.assertIsNone(co.journal())
+        self.assertEqual(marker.read_text(), '2')
+        self.assertEqual(len(list(co.env_path.parent.glob('.futureagi-updates/env-commits/*/*/slot'))), 2)
+        self.assertEqual(self.containers_as_started(co), before)
+
+    def boundary_conflicts(self, recovering):
+        from update_e2e.faults import FaultDocker
+
+        assert H is not None
+        registry = self.own_registry('commit-boundary-' + str(recovering).lower(), V51, V52)
+        for rename in (False, True):
+            with self.subTest(recovering=recovering, rename=rename):
+                co = self.checkout('commit-' + str(recovering).lower() + '-' + str(rename).lower(),
+                                   version=V51, registry=registry.host)
+                co.install()
+                before_stack = self.containers_as_started(co)
+                original = co.env_bytes()
+                args = ('apply', *self.manifest_args(release(V52, registry=registry.host)), '--allow-no-backup')
+                if recovering:
+                    fd = FaultDocker(H.hook_dir('commit-kill-' + str(rename)) / 'docker')
+                    proc = co.spawn(*args, env=fd.env(at=1, match='*pull*', action='sigkill'))
+                    self.addCleanup(proc.kill_group)
+                    killed = proc.wait(timeout=180)
+                    self.assertEqual(killed.code, -signal.SIGKILL, killed.describe())
+                    self.assertTrue(fd.signalled())
+                before = co.env_bytes()
+                operator = before + b'\nODD_NAME=boundary-only-secret-96a8\n'
+                # Fault code is appended ONLY to this disposable checkout, never
+                # enabled by a production environment variable or CLI switch.
+                source = co.root / 'deploy/update/envcommit.py'
+                source.write_text(source.read_text() + '\n' + '\n'.join((
+                    '_boundary_original = exchange',
+                    'def exchange(a, b, c, d):',
+                    '    if b == "slot":',
+                    f'        target = Path({str(co.env_path)!r})',
+                    f'        data = {operator!r}',
+                    '        staged = target.with_name("boundary-editor")',
+                    '        staged.write_bytes(data)' if rename else '        target.write_bytes(data)',
+                    '        os.replace(staged, target)' if rename else '        pass',
+                    '    return _boundary_original(a, b, c, d)',
+                    '')))
+                result = co.bin_update('rollback') if recovering else co.bin_update(*args)
+                self.assertExit(result, 2, 'env commit conflict', stream='both')
+                self.assertEqual(self.containers_as_started(co), before_stack)
+                self.assertTrue(co.journal())
+                self.assertFalse(co.receipts())
+                direction = 'restore' if recovering else 'forward'
+                op_id = co.journal()['env_recovery']['commit'][direction]
+                ops = list(co.env_path.parent.glob('.futureagi-updates/env-commits/*/' + op_id))
+                self.assertEqual(len(ops), 1)
+                self.assertEqual((ops[0] / 'slot').read_bytes(), operator)
+                self.assertEqual((ops[0] / 'candidate').read_bytes(), co.env_bytes())
+                if recovering:
+                    self.assertEqual(co.env_bytes(), original)
+                stable = co.env_bytes()
+                for _ in range(2):
+                    retried = co.bin_update('rollback')
+                    self.assertExit(retried, 2, 'conflict', stream='both')
+                    self.assertEqual(co.env_bytes(), stable)
+                    self.assertTrue(co.journal())
+                    self.assertFalse(co.receipts())
+                status = co.bin_update('status')
+                self.assertExit(status, 2, 'conflict', stream='both')
+                self.assertNotIn('boundary-only-secret-96a8', result.output + retried.output + status.output)
+                self.assertEqual(self.containers_as_started(co), before_stack)
+
+    def test_final_forward_boundary_preserves_in_place_and_rename_edits(self):
+        self.boundary_conflicts(False)
+
+    def test_final_recovery_boundary_preserves_in_place_and_rename_edits(self):
+        self.boundary_conflicts(True)
+
+    def test_two_checkouts_unset_export_cannot_adopt_the_default_owner(self):
+        assert H is not None
+        a = self.checkout('standalone', version=V51)  # exactly the Compose file's fallback name
+        b = self.checkout('export-owner-b', version=V51)
+        a.install()
+        original_b = b.env_bytes()
+        b.env_path.write_bytes(re.sub(br'(?m)^COMPOSE_PROJECT_NAME=.*\n', b'', original_b))
+        # Always restore B's own selection before its cleanup; never use B's fallback to down A.
+        self.addCleanup(b.env_path.write_bytes, original_b)
+        exported = e2e.clean_environ({'COMPOSE_PROJECT_NAME': b.project})
+        e2e.run([*H.compose, 'up', '-d', '--wait', '--wait-timeout', '120'], cwd=b.root, env=exported, timeout=180)
+        b.wait_healthy()
+        self.assertEqual(json.loads(b.compose('config', '--format', 'json').stdout)['name'], a.project)
+        for co in (a, b):
+            e2e.run(['docker', 'exec', co.app().id, 'sh', '-c',
+                     'printf ' + co.project + ' > /data/operator-sentinel'])
+        hook = self.recording_hook('ownership-must-not-backup')
+        b.write_update_conf({'FUTURE_AGI_UPDATE_BACKUP_COMMAND': str(hook['hook'])})
+        b.state_dir.mkdir(mode=0o700, exist_ok=True)
+        journal = b.state_dir / 'journal.json'
+        journal.write_text(json.dumps({'kind': 'apply', 'stage': 'env_written', 'mode': 'standalone',
+                                      'production': False, 'env_file': '.env', 'project': a.project,
+                                      'target_version': V52, 'found_values': {VERSION_KEY: V51}}))
+        before = (a.snapshot(), b.snapshot(), journal.read_bytes())
+        for command in (('check', *self.manifest_args(release(V52))),
+                        ('apply', *self.manifest_args(release(V52))), ('rollback',), ('rollback', '--yes')):
+            with self.subTest(command=command):
+                result = b.bin_update(*command)
+                self.assertEqual(result.code, 2, result.describe())
+                self.assertIn('ownership', result.output)
+                self.assertEqual((a.snapshot(), b.snapshot(), journal.read_bytes()), before)
+                self.assertFalse(hook['log'].exists())
+                for co in (a, b):
+                    self.assertEqual(e2e.run(['docker', 'exec', co.app().id, 'cat',
+                                             '/data/operator-sentinel']).stdout, co.project)
+        # Positive control through the very same updater and Docker daemon.
+        result = a.bin_update('apply', *self.manifest_args(release(V52)), '--allow-no-backup')
+        self.assertExit(result, 0, f'Updated to {V52}', stream='both')
+        self.assertRuns(a, V52)
+        self.assertEqual(b.snapshot(), before[1])
+        self.assertEqual(e2e.run(['docker', 'exec', a.app().id, 'cat', '/data/operator-sentinel']).stdout, a.project)
+
+
+    def test_real_compose_explicit_custom_env_file_provenance(self):
+        from deploy.update.install import Installation, InstallError
+
+        assert H is not None
+        co = self.checkout('custom-env-provenance', version=V51)
+        # Only provenance is under test: use the small real-stack fixture as a production-shaped pair.
+        base = co.root / 'docker-compose.distributed.yml'
+        overlay = co.root / 'deploy/docker-compose.production.yml'
+        base.write_bytes((co.root / 'docker-compose.yml').read_bytes())
+        overlay.write_text('services: {}\n')
+        custom = co.root / 'deploy/prod custom.env'
+        custom.write_bytes(co.env_bytes())
+        args = ['--env-file', str(custom.relative_to(co.root)), '-f', str(base), '-f', str(overlay)]
+        e2e.run([*H.compose, *args, 'up', '-d', '--wait', '--wait-timeout', '120'],
+                cwd=co.root, env=e2e.clean_environ(), timeout=180)
+        records = json.loads(e2e.run(['docker', 'inspect', *[c.id for c in co.containers()]]).stdout)
+        labels = [r['Config']['Labels'] for r in records]
+        field = 'com.docker.compose.project.environment_file'
+        e2e.log('explicit env provenance on Compose ' + H.compose_version + ': ' +
+                json.dumps([label.get(field) for label in labels]))
+        inst = Installation(co.root, production=True, env_file=custom, environ=e2e.clean_environ(), compose=H.compose)
+        if all(field in label for label in labels):
+            self.assertEqual({(co.root / label[field]).resolve() for label in labels}, {custom.resolve()})
+            inst.check_ownership()
+            other = co.root / 'deploy/other.env'
+            other.write_bytes(custom.read_bytes())
+            wrong = Installation(co.root, production=True, env_file=other, environ=e2e.clean_environ(), compose=H.compose)
+            with self.assertRaisesRegex(InstallError, 'environment_file'):
+                wrong.check_ownership()
+        else:
+            # Older Compose without this provenance cannot prove which production env file owns the stack.
+            with self.assertRaisesRegex(InstallError, 'environment_file'):
+                inst.check_ownership()
+        self.assertEqual(co.env_bytes(), custom.read_bytes())
+
+
+class StandaloneBuildContextE2E(StandaloneE2EHelpers, unittest.TestCase):
+    def test_retained_env_secrets_never_enter_root_or_backend_image_layers(self):
+        from update_e2e.build_contexts import assert_private_contexts_excluded
+        assert H is not None
+        assert_private_contexts_excluded(self, e2e.update_source(), H.base / (H.prefix + 'context-probes'))
+
 
 if __name__ == "__main__":
     unittest.main()

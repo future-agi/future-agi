@@ -61,7 +61,7 @@ from .manifest import (DEPLOYMENT_FILE_LIST, ManifestError, _skipped_in_director
 from .plan import (BLOCKED, UP_TO_DATE, _manifest_of, cd_prefix, classify_strays, command_prefix, install_command,
                    jobs_text, on_release, plan_text, selected_keys, stray_states, unfinished)
 from .readiness import NotReady, Readiness, standalone_settings
-from .receipt import IDENTITY_FIELDS, StateDir, scrub
+from .receipt import IDENTITY_FIELDS, StateDir, StateError, scrub
 from .settings import Settings
 
 STAGES_BEFORE_ROLLOUT = ("prepare", "env_written", "pulled")
@@ -228,55 +228,10 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _read_bytes(path: Path) -> Optional[bytes]:
-    try:
-        return Path(os.path.realpath(path)).read_bytes()
-    except OSError:
-        return None
 
 
-def _put_back(path: Path, original: Optional[bytes], changes: Mapping[str, Optional[str]],
-              found: Mapping[str, Optional[str]]) -> None:
-    """After a before-rollout restore, give the env file back its exact original bytes.
 
-    Writing the found values back restores every value, but a key this run
-    removed comes back at the end of the file. When the file is exactly what
-    this run made of it (nobody else edited it meanwhile), the original text
-    is written back instead. Best effort: the values are right either way.
-    """
 
-    current = _read_bytes(path)
-    if original is None or current is None or current == original:
-        return
-    try:
-        text = original.decode("utf-8", "surrogateescape")
-        made = envfile.render_changes(envfile.render_changes(text, changes), found, verbatim=True)
-        if current != made.encode("utf-8", "surrogateescape"):
-            return
-        target = Path(os.path.realpath(path))
-        info = target.stat()
-        fd, temp = tempfile.mkstemp(prefix=".env.futureagi-update-", suffix=".tmp", dir=str(target.parent))
-    except (OSError, ValueError):
-        return
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(original)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp, info.st_mode & 0o7777)
-        if hasattr(os, "chown"):
-            try:
-                os.chown(temp, info.st_uid, info.st_gid)
-            except PermissionError:
-                pass
-        os.replace(temp, target)
-    except BaseException as exc:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
-        if not isinstance(exc, OSError):
-            raise
 
 
 def _digest_set(entries: List[str]) -> set:
@@ -473,6 +428,82 @@ def finished_run(journal: Mapping[str, Any], history: Sequence[Mapping[str, Any]
     return dict(newest)
 
 
+def validate_journal_header(journal: Mapping[str, Any], journal_path: Any = 'journal') -> None:
+    """Validate before interpreting stages, identity, or a matching receipt."""
+    if (journal.get('stage') not in (*STAGES_BEFORE_ROLLOUT, 'rollout')
+            or journal.get('kind') not in ('apply', 'rollback')
+            or ('journal_version' in journal and (type(journal['journal_version']) is not int
+                                                  or journal['journal_version'] not in (1, 2)))
+            or ('production' in journal and journal['production'] is not None
+                and type(journal['production']) is not bool)
+            or any(journal.get(key) is not None and (not isinstance(journal[key], str) or not journal[key])
+                   for key in ('project', 'mode', 'env_file'))):
+        raise StateError(f"cannot recover {journal_path}: invalid or unknown run kind/stage or journal identity/version; "
+                         "the journal was kept. Inspect it and recover the installation manually")
+
+
+def check_journal_owner(installation: Installation, journal: Mapping[str, Any], *,
+                        journal_path: Any = 'journal', again: str = '',
+                        identity: Optional[Mapping[str, Any]] = None) -> None:
+    """One identity comparison for recovery and read-only diagnostics (legacy fields may be absent)."""
+    identity = installation.identity() if identity is None else identity
+    env_file, production = journal.get('env_file'), journal.get('production')
+    if ((env_file is None or env_file == identity['env_file'])
+            and (production is None or production == identity['production'])):
+        for field in ('project', 'mode'):
+            current = identity.get(field)
+            if current is not None and journal.get(field) is not None and journal[field] != current:
+                raise Blocked(f"cannot recover {journal_path}: its {field} is {journal[field]!r}, "
+                              f"not this installation's {current!r}. Restore the original project selection "
+                              "and installation flags before retrying; the journal was kept")
+        return
+    env_name = identity['env_file'] if env_file is None else env_file
+    production = identity['production'] if production is None else production
+    theirs = cd_prefix(installation) + command_prefix(production, env_name)
+    kind = journal.get('kind') or 'apply'
+    raise Blocked(f"an interrupted bin/update {kind} for {env_name} must be recovered before this install can be "
+                  f"updated or rolled back: {recover_elsewhere(theirs, kind, f'`{again}` again' if again else '')}")
+
+
+def validate_recovery(installation: Installation, journal: Mapping[str, Any],
+                      history: Sequence[Mapping[str, Any]] = (), *, journal_path: Any = 'journal',
+                      again: str = '', durable: bool = False, check_provenance: bool = False,
+                      identity: Optional[Mapping[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Shared recoverability gate; read-only unless real recovery requests durable inspection.
+
+    A preparing inverse and an armed inverse both inspect as 'restoring', but
+    only the latter can replay. Validate that distinction before trusting a
+    completed receipt or making any recovery/initialization promise.
+    """
+    validate_journal_header(journal, journal_path)
+    check_journal_owner(installation, journal, journal_path=journal_path, again=again, identity=identity)
+    if check_provenance:
+        installation.containers()  # Reject foreign provenance before any recovery assumption.
+    recovery = journal.get('env_recovery')
+    path = getattr(installation, 'env_alias', installation.env_file)
+    outcome = None
+    try:
+        if isinstance(recovery, Mapping) and recovery.get('commit') is not None:
+            outcome = envfile.check_commit(path, recovery, durable=durable)
+            if outcome == 'restoring':
+                envfile.envcommit.check_resume(path, Path(recovery['target']), recovery['commit']['restore'],
+                                              recovery['after_sha256'], recovery['before_sha256'])
+        elif journal.get('journal_version') == 2:
+            raise StateError('missing private env commit reference; keep the journal for manual recovery')
+        finished = finished_run(journal, history)
+        if finished is not None and outcome == 'restoring':
+            raise StateError('unfinished inverse env operation cannot be cleared by a receipt; keep the journal '
+                             'and retained files for manual recovery')
+        if finished is None and journal.get('stage') in STAGES_BEFORE_ROLLOUT:
+            envfile.recovery_text(path, recovery)
+        return finished
+    except (envfile.EnvFileError, envfile.envcommit.CommitError) as exc:
+        raise StateError(f'{exc}. Kept {journal_path}; no guessed restoration was attempted. '
+                         'Preserve the journal, current env and private retained entries. '
+                         'An older or incomplete journal needs operator-assisted recovery from an independent '
+                         'backup; found_values/previous_values cannot prove the original bytes') from exc
+
+
 def preview_recovery(installation: Installation, journal: Mapping[str, Any],
                      history: Optional[Sequence[Mapping[str, Any]]] = None) -> Tuple[Dict[str, Any], List[str]]:
     """Plan as recovering `journal` (Updater.recover) would leave things, without changing anything.
@@ -486,7 +517,7 @@ def preview_recovery(installation: Installation, journal: Mapping[str, Any],
     record, and recovery only removes the journal.
     """
 
-    finished = finished_run(journal, history or [])
+    finished = validate_recovery(installation, journal, history or [], check_provenance=True)
     if finished is not None:
         # Only a final receipt is a run that finished; another one records how the run stopped (Updater.recover).
         run = (f"a finished bin/update {journal.get('kind', 'apply')}" if finished.get("status") in FINISHED_STATUSES
@@ -494,8 +525,11 @@ def preview_recovery(installation: Installation, journal: Mapping[str, Any],
         return finished, [f"{run} left its journal; the next apply or rollback removes it and recovers nothing"]
     notes = [JOURNAL_NOTE]
     if journal.get("stage") in STAGES_BEFORE_ROLLOUT:
-        # The values that run found; a journal from before found_values existed has only previous_values.
-        values = journal["found_values"] if "found_values" in journal else journal.get("previous_values")
+        # Validate the lexical inverse even on a dry run; a legacy last-value
+        # map cannot establish that recovery would be safe.
+        original = envfile.recovery_text(installation.env_file, journal.get("env_recovery"))
+        parsed = {item.key: item.value for item in envfile._definitions(original)}
+        values = {key: parsed.get(key) for key in journal.get("env_changes", {})}
         if values:
             installation.overlay_env(values)
             assumed = ", ".join(f"{key}={value or 'unset'}" for key, value in sorted(values.items()))
@@ -546,6 +580,15 @@ class Updater:
     def _env_name(self) -> str:
         return self.installation.relative(self.installation.env_file)
 
+    def _env_path(self) -> Path:
+        path = getattr(self.installation, "env_alias", self.installation.env_file)
+        target = getattr(self.installation, "env_target", self.installation.env_file if
+                         hasattr(self.installation, "env_alias") else None)
+        if target is not None and os.path.realpath(path) != str(target):
+            raise envfile.EnvCommitError("the selected env target changed since installation discovery; "
+                                         "keep any journal and retained files, and reconcile the alias manually")
+        return path
+
     # ------------------------------------------------------------- recovery --
     def recover(self, again: str = "") -> Optional[Dict[str, Any]]:
         """Turn a journal left by a killed run into a receipt.
@@ -554,16 +597,27 @@ class Updater:
         install's journal names as the one to run once that is recovered.
         """
 
-        journal = self.state.read_journal()
-        if not journal:
+        # A true no-op needs neither Docker nor a new state directory. Re-read
+        # after taking the lock: another updater may have finished meanwhile.
+        if self.state.read_journal() is None:
             return None
-        self._check_journal_owner(journal, again)
-        finished = self._finished_run(journal)
+        with self.state.lock():
+            return self._recover_locked(again)
+
+    def _recover_locked(self, again: str = "") -> Optional[Dict[str, Any]]:
+        journal = self.state.read_journal()
+        if journal is None:
+            return None
+        self.installation.check_ownership()
+        self._env_path()  # Retain the discovery-time alias/target guard on mutating recovery.
+        finished = validate_recovery(self.installation, journal, self._history(),
+                                     journal_path=self.state.journal_path, again=again, durable=True)
         if finished is not None:
             # The run wrote its final receipt and was stopped before it could remove its journal: there is nothing
             # to recover, and a second receipt for it (or putting back values it had finished with) would be wrong.
             # A receipt that records a stopped run (a recovery killed after writing it, or a run that failed) says
             # how that run stopped, as its recovery does; only a final one is a run that finished.
+            self.state.sync_finished(journal, Path(finished['_path']))
             self.state.clear_journal()
             what = f"bin/update {journal.get('kind', 'apply')} to {journal.get('target_version')}"
             status = finished.get("status")
@@ -578,17 +632,10 @@ class Updater:
                          f"(receipt {finished['_path']}): {how}, so there was nothing more to recover.")
             return None
         if journal.get("stage") in STAGES_BEFORE_ROLLOUT:
-            # The values that run found; a journal from before found_values existed has only previous_values.
-            found = journal["found_values"] if "found_values" in journal else journal.get("previous_values")
-            skipped = self._restore_found(found if isinstance(found, Mapping) else {})
+            self._restore_env(journal)
             self.installation.reload_env()
             journal["status"] = "interrupted_before_rollout"
-            note = "it stopped before restarting anything; its version settings were put back"
-            if skipped:
-                # Recorded and reported, never retried: a value that cannot be written back must not leave
-                # a journal that stops every later run.
-                journal["unrestored_values"] = skipped
-                note += ", except " + self._unrestored_text(skipped)
+            note = "it stopped before restarting anything; its version settings were put back exactly"
         else:
             journal["status"] = "interrupted_during_rollout"
             note = "it stopped while containers were being replaced"
@@ -601,68 +648,43 @@ class Updater:
         journal["_path"] = str(path)
         return journal
 
-    def _finished_run(self, journal: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
-        """The receipt the journal's run already wrote (finished_run with this install's receipts), if it did."""
+    def _restore_env(self, journal: Mapping[str, Any]) -> None:
+        """Never reconstruct lexical bytes from last-value-wins receipt fields."""
 
-        return finished_run(journal, self._history())
+        try:
+            recovery = journal.get("env_recovery")
+            envfile._check_recovery(self._env_path(), recovery)
+            if "commit" not in recovery:
+                # Upgrade a valid legacy inverse BEFORE its first preserving write.
+                recovery["commit"] = envfile.envcommit.reference()
+                recovery["commit_legacy"] = True
+                journal["journal_version"] = 2
+                self.state.write_journal(journal)
+            envfile.restore_changes(self._env_path(), recovery)
+        except envfile.EnvFileError as exc:
+            raise StateError(
+                f"{exc}. Kept {self.state.journal_path}; no guessed restoration was attempted. "
+                "Preserve the journal, current env and private retained entries. Quiesce writers and follow "
+                "the manual conflict recovery guidance in deploy/update/README.md. An older or incomplete "
+                "journal without exact recovery data needs operator-assisted recovery from an independent backup; "
+                "found_values/previous_values cannot prove the original bytes") from exc
 
-    def _restore_found(self, found: Mapping[str, Any]) -> Dict[str, Any]:
-        """Put the version keys back exactly as a run found them; returns the ones that cannot be written back.
 
-        A found value is whatever the env file held (`${RELEASE}` included),
-        so it is written verbatim. One that would not read back as itself
-        where its key is defined (a quote inside it, a line break) is left
-        out rather than refused with the rest. An error writing the file
-        itself still raises: the journal stays and the next run tries again.
-        """
 
-        path = self.installation.env_file
-        raw = _read_bytes(path)
-        text = raw.decode("utf-8", "surrogateescape") if raw is not None else ""
-        writable: Dict[str, Any] = {}
-        skipped: Dict[str, Any] = {}
-        for key, value in found.items():
-            try:
-                envfile.render_changes(text, {key: value}, verbatim=True)
-            except envfile.EnvFileError:
-                skipped[key] = value
-            else:
-                writable[key] = value
-        envfile.write_changes(path, writable, verbatim=True)
-        return skipped
 
-    def _unrestored_text(self, skipped: Mapping[str, Any]) -> str:
-        """The keys a restore could not put back (installation.env is the env file now), and what to do."""
-
-        keys = "; ".join(f"{key} (it was {value!r}, the env file now has {self.installation.env.get(key)!r})"
-                         for key, value in sorted(skipped.items()))
-        that = "That value" if len(skipped) == 1 else "Those values"
-        return (f"{keys}. {that} cannot be written back safely: set {'it' if len(skipped) == 1 else 'them'} in "
-                f"{self._env_name()} by hand before the next update")
 
     def _check_journal_owner(self, journal: Mapping[str, Any], again: str = "") -> None:
         """Only the install a run was for may recover it (its env file holds the keys to put back).
 
-        The same test as `bin/update check` makes (__main__._elsewhere): the
-        env file and the --production flag, as far as the journal records them.
+        Shared with check and status: env file, --production, project and
+        mode, as far as the journal records them.
         The refusal names that install's command that only recovers the run
         (rollback without --yes), never one that would go on to update or roll
         back that install; then `again`, this run's own command.
         """
 
-        env_file = journal.get("env_file")
-        production = journal.get("production")
-        if ((env_file is None or env_file == self._env_name())
-                and (production is None or bool(production) == self.installation.production)):
-            return
-        env_name = self._env_name() if env_file is None else str(env_file)
-        production = self.installation.production if production is None else bool(production)
-        theirs = cd_prefix(self.installation) + command_prefix(production, env_name)
-        kind = journal.get("kind") or "apply"
-        raise Blocked(
-            f"an interrupted bin/update {kind} for {env_name} must be recovered before this install can be updated "
-            "or rolled back: "
-            f"{recover_elsewhere(theirs, kind, f'`{again}` again' if again else '')}")
+        validate_journal_header(journal, self.state.journal_path)
+        check_journal_owner(self.installation, journal, journal_path=self.state.journal_path, again=again)
 
     # --------------------------------------------------------------- checks --
     def _check_readiness_settings(self) -> None:
@@ -892,9 +914,12 @@ class Updater:
 
         installation = self.installation
         stage = "prepare"
-        record.update(stage=stage, status="running")
+        installation.check_ownership()
+        record.update(stage=stage, status="running", journal_version=2,
+                      env_recovery=envfile.recovery_record(self._env_path(), record["env_changes"]))
+        # The minimal lexical inverse and both hashes are durable before any
+        # env bytes change, including a kill during write/rename/fsync itself.
         self.state.write_journal(record)
-        original = _read_bytes(installation.env_file)
 
         def advance(name: str) -> None:
             # The stage counts only once its journal is on disk: a failure or
@@ -910,7 +935,7 @@ class Updater:
 
         try:
             with signals_as_interrupt():
-                envfile.write_changes(installation.env_file, record["env_changes"])
+                envfile.write_changes(self._env_path(), record["env_changes"], recovery=record["env_recovery"])
                 installation.reload_env()
                 advance("env_written")
                 config, services = self._check_config(expected_tags)
@@ -976,6 +1001,10 @@ class Updater:
                         self._stale(config, services, image_ids, expected_tags, changed)
                     else:
                         self._stale(config, services, image_ids, strays, set(strays))
+        except envfile.EnvCommitError as exc:
+            # Exchange may already have captured an operator entry. Never swap
+            # back, write a completion receipt, or let tags alone authorize retry.
+            raise UpdateError(f"{exc}. Kept {self.state.journal_path}") from exc
         except (Exception, Interrupted, KeyboardInterrupt) as exc:
             interrupted = isinstance(exc, (Interrupted, KeyboardInterrupt))
             secrets = self.state.secrets
@@ -984,28 +1013,22 @@ class Updater:
             record["finished_at"] = _now()
             if stage in STAGES_BEFORE_ROLLOUT:
                 try:
-                    # Back to the values this run found (a resumed apply found the new ones), exactly as found.
-                    found = record["found_values"]
-                    skipped = self._restore_found(found)
-                    writable = {key: value for key, value in found.items() if key not in skipped}
-                    _put_back(installation.env_file, original, record["env_changes"], writable)
+                    self._restore_env(record)
                     installation.reload_env()
                 except Exception as restore_exc:  # leave the journal: the next run restores
                     again = (self._command("apply --stage" if stage_only else "apply") if record["kind"] == "apply"
                              else self._rollback_command(record["rolls_back"]))
                     problem = scrub(str(restore_exc) or restore_exc.__class__.__name__, secrets)
+                    if isinstance(restore_exc.__cause__, envfile.EnvCommitError):
+                        raise UpdateError(f"{detail}; exact restoration stopped: {problem}. "
+                                          "The conflict requires manual reconciliation, not an automatic retry") from exc
                     raise UpdateError(
                         f"{detail}; restoring the previous version settings also failed ({problem}). "
                         f"Run `{again}` again: it restores them first") from exc
-                # The original bytes may have brought back what could not be written on its own.
-                skipped = {key: value for key, value in skipped.items() if installation.env.get(key) != value}
-                if skipped:
-                    record["unrestored_values"] = skipped
                 record["status"] = "interrupted_before_rollout" if interrupted else "failed_before_rollout"
                 path = self.state.write_receipt(record)
                 self.state.clear_journal()
-                extra = f" Not put back: {self._unrestored_text(skipped)}." if skipped else ""
-                message = self._before_rollout_text(record, expected_tags, resumed, path, extra, undoing)
+                message = self._before_rollout_text(record, expected_tags, resumed, path, undoing=undoing)
                 raise (InterruptedRun if interrupted else FailedBeforeRollout)(message) from exc
             record["status"] = "interrupted_during_rollout" if interrupted else "failed_during_rollout"
             path = self.state.write_receipt(record)
@@ -1413,7 +1436,8 @@ class Updater:
         with self.state.lock():
             notes: List[str] = []
             if not dry_run:
-                self.recover(again)
+                self.installation.check_ownership()
+                self._recover_locked(again)
             history = self._history()
             journal = self.state.read_journal() if dry_run else None
             if journal:
@@ -2287,13 +2311,17 @@ class Updater:
                  + (["--yes"] if yes else []))
         again = self._command(" ".join(_quote(word) for word in words))
         with self.state.lock():
+            self.installation.check_ownership()
             # A journal whose run already wrote its receipt: recovering only removes it (recover). Another install's
             # journal is refused first, as recover refuses it.
             journal = self.state.read_journal()
             if journal:
                 self._check_journal_owner(journal, again)
-            left = self._finished_run(journal) if journal else None
-            recovered = self.recover(again)
+            history_before_recovery = self._history() if journal else []
+            recovered = self._recover_locked(again)
+            # Match only after real recovery's header/identity/operation gate.
+            # Use the earlier history, not a receipt recovery may just have added.
+            left = finished_run(journal, history_before_recovery) if journal else None
             if recovered is None and left is not None and not yes:
                 if left.get("status") in FINISHED_STATUSES:
                     # That run finished: removing its journal was all there was to do.

@@ -885,7 +885,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
 
     def test_signing_is_keyless_and_logged(self):
         run = one_step(self.publish, runs_containing("cosign sign-blob"))["run"]
-        line = next(l for l in run.splitlines() if "cosign sign-blob" in l)
+        line = next(candidate for candidate in run.splitlines() if "cosign sign-blob" in candidate)
         self.assertIn("--yes", line)
         self.assertIn('--bundle "new/$BUNDLE"', line)
         for forbidden in ("--key", "--tlog-upload=false", "--use-signing-config=false", "--insecure"):
@@ -1783,8 +1783,8 @@ class UpgradeFloorTests(unittest.TestCase):
         self.assertFalse(is_prerelease(floor))
 
     def test_the_file_holds_exactly_one_version_line(self):
-        lines = [l.split("#", 1)[0].strip() for l in (UPDATE_DIR / "upgrade-floor").read_text().splitlines()]
-        self.assertEqual([l for l in lines if l], [read_upgrade_floor(ROOT)])
+        lines = [line.split("#", 1)[0].strip() for line in (UPDATE_DIR / "upgrade-floor").read_text().splitlines()]
+        self.assertEqual([line for line in lines if line], [read_upgrade_floor(ROOT)])
 
     def test_the_floor_is_not_newer_than_the_latest_release_tag(self):
         result = git("tag", "--list", "v*")
@@ -2212,7 +2212,10 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn(f"`{STATE_DIR}/`", self.text)
 
     def test_files_it_points_at_exist(self):
-        runtime = {f"{STATE_DIR}/", "deploy/.env.production", MANIFEST_ASSET, BUNDLE_ASSET, CONFIG_FILE}
+        runtime = {f"{STATE_DIR}/", "deploy/.env.production", MANIFEST_ASSET, BUNDLE_ASSET, CONFIG_FILE,
+                   # Private commit records are generated on the target filesystem, not shipped assets.
+                   "<canonical-env-parent>/.futureagi-updates/env-commits/<target-id>/<operation-id>/",
+                   "env-retained-<id>.json", "manifest.json"}
         tokens = sorted(set(re.findall(r"`([^`\s]+)`", self.text)))
         for token in tokens:
             # A path in the operator's home (~/.docker/config.json) is not the checkout's.
@@ -2994,7 +2997,8 @@ elif args[5] == "{{json .Image}}":
     if args[3] not in images:
         print("ERROR: " + args[3] + ": not found", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(images[args[3]]))
+    raw_images = json.loads(os.environ.get("FAKE_IMAGE_TEXT", "{}"))
+    print(raw_images.get(args[3], json.dumps(images[args[3]])))
 else:
     sys.exit(71)
 """
@@ -3109,6 +3113,104 @@ class TrustRound6RevisionCase(_StepHarness):
                       f"{TRUST_ROUND6_REVISION_LABEL} label of each of its platforms must be {self.commit}, the tag's "
                       "commit, but it is ", result.stdout)
         self.assertIn(". Nothing was signed: find out what pushed that image to its tag", result.stdout)
+
+
+def trust_round6_revision_corpus(commit: str) -> List[Tuple[str, Any, Any]]:
+    """buildx configs and the exact revision map (None means a non-object input).
+
+    Check every key as well as every value: dropping an invalid platform must
+    never turn the signing predicate into a vacuous or partial success.
+    """
+
+    good = trust_round6_config("amd64", {TRUST_ROUND6_REVISION_LABEL: commit})
+    cases = [("single", good, {"linux/amd64": commit})]
+    for arches in (("amd64",), ("amd64", "arm64"), ("amd64", "arm64", "s390x")):
+        cases.append(("index-" + "-".join(arches),
+                      {f"linux/{arch}": trust_round6_config(arch, {TRUST_ROUND6_REVISION_LABEL: commit})
+                       for arch in arches}, {f"linux/{arch}": commit for arch in arches}))
+    bad = [("missing-config", {}, None), ("missing-labels", {"config": {}}, None),
+           ("missing-revision", {"config": {"Labels": {}}}, None)]
+    for name, value in (("null", None), ("string", "bad"), ("array", []), ("number", 7), ("bool", True)):
+        bad.append((f"config-{name}", {"config": value}, None))
+        bad.append((f"labels-{name}", {"config": {"Labels": value}}, None))
+    for name, value in (("null", None), ("empty", ""), ("wrong", "f" * 40), ("short", commit[:12]),
+                        ("uppercase", commit.upper()), ("space", commit + " "), ("newline", commit + "\n"),
+                        ("number", 7), ("bool", True), ("array", [commit]), ("object", {"revision": commit})):
+        bad.append((f"revision-{name}", {"config": {"Labels": {TRUST_ROUND6_REVISION_LABEL: value}}}, value))
+    for name, config, revision in bad:
+        single = {**good, **config}
+        if name == "missing-config":
+            del single["config"]
+        cases.append((f"single-{name}", single, {"linux/amd64": revision}))
+        cases.append((f"mixed-{name}", {"linux/amd64": good, "linux/arm64": config},
+                      {"linux/amd64": commit, "linux/arm64": revision}))
+    for name, value in (("null", None), ("string", "bad"), ("array", []), ("number", 7), ("bool", True)):
+        cases.append((f"root-{name}", value, None))
+        cases.append((f"only-platform-{name}", {"linux/arm64": value}, {"linux/arm64": None}))
+        for first in (False, True):
+            entries = [("linux/amd64", good), ("linux/arm64", value)]
+            cases.append((f"mixed-platform-{name}-first-{first}", dict(reversed(entries) if first else entries),
+                          {"linux/amd64": commit, "linux/arm64": None}))
+    cases.append(("empty-index", {}, {}))
+    return cases
+
+
+class TrustRound6JqCompatibilityTests(TrustRound6RevisionCase):
+    """Run with real jq on PATH (in particular 1.6 and 1.7.1), never a jq stub.
+
+    The version is included in subtest diagnostics. Both the extracted workflow
+    filter and the complete workflow step use that same executable.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.jq = shutil.which("jq")
+        self.jq_version = subprocess.check_output([self.jq, "--version"], text=True).strip()
+        filters = re.findall(r"jq (-[a-z]+) '(.*?)' <<<\"\$config\"", trust_round6_revision_step(self.doc)["run"], re.S)
+        self.assertEqual(len(filters), 1)
+        self.jq_options, self.revision_filter = filters[0]
+
+    def test_actual_filter_and_step_preserve_and_validate_every_platform(self):
+        for name, image, expected in trust_round6_revision_corpus(self.commit):
+            with self.subTest(jq=self.jq_version, config=name):
+                self.log.unlink(missing_ok=True)
+                filtered = subprocess.run([self.jq, self.jq_options, self.revision_filter], input=json.dumps(image),
+                                          capture_output=True, text=True, timeout=10)
+                if expected is None:
+                    self.assertEqual(filtered.returncode, 5, filtered.stderr)
+                    self.assertEqual(filtered.stdout, "")
+                else:
+                    self.assertEqual(filtered.returncode, 0, filtered.stderr)
+                    self.assertEqual(json.loads(filtered.stdout), expected)
+                result = self.run_check(self.images(frontend=image))
+                valid = bool(expected) and all(revision == self.commit for revision in expected.values())
+                if valid:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(f"frontend: {self.references['frontend']} was built from {self.commit}", result.stdout)
+                elif expected is None:
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn(f"::error::cannot read the image configuration of {self.references['frontend']}",
+                                  result.stderr)
+                else:
+                    self.refused(result, "frontend")
+                    found = result.stdout.split("but it is ", 1)[1].split(". Nothing was signed:", 1)[0]
+                    self.assertEqual(json.loads(found), expected)
+                sleeps = [call for call in calls(self.log) if call[0] == "sleep"]
+                self.assertEqual(sleeps, [["sleep", str(n * 10)] for n in range(1, 6)]
+                                 if expected is None else [])
+
+    def test_malformed_json_is_retried_and_never_passes(self):
+        good = json.dumps(trust_round6_image(self.commit))
+        for raw in ("", " \n\t", "{", "not json", '{"linux/arm64":',
+                    good + "\n" + good, "{}\n" + good, good + "\n{}", "null\n" + good):
+            with self.subTest(jq=self.jq_version, raw=raw):
+                self.log.unlink(missing_ok=True)
+                result = self.run_check(FAKE_IMAGE_TEXT=json.dumps({self.references["frontend"]: raw}))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(f"::error::cannot read the image configuration of {self.references['frontend']}",
+                              result.stderr)
+                self.assertEqual([call for call in calls(self.log) if call[0] == "sleep"],
+                                 [["sleep", str(n * 10)] for n in range(1, 6)])
 
 
 class TrustRound6RevisionCheckTests(TrustRound6RevisionCase):
@@ -3391,6 +3493,16 @@ class ClosingDeploymentFileCoverageTests(unittest.TestCase):
                              "helm-release.yml", "update-ci.yml"):
                 with self.subTest(event=event, workflow=workflow):
                     self.assertIn(f".github/workflows/{workflow}", paths)
+
+    def test_update_ci_e2e_matrix_runs_every_e2e_suite(self):
+        text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")
+        listed = re.findall(r"^        suite: \[([^\]]*)\]$", text, re.M)
+        self.assertEqual(len(listed), 1, "the e2e job names its suites in one matrix list")
+        suites = sorted(name.strip() for name in listed[0].split(","))
+        files = sorted(path.name[len("test_update_e2e_"):-len(".py")]
+                       for path in (ROOT / "deploy/tests").glob("test_update_e2e_*.py"))
+        self.assertEqual(suites, files)
+        self.assertIn('-p "test_update_e2e_${SUITE}.py"', text)
 
     def test_update_ci_jobs_run_where_python_3_9_exists(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")

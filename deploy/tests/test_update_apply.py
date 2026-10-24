@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unicodedata
 from collections import namedtuple
 from pathlib import Path
 from unittest import mock
@@ -122,6 +123,10 @@ class FakeInstallation(Installation):
     @property
     def project(self):
         return self._project
+
+    def check_ownership(self):
+        # This fake owns its entire in-memory project. Real provenance is tested through Installation/CLI.
+        pass
 
     def resolved_images(self):
         env = read_env(self.env_file)  # Compose reads the file on disk
@@ -335,6 +340,20 @@ class UpdaterCase(unittest.TestCase):
             return real_write(path, changes, **kwargs)
 
         patcher = mock.patch.object(envfile_module, "write_changes", recording_write)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        real_restore = envfile_module.restore_changes
+
+        def recording_restore(path, record):
+            index = self.env_write_count
+            self.env_write_count += 1
+            self.log.append(('env_restore',))
+            failure = self.env_write_failures.get(index)
+            if failure is not None:
+                raise failure
+            return real_restore(path, record)
+
+        patcher = mock.patch.object(envfile_module, 'restore_changes', recording_restore)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.build()
@@ -590,6 +609,21 @@ class UpdaterCase(unittest.TestCase):
                   "previous_images": self.snapshot_of("v1.0.0"), "components": [],
                   "started_at": "2026-10-19T00:00:00Z"}
         record.update(fields)
+        if stage in STAGES_BEFORE_ROLLOUT and 'env_recovery' not in fields:
+            values = record.get('found_values', record['previous_values'])
+            try:
+                before = envfile_module.render_changes(self.env_bytes().decode('utf-8'), values, verbatim=True)
+            except EnvFileError:
+                pass  # Explicit malformed/legacy fixture: there is no safe inverse to invent.
+            else:
+                fixture = self.root / 'journal-before.env'
+                fixture.write_bytes(before.encode())
+                fixture.chmod(self.env_path.stat().st_mode & 0o7777)
+                changes = {key: value for key, value in record['env_changes'].items() if key in values}
+                record['env_recovery'] = envfile_module.recovery_record(fixture, changes)
+                record['env_recovery']['target'] = os.path.realpath(self.env_path)
+                record['env_recovery'].pop('commit')  # Synthetic legacy journal: no physical exchange occurred.
+                fixture.unlink()
         StateDir.write_journal(self.state, record)
         return record
 
@@ -616,6 +650,228 @@ def deliver(signum):
 
 
 # ================================================================ tests ==
+
+class CrashRecoveryPreservationTests(UpdaterCase):
+    """A killed Updater must undo bytes, not re-encode last-definition-wins values."""
+
+    def interrupt_apply(self, plan=None):
+        self.inst.failures["config"] = SystemExit(137)  # outside Exception: no in-process cleanup
+        with self.assertRaises(SystemExit):
+            self.apply(plan)
+        del self.inst.failures["config"]
+        self.assertEqual(self.journal()["stage"], "env_written")
+        self.assertFalse(any(call[0] == "up" for call in self.compose_calls()))
+
+    def test_old_unicode_tables_do_not_rewrite_inside_unrelated_multiline_values(self):
+        for char in ("ࡰ", "\U0001e030", "\U00031350"):
+            with self.subTest(char=char):
+                text = f'FUTURE_AGI_VERSION=v1.0.0\n{char}="first\nFUTURE_AGI_VERSION=v0.0.1\nlast"\n'
+                self.build(env_text=text)
+                with mock.patch.object(envfile_module, "unicodedata", unicodedata.ucd_3_2_0):
+                    self.interrupt_apply()
+                    self.assertEqual(self.env_bytes(), text.replace("=v1.0.0", "=v1.1.0").encode())
+                    self.updater().recover()
+                    self.assertEqual(read_env(self.env_path)["FUTURE_AGI_VERSION"], "v1.0.0")
+                self.assertEqual(self.env_bytes(), text.encode())
+
+    def test_killed_apply_restores_duplicate_definitions_and_intervening_interpolation(self):
+        self.build(env_text=(f'﻿SECRET_KEY={SECRET}\r\n'
+                             'export FUTURE_AGI_VERSION : "v0.9.0"  # first\r\n'
+                             'MIDDLE=${FUTURE_AGI_VERSION}\r\n'
+                             '  FUTURE_AGI_VERSION= v1.0.0 # last'))
+        self.env_path.chmod(0o640)
+        self.interrupt_apply()
+        recovered = self.updater().recover()
+        self.assertEqual(recovered["status"], "interrupted_before_rollout")
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual(stat.S_IMODE(self.env_path.stat().st_mode), 0o640)
+        self.assertIsNone(self.journal())
+        self.assertNotIn(SECRET, self.state_text())
+
+    def test_killed_rollback_restores_escaped_dollars_without_interpolating_them(self):
+        runner = "SIMULATION_RUNNER_VERSION"
+        for token in ('"\\$X"', '"v\\${X"', "'literal$X'", '"first\\nsecond"'):
+            with self.subTest(token=token):
+                self.build(values={"FUTURE_AGI_VERSION": "v1.0.0", runner: "v1.0.0", "X": "v9"})
+                applied = self.applied(self.plan(env_changes={"FUTURE_AGI_VERSION": TARGET, runner: TARGET}))
+                # This inactive pin was edited after the update; rollback can still touch it.
+                raw = self.env_bytes().replace(f"{runner}={TARGET}".encode(), f"{runner}={token}".encode())
+                self.env_path.write_bytes(raw)
+                self.inst.reload_env()
+                self.inst.failures["config"] = SystemExit(137)
+                with self.assertRaises(SystemExit):
+                    self.rollback(applied)
+                del self.inst.failures["config"]
+                self.assertEqual((self.journal()["kind"], self.journal()["stage"]), ("rollback", "env_written"))
+                recovered = self.updater().recover()
+                self.assertEqual(recovered["status"], "interrupted_before_rollout")
+                self.assertEqual(self.env_bytes(), raw)
+                self.assertIsNone(self.journal())
+
+
+    def test_unicode_tables_never_expose_a_multiline_value_to_apply(self):
+        import unicodedata
+
+        for char in ("ࡰ", "\U0001e030", "\U00031350"):
+            with self.subTest(key=char), mock.patch.object(envfile_module, "unicodedata", unicodedata.ucd_3_2_0):
+                text = f'FUTURE_AGI_VERSION=v1.0.0\n{char}="\nFUTURE_AGI_VERSION=v0.0.1\n"\n'
+                self.build(env_text=text)
+                self.apply()
+                expected = text.replace("FUTURE_AGI_VERSION=v1.0.0", "FUTURE_AGI_VERSION=v1.1.0")
+                self.assertEqual(self.env_bytes(), expected.encode())
+                self.assertEqual(self.last_receipt()["previous_values"], {"FUTURE_AGI_VERSION": "v1.0.0"})
+
+
+    def test_killed_rollback_restores_literal_escaped_dollars(self):
+        receipt = self.applied()
+        before = self.env_bytes().replace(b'FUTURE_AGI_VERSION=v1.1.0',
+                                          b'X=v9\nFUTURE_AGI_VERSION="v\\${X"\n'
+                                          b'MIDDLE=${FUTURE_AGI_VERSION}\n'
+                                          b'FUTURE_AGI_VERSION="\\$X"')
+        self.env_path.write_bytes(before)
+        self.inst.reload_env()
+        self.inst.failures["config"] = SystemExit(137)
+        with self.assertRaises(SystemExit):
+            self.rollback(receipt)
+        del self.inst.failures["config"]
+        self.assertEqual((self.journal()["kind"], self.journal()["stage"]), ("rollback", "env_written"))
+        recovered = self.updater().recover()
+        self.assertEqual(self.env_bytes(), before)
+        self.assertEqual(recovered["status"], "interrupted_before_rollout")
+        self.assertIsNone(self.journal())
+
+class RecoveryTransactionInvariantTests(UpdaterCase):
+    interrupt_apply = CrashRecoveryPreservationTests.interrupt_apply
+
+    def test_mutating_entry_points_prove_ownership_under_lock_before_any_effect(self):
+        self.interrupt_apply()
+        before = (self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts(), list(self.hook.calls))
+        def refuse():
+            self.assertIsNotNone(self.state.lock_holder())
+            raise InstallError('foreign ownership')
+        with mock.patch.object(self.inst, 'check_ownership', side_effect=refuse):
+            for run in (lambda: self.apply(), lambda: self.rollback(yes=True), lambda: self.rollback(yes=False),
+                        lambda: self.updater().recover()):
+                with self.subTest(run=run), self.assertRaisesRegex(InstallError, 'ownership'):
+                    run()
+                self.assertTrue(self.state.journal_path.exists(), 'a refused recovery must retain its journal')
+                self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts(),
+                                  list(self.hook.calls)), before)
+
+    def test_fresh_apply_refuses_foreign_ownership_before_backup_and_journal(self):
+        def refuse():
+            self.assertIsNotNone(self.state.lock_holder())
+            raise InstallError('foreign ownership')
+        with mock.patch.object(self.inst, 'check_ownership', side_effect=refuse):
+            with self.assertRaisesRegex(InstallError, 'ownership'):
+                self.apply()
+        self.assertEqual(self.hook.calls, [])
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertIsNone(self.journal())
+        self.assertEqual(self.receipts(), [])
+
+    def test_journal_project_identity_must_still_match_the_selected_project(self):
+        self.interrupt_apply()
+        self.inst._project = 'another-project'
+        before = self.env_bytes(), self.state.journal_path.read_bytes()
+        with self.assertRaisesRegex(Blocked, 'project'):
+            self.updater().recover()
+        self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes()), before)
+
+    def test_no_journal_recover_never_contacts_docker_or_creates_state(self):
+        with mock.patch.object(self.inst, 'check_ownership', side_effect=AssertionError('no daemon work')):
+            self.assertIsNone(self.updater().recover())
+        self.assertFalse(self.state.path.exists())
+
+    def test_legacy_malformed_and_unknown_journals_are_kept_without_guessing(self):
+        for journal in ({}, {'kind': 'apply'}, {'kind': 'apply', 'stage': 'future'},
+                        {'kind': 'apply', 'stage': 'prepare', 'found_values': {'FUTURE_AGI_VERSION': 'v0.9.0'}},
+                        {'kind': 'rollback', 'stage': 'pulled', 'previous_values': {'FUTURE_AGI_VERSION': None}},
+                        {'kind': 'apply', 'stage': 'env_written', 'env_recovery': {'format': 2}}):
+            with self.subTest(journal=journal):
+                self.state.write_journal(journal)
+                before = self.state.journal_path.read_bytes()
+                with self.assertRaises(StateError):
+                    self.updater().recover()
+                self.assertEqual(self.env_bytes(), self.original)
+                self.assertEqual(self.state.journal_path.read_bytes(), before)
+                self.assertEqual(self.receipts(), [])
+
+    def test_killed_recovery_after_env_rename_is_idempotent_and_durable_on_retry(self):
+        self.build(env_text='FUTURE_AGI_VERSION=v0.9.0\nMIDDLE=${FUTURE_AGI_VERSION}\n'
+                            'FUTURE_AGI_VERSION=v1.0.0')
+        self.interrupt_apply()
+        journal = self.state.journal_path.read_bytes()
+        exchange = envfile_module.envcommit.exchange
+        def killed(a, b, c, d):
+            exchange(a, b, c, d)
+            if b == 'slot':
+                raise SystemExit(137)
+        with mock.patch.object(envfile_module.envcommit, 'exchange', side_effect=killed):
+            with self.assertRaises(SystemExit):
+                self.updater().recover()
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual(self.state.journal_path.read_bytes(), journal)
+        self.assertEqual(self.receipts(), [])
+        sync = envfile_module.envcommit.sync_dir
+        with mock.patch.object(envfile_module.envcommit, 'sync_dir', wraps=sync) as synced:
+            self.updater().recover()
+        self.assertGreater(synced.call_count, 0)
+        self.assertIsNone(self.journal())
+        self.assertEqual(len(self.receipts()), 1)
+        self.assertIsNone(self.updater().recover())
+
+    def test_failed_journal_directory_fsync_never_allows_env_mutation(self):
+        with mock.patch.object(receipt_module, '_fsync_dir', side_effect=OSError(28, 'No space left on device')):
+            with self.assertRaises(StateError):
+                self.apply()
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual(self.env_write_count, 0)
+        self.assertIsNotNone(self.journal())
+        self.updater().recover()
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertIsNone(self.journal())
+
+    def test_journal_replacement_and_parent_sync_precede_the_env_write(self):
+        events = []
+        replace, sync = os.replace, os.fsync
+        def replaced(src, dst, **kwargs):
+            replace(src, dst, **kwargs)
+            events.append(('replace', str(dst)))
+        def synced(fd):
+            sync(fd)
+            events.append(('sync-dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'sync-file', None))
+        exchange = envfile_module.envcommit.exchange
+        def exchanged(a, b, c, d):
+            events.append(('exchange', d))
+            return exchange(a, b, c, d)
+        with mock.patch.object(os, 'replace', side_effect=replaced), mock.patch.object(os, 'fsync', side_effect=synced), \
+                mock.patch.object(envfile_module.envcommit, 'exchange', side_effect=exchanged):
+            self.interrupt_apply()
+        first_journal = events.index(('replace', str(self.state.journal_path)))
+        first_env = events.index(('exchange', self.env_path.name))
+        between = [kind for kind, _ in events[first_journal + 1:first_env]]
+        self.assertEqual(between[:2], ['sync-dir', 'sync-dir'])
+        self.assertIn('sync-file', between)
+        self.assertIn(('replace', 'manifest.json'), events[first_journal + 1:first_env])
+        record = self.journal()['env_recovery']
+        self.assertEqual(record['before_sha256'], hashlib.sha256(self.original).hexdigest())
+        self.assertEqual(record['after_sha256'], hashlib.sha256(self.env_bytes()).hexdigest())
+        self.assertNotIn(SECRET, json.dumps(record))
+
+    def test_receipts_never_publish_private_recovery_bytes(self):
+        private = 'version-comment-private-value'
+        self.build(env_text='SECRET_KEY=' + SECRET + '\nFUTURE_AGI_VERSION=v1.0.0 # ' + private + '\n')
+        self.interrupt_apply()
+        journal = self.journal()
+        # Simulate a removed line's comment in private recovery metadata; StateDir must strip it regardless.
+        journal['env_recovery']['private_test'] = private
+        path = self.state.write_receipt(journal)
+        text = path.read_text()
+        self.assertNotIn('env_recovery', text)
+        self.assertNotIn(private, text)
+        self.assertNotIn(SECRET, self.state.journal_path.read_text())
+
 
 class ExceptionContractTests(unittest.TestCase):
     def test_exit_codes(self):
@@ -1071,8 +1327,9 @@ class FailureBeforeRolloutTests(UpdaterCase):
         self.inst.failures["pull"] = InstallError("nope")
         self.assertRaisesExactly(FailedBeforeRollout, self.apply)
         writes = [e[1] for e in self.log if e[0] == "env_write"]
-        self.assertEqual(writes, [{"FUTURE_AGI_VERSION": "v1.1.0"}, {"FUTURE_AGI_VERSION": "v1.0.0"}])
-        self.assertEqual(self.events()[-3:], [("env_write", {"FUTURE_AGI_VERSION": "v1.0.0"}),
+        self.assertEqual(writes, [{"FUTURE_AGI_VERSION": "v1.1.0"}])
+        self.assertIn(("env_restore",), self.log)
+        self.assertEqual(self.events()[-3:], [("env_restore",),
                                               ("receipt", "failed_before_rollout"), ("clear_journal",)])
 
     def test_env_write_itself_failing(self):
@@ -1366,7 +1623,7 @@ class RestoreFailureTests(UpdaterCase):
         exc = self.fail_twice()
         self.assertEqual(exc.exit_code, 2)
         self.assertIn("restoring the previous version settings also failed "
-                      "(cannot write .env: No space left on device)", str(exc))
+                      "(cannot write .env: No space left on device.", str(exc))
         self.assertIn("Run `./bin/update apply` again: it restores them first", str(exc))
         self.assertIn("exit code 15", str(exc))
         journal = self.journal()
@@ -1436,9 +1693,12 @@ class RecoverTests(UpdaterCase):
         self.assertIn("Recovered an interrupted apply to v1.1.0: it stopped while containers were being replaced",
                       self.out.getvalue())
 
-    def test_unknown_stage_is_treated_as_during_rollout(self):
-        self.craft_journal("something-new")
-        self.assertEqual(self.updater().recover()["status"], "interrupted_during_rollout")
+    def test_unknown_stage_keeps_the_journal_for_manual_recovery(self):
+        self.craft_journal('something-new')
+        before = self.state.journal_path.read_bytes()
+        with self.assertRaises(StateError):
+            self.updater().recover()
+        self.assertEqual(self.state.journal_path.read_bytes(), before)
         self.assertEqual(self.env_bytes(), self.original)
 
     def test_existing_error_is_kept(self):
@@ -2605,7 +2865,8 @@ class FoundValuesTests(UpdaterCase):
         self.assertEqual(self.env_bytes(), before)
         self.assertEqual(self.inst.env["FUTURE_AGI_VERSION"], "v1.1.0")
         self.assertEqual([e[1] for e in self.log if e[0] == "env_write"],
-                         [{"FUTURE_AGI_VERSION": "v1.1.0"}, {"FUTURE_AGI_VERSION": "v1.1.0"}])
+                         [{"FUTURE_AGI_VERSION": "v1.1.0"}])
+        self.assertIn(("env_restore",), self.log)
 
     def test_killed_resume_is_recovered_to_what_it_found(self):
         self.failed_rollout()
@@ -2636,7 +2897,8 @@ class FoundValuesTests(UpdaterCase):
         self.craft_journal("env_written", found_values={})
         self.updater().recover()
         self.assertEqual(self.env_bytes(), self.original)
-        self.assertEqual([e[1] for e in self.log if e[0] == "env_write"], [{}])
+        self.assertEqual([e[1] for e in self.log if e[0] == "env_write"], [])
+        self.assertIn(("env_restore",), self.log)
 
     def test_rollback_records_found_values(self):
         self.applied()
@@ -2694,6 +2956,46 @@ def process_gone(pid, timeout=10.0):
     return False
 
 
+def group_gone(pgid, timeout=10.0):
+    """Whether every process of group `pgid` has exited (zombies waiting for their new parent count as gone)."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass  # On sandboxed macOS a dead group can give EPERM; verify through ps, never treat it as success.
+        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True, check=False)
+        if listing.returncode != 0:
+            raise AssertionError('cannot verify hook process group: ' + listing.stderr)
+        states = [line.split()[1] for line in listing.stdout.splitlines()
+                  if len(line.split()) == 2 and line.split()[0] == str(pgid)]
+        if all(state.startswith("Z") for state in states):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class RecordHookGroups:
+    """Records the process group of every hook run_hook starts (its own session: the group id is the leader's pid).
+
+    Whether a hook got as far as starting its child before a short timeout depends on how loaded the host is;
+    its group is known either way, so the tests check that the whole group is gone.
+    """
+
+    def __init__(self):
+        self.groups = []
+        self.real = subprocess.Popen
+
+    def __call__(self, *args, **kwargs):
+        process = self.real(*args, **kwargs)
+        if kwargs.get("start_new_session"):
+            self.groups.append(process.pid)
+        return process
+
+
 class HookRunnerTests(unittest.TestCase):
     """The default hook runner: run_hook, with real processes."""
 
@@ -2706,8 +3008,17 @@ class HookRunnerTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.pids = []
         self.addCleanup(self.kill_leftovers)
+        self.recorder = RecordHookGroups()
+        patcher = mock.patch.object(subprocess, "Popen", self.recorder)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def kill_leftovers(self):
+        for pgid in self.recorder.groups:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
         for pid in self.pids:
             try:
                 os.kill(pid, signal.SIGKILL)
@@ -2749,8 +3060,11 @@ class HookRunnerTests(unittest.TestCase):
         self.addCleanup(thread.join, 10)
 
     def assertGroupGone(self):
-        for pid in self.started():
-            self.assertTrue(process_gone(pid), f"hook process {pid} outlived run_hook")
+        self.assertEqual(len(self.recorder.groups), 1, "run_hook starts one hook")
+        self.assertTrue(group_gone(self.recorder.groups[0]), "a process of the hook's group outlived run_hook")
+        if (self.dir / "started").exists():  # what it reported, when it got that far before being stopped
+            for pid in self.started():
+                self.assertTrue(process_gone(pid), f"hook process {pid} outlived run_hook")
 
     def test_returns_the_exit_code(self):
         result = run_hook(["/bin/sh", "-c", "exit 3"], cwd=str(self.dir), env=dict(os.environ), check=False,
@@ -2790,9 +3104,16 @@ class HookRunnerTests(unittest.TestCase):
         self.assertGroupGone()
 
     def test_processes_ignoring_sigterm_are_killed_after_the_grace_period(self):
-        started = time.monotonic()
-        with self.assertRaises(subprocess.TimeoutExpired):
-            run_hook(self.hook(ignore_term=True), cwd=str(self.dir), env=dict(os.environ), check=False, timeout=1)
+        # The hook ignores SIGTERM from its first instruction (an ignored signal stays ignored across fork and
+        # exec), however long a loaded host takes to start it: only the SIGKILL after the grace stops it.
+        previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_hook(self.hook(ignore_term=True), cwd=str(self.dir), env=dict(os.environ), check=False,
+                         timeout=1)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
         self.assertGreaterEqual(time.monotonic() - started, 1.9)  # the timeout, then the grace period
         self.assertGroupGone()
 
@@ -2824,11 +3145,17 @@ class DefaultHookRunnerTests(UpdaterCase):
         script.chmod(0o755)
         settings = load_settings(self.root, {"FUTURE_AGI_UPDATE_BACKUP_TIMEOUT_SECONDS": "1"}, environ={})
         updater = Updater(self.inst, settings, self.state, out=self.out, readiness=self.ready)
-        with mock.patch.object(apply_module, "HOOK_STOP_GRACE_SECONDS", 1.0):
+        recorder = RecordHookGroups()
+        with mock.patch.object(apply_module, "HOOK_STOP_GRACE_SECONDS", 1.0), \
+                mock.patch.object(subprocess, "Popen", recorder):
             exc = self.assertRaisesExactly(FailedBeforeRollout, self.apply, updater=updater,
                                            backup_command=str(script))
         self.assertEqual(str(exc), "the backup hook did not finish within 1s; nothing was changed")
-        self.assertTrue(process_gone(int(marker.read_text().strip())))
+        self.assertEqual(len(recorder.groups), 1)
+        self.assertTrue(group_gone(recorder.groups[0]), "a process of the hook's group outlived it")
+        child = marker.read_text().strip() if marker.exists() else ""
+        if child:  # the hook got as far as starting its child before the timeout
+            self.assertTrue(process_gone(int(child)))
         self.assertEqual(self.env_bytes(), self.original)
         self.assertEqual(self.receipts(), [])
         self.assertEqual(self.compose_calls(), [])
@@ -3154,10 +3481,15 @@ class RollbackLocalAndInactiveTests(UpdaterCase):
             raise InstallError("pull failed")
 
         self.inst.failures["pull"] = edit_then_fail
-        self.assertRaisesExactly(FailedBeforeRollout, self.rollback)
-        self.assertEqual(self.env_value("ADDED_BY_THE_OPERATOR"), "1")
-        self.assertEqual(self.env_value("FI_COLLECTOR_VERSION"), "v1.1.0")
-        self.assertEqual(self.env_value("FUTURE_AGI_VERSION"), "v1.1.0")
+        exc = self.assertRaisesExactly(UpdateError, self.rollback)
+        self.assertIn('env commit conflict', str(exc))
+        self.assertIn('Kept', str(exc))
+        self.assertIn(b'ADDED_BY_THE_OPERATOR=1', self.env_bytes())
+        self.assertIsNotNone(self.journal())
+        before = self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()
+        with self.assertRaises(StateError):
+            self.updater().recover()
+        self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()), before)
 
     def test_containerd_local_build_with_its_own_repo_digest_is_accepted(self):
         own = [f"{FI_COLLECTOR.repo}@{self.local_id}"]
@@ -3395,78 +3727,7 @@ class StateDirFileTests(unittest.TestCase):
 
 # --------------------------------------------------- putting the bytes back --
 
-class PutBackTests(unittest.TestCase):
-    """apply._put_back: best effort, after the values are already restored; it never raises an OSError."""
 
-    ORIGINAL = b"FUTURE_AGI_VERSION=v1.0.0\nSECRET_KEY=abc\n"
-    CHANGES = {"FUTURE_AGI_VERSION": None}
-    FOUND = {"FUTURE_AGI_VERSION": "v1.0.0"}
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(os.path.realpath(temporary.name))
-        self.env = self.root / ".env"
-        # What removing the key and then writing it back makes: the key comes back at the end.
-        self.made = b"SECRET_KEY=abc\nFUTURE_AGI_VERSION=v1.0.0\n"
-        self.env.write_bytes(self.made)
-        os.chmod(self.env, 0o640)
-
-    def put_back(self, original=ORIGINAL, changes=None, found=None):
-        apply_module._put_back(self.env, original, self.CHANGES if changes is None else changes,
-                               self.FOUND if found is None else found)
-
-    def temp_files(self):
-        return [p.name for p in self.root.iterdir() if p.name.startswith(".env.futureagi-update-")]
-
-    def test_original_bytes_and_mode_come_back(self):
-        self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.ORIGINAL)
-        self.assertEqual(stat.S_IMODE(self.env.stat().st_mode), 0o640)
-        self.assertEqual(self.temp_files(), [])
-
-    def test_nothing_to_do(self):
-        for original in (None, self.made):
-            with self.subTest(original=original):
-                self.put_back(original=original)
-                self.assertEqual(self.env.read_bytes(), self.made)
-
-    def test_missing_env_file_is_left_alone(self):
-        self.env.unlink()
-        self.put_back()
-        self.assertFalse(self.env.exists())
-
-    def test_changes_it_cannot_render_are_left_alone(self):
-        self.put_back(changes={"NOT A KEY": "v1.1.0"})
-        self.assertEqual(self.env.read_bytes(), self.made)
-
-    def test_failed_write_keeps_the_restored_values(self):
-        with mock.patch("os.replace", side_effect=OSError(28, "No space left on device")):
-            self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.made)
-        self.assertEqual(self.temp_files(), [])
-
-    def test_unwritable_directory_keeps_the_restored_values(self):
-        with mock.patch("tempfile.mkstemp", side_effect=PermissionError(13, "Permission denied")):
-            self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.made)
-
-    def test_interrupt_while_writing_propagates_and_cleans_up(self):
-        with mock.patch("os.replace", side_effect=KeyboardInterrupt()):
-            with self.assertRaises(KeyboardInterrupt):
-                self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.made)
-        self.assertEqual(self.temp_files(), [])
-
-    def test_owner_that_cannot_be_kept_is_not_an_error(self):
-        with mock.patch("os.chown", side_effect=PermissionError(1, "Operation not permitted")):
-            self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.ORIGINAL)
-
-    def test_unreadable_env_file_is_left_alone(self):
-        with mock.patch.object(Path, "read_bytes", side_effect=PermissionError(13, "Permission denied")):
-            self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.made)
 
 
 # ---------------------------------------------------- stopping a hook group --
@@ -3637,16 +3898,19 @@ class DryRunAfterAKilledRunTests(UpdaterCase):
         self.assertEqual(plan["notes"], [])
 
     def test_preview_recovery_changes_nothing_but_the_overlay(self):
-        journal = self.craft_journal("prepare", found_values={"FUTURE_AGI_VERSION": None})
+        self.build(values={'FUTURE_AGI_VERSION': None})
+        CrashRecoveryPreservationTests.interrupt_apply(self)
+        journal = self.journal()
+        before = self.env_bytes()
         record, notes = apply_module.preview_recovery(self.inst, journal)
-        self.assertEqual(record["status"], "interrupted_before_rollout")
-        self.assertEqual(journal["status"], "running")
-        self.assertEqual(notes[-1], "that run stopped before restarting anything; this plan assumes recovery has "
-                                    "put back FUTURE_AGI_VERSION=unset")
-        self.assertNotIn("FUTURE_AGI_VERSION", self.inst.env)
-        self.assertEqual(self.env_bytes(), self.original)
-        record, notes = apply_module.preview_recovery(self.inst, dict(journal, found_values={}))
-        self.assertEqual(notes, [apply_module.JOURNAL_NOTE])
+        self.assertEqual(record['status'], 'interrupted_before_rollout')
+        self.assertEqual(journal['status'], 'running')
+        self.assertIn('FUTURE_AGI_VERSION=unset', notes[-1])
+        self.assertNotIn('FUTURE_AGI_VERSION', self.inst.env)
+        self.assertEqual(self.env_bytes(), before)
+        # Last-value fields are no longer authoritative, even when present but empty.
+        record, again = apply_module.preview_recovery(self.inst, dict(journal, found_values={}))
+        self.assertEqual(again, notes)
 
 
 # ------------------------------------------ what a resume records from before --
@@ -3857,6 +4121,7 @@ class StagedUpdateTests(UpdaterCase):
         # The staged images are on the host with their signed digests: verified again, not pulled again.
         self.assertEqual([c[0] for c in self.compose_calls()], ["config", "up"])
         self.assertEqual([e[1] for e in self.log if e[0] == "env_write"], [{}])
+        self.assertNotIn(("env_restore",), self.log)
         self.assertEqual(self.inst.running["app"]["image_id"], id_of("futureagi/standalone", "v1.1.0"))
         self.assertIn("Updated to v1.1.0", self.out.getvalue())
 
@@ -4025,7 +4290,7 @@ class InterpolatedVersionValueTests(UpdaterCase):
         self.assertEqual(self.inst.env["FUTURE_AGI_VERSION"], "${RELEASE}")
         self.assertIsNone(self.journal())
         self.assertEqual(self.last_receipt()["found_values"], {"FUTURE_AGI_VERSION": "${RELEASE}"})
-        self.assertEqual(self.env_write_kwargs[-1], {"verbatim": True})
+        self.assertIn("recovery", self.env_write_kwargs[-1])
 
     def test_a_killed_run_is_recovered_and_the_next_apply_proceeds(self):
         self.inst.failures["pull"] = SystemExit(137)
@@ -4052,31 +4317,29 @@ class UnwritableFoundValueTests(UpdaterCase):
         super().setUp()
         self.build(current="v1.1.0")
 
-    def test_recover_records_it_clears_the_journal_and_says_what_to_fix(self):
-        self.craft_journal("pulled", found_values={"FUTURE_AGI_VERSION": "v1.0.0\nINJECTED=1"})
-        recovered = self.updater().recover()
-        self.assertEqual(recovered["status"], "interrupted_before_rollout")
-        self.assertEqual(recovered["unrestored_values"], {"FUTURE_AGI_VERSION": "v1.0.0\nINJECTED=1"})
-        self.assertIsNone(self.journal())
-        self.assertEqual(self.env_bytes(), self.original, "nothing unsafe was written")
-        text = self.out.getvalue()
-        self.assertIn("except FUTURE_AGI_VERSION (it was 'v1.0.0\\nINJECTED=1', the env file now has 'v1.1.0')", text)
-        self.assertIn("set it in .env by hand", text)
-        # The next run is not stopped by it.
-        self.assertIsNone(self.updater().recover())
-        self.rollback_or_apply_proceeds()
+    def test_legacy_ambiguous_values_keep_the_journal_without_guessing(self):
+        self.craft_journal('pulled', found_values={'FUTURE_AGI_VERSION': 'v1.0.0\nINJECTED=1'})
+        journal = self.state.journal_path.read_bytes()
+        with self.assertRaises(StateError) as caught:
+            self.updater().recover()
+        self.assertIn('operator-assisted recovery', str(caught.exception))
+        self.assertEqual(self.state.journal_path.read_bytes(), journal)
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual(self.receipts(), [])
 
     def rollback_or_apply_proceeds(self):
         self.apply(self.plan(decision=UP_TO_DATE, env_changes={}))
         self.assertIn("Nothing to do", self.out.getvalue())
 
-    def test_other_keys_are_still_put_back(self):
-        self.build("distributed", current="v1.1.0")
-        self.craft_journal("pulled", found_values={"FUTURE_AGI_VERSION": "v1.0.0", "FRONTEND_VERSION": "a\rb"})
-        recovered = self.updater().recover()
-        self.assertEqual(self.env_value("FUTURE_AGI_VERSION"), "v1.0.0")
-        self.assertEqual(self.env_value("FRONTEND_VERSION"), "v1.1.0")
-        self.assertEqual(recovered["unrestored_values"], {"FRONTEND_VERSION": "a\rb"})
+    def test_a_legacy_journal_never_partially_restores_other_keys(self):
+        self.build('distributed', current=TARGET)
+        self.craft_journal('pulled', found_values={'FUTURE_AGI_VERSION': 'v1.0.0', 'FRONTEND_VERSION': 'a\rb'})
+        before = self.state.journal_path.read_bytes()
+        with self.assertRaises(StateError):
+            self.updater().recover()
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual(self.state.journal_path.read_bytes(), before)
+        self.assertEqual(self.receipts(), [])
 
     def test_failure_before_the_restart_puts_back_the_original_bytes(self):
         # Compose reads "\n" in a double-quoted value as a line break: no write can put that value back,
@@ -4091,7 +4354,7 @@ class UnwritableFoundValueTests(UpdaterCase):
         self.assertNotIn("Not put back", str(exc))
         self.assertNotIn("unrestored_values", self.last_receipt())
 
-    def test_when_the_file_was_edited_meanwhile_it_says_what_to_fix_and_keeps_no_journal(self):
+    def test_when_the_file_was_edited_meanwhile_it_says_what_to_fix_and_keeps_the_journal(self):
         text = 'SECRET_KEY=%s\nFUTURE_AGI_VERSION="v1.0.0\\nnote"\nOTHER=x\n' % SECRET
         self.build(env_text=text)
 
@@ -4100,13 +4363,15 @@ class UnwritableFoundValueTests(UpdaterCase):
             raise InstallError("`docker compose pull` failed: network unreachable")
 
         self.inst.failures["pull"] = edit_then_fail
-        exc = self.assertRaisesExactly(FailedBeforeRollout, self.apply)
-        self.assertIn("Nothing was restarted; the previous versions are running. Not put back: FUTURE_AGI_VERSION "
-                      "(it was 'v1.0.0\\nnote', the env file now has 'v1.1.0'). That value cannot be written back "
-                      "safely: set it in .env by hand before the next update. Receipt: ", str(exc))
-        self.assertEqual(self.last_receipt()["unrestored_values"], {"FUTURE_AGI_VERSION": "v1.0.0\nnote"})
-        self.assertIsNone(self.journal())
-        self.assertEqual(self.env_value("ADDED_BY_THE_OPERATOR"), "1")
+        exc = self.assertRaisesExactly(UpdateError, self.apply)
+        self.assertIn('env commit conflict', str(exc))
+        self.assertIn('Kept', str(exc))
+        self.assertIn(b'ADDED_BY_THE_OPERATOR=1', self.env_bytes())
+        self.assertIsNotNone(self.journal())
+        before = self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()
+        with self.assertRaises(StateError):
+            self.updater().recover()
+        self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()), before)
 
 
 class ScrubOnlyFreeTextTests(UpdaterCase):
@@ -5094,7 +5359,7 @@ class RestoreFailureCommandTests(UpdaterCase):
     def test_the_restore_error_is_scrubbed(self):
         text = str(self.fail_twice(self.apply))
         self.assertIn("restoring the previous version settings also failed (cannot write .env: No space left on "
-                      "device (***))", text)
+                      "device (***).", text)
         self.assertNotIn(SECRET, text)
 
 
@@ -5242,31 +5507,7 @@ class LockUnsupportedTests(unittest.TestCase):
 
 # ------------------------------------------------------------ integration --
 
-class PutBackCornerTests(unittest.TestCase):
-    """_put_back's last resorts: a temporary file it cannot remove, and a system without chown."""
 
-    ORIGINAL, CHANGES, FOUND = PutBackTests.ORIGINAL, PutBackTests.CHANGES, PutBackTests.FOUND
-    setUp = PutBackTests.setUp
-    put_back = PutBackTests.put_back
-    temp_files = PutBackTests.temp_files
-
-    def test_a_temporary_file_it_cannot_remove_is_not_an_error(self):
-        with mock.patch("os.replace", side_effect=OSError(28, "No space left on device")), \
-                mock.patch("os.unlink", side_effect=OSError(1, "Operation not permitted")):
-            self.put_back()
-        self.assertEqual(self.env.read_bytes(), self.made)  # the values written back stay
-        self.assertEqual(len(self.temp_files()), 1)
-
-    def test_without_chown_the_original_bytes_and_mode_still_come_back(self):
-        chown = os.chown
-        del os.chown
-        try:
-            self.put_back()
-        finally:
-            os.chown = chown
-        self.assertEqual(self.env.read_bytes(), self.ORIGINAL)
-        self.assertEqual(stat.S_IMODE(self.env.stat().st_mode), 0o640)
-        self.assertEqual(self.temp_files(), [])
 
 
 class StaleCheckScopeTests(UpdaterCase):
@@ -5401,7 +5642,7 @@ class RollbackStoppedBeforeRestartTests(UpdaterCase):
         self.assertEqual(self.env_bytes(), self.original)
 
     def test_rollback_of_a_finished_update_names_a_value_it_could_not_put_back(self):
-        applied = self.applied()
+        self.applied()
         # A quoted value with a line break: no write can put it back on its own.
         self.env_path.write_bytes(self.env_bytes().replace(b"FUTURE_AGI_VERSION=v1.1.0",
                                                            b'FUTURE_AGI_VERSION="v1.1.0\\nnote"'))
@@ -5413,14 +5654,15 @@ class RollbackStoppedBeforeRestartTests(UpdaterCase):
 
         self.prune("v1.0.0")  # pulled only when it is not on the host
         self.inst.failures["pull"] = edit_then_fail
-        exc = self.assertRaisesExactly(FailedBeforeRollout, self.rollback)
-        text = str(exc)
-        self.assertIn("rollback stopped before restarting anything: network down. Nothing was restarted; the stack "
-                      "still runs v1.1.0. To try the rollback again, run `./bin/update rollback --receipt "
-                      f"{Path(applied).resolve()} --yes`. Not put back: FUTURE_AGI_VERSION (it was "
-                      "'v1.1.0\\nnote', the env file now has 'v1.0.0').", text)
-        self.assertNotIn("Nothing was changed", text)
-        self.assertEqual(self.last_receipt()["unrestored_values"], {"FUTURE_AGI_VERSION": "v1.1.0\nnote"})
+        exc = self.assertRaisesExactly(UpdateError, self.rollback)
+        self.assertIn('env commit conflict', str(exc))
+        self.assertIn('Kept', str(exc))
+        self.assertIn(b'ADDED_BY_THE_OPERATOR=1', self.env_bytes())
+        self.assertIsNotNone(self.journal())
+        before = self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()
+        with self.assertRaises(StateError):
+            self.updater().recover()
+        self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()), before)
 
     def test_every_key_the_env_file_selects_is_named_as_found(self):
         self.build("distributed")
@@ -7049,6 +7291,9 @@ class Round5RollbackStrayOnTheRestoredImageTests(UpdaterCase):
                       "worker-default`; remove the containers of property-catalog-supervisor with `docker rm -f "
                       f"{unknown['id'][:12]}`, then run", text)
         self.assertNotIn("rm -sf property-catalog-supervisor", text)
+        self.assertIn(" (worker-default: a profile that is not enabled now; Compose could not resolve every profile, "
+                      "so bin/update cannot tell whether property-catalog-supervisor belongs to one or is defined by "
+                      "no compose file any more): ", text)
 
 
 class Round5RecoveredRollbackTests(UpdaterCase):
@@ -8097,23 +8342,21 @@ class Round6RecoverOnlyStoppedRollbackTests(UpdaterCase):
                       "run v1.1.0 while others run v1.0.0, and bin/update refuses to update this install until it is "
                       f"finished. To finish it, run `./bin/update rollback --receipt {applied} --yes`.", text)
 
-    def test_a_rollback_that_cannot_go_on_now_is_still_one_to_finish(self):
-        applied = Path(self.applied()).resolve()
+    def test_operator_edit_after_killed_rollout_is_not_silently_acknowledged(self):
+        self.applied()
         self.inst.failures["up"] = SystemExit(137)
         with self.assertRaises(SystemExit):
             self.rollback()
         del self.inst.failures["up"]
-        self.env_path.write_bytes(self.env_bytes() + b"INSTALL_STABILITY_SECONDS=0\n")
+        edited = self.env_bytes() + b"INSTALL_STABILITY_SECONDS=0\n"
+        self.env_path.write_bytes(edited)
         self.inst.env = read_env(self.env_path)
-        self.out = io.StringIO()
-        self.assertIsNone(self.rollback(yes=False))
-        text = self.out.getvalue()
-        self.assertIn("Nothing else was changed, but the rollback of v1.1.0 is not finished: some containers may still "
-                      "run v1.1.0 while others run v1.0.0, and bin/update refuses to update this install until it is "
-                      "finished. It cannot be finished now: ", text)
-        self.assertIn("in .env. Fix it and run bin/update again; nothing was changed. Once that is resolved, run "
-                      f"`./bin/update rollback --receipt {applied} --yes`.", text)
-        self.assertEqual([r["status"] for r in self.receipts()], ["succeeded", "interrupted_during_rollout"])
+        for _ in range(2):
+            with self.assertRaisesRegex(StateError, 'conflict'):
+                self.rollback(yes=False)
+            self.assertEqual(self.env_bytes(), edited)
+            self.assertIsNotNone(self.journal())
+        self.assertEqual([r["status"] for r in self.receipts()], ["succeeded"])
 
 
 
@@ -8301,6 +8544,985 @@ class IntegratorRound6DeploymentComparisonEdgeTests(GitCheckoutCase):
         text = self.out.getvalue()
         self.assertIn(f"again. Receipt: {receipt}", text)
         self.assertNotIn("deployment files", text)
+
+
+class IntegratorRound6DeploymentComparisonFailureTests(GitCheckoutCase):
+    """A rollback's deployment-file check gives safe, actionable output at each git boundary."""
+
+    def differences(self, previous="v1.0.0"):
+        return self.updater()._deployment_differences(previous)
+
+    def _failed_nth_git(self, subcommand, number):
+        real = Updater._git
+        calls = []
+
+        def run(updater, *args):
+            if args[0] == subcommand:
+                calls.append(args)
+                if len(calls) == number:
+                    argv = ["git", "-C", str(updater.installation.root), "--literal-pathspecs", *args]
+                    return subprocess.CompletedProcess(argv, 128, b"", b"fatal: test failure\n")
+            return real(updater, *args)
+
+        return run, calls
+
+    def test_invalid_previous_release_never_suggests_checkout_commands(self):
+        updater = self.updater()
+        with mock.patch.object(updater, "_deployment_differences", side_effect=AssertionError("must not compare")):
+            for version in (None, "", "latest", "v1.0", 100):
+                with self.subTest(version=version):
+                    self.assertEqual(updater._files_back_step(version), "")
+
+    def test_empty_path_list_is_a_no_op(self):
+        updater = self.updater()
+        with mock.patch.object(updater, "_git", side_effect=AssertionError("must not run git")):
+            self.assertEqual(updater._paths_at("HEAD", []), ([], None))
+
+    def test_release_without_deployment_metadata_compares_no_paths(self):
+        self.write({"ordinary.txt": "previous release\n"})
+        git(self.root, "init", "-q")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "previous release")
+        git(self.root, "tag", "v1.0.0")
+        self.write({"deploy/update/deployment-files.txt": "docker-compose.yml\n",
+                    "docker-compose.yml": "services:\n  app:\n    image: futureagi/standalone:latest\n"})
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "current release")
+
+        check = self.differences()
+        self.assertEqual(check["note"], "")
+        self.assertEqual(check["differ"], [])
+        self.assertEqual(check["absent"], [])
+
+    def test_checkout_outside_this_worktree_is_not_compared(self):
+        self.release_repo()
+        real = Updater._git
+
+        def different_top(updater, *args):
+            if args[:2] == ("rev-parse", "--show-toplevel"):
+                argv = ["git", "-C", str(updater.installation.root), "--literal-pathspecs", *args]
+                return subprocess.CompletedProcess(argv, 0, b"/another/checkout\n", b"")
+            return real(updater, *args)
+
+        with mock.patch.object(Updater, "_git", different_top):
+            check = self.differences()
+        self.assertEqual(check["note"], "this checkout is not a git work tree")
+        self.assertEqual(check["differ"], [])
+
+    def test_failure_listing_comparison_paths_is_reported(self):
+        self.release_repo()
+        fail, calls = self._failed_nth_git("ls-tree", 2)
+        with mock.patch.object(Updater, "_git", fail):
+            check = self.differences()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(check["note"], "`git ls-tree` failed: fatal: test failure")
+        self.assertEqual(check["differ"], [])
+
+    def test_failure_archiving_comparison_paths_is_reported(self):
+        self.release_repo()
+        fail, calls = self._failed_nth_git("archive", 2)
+        with mock.patch.object(Updater, "_git", fail):
+            check = self.differences()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(check["note"], "`git archive` failed: fatal: test failure")
+        self.assertEqual(check["differ"], [])
+
+    def test_restore_command_keeps_paths_when_git_listing_raises_or_fails(self):
+        updater = self.updater()
+        failed = subprocess.CompletedProcess(["git", "ls-tree"], 128, b"", b"fatal: unavailable\n")
+        failures = (("raises", subprocess.TimeoutExpired("git", 30)), ("returns", ([], failed)))
+        for kind, failure in failures:
+            with self.subTest(failure=kind):
+                patch = (mock.patch.object(updater, "_paths_at", side_effect=failure) if kind == "raises" else
+                         mock.patch.object(updater, "_paths_at", return_value=failure))
+                with patch:
+                    _, _, undo = updater._restore_steps(
+                        {"previous": "v1.0.0", "differ": ["docker-compose.yml"], "absent": []}, None)
+                self.assertEqual(undo, "`git checkout HEAD -- docker-compose.yml`")
+
+    def test_an_unreadable_earlier_compose_does_not_hide_a_later_bind_mount(self):
+        listed = self.LISTED + ["docker-compose.extra.yml", "deploy/telemetry.xml"]
+        self.release_repo(listed=listed, target_files={
+            "docker-compose.extra.yml": ("services:\n  app:\n    volumes:\n"
+                                         "      - ./deploy/telemetry.xml:/etc/telemetry.xml:ro\n"),
+            "deploy/telemetry.xml": "<telemetry/>\n"})
+        real = Path.read_text
+
+        def read_text(path, *args, **kwargs):
+            if path == self.root / "docker-compose.yml":
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", read_text):
+            check = self.differences()
+        self.assertEqual(check["absent"], ["deploy/telemetry.xml"])
+
+
+class ApplyHelperMutationTests(unittest.TestCase):
+    def test_ignored_first_signal_does_not_skip_a_later_signal(self):
+        sigterm, sighup = signal.SIGTERM, signal.SIGHUP
+        previous = {sigterm: signal.SIG_IGN, sighup: signal.SIG_DFL}
+        registered = []
+
+        def set_signal(sig, handler):
+            registered.append((sig, handler))
+            return previous[sig]
+
+        with mock.patch.object(signal, "getsignal", side_effect=lambda sig: previous[sig]), \
+                mock.patch.object(signal, "signal", side_effect=set_signal):
+            with signals_as_interrupt():
+                pass
+        installed = [sig for sig, handler in registered if handler not in (signal.SIG_IGN, signal.SIG_DFL)]
+        self.assertEqual(installed, [sighup])
+
+
+
+
+
+
+
+
+
+    def test_gpu_release_tags_and_release_names_are_normalized(self):
+        self.assertTrue(apply_module._is_release_tag("v1.2.3-gpu"))
+        self.assertFalse(apply_module._is_release_tag("v1.2.3-gpu-extra"))
+        self.assertEqual(apply_module._release_of("v1.2.3-gpu"), "v1.2.3")
+        self.assertEqual(apply_module._release_of("v1.2.3"), "v1.2.3")
+        # Only a -gpu suffix names the release's CUDA variant: any other four characters stay part of the tag.
+        for tag in ("v1.2.3-rc1", "v1.2.3-cpu", "latest-gpu", "local"):
+            with self.subTest(tag=tag):
+                self.assertEqual(apply_module._release_of(tag), tag)
+
+    def test_digest_set_keeps_a_valid_digest_after_an_invalid_entry(self):
+        digest = "sha256:" + "a" * 64
+        reference = f"futureagi/standalone@{digest}"
+        malformed = "futureagi/standalone@sha256:abc"  # parse_image_ref refuses it
+        with self.assertRaises(Exception):
+            parse_image_ref(malformed)
+        # An entry that does not parse, then one without a digest, then the digest itself.
+        self.assertEqual(apply_module._digest_set([malformed, "futureagi/standalone:v1.0.0", reference]),
+                         {(parse_image_ref(reference).name, digest)})
+
+    def test_compose_paths_skip_comments_and_read_anchored_flow_lists(self):
+        text = ("services:\n  first:\n    volumes:\n\n"
+                "      - ./deploy/first:/first:ro\n"
+                "  second:\n    volumes: &shared [./deploy/second:/second, ./deploy/third:/third]\n")
+        self.assertEqual(apply_module.compose_paths(text),
+                         ["deploy/first", "deploy/second", "deploy/third"])
+
+    def test_tar_extraction_skips_unsafe_entries_and_creates_nested_parents(self):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w") as archive:
+            for name, contents in (("../outside.yml", b"unsafe"),
+                                   ("deploy/nested/settings.yml", b"safe: true\n")):
+                member = tarfile.TarInfo(name)
+                member.size = len(contents)
+                archive.addfile(member, io.BytesIO(contents))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        into = root / "into"
+        into.mkdir()
+        apply_module._extract_tar(data.getvalue(), into)
+        self.assertEqual((into / "deploy/nested/settings.yml").read_bytes(), b"safe: true\n")
+        self.assertFalse((root / "outside.yml").exists())
+
+    def test_tar_extraction_creates_every_directory_entry(self):
+        # A directory entry may come after a file below it, name a directory whose parent has no entry of its own,
+        # or name an empty directory: each is created, and none stops the extraction.
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w") as archive:
+            member = tarfile.TarInfo("deploy/settings.yml")
+            member.size = 3
+            archive.addfile(member, io.BytesIO(b"a\n\n"))
+            for name in ("deploy", "deploy/conf/empty", "deploy/conf/empty"):
+                directory = tarfile.TarInfo(name)
+                directory.type = tarfile.DIRTYPE
+                archive.addfile(directory)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        into = Path(temporary.name)
+        apply_module._extract_tar(data.getvalue(), into)
+        self.assertEqual((into / "deploy/settings.yml").read_bytes(), b"a\n\n")
+        self.assertTrue((into / "deploy/conf/empty").is_dir())
+
+    def test_compose_paths_drop_trailing_comments_and_mapping_keys(self):
+        text = ("services:\n  app:\n    env_file:\n      - ./deploy/app.env # the app's settings\n"
+                "      - required: false\n        path: ./deploy/optional.env # optional\n"
+                "    volumes:\n      - ./deploy/conf:/conf:ro # read-only\n"
+                "      - type: bind\n        source: ./deploy/data # the data directory\n        target: /data\n")
+        self.assertEqual(apply_module.compose_paths(text),
+                         ["deploy/app.env", "deploy/optional.env", "deploy/conf", "deploy/data"])
+
+    def test_staged_update_with_mixed_old_and_new_containers_was_started(self):
+        target = {"status": "staged", "previous_images": {"app": {"image_id": "sha256:old"}},
+                  "components": [{"component": "standalone", "services": ["app"]}]}
+        containers = [{"service": "app", "image_id": "sha256:old"},
+                      {"service": "app", "image_id": "sha256:new"}]
+        self.assertFalse(Updater._never_started(target, containers))
+
+
+class RollbackMutationSafetyTests(UpdaterCase):
+    def test_rollback_without_yes_defaults_to_preview_only(self):
+        self.applied()
+        original, receipts = self.env_bytes(), self.state.receipts()
+        calls_before = list(self.compose_calls())
+        exc = self.assertRaisesExactly(Blocked, self.updater().rollback, None)
+        self.assertEqual(str(exc), "rollback not started: rerun with --yes to confirm")
+        self.assertEqual((self.env_bytes(), self.state.receipts()), (original, receipts))
+        self.assertNotIn("up", [call[0] for call in self.compose_calls()[len(calls_before):]])
+
+    def test_rollback_reuses_the_previous_image_id_when_no_digest_was_recorded(self):
+        applied = Path(self.applied()).resolve()
+        record = json.loads(applied.read_text(encoding="utf-8"))
+        old_id = record["previous_images"]["app"]["image_id"]
+        record["previous_images"]["app"]["repo_digests"] = []
+        applied.write_text(json.dumps(record), encoding="utf-8")
+        calls_before = list(self.compose_calls())
+        self.inst.failures["pull"] = REGISTRY_DOWN
+
+        self.rollback()
+
+        new_calls = self.compose_calls()[len(calls_before):]
+        self.assertNotIn("pull", [call[0] for call in new_calls])
+        self.assertEqual(self.last_receipt()["status"], "rolled_back")
+        self.assertEqual(self.inst.running["app"]["image_id"], old_id)
+
+    def test_rollback_adoption_uses_the_known_id_when_inspection_has_no_id(self):
+        self.build(values={"FUTURE_AGI_VERSION": ""})
+        applied = Path(self.applied()).resolve()
+        old_id = json.loads(applied.read_text(encoding="utf-8"))["previous_images"]["app"]["image_id"]
+        real_image = self.inst.image
+
+        def image_without_id(reference):
+            info = real_image(reference)
+            if reference == old_id and info is not None:
+                return dict(info, id=None)
+            return info
+
+        with mock.patch.object(self.inst, "image", image_without_id):
+            self.rollback()
+
+        self.assertIn(("docker", ("tag", old_id, "futureagi/standalone:v1.0.0")), self.log)
+        self.assertNotIn("Already on this host with the expected digest", self.out.getvalue())
+        self.assertEqual(self.last_receipt()["status"], "rolled_back")
+
+    # _runs_release: whether a staged update was already started outside bin/update (the stack runs its release).
+    COMPONENTS = [{"component": "standalone", "services": ["app", "init"]}]
+
+    def on_host(self, version):
+        """The release's standalone image on this host (its version label readable); returns its id."""
+
+        image_id = id_of("futureagi/standalone", version)
+        self.inst.local_images[f"futureagi/standalone:{version}"] = image_id
+        return image_id
+
+    def box(self, service, version, status="running", exit_code=0, image_id=None):
+        return {"service": service, "image": f"futureagi/standalone:{version}", "status": status,
+                "exit_code": exit_code, "health": "healthy",
+                "image_id": id_of("futureagi/standalone", version) if image_id is None else image_id}
+
+    def runs(self, containers, components=None, version=TARGET):
+        return self.updater()._runs_release(containers, components or self.COMPONENTS, version)
+
+    def test_release_already_runs_only_if_all_containers_of_each_service_are_on_it(self):
+        self.on_host(TARGET)
+        job = self.box("init", TARGET, status="exited")
+        self.assertTrue(self.runs([self.box("app", TARGET), self.box("app", TARGET), job]))
+        self.assertFalse(self.runs([self.box("app", TARGET), self.box("app", "v1.0.0"), job]))
+
+    def test_a_job_counts_only_if_every_container_of_it_exited_cleanly_on_the_release(self):
+        self.on_host(TARGET)
+        app = self.box("app", TARGET)
+        self.assertTrue(self.runs([app, self.box("init", TARGET, status="exited")]))
+        self.assertFalse(self.runs([app, self.box("init", TARGET, status="exited"),
+                                    self.box("init", TARGET, status="exited", exit_code=1)]))
+
+    def test_only_finished_jobs_do_not_make_a_running_release(self):
+        self.on_host(TARGET)
+        self.assertFalse(self.runs([self.box("app", TARGET, status="exited"),
+                                    self.box("init", TARGET, status="exited")]))
+
+    def test_an_image_without_a_version_label_is_not_the_release_whatever_its_tag(self):
+        unlabelled = "sha256:" + "4" * 64
+        self.inst.metadata[unlabelled] = {"repo_digests": [], "version": ""}
+        self.inst.local_images[f"futureagi/standalone:{TARGET}"] = unlabelled
+        self.assertFalse(self.runs([self.box("app", TARGET, image_id=unlabelled),
+                                    self.box("init", TARGET, status="exited", image_id=unlabelled)]))
+
+    def test_a_version_that_is_not_a_release_never_runs(self):
+        nightly = "sha256:" + "3" * 64
+        self.inst.metadata[nightly] = {"repo_digests": [], "version": "nightly"}
+        self.inst.local_images["futureagi/standalone:nightly"] = nightly
+        self.assertFalse(self.runs([self.box("app", "nightly", image_id=nightly),
+                                    self.box("init", "nightly", status="exited", image_id=nightly)],
+                                   version="nightly"))
+
+    def test_each_image_is_inspected_once_and_a_container_without_one_never(self):
+        image_id = self.on_host(TARGET)
+        del self.log[:]
+        self.assertFalse(self.runs([self.box("app", TARGET), self.box("app", TARGET),
+                                    self.box("init", TARGET, status="exited", image_id="")]))
+        self.assertEqual([entry for entry in self.log if entry[0] == "image"], [("image", image_id)])
+
+    def test_previous_release_selection_ignores_malformed_record_shapes(self):
+        self.assertIsNone(Updater._previous_release(
+            {"previous_values": {"FUTURE_AGI_VERSION": 123}, "components": []}, {}))
+        self.assertIsNone(Updater._previous_release({"components": ["not a component"]}, {}))
+
+    def test_previous_release_of_an_install_that_followed_latest_is_the_version_that_ran(self):
+        # FUTURE_AGI_VERSION was empty (or another value that is no release): the image that ran says which.
+        target = {"previous_values": {"FUTURE_AGI_VERSION": ""},
+                  "components": [{"component": "standalone", "variable": "FUTURE_AGI_VERSION", "services": ["app"]}],
+                  "previous_images": {"app": {"image": "futureagi/standalone:latest", "version": "v1.0.0"}}}
+        for value in ("", "latest"):
+            with self.subTest(value=value):
+                target["previous_values"]["FUTURE_AGI_VERSION"] = value
+                self.assertEqual(Updater._previous_release(target, {}), "v1.0.0")
+
+
+class GitComparisonMutationTests(GitCheckoutCase):
+    def differences(self, previous="v1.0.0"):
+        return self.updater()._deployment_differences(previous)
+
+    def test_untracked_nested_directories_do_not_duplicate_the_same_file(self):
+        updater = self.updater()
+        output = b"deploy/conf/settings.xml\0"
+        result = subprocess.CompletedProcess(["git", "ls-files"], 0, output, b"")
+        with mock.patch.object(updater, "_git", return_value=result):
+            self.assertEqual(updater._untracked(["deploy", "deploy/conf"]), ["deploy/conf/settings.xml"])
+
+    def test_extra_tracked_scan_continues_after_a_missing_file(self):
+        self.write({"deploy/conf/z-extra.xml": "<extra/>\n"})
+        updater = self.updater()
+        names = b"deploy/conf/a-gone.xml\0deploy/conf/z-extra.xml\0"
+
+        def tree(*args):
+            stdout = names if args[4] == "HEAD" else b""
+            return subprocess.CompletedProcess(["git", *args], 0, stdout, b"")
+
+        with mock.patch.object(updater, "_git", tree):
+            self.assertEqual(updater._extra_tracked("refs/tags/v1.0.0", ["deploy/conf"]),
+                             ["deploy/conf/z-extra.xml"])
+
+    def test_git_ignores_environment_that_points_at_another_repository(self):
+        other = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(other), True)
+        (other / "tracked.txt").write_text("external\n", encoding="utf-8")
+        git(other, "init", "-q")
+        git(other, "add", "-A")
+        git(other, "commit", "-q", "-m", "external repository")
+        git(other, "tag", "v1.0.0")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
+            self.assertFalse(self.updater()._has_tag("v1.0.0"))
+
+    def test_failed_git_status_does_not_trust_partial_stdout(self):
+        self.release_repo()
+        self.assertNotEqual(self.differences()["differ"], [], "the files differ: a comparison would say so")
+        real = Updater._git
+        root = str(self.root)
+        # Each answer alone, the other git command answering truly: a failed command's output is not trusted, and
+        # `--is-inside-work-tree` must answer exactly "true" (it says "false" inside the .git directory).
+        answers = {
+            "inside fails": (("rev-parse", "--is-inside-work-tree"), 128, b"true\n"),
+            "inside says false": (("rev-parse", "--is-inside-work-tree"), 0, b"false\n"),
+            "top fails": (("rev-parse", "--show-toplevel"), 128, (root + "\n").encode()),
+        }
+        for name, (command, code, stdout) in answers.items():
+            def partial_output(updater, *args, command=command, code=code, stdout=stdout):
+                if args == command:
+                    argv = ["git", "-C", root, "--literal-pathspecs", *args]
+                    return subprocess.CompletedProcess(argv, code, stdout, b"fatal: failed\n" if code else b"")
+                return real(updater, *args)
+
+            with self.subTest(answer=name):
+                with mock.patch.object(Updater, "_git", partial_output):
+                    check = self.differences()
+                self.assertEqual((check["note"], check["differ"]), ("this checkout is not a git work tree", []))
+
+    def test_git_error_uses_the_last_nonempty_diagnostic_line(self):
+        result = subprocess.CompletedProcess(["git", "-C", str(self.root), "--literal-pathspecs", "ls-tree"],
+                                             128, b"", b"fatal: first\n\nfatal: final\n")
+        self.assertEqual(Updater._git_failed(result), "`git ls-tree` failed: fatal: final")
+
+    def test_invalid_release_names_are_rejected_without_asking_git(self):
+        updater = self.updater()
+        found = subprocess.CompletedProcess(["git"], 0, b"valid\n", b"")
+        with mock.patch.object(updater, "_git", return_value=found) as git_call:
+            self.assertFalse(updater._has_tag("latest"))
+        git_call.assert_not_called()
+
+    def test_previous_release_list_files_are_compared_even_if_current_list_omits_them(self):
+        old_compose = "services:\n  app:\n    image: futureagi/standalone:latest\n"
+        self.write({"deploy/update/deployment-files.txt": "docker-compose.yml\ndeploy/required.conf\n",
+                    "docker-compose.yml": old_compose, "deploy/required.conf": "old config\n"})
+        git(self.root, "init", "-q")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "previous release")
+        git(self.root, "tag", "v1.0.0")
+        self.write({"deploy/update/deployment-files.txt": "docker-compose.yml\n",
+                    "docker-compose.yml": old_compose, "deploy/required.conf": "new config\n"})
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "current release")
+
+        self.assertEqual(self.differences()["differ"], ["deploy/required.conf"])
+
+
+class ReceiptMutationEdgeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(os.path.realpath(temporary.name))
+        self.state = StateDir(self.root)
+
+    @staticmethod
+    def number(path):
+        return int(path.stem.rsplit("-", 1)[1])
+
+    def write_raw(self, number, record):
+        """A receipt file as an earlier bin/update left it."""
+
+        self.state.ensure()
+        path = self.state.path / f"receipt-20261019T000000Z-{number}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return path
+
+    IDENTITY = {"mode": "standalone", "production": False, "env_file": ".env", "project": "fagi-test"}
+
+    def test_receipts_written_with_schema_two_stay_readable(self):
+        # Receipts outlive the bin/update that wrote them: schema 2 on disk is what rollback reads.
+        old = self.write_raw(1000, dict(self.IDENTITY, kind="apply", status="succeeded", schema_version=2))
+        self.assertEqual([r["_path"] for r in self.state.history(self.IDENTITY)], [str(old)])
+        self.assertEqual(self.state.load_receipt(old)["status"], "succeeded")
+        written = json.loads(self.state.write_receipt(dict(self.IDENTITY, kind="apply")).read_text(encoding="utf-8"))
+        self.assertEqual(written["schema_version"], 2)
+
+    def test_a_receipt_of_another_schema_does_not_hide_later_ones(self):
+        self.write_raw(1000, dict(self.IDENTITY, kind="apply", status="succeeded", schema_version=1))
+        later = self.write_raw(2000, dict(self.IDENTITY, kind="apply", status="succeeded", schema_version=2))
+        self.assertEqual([r["_path"] for r in self.state.history(self.IDENTITY)], [str(later)])
+
+    def test_receipt_number_stays_after_previous_when_clock_steps_back(self):
+        # The newest receipt was written while the clock ran ahead (NTP then stepped it back).
+        ahead = 2_000_000_000_000_000_000
+        newest = self.write_raw(ahead, dict(self.IDENTITY, kind="apply", status="succeeded", schema_version=2))
+        with mock.patch.object(receipt_module.time, "time_ns", return_value=ahead - 10**12):
+            second = self.state.write_receipt({"kind": "apply", "status": "succeeded"})
+        self.assertEqual(self.number(second), ahead + 1)
+        self.assertEqual(self.state.receipts(), [newest, second])
+
+    def test_receipt_number_is_the_clock_when_it_is_ahead_of_the_newest(self):
+        newest = self.write_raw(1000, dict(self.IDENTITY, kind="apply", status="succeeded", schema_version=2))
+        with mock.patch.object(receipt_module.time, "time_ns", return_value=5_000):
+            second = self.state.write_receipt({"kind": "apply", "status": "succeeded"})
+        self.assertEqual(self.number(second), 5_000)
+        self.assertEqual(self.state.receipts(), [newest, second])
+
+    def test_receipt_never_persists_internal_path(self):
+        path = self.state.write_receipt({"kind": "apply", "status": "succeeded", "_path": "/private/source"})
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("_path", record)
+
+    def test_receipt_file_is_indented_json_ending_in_a_newline(self):
+        # Receipts are read by people too (`status` names them): two-space indented, sorted, newline-terminated.
+        record = {"kind": "apply", "status": "succeeded", "env_changes": {"FUTURE_AGI_VERSION": "v1.1.0"}}
+        path = self.state.write_receipt(record)
+        expected = dict(record, schema_version=2)
+        self.assertEqual(path.read_text(encoding="utf-8"), json.dumps(expected, sort_keys=True, indent=2) + "\n")
+
+    def test_state_file_bytes_are_flushed_before_the_fsync(self):
+        real_fsync = os.fsync
+        synced = []
+
+        def fsync(fd):
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                synced.append(os.fstat(fd).st_size)
+            real_fsync(fd)
+
+        with mock.patch.object(os, "fsync", fsync):
+            self.state.write_journal({"kind": "apply", "stage": "prepare"})
+        self.assertEqual(synced, [self.state.journal_path.stat().st_size] * (2 if sys.platform == 'darwin' else 1))
+        self.assertGreater(synced[0], 0)
+
+    def test_secret_values_at_the_six_character_boundary_are_scrubbed(self):
+        self.assertEqual(receipt_module.secret_values({"API_TOKEN": "abcdef", "LICENSE": "1234567",
+                                                       "DB_PASSWORD": "abcde", "COMPOSE_PROFILES": "workers"}),
+                         ["1234567", "abcdef"])
+
+    def test_ownership_hint_checks_the_state_directory_after_a_missing_file(self):
+        stat_result = mock.Mock(st_uid=2000)
+        with mock.patch.object(os, "geteuid", return_value=1000), \
+                mock.patch.object(os, "stat", side_effect=[FileNotFoundError(), stat_result]), \
+                mock.patch.object(receipt_module, "_user_name",
+                                  side_effect=lambda uid: {1000: "me", 2000: "owner"}[uid]):
+            hint = receipt_module.ownership_hint(self.root / "missing", self.state.path)
+        self.assertIn("belongs to owner", hint)
+
+    def test_lock_file_is_private(self):
+        with self.state.lock():
+            pass
+        self.assertEqual(stat.S_IMODE(self.state.lock_path.stat().st_mode), 0o600)
+
+    def test_lock_replaces_stale_holder_text_before_writing_pid(self):
+        self.state.ensure()
+        self.state.lock_path.write_text("pid 123456789\n", encoding="ascii")
+        with self.state.lock():
+            self.assertEqual(self.state.lock_holder(), f"pid {os.getpid()}")
+
+    def test_a_holder_that_cannot_write_its_pid_leaves_no_stale_one(self):
+        # A full disk, say: the lock still works, and no earlier holder's pid (or part of it) is reported as its.
+        self.state.ensure()
+        self.state.lock_path.write_text("pid 123456789\n", encoding="ascii")
+        with mock.patch.object(os, "pwrite", side_effect=OSError(errno.ENOSPC, "No space left on device")):
+            with self.state.lock():
+                self.assertEqual(self.state.lock_holder(), "lock held")
+        self.assertEqual(self.state.lock_path.read_bytes(), b"")
+
+    def test_a_lock_held_for_a_moment_is_waited_for_with_pauses(self):
+        # lock_holder() peeks with a shared lock: lock() retries for a moment, sleeping between tries.
+        import fcntl
+
+        real_flock = fcntl.flock
+        attempts = []
+
+        def flock(fd, operation):
+            if operation == fcntl.LOCK_EX | fcntl.LOCK_NB:
+                attempts.append(operation)
+                if len(attempts) == 1:
+                    raise BlockingIOError(errno.EWOULDBLOCK, "Resource temporarily unavailable")
+            return real_flock(fd, operation)
+
+        with mock.patch.object(fcntl, "flock", flock), \
+                mock.patch.object(receipt_module.time, "sleep") as sleep:
+            with self.state.lock():
+                self.assertEqual(self.state.lock_holder(), f"pid {os.getpid()}")
+        self.assertEqual(len(attempts), 2)
+        sleep.assert_called_once_with(0.02)
+
+    def test_a_lock_held_by_another_run_is_refused_after_the_retry_window(self):
+        import fcntl
+
+        self.state.ensure()
+        other = os.open(str(self.state.lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.pwrite(other, b"pid 4242\n", 0)
+        clock = iter([100.0, 100.1, 100.2, 100.3])
+        with mock.patch.object(receipt_module.time, "monotonic", lambda: next(clock)), \
+                mock.patch.object(receipt_module.time, "sleep") as sleep:
+            with self.assertRaises(StateError) as caught:
+                with self.state.lock():
+                    pass
+        self.assertEqual(str(caught.exception), "another bin/update is running in this checkout (pid 4242)")
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_state_directory_is_private_from_the_moment_it_exists(self):
+        # Whatever the umask, nobody else can enter the directory, not even before ensure() chmods it.
+        previous = os.umask(0)
+        self.addCleanup(os.umask, previous)
+        real_chmod = os.chmod
+        modes = []
+
+        def chmod(path, mode, *args, **kwargs):
+            if str(path) == str(self.state.path):
+                modes.append(stat.S_IMODE(os.stat(path).st_mode))
+            return real_chmod(path, mode, *args, **kwargs)
+
+        with mock.patch.object(os, "chmod", chmod):
+            self.state.ensure()
+        self.assertEqual(modes, [0o700])
+        self.assertEqual(stat.S_IMODE(self.state.path.stat().st_mode), 0o700)
+
+    def test_lock_holder_closes_its_peek_descriptor(self):
+        with self.state.lock():
+            pass
+        real_open = os.open
+        descriptors = []
+
+        def recording_open(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            descriptors.append(fd)
+            return fd
+
+        with mock.patch.object(os, "open", recording_open):
+            self.assertIsNone(self.state.lock_holder())
+        self.assertEqual(len(descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(descriptors[0])
+
+    def test_json_read_error_keeps_the_default_owner_hint_path(self):
+        path = self.root / "unreadable.json"
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError(13, "Permission denied")), \
+                mock.patch.object(receipt_module, "ownership_hint",
+                                  side_effect=lambda target, state_dir: f" owned:{state_dir}"):
+            with self.assertRaises(StateError) as ctx:
+                receipt_module._read_json(path)
+        self.assertIn(f"owned:{path.parent}", str(ctx.exception))
+
+    def test_json_write_error_keeps_the_default_owner_hint_path(self):
+        path = self.root / "unwritable" / "journal.json"
+        with mock.patch.object(os, "open", side_effect=PermissionError(13, "Permission denied")), \
+                mock.patch.object(receipt_module, "ownership_hint",
+                                  side_effect=lambda target, state_dir: f" owned:{state_dir}"):
+            with self.assertRaises(StateError) as ctx:
+                receipt_module._write_json(path, {"kind": "apply"})
+        self.assertIn(f"owned:{path.parent}", str(ctx.exception))
+
+
+class BackupAndWaitMutationTests(UpdaterCase):
+    def test_backup_elapsed_seconds_are_measured_as_a_duration(self):
+        updater = self.updater()
+        updater.hook_runner = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0)
+        with mock.patch.object(time, "monotonic", side_effect=[100.0, 101.24]):
+            record = updater._backup(BACKUP, False, {})
+        self.assertEqual(record["seconds"], 1.2)
+
+    def test_the_longest_backup_timeout_is_accepted(self):
+        self.apply(updater=self.updater(FUTURE_AGI_UPDATE_BACKUP_TIMEOUT_SECONDS="86400"))
+        self.assertEqual(self.hook.calls[0][1]["timeout"], 86400)
+        self.assertEqual(self.last_receipt()["status"], "succeeded")
+
+
+class StopProcessGroupProbeTests(unittest.TestCase):
+    """_stop_process_group after its SIGTERM: the hook's leader can exit while the rest of its group lives on."""
+
+    def stop(self, polls, group_alive, grace):
+        process = mock.Mock(pid=4242)
+        results = list(polls)
+        process.poll.side_effect = lambda: results.pop(0) if len(results) > 1 else results[0]
+        sent = []
+        alive = list(group_alive)
+
+        def killpg(pid, signum):
+            self.assertEqual(pid, 4242)
+            sent.append(signum)
+            if signum == 0 and not (alive.pop(0) if len(alive) > 1 else alive[0]):
+                raise ProcessLookupError()
+
+        ticks = iter(range(10, 10_000))  # a clock that moves one second each time it is read
+        with mock.patch("os.killpg", side_effect=killpg), \
+                mock.patch.object(apply_module.time, "monotonic", lambda: float(next(ticks))), \
+                mock.patch.object(apply_module.time, "sleep") as sleep:
+            apply_module._stop_process_group(process, grace)
+        return process, sent, sleep
+
+    def test_a_group_that_outlives_its_leader_is_killed_after_the_grace(self):
+        # The leader exits on SIGTERM; a child that ignores it keeps the group: it gets SIGKILL once the grace is over.
+        process, sent, sleep = self.stop(polls=[0], group_alive=[True], grace=2.5)
+        self.assertEqual(sent, [signal.SIGTERM, 0, 0, signal.SIGKILL])
+        self.assertEqual(sleep.call_args_list, [mock.call(0.05)] * 2)
+        process.wait.assert_called_once_with(timeout=apply_module.HOOK_REAP_SECONDS)
+
+    def test_a_group_gone_with_its_leader_gets_no_sigkill_and_no_more_waiting(self):
+        # Its id may belong to another process group by the time a SIGKILL would be sent.
+        process, sent, sleep = self.stop(polls=[None, 0], group_alive=[False], grace=30.0)
+        self.assertEqual(sent, [signal.SIGTERM, 0])
+        self.assertEqual(sleep.call_args_list, [mock.call(0.05)])
+        process.wait.assert_not_called()
+
+
+class RunHookContractTests(unittest.TestCase):
+    """run_hook answers like subprocess.run: a failure is returned unless check asks for an exception."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.dir = os.path.realpath(temporary.name)
+
+    def hook(self, code, **kwargs):
+        return run_hook(["/bin/sh", "-c", f"exit {code}"], cwd=self.dir, env=dict(os.environ), timeout=30, **kwargs)
+
+    def test_a_failure_is_returned_by_default(self):
+        self.assertEqual(self.hook(3).returncode, 3)
+
+    def test_check_accepts_exit_code_zero_only(self):
+        self.assertEqual(self.hook(0, check=True).returncode, 0)
+        for code in (1, 2):
+            with self.subTest(code=code):
+                with self.assertRaises(subprocess.CalledProcessError) as caught:
+                    self.hook(code, check=True)
+                self.assertEqual(caught.exception.returncode, code)
+
+
+class UpdaterStepMutationTests(UpdaterCase):
+    def test_each_message_is_flushed_before_a_command_writes_to_the_same_terminal(self):
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding="utf-8")  # block-buffered, like stderr on a pipe
+        updater = Updater(self.inst, load_settings(self.root, None, environ={}), self.state, out=out,
+                          readiness=self.ready, hook_runner=self.hook)
+        updater.say("Pulling futureagi/standalone:v1.1.0")
+        self.assertEqual(raw.getvalue(), b"Pulling futureagi/standalone:v1.1.0\n")
+
+    def test_restore_refuses_all_keys_if_an_operator_edits_one_line(self):
+        self.build('distributed', values={'FUTURE_AGI_VERSION': '', 'FRONTEND_VERSION': 'v1.0.0'})
+        changes = {'FUTURE_AGI_VERSION': TARGET, 'FRONTEND_VERSION': TARGET}
+        record = envfile_module.recovery_record(self.env_path, changes)
+        self.real_write(self.env_path, changes, recovery=record)
+        self.env_path.write_bytes(self.env_bytes().replace(b'FUTURE_AGI_VERSION=v1.1.0',
+                                                          b'FUTURE_AGI_VERSION=v1.1.0 # operator'))
+        before = self.env_bytes()
+        with self.assertRaises(StateError):
+            self.updater()._restore_env({'env_recovery': record})
+        self.assertEqual(self.env_bytes(), before)
+
+    def test_restore_into_a_missing_env_file_retains_recovery_state(self):
+        record = envfile_module.recovery_record(self.env_path, {'FUTURE_AGI_VERSION': TARGET})
+        self.env_path.unlink()
+        with self.assertRaises(StateError):
+            self.updater()._restore_env({'env_recovery': record})
+        self.assertFalse(self.env_path.exists())
+
+    def test_snapshot_skips_one_off_and_other_containers_and_records_the_rest(self):
+        old_id = id_of("futureagi/standalone", "v1.0.0")
+        image = "futureagi/standalone:v1.0.0"
+        containers = [{"service": "app", "image": image, "image_id": old_id, "oneoff": True},
+                      {"service": "postgres", "image": "postgres:16", "image_id": POSTGRES_ID},
+                      {"service": "app", "image": image, "image_id": ""},
+                      {"service": "app", "image": image, "image_id": old_id}]
+        self.assertEqual(self.updater()._snapshot_images(["app"], containers), {"app": {
+            "image": image, "image_id": old_id, "version": "v1.0.0",
+            "repo_digests": [f"futureagi/standalone@{digest_of('futureagi/standalone', 'v1.0.0')}"]}})
+
+    def test_config_check_goes_on_past_a_service_whose_key_this_run_leaves_alone(self):
+        self.build("distributed", groups=(FI_COLLECTOR, BACKEND, FRONTEND))
+        with self.assertRaises(UpdateError) as caught:
+            self.updater()._check_config({"FUTURE_AGI_VERSION": "v1.0.0", "FRONTEND_VERSION": TARGET})
+        self.assertIn("service frontend resolves to futureagi/frontend:v1.0.0, not tag v1.1.0", str(caught.exception))
+
+
+class RollbackRestoreMutationTests(UpdaterCase):
+    def test_a_key_pinned_for_an_inactive_profile_does_not_stop_the_keys_after_it(self):
+        receipt = {"components": [
+            {"component": "code_executor", "variable": "CODE_EXECUTOR_VERSION", "services": []},
+            {"component": "standalone", "variable": "FUTURE_AGI_VERSION", "services": ["app"]}],
+            "previous_values": {"CODE_EXECUTOR_VERSION": "v1.0.0", "FUTURE_AGI_VERSION": "v1.0.0"},
+            "previous_images": {}}
+        values, expected = self.updater()._restore_values(receipt)
+        self.assertEqual(values, {"CODE_EXECUTOR_VERSION": "v1.0.0", "FUTURE_AGI_VERSION": "v1.0.0"})
+        self.assertEqual(expected, {"FUTURE_AGI_VERSION": "v1.0.0"})
+
+    def test_tags_that_ran_cover_every_item_and_every_readable_image(self):
+        items = [{"current_tags": ["local"]}, {"services": ["backend", "worker", "beat"]}]
+        previous_images = {"backend": {"image": "UPPER/Case:v1"},  # not an image reference: skipped
+                           "worker": {"image": "futureagi/future-agi:local"},
+                           "beat": {"image": "futureagi/future-agi"}}
+        self.assertEqual(Updater._tags_that_ran(items, previous_images), ["local", "local", "latest"])
+
+    def test_a_stray_is_on_the_restored_image_only_if_all_its_containers_are(self):
+        self.assertTrue(Updater._on_restored_image(["a", "b"], {"a", "b"}))
+        self.assertFalse(Updater._on_restored_image(["a", "b"], {"a"}))
+        self.assertFalse(Updater._on_restored_image([], {"a"}))
+        self.assertFalse(Updater._on_restored_image(["a"], None))
+
+    def test_a_rollback_receipt_that_names_no_update_is_ignored(self):
+        applied = Path(self.applied()).resolve()
+        self.state.write_receipt({"kind": "rollback", "status": "rolled_back", "mode": self.inst.mode,
+                                  "production": self.inst.production, "project": self.inst.project,
+                                  "env_file": self.inst.relative(self.inst.env_file)})
+        self.rollback()
+        self.assertEqual((self.last_receipt()["status"], self.last_receipt()["rolls_back"]),
+                         ("rolled_back", str(applied)))
+        self.assertEqual(self.env_bytes(), self.original)
+
+    def test_rolling_back_an_older_update_names_the_newest_one_to_roll_back_first(self):
+        first = self.craft_apply()
+        self.craft_apply(previous="v1.1.0", target="v1.2.0")
+        newest = shlex.quote(str(Path(self.craft_apply(previous="v1.2.0", target="v1.3.0")).resolve()))
+        exc = self.assertRaisesExactly(Blocked, self.rollback, first)
+        self.assertEqual(str(exc), f"a newer update ({newest}) ran after that one; roll that back first: "
+                                   f"`./bin/update rollback --receipt {newest} --yes`")
+
+    def test_another_installs_journal_is_refused_before_this_installs_receipts_are_read(self):
+        self.build("production", current="v1.1.0")
+        self.craft_journal("pulled", env_file=None, production=False)
+        (self.state.path / "receipt-20261019T000000Z-1.json").write_text("{not json", encoding="utf-8")
+        exc = self.assertRaisesExactly(Blocked, self.rollback, yes=False)
+        self.assertTrue(str(exc).startswith("an interrupted bin/update apply for "), str(exc))
+        self.assertIsNotNone(self.journal())
+
+
+class RolloutStrayOnAVerifiedImageTests(UpdaterCase):
+    """After the restart, a disabled profile's container on an image this run verified runs its release."""
+
+    def setUp(self):
+        super().setUp()
+        self.build("distributed")
+        self.inst.profile_services["worker-default"] = "futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}"
+
+    def test_a_stray_on_the_restored_image_passes_whatever_tag_it_was_created_from(self):
+        self.inst.metadata[id_of("futureagi/future-agi", "v1.0.0")]["version"] = ""  # no OCI version label
+        applied = Path(self.applied()).resolve()
+        # Created from another tag of the very image the rollback restores and verifies (by id).
+        self.inst.extra_containers.append(stray_container("worker-default", "v1.0.0", tag="custom"))
+        self.rollback()
+        self.assertEqual((self.last_receipt()["status"], self.last_receipt()["rolls_back"]),
+                         ("rolled_back", str(applied)))
+
+
+class RecoverOnlyRollbackMutationTests(UpdaterCase):
+    """`rollback` without --yes after recovering a rollback that was killed: what it says depends on where it was."""
+
+    def killed_rollback(self, failure_on="pull", receipt=None):
+        if failure_on == "pull":
+            self.prune("v1.0.0")  # pulled only when it is not on the host
+        self.inst.failures[failure_on] = SystemExit(137)
+        with self.assertRaises(SystemExit):
+            self.rollback(receipt)
+        self.inst.failures = {}
+        self.out = io.StringIO()
+
+    def test_a_rollback_killed_before_its_restart_leaves_the_update_to_roll_back(self):
+        applied = Path(self.applied()).resolve()
+        self.killed_rollback()
+        self.assertIsNone(self.rollback(yes=False))
+        text = self.out.getvalue()
+        self.assertIn("Recovered an interrupted rollback to v1.0.0: it stopped before restarting anything", text)
+        self.assertNotIn("is not finished", text)
+        self.assertIn("Nothing else was changed. To roll back v1.1.0 as well (to FUTURE_AGI_VERSION=v1.0.0), run "
+                      f"`./bin/update rollback --receipt {applied} --yes`.", text)
+
+    def test_recovery_refuses_an_operator_edit_without_overwriting_it(self):
+        self.applied()
+        self.killed_rollback()
+        self.env_path.write_bytes(self.env_bytes() + b'INSTALL_STABILITY_SECONDS=0\n')
+        self.inst.env = read_env(self.env_path)
+        before = self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()
+        with self.assertRaises(StateError):
+            self.rollback(yes=False)
+        self.assertEqual((self.env_bytes(), self.state.journal_path.read_bytes(), self.receipts()), before)
+
+    def test_a_staged_update_that_never_started_is_previewed_as_restarting_nothing(self):
+        staged = staged_by(self)
+        self.killed_rollback(failure_on="config")
+        self.assertIsNone(self.rollback(yes=False))
+        text = self.out.getvalue()
+        self.assertIn("The update to v1.1.0 was staged and never started: the rollback puts the version settings back "
+                      "and verifies the previous images, and restarts nothing.", text)
+        self.assertIn(f"`./bin/update rollback --receipt {staged} --yes`", text)
+
+    def test_the_rollback_killed_mid_rollout_is_the_one_to_finish_whatever_receipt_was_given(self):
+        first = Path(self.applied()).resolve()
+        second = Path(self.applied(self.plan(target="v1.2.0"))).resolve()
+        self.killed_rollback(failure_on="up")
+        self.assertIsNone(self.rollback(first, yes=False))
+        text = self.out.getvalue()
+        self.assertNotIn("cannot be finished now", text)
+        self.assertIn(f"finished. To finish it, run `./bin/update rollback --receipt {second} --yes`.", text)
+
+
+class StoppedRunWordingMutationTests(UpdaterCase):
+    def test_a_retried_rollback_quotes_every_key_it_restores(self):
+        # SIMULATION_RUNNER_VERSION, pinned for a profile that is not enabled, is put back (unset) like the others.
+        self.build("distributed")
+        plan = self.plan()
+        plan["components"].append(inactive_item())
+        plan["env_changes"][RUNNER] = TARGET
+        applied = Path(self.apply(plan)).resolve()
+        self.inst.failures["up"] = InstallError("`docker compose up` failed with exit code 1")
+        self.assertRaisesExactly(FailedDuringRollout, self.rollback)
+        self.prune("v1.0.0")  # pulled only when it is not on the host
+        self.inst.failures = {"pull": InstallError("`docker compose pull` failed: network unreachable")}
+        exc = self.assertRaisesExactly(FailedBeforeRollout, self.rollback)
+        self.assertIn("is still unfinished: .env selects FRONTEND_VERSION=v1.0.0, FUTURE_AGI_VERSION=v1.0.0, "
+                      "SIMULATION_RUNNER_VERSION=unset, and some containers may still run v1.1.0. To finish it, run "
+                      f"`./bin/update rollback --receipt {applied} --yes`.", str(exc))
+
+    def failing_rollback(self):
+        self.prune("v1.0.0")  # pulled only when it is not on the host
+        self.inst.failures["pull"] = InstallError("network down")
+        return str(self.assertRaisesExactly(FailedBeforeRollout, self.rollback))
+
+    def test_a_stack_whose_images_carry_no_version_label_reads_as_running_the_update(self):
+        # The rollback found the stack on images without an OCI version label: it says the update, not nothing.
+        self.inst.metadata[id_of("futureagi/standalone", TARGET)]["version"] = ""
+        self.applied()
+        text = self.failing_rollback()
+        self.assertIn("rollback stopped before restarting anything: network down. Nothing was changed: .env still "
+                      "selects FUTURE_AGI_VERSION=v1.1.0, which the stack runs. To try the rollback again", text)
+
+    def test_a_staged_update_on_unlabelled_images_names_the_release_the_stack_still_runs(self):
+        self.inst.metadata[id_of("futureagi/standalone", "v1.0.0")]["version"] = ""
+        staged_by(self)
+        text = self.failing_rollback()
+        self.assertIn("The update to v1.1.0 staged earlier is still pending: .env selects it "
+                      "(FUTURE_AGI_VERSION=v1.1.0), and the stack still runs v1.0.0. To finish it", text)
+
+    def test_a_stopped_resume_names_only_the_keys_the_update_changed(self):
+        # FRONTEND_VERSION selected the release already: the update changed FUTURE_AGI_VERSION only.
+        self.build("distributed", values={"FUTURE_AGI_VERSION": "v1.0.0", "FRONTEND_VERSION": TARGET})
+        self.ready.failure = NotReady("the API is not answering")
+        self.assertRaisesExactly(FailedDuringRollout, self.apply, self.plan(env_changes={"FUTURE_AGI_VERSION": TARGET}))
+        self.ready.failure = None
+        self.prune(TARGET)  # pulled only when it is not on the host
+        self.inst.failures["pull"] = InstallError("`docker compose pull` failed: network unreachable")
+        exc = self.assertRaisesExactly(FailedBeforeRollout, self.apply,
+                                       self.plan(env_changes={}, resume=True, current=[TARGET], action="keep"))
+        self.assertIn("is still unfinished: .env selects it (FUTURE_AGI_VERSION=v1.1.0).", str(exc))
+
+
+class DeploymentComparisonMutationTests(GitCheckoutCase):
+    IGNORE = ".env\n.futureagi-updates/\n"
+
+    def differences(self, previous="v1.0.0"):
+        return self.updater()._deployment_differences(previous)
+
+    def commit(self, files, tag=None):
+        self.write(files)
+        if not (self.root / ".git").exists():
+            git(self.root, "init", "-q")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", tag or "next")
+        if tag:
+            git(self.root, "tag", tag)
+
+    def test_files_back_step_names_the_checkout_only_when_files_differ(self):
+        self.release_repo()
+        updater = self.updater()
+        self.assertEqual(updater._files_back_step("v1.1.0"), "")  # the checkout is at v1.1.0
+        self.assertEqual(updater._files_back_step("v1.0.0"), "bring back v1.0.0's deployment files with `git checkout "
+                                                             "v1.0.0 -- docker-compose.yml deploy/clickhouse`")
+
+    def test_no_directories_have_no_untracked_or_extra_files_and_ask_git_nothing(self):
+        updater = self.updater()
+        with mock.patch.object(updater, "_git", side_effect=AssertionError("must not run git")):
+            self.assertEqual(updater._untracked([]), [])
+            self.assertEqual(updater._extra_tracked("refs/tags/v1.0.0", []), [])
+
+    def test_extra_tracked_names_a_file_in_nested_directories_once(self):
+        self.write({"deploy/conf/extra.xml": "<extra/>\n"})
+        updater = self.updater()
+
+        def tree(*args):
+            stdout = b"deploy/conf/extra.xml\0" if args[4] == "HEAD" else b""
+            return subprocess.CompletedProcess(["git", *args], 0, stdout, b"")
+
+        with mock.patch.object(updater, "_git", tree):
+            self.assertEqual(updater._extra_tracked("refs/tags/v1.0.0", ["deploy", "deploy/conf"]),
+                             ["deploy/conf/extra.xml"])
+
+    def test_a_release_path_inside_a_listed_directory_is_compared_with_that_directory(self):
+        compose = ("services:\n  app:\n    image: futureagi/standalone:${FUTURE_AGI_VERSION:-latest}\n    volumes:\n"
+                   "      - ./deploy/clickhouse/users.d/default.xml:/etc/clickhouse-server/users.d/default.xml:ro\n")
+        self.commit({".gitignore": self.IGNORE, "docker-compose.yml": compose,
+                     "deploy/update/deployment-files.txt": "docker-compose.yml\ndeploy/clickhouse\n",
+                     "deploy/clickhouse/users.d/default.xml": "<clickhouse/>\n"}, "v1.0.0")
+        self.commit({"deploy/clickhouse/users.d/default.xml": "<clickhouse><users/></clickhouse>\n"})
+        self.assertEqual(self.differences()["differ"], ["deploy/clickhouse"])
+
+    def test_a_new_listed_file_named_only_outside_the_compose_files_is_not_absent(self):
+        self.commit({".gitignore": self.IGNORE, "deploy/update/deployment-files.txt": "docker-compose.yml\n",
+                     "docker-compose.yml": "services:\n  app:\n    image: futureagi/standalone:latest\n"},
+                    "v1.0.0")
+        self.commit({"deploy/update/deployment-files.txt": "docker-compose.yml\ndeploy/notes.conf\ndeploy/new.conf\n",
+                     "deploy/notes.conf": "include deploy/new.conf\n", "deploy/new.conf": "new\n"})
+        check = self.differences()
+        self.assertEqual((check["note"], check["differ"], check["absent"]), ("", [], []))
+        # Named by a compose file, the same file is one the previous release lacks.
+        self.commit({"docker-compose.yml": "services:\n  app:\n    image: futureagi/standalone:latest\n    env_file:\n"
+                                           "      - deploy/new.conf\n"})
+        self.assertEqual(self.differences()["absent"], ["deploy/new.conf"])
+
+
 
 
 if __name__ == "__main__":

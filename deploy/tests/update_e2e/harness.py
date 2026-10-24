@@ -24,7 +24,8 @@ Environment:
                                   must be visible to Docker bind mounts
   FUTURE_AGI_UPDATE_E2E_PREFIX    name prefix of every Docker resource and
                                   directory the harness creates (default fagi-upd-e2e-sa-;
-                                  the Distributed suite uses its own, fagi-upd-e2e-dist-)
+                                  the Distributed suite uses its own, fagi-upd-e2e-dist-, and
+                                  the fault-injection suite fagi-upd-e2e-flt-)
   FUTURE_AGI_UPDATE_E2E_KEEP=1    keep containers, registry and files at the end
   FUTURE_AGI_UPDATE_E2E_PYTHON    interpreter bin/update runs with (its PYTHON)
   FUTURE_AGI_UPDATE_E2E_BUILD     `docker` to build images from fakeapp/Dockerfile and
@@ -105,6 +106,9 @@ DEFAULT_PREFIX = "fagi-upd-e2e-sa-"
 # The Distributed suite's prefix (distributed.py reads the same variable).
 DIST_PREFIX_VAR = "FUTURE_AGI_UPDATE_E2E_DIST_PREFIX"
 DEFAULT_DIST_PREFIX = "fagi-upd-e2e-dist-"
+# The fault-injection suite's prefix (faults.py reads the same variable).
+FAULTS_PREFIX_VAR = "FUTURE_AGI_UPDATE_E2E_FAULTS_PREFIX"
+DEFAULT_FAULTS_PREFIX = "fagi-upd-e2e-flt-"
 DEFAULT_BASE = Path.home() / ".fagi-update-e2e"
 
 try:  # the updater's own pinned cosign image, so tests sign with what it verifies with
@@ -453,9 +457,10 @@ def name_prefix() -> str:
 
 
 def suite_prefixes() -> List[str]:
-    """The prefix of every e2e suite (Standalone, Distributed), as configured."""
+    """The prefix of every e2e suite (Standalone, Distributed, fault injection), as configured."""
 
-    return [os.environ.get(PREFIX_VAR) or DEFAULT_PREFIX, os.environ.get(DIST_PREFIX_VAR) or DEFAULT_DIST_PREFIX]
+    return [os.environ.get(PREFIX_VAR) or DEFAULT_PREFIX, os.environ.get(DIST_PREFIX_VAR) or DEFAULT_DIST_PREFIX,
+            os.environ.get(FAULTS_PREFIX_VAR) or DEFAULT_FAULTS_PREFIX]
 
 
 def availability() -> Optional[str]:
@@ -1028,8 +1033,13 @@ class Harness:
             "Created by deploy/tests/update_e2e/harness.py; removed by its stop().\n", encoding="utf-8")
         atexit.register(self.stop)
         self._started = True
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=1 if os.environ.get(JOBS_VAR) == "1" else 2) as pool:
             keys = [pool.submit(self._generate_key, who) for who in ("trusted", "attacker")]
+            if os.environ.get(JOBS_VAR) == "1":
+                # Serial validation includes Docker-based key generation, not
+                # only the tests; don't overlap it with registry/image setup.
+                for future in keys:
+                    future.result()
             self._start_registry()
             self._save_state()
             for version, mode in {**IMAGES, **(extra_images or {})}.items():
@@ -1296,7 +1306,7 @@ class Harness:
         specs = [tuple(spec) for spec in specs]
         if not specs:
             return
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=1 if os.environ.get(JOBS_VAR) == "1" else 2) as pool:
             futures = [pool.submit(self.release, version, variant=variant, signer=signer)
                        for version, variant, signer in specs]
             for future in futures:
@@ -1367,14 +1377,19 @@ class Harness:
 
     def new_checkout(self, name: str, *, version: Optional[str] = "v1.51.0", variant: str = "default",
                      settings: Optional[Mapping[str, str]] = None, env_extra: Iterable[str] = (),
-                     registry: Optional[str] = None) -> "Checkout":
+                     registry: Optional[str] = None, root: Optional[Path] = None) -> "Checkout":
         """A checkout named `name` whose images come from `registry` (a
-        PrivateRegistry's host; default the run's registry)."""
+        PrivateRegistry's host; default the run's registry), in `root` (a
+        directory inside this run's directory; default checkouts/<project>):
+        a path with spaces or non-ASCII characters, say. The Compose project
+        is `name` with the prefix either way."""
 
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
             raise ValueError(f"checkout names are lower-case letters, digits and dashes: {name!r}")
         project = f"{self.prefix}{name}"
-        root = self.checkouts_dir / project
+        if root is not None and self.run_dir.resolve() not in Path(root).resolve().parents:
+            raise ValueError(f"a checkout root must be inside {self.run_dir} (cleanup removes it): {root}")
+        root = Path(root) if root is not None else self.checkouts_dir / project
         if root.exists():
             Checkout(self, project, root, 0, 0, "").down()
             shutil.rmtree(root)

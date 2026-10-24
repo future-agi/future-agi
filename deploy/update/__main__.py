@@ -12,20 +12,23 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .apply import JOURNAL_NOTE  # noqa: F401  (part of this module's interface)
 from .apply import (FINISHED_STATUSES, Blocked, Interrupted, InterruptedRun, UpdateError, Updater, finished_run,
-                    preview_recovery, recover_elsewhere, signals_as_interrupt)
+                    preview_recovery, recover_elsewhere, signals_as_interrupt, validate_journal_header,
+                    validate_recovery)
 from .envfile import EnvFileError
 from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, VERSION_VARIABLES, InstallError, Installation
 from .manifest import ManifestError
 from .plan import BLOCKED, build_plan, cd_prefix, command_prefix, install_command, plan_json, plan_text
 from .readiness import NotReady
-from .receipt import StateDir, StateError, secret_values
+from .receipt import JOURNAL, STATE_DIR, StateDir, StateError, secret_values
 from .settings import SettingsError, load_settings
 from .trust import Verifier, VerificationError, fetch_manifest, remove_workdir
 
@@ -33,6 +36,8 @@ SUPPRESS = argparse.SUPPRESS
 COMMANDS = ("check", "apply", "rollback", "status")
 # The commands that verify a manifest's signature (load_settings checks the cosign settings for them only).
 VERIFYING_COMMANDS = ("check", "apply")
+# The directory a verifying run fetches its manifest into, in the state directory (verify-<pid>).
+STALE_WORKDIR = re.compile(r"verify-([0-9]+)")
 
 # Every option: the commands that take it, its help group (None: the command's
 # own options), its flag and its argparse keywords. Each one may come before
@@ -202,12 +207,29 @@ def _status(installation: Installation, state: StateDir) -> Optional[str]:
     holder, journal = _lock_and_journal(state)
     # This install's last run: another install in the same checkout keeps receipts here too.
     last = state.latest_receipt(identity)
-    if holder:
+    conflict = None
+    finished = None
+    if not holder and journal:
+        try:
+            finished = validate_recovery(installation, journal, [last] if last else [],
+                                         journal_path=state.journal_path, identity=identity)
+        except Blocked as exc:
+            problem = problem or str(exc)
+            # Keep the existing cross-env command guidance, but it is a blocker,
+            # not a successful recovery preview for the selected installation.
+            if not _elsewhere(journal, identity):
+                conflict = str(exc)
+        except (StateError, EnvFileError) as exc:
+            conflict = str(exc)
+            problem = problem or conflict
+    if conflict:
+        print(f"Env conflict  {conflict}. Journal retained at {state.journal_path}")
+    elif holder:
         # Its journal, if any, is the live record of a run that is still going.
         doing = (f" (now: {journal.get('kind')} to {journal.get('target_version')}, stage {journal.get('stage')})"
                  if journal else "")
         print(f"In progress   a bin/update run is in progress ({holder}); wait for it to finish{doing}")
-    elif journal and last and finished_run(journal, [last]) is not None:
+    elif journal and finished is not None:
         # Its run wrote its receipt (Last run, below) and stopped before removing the journal: nothing to recover.
         # Only a final receipt is a run that finished; another one records how the run stopped (a recovery killed
         # after writing it), and check says how to go on from there.
@@ -237,9 +259,9 @@ def _status(installation: Installation, state: StateDir) -> Optional[str]:
 def _elsewhere(journal: Mapping[str, Any], identity: Mapping[str, Any]) -> bool:
     """Whether `journal` was left by a run for another install in this checkout.
 
-    The same test as Updater._check_journal_owner, so check blocks exactly
-    when apply would: the env file and the --production flag tell whose
-    version keys recovery puts back. Only what the journal records counts.
+    Selects cross-env command guidance only. The shared validate_recovery
+    gate also checks project/mode and header types before promising recovery.
+    Only what the journal records counts.
     """
 
     return any(journal.get(key) is not None and journal.get(key) != identity[key] for key in ("env_file", "production"))
@@ -307,6 +329,7 @@ def _check_inputs(installation: Installation, state: StateDir,
                              f"`{check}` again")
     if not journal:
         return history, [], None
+    validate_journal_header(journal, state.journal_path)
     if _elsewhere(journal, identity):
         return history, [], (f"an interrupted bin/update run for {journal.get('env_file')} must be recovered before "
                              f"apply or rollback can run for this install: "
@@ -402,6 +425,33 @@ def _tolerant_output() -> None:
             pass
 
 
+def _remove_stale_workdirs(state: StateDir) -> None:
+    """Remove the verify-<pid> directories of runs that are gone.
+
+    A run removes its own on the way out, but one killed outright (kill -9,
+    power loss) cannot. A directory whose process still exists (a check
+    running next to this one, or a pid since reused) is left alone.
+    """
+
+    try:
+        entries = list(state.path.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        match = STALE_WORKDIR.fullmatch(entry.name)
+        if match is None or entry.is_symlink() or not entry.is_dir():
+            continue
+        pid = int(match.group(1))
+        if pid <= 0 or pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            remove_workdir(entry)
+        except (OSError, OverflowError):  # alive under another user, or not a pid at all
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _tolerant_output()
     parser = build_parser()
@@ -459,10 +509,26 @@ def main(argv: Optional[List[str]] = None) -> int:
             # options go in before any plan or stack check: the bin/update commands the installation prints
             # itself (check_stack's `./bin/update --production check`, its own refusal to start without
             # --production) repeat them too.
-            installation = Installation(root, production=bool(option("production", False)),
-                                        env_file=from_cwd(option("env_file")),
-                                        caller_cwd=Path(option("cwd")).resolve() if option("cwd") else None,
-                                        command_options=list(command_options))
+            try:
+                installation = Installation(root, production=bool(option("production", False)),
+                                            env_file=from_cwd(option("env_file")),
+                                            caller_cwd=Path(option("cwd")).resolve() if option("cwd") else None,
+                                            command_options=list(command_options))
+            except (InstallError, EnvFileError):
+                # Read-only bootstrap diagnostics; never construct mutable state
+                # or hide ordinary preflight remedies behind an unrelated journal.
+                pending = root / STATE_DIR / JOURNAL
+                try:
+                    evidence = json.loads(pending.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    evidence = None
+                if isinstance(evidence, dict) and evidence.get("journal_version") == 2:
+                    raise StateError(
+                        f"Cannot open the installation with an unfinished run. Keep {pending} and "
+                        "the selected env target's .futureagi-updates/env-commits directory. The env may already "
+                        "have changed; use the README's manual conflict recovery guidance. This diagnostic is "
+                        "read-only and does not authorize recovery without ownership") from None
+                raise
             state = StateDir(root, secret_values(installation.env))
             if args.command == "status":
                 problem = _status(installation, state)
@@ -481,6 +547,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     source = str(root / source)
             bundle = located(option("bundle")) if option("bundle") else option("bundle")
             state.ensure()
+            _remove_stale_workdirs(state)
             workdir = state.path / f"verify-{os.getpid()}"
             remove_workdir(workdir)
             fetched = fetch_manifest(source, workdir, cwd=cwd, bundle=bundle)

@@ -22,6 +22,8 @@ __pycache__ or .pyc/.pyo): hosts would never report a local edit to it.
 from __future__ import annotations
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
 import os
 import subprocess
@@ -30,8 +32,13 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# deploy/ has no __init__.py, so `import deploy` would let a regular `deploy`
+# package anywhere on sys.path (PYTHONPATH, the interpreter's site-packages)
+# win over the checkout's: the checkout's deploy/ is made the package first.
+if "deploy" not in sys.modules:
+    _spec = importlib.machinery.ModuleSpec("deploy", None, is_package=True)
+    _spec.submodule_search_locations = [str(ROOT / "deploy")]
+    sys.modules["deploy"] = importlib.util.module_from_spec(_spec)
 
 from deploy.update.manifest import (  # noqa: E402
     BUNDLE_ASSET, COMPONENT_REPOSITORIES, DEPLOYMENT_FILE_LIST, PRODUCT, SCHEMA_VERSION, ManifestError,

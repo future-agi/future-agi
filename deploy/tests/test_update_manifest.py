@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -1515,6 +1516,45 @@ class GeneratorTests(unittest.TestCase):
                 manifest = self.generate(*args, version=version, components=component_args(version))
                 self.assertEqual([error.message for error in validator.iter_errors(manifest)], [])
 
+    def test_a_component_with_two_digests_is_a_clean_error(self):
+        # Only the last '@' separates the digest: the image part then names a digest of its own.
+        ref = f"backend=docker.io/futureagi/future-agi:{VERSION}@{COMPONENT_DIGESTS['backend']}@{HELM_DIGEST}"
+        result = self.run_generator(components=component_args(overrides={"backend": ref}))
+        self.assertGeneratorFails(result, "^generate_update_manifest: manifest.components.backend.image must not "
+                                          "embed a digest; use manifest.components.backend.digest\n$")
+
+    def test_a_deploy_package_on_pythonpath_does_not_shadow_the_checkouts(self):
+        # The release workflow runs the generator with whatever python3 it has: the checkout's manifest rules win.
+        shadow = self.base / "shadow"
+        (shadow / "deploy" / "update").mkdir(parents=True)
+        for package in (shadow / "deploy", shadow / "deploy" / "update"):
+            (package / "__init__.py").write_text("", encoding="utf-8")
+        (shadow / "deploy" / "update" / "manifest.py").write_text("raise ImportError('shadowed')\n", encoding="utf-8")
+        self.env["PYTHONPATH"] = str(shadow)
+        self.assertEqual(self.generate()["version"], VERSION)
+
+    def test_main_returns_0_after_writing_the_manifest(self):
+        spec = importlib.util.spec_from_file_location("generate_update_manifest_main", GENERATOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        output = self.base / "manifest.json"
+        argv = ["--version", VERSION, "--source-sha", SOURCE_SHA, "--published-at", PUBLISHED_AT, "--helm-chart",
+                CHART, "--helm-digest", HELM_DIGEST, *component_args(), "--repo-root", str(self.repo),
+                "--output", str(output)]
+        self.assertEqual(module.main(argv), 0)
+        self.assertEqual(validate_manifest(json.loads(output.read_text(encoding="utf-8")))["version"], VERSION)
+
+    def test_a_git_that_hangs_is_a_manifest_error(self):
+        spec = importlib.util.spec_from_file_location("generate_update_manifest_hang", GENERATOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        hang = subprocess.TimeoutExpired(["git"], 300)
+        with mock.patch.object(module.subprocess, "run", side_effect=hang) as run:
+            with self.assertRaisesRegex(ManifestError, "^" + re.escape(
+                    f"cannot run git to list the files it tracks in {self.repo}: {hang}") + "$"):
+                module.tracked_files(self.repo, ["config"])
+        self.assertGreater(run.call_args.kwargs["timeout"], 0)
+
 
 # --------------------------------------------------------------- JSON Schema --
 
@@ -2779,6 +2819,76 @@ class IntegratorRound6SchemaVersionLengthTests(unittest.TestCase):
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
         self.assertNotIn("[1-9][0-9]*", schema)
         self.assertEqual(schema.count("(0|[1-9][0-9]{0,17})"), 47)
+
+
+# ------------------------------------------------ hardening: small corners --
+
+class HardeningVersionMessageTests(unittest.TestCase):
+    """An invalid version is quoted whole up to 64 characters, longer ones as their first 32 and last 8."""
+
+    def assertMessage(self, value, message):
+        with self.assertRaises(ManifestError) as caught:
+            parse_version(value)
+        self.assertEqual(str(caught.exception), message)
+
+    def test_a_64_character_value_is_quoted_whole(self):
+        value = "v" + "0123456789abcdef" * 3 + "0123456789abcde"
+        self.assertEqual(len(value), 64)
+        self.assertMessage(value, f"invalid version {value!r}: expected vMAJOR.MINOR.PATCH")
+
+    def test_a_65_character_value_is_quoted_as_its_first_32_and_last_8_characters(self):
+        value = "v" + "0123456789abcdef" * 4
+        self.assertEqual(len(value), 65)
+        self.assertMessage(value, "invalid version 'v0123456789abcdef0123456789abcde...89abcdef': "
+                                  "expected vMAJOR.MINOR.PATCH")
+
+    def test_a_long_number_is_shortened_the_same_way(self):
+        value = "v1." + "1234567890" * 7 + ".0"
+        self.assertMessage(value, f"invalid version {value[:32] + '...' + value[-8:]!r}: expected vMAJOR.MINOR.PATCH "
+                                  f"without leading zeros, each number at most 18 digits long")
+
+
+class HardeningImageRefTests(unittest.TestCase):
+    def test_one_name_with_a_dot_or_named_localhost_is_a_docker_hub_library_image(self):
+        # Only a first component followed by another one names a registry, as in Docker.
+        cases = {
+            "foo.bar": ImageRef("docker.io", "library/foo.bar", None, None),
+            "foo.bar:v1": ImageRef("docker.io", "library/foo.bar", "v1", None),
+            "localhost": ImageRef("docker.io", "library/localhost", None, None),
+            "localhost:v1": ImageRef("docker.io", "library/localhost", "v1", None),
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(parse_image_ref(value), expected)
+
+
+class HardeningManifestFieldTests(ManifestCase):
+    def test_an_invalid_beta_version_is_reported_before_the_fields_after_it(self):
+        def mutate(manifest):
+            manifest["version"] = "v1.52"
+            manifest["source_sha"] = "not-a-sha"
+
+        self.assertRejected(self.mutated(mutate, channel="beta"), r"^invalid version 'v1\.52': expected vMAJOR")
+
+    def test_one_platform_outside_linux_amd64_and_arm64_refuses_the_whole_list(self):
+        for platforms in (["linux/amd64", "linux/s390x"], ["windows/amd64", "linux/arm64"],
+                          ["linux/amd64", "linux/arm64", "linux/arm/v7"]):
+            with self.subTest(platforms=platforms):
+                self.assertRejected(
+                    self.mutated(lambda m: m["components"]["backend"].__setitem__("platforms", platforms)),
+                    "^manifest.components.backend.platforms must list linux/amd64 and/or linux/arm64$")
+
+
+class HardeningLeftOutOfDigestsTests(unittest.TestCase):
+    def test_a_tracked_path_that_is_the_listed_directory_itself_is_not_reported(self):
+        # git ls-files names a submodule (or a symlink git tracks) by its own path: it lies below no directory.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "catalog" / "sub").mkdir(parents=True)
+            (root / "catalog" / "sub" / ".hidden").write_text("x", encoding="utf-8")
+            self.assertEqual(left_out_of_digests(root, ["catalog"], ["catalog"]), [])
+            self.assertEqual(left_out_of_digests(root, ["catalog"], ["catalog", "catalog/sub/.hidden"]),
+                             ["catalog/sub/.hidden"])
 
 
 if __name__ == "__main__":

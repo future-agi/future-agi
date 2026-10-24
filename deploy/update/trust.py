@@ -91,6 +91,9 @@ _DOCKER_NOISE_RE = re.compile(  # help hints and pull progress (Docker's, then P
     r"|: (?:Pulling fs layer|Waiting|Verifying Checksum|Download complete|Pull complete|Already exists)$"
     r"|^Trying to pull |^Getting image source signatures$|^Copying (?:blob|config) |^Writing manifest to image"
 )
+# A warning printed before the error that stopped `docker run` (Docker's WARNING:, Podman's WARN[0000],
+# a daemon's level=warning): named only when nothing else was printed.
+_DOCKER_WARNING_RE = re.compile(r"^WARN(?:ING)?\b|\blevel=warning\b", re.IGNORECASE)
 
 
 def workflow_claims(identity_template: str, version: str) -> Optional[Tuple[str, str]]:
@@ -251,7 +254,10 @@ def _docker_daemon_host(environ: Mapping[str, str], config: Any, directory: Path
     if raw or not isinstance(name, str) or name in ("", "default"):
         host = _docker_host_url(raw, bool(environ.get("DOCKER_TLS") or environ.get("DOCKER_TLS_VERIFY")))
     else:
-        digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+        try:
+            digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+        except UnicodeError:  # invalid bytes in DOCKER_CONTEXT, a lone surrogate in config.json: no such context
+            return None
         meta = _read_json_file(directory / "contexts" / "meta" / digest / "meta.json", "Docker context")
         endpoints = _json_field(meta, "Endpoints")
         endpoint = endpoints.get("docker") if isinstance(endpoints, dict) else None
@@ -313,7 +319,8 @@ def _docker_failure(returncode: int, output: str) -> Optional[str]:
             return line
     if returncode in _DOCKER_EXIT_STATUSES:
         meaningful = [line for line in lines if not _DOCKER_NOISE_RE.search(line)]
-        return meaningful[0] if meaningful else f"docker run exited with status {returncode}"
+        errors = [line for line in meaningful if not _DOCKER_WARNING_RE.search(line)] or meaningful
+        return errors[0] if errors else f"docker run exited with status {returncode}"
     return None
 
 
@@ -846,9 +853,13 @@ class Verifier:
             try:
                 key_copy = fetched.directory / "trusted-key.pub"
                 if not key_copy.exists():
-                    _write_private(key_copy, key_path.read_bytes())
-            except OSError as exc:
-                return Verification(False, error=f"cannot read FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key}: {exc}")
+                    # Read like the manifest: a named pipe or a device is refused, never waited on or read endlessly.
+                    _write_private(key_copy, _read_local(key_path, "FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY"))
+            except ManifestError as exc:  # the key itself (_read_local turns every error reading it into one)
+                return Verification(False, error=str(exc))
+            except OSError as exc:  # bin/update's copy of it: a full disk, a file already there
+                return Verification(False, error=f"cannot copy FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY {key} to "
+                                                 f"{key_copy}: {exc.strerror or exc}")
             args = ["verify-blob", "--key", str(key_copy), "--bundle", str(fetched.bundle_path)]
             if offline:
                 args.append("--insecure-ignore-tlog=true")

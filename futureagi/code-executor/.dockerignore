@@ -76,3 +76,7 @@ docker-compose*.yml
 *~
 .DS_Store
 **/.DS_Store
+
+# Private updater state contains complete retained env files (including secrets).
+# Keep this recursive exclusion LAST: later negations must not re-include it.
+**/.futureagi-updates/

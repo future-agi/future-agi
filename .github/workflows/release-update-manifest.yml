@@ -229,14 +229,17 @@ jobs:
           fi
           # image@digest -> {"<platform>": "<its revision label>", ...}, retried for transient registry errors.
           # buildx prints one image's configuration, or a platform -> configuration map for an index of several.
+          # Slurp requires exactly one JSON value even on jq 1.6; explicit entries avoid its map_values/try bug.
           revisions() {
             local config
             for attempt in 1 2 3 4 5; do
               if config=$(docker buildx imagetools inspect "$1" --format '{{json .Image}}') \
-                && jq -ce 'if type != "object" then error("not an image")
+                && jq -sce 'if length != 1 then error("not one image") else .[0] end
+                  | if type != "object" then error("not an image")
                   elif has("config") or has("rootfs") or has("architecture") then {("\(.os)/\(.architecture)"): .}
                   else . end
-                  | map_values(try .config.Labels["org.opencontainers.image.revision"] catch null)' <<<"$config"; then
+                  | to_entries | map({key, value: (try .value.config.Labels["org.opencontainers.image.revision"] catch null)})
+                  | from_entries' <<<"$config"; then
                 return 0
               fi
               sleep $((attempt * 10))

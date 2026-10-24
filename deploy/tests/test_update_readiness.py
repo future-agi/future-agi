@@ -11,6 +11,7 @@ import http.client
 import http.server
 import io
 import os
+import re
 import shlex
 import socket
 import sys
@@ -154,6 +155,24 @@ class BoundedTests(unittest.TestCase):
                     standalone_settings({key: bad})
                 self.assertTrue(str(ctx.exception).startswith(f"{key} must be an integer in ["))
 
+    def test_standalone_settings_take_bin_installs_defaults_and_bounds(self):
+        # The same `bounded_env_int KEY DEFAULT MIN MAX` lines bin/install runs.
+        lines = re.findall(r"^bounded_env_int (INSTALL_[A-Z_]+) ([0-9]+) ([0-9]+) ([0-9]+)$",
+                           (ROOT / "bin" / "install").read_text(encoding="utf-8"), re.MULTILINE)
+        keys = ("INSTALL_READY_TIMEOUT_SECONDS", "INSTALL_STABILITY_SECONDS", "INSTALL_READY_MAX_SECONDS")
+        self.assertEqual([line[0] for line in lines], list(keys))
+        self.assertEqual(standalone_settings({}), tuple(int(line[1]) for line in lines))
+        for index, (key, _, minimum, maximum) in enumerate(lines):
+            for raw in (minimum, maximum):
+                with self.subTest(key=key, raw=raw):
+                    self.assertEqual(standalone_settings({key: raw})[index], int(raw))
+            for raw in (str(int(minimum) - 1), str(int(maximum) + 1)):
+                with self.subTest(key=key, raw=raw):
+                    with self.assertRaises(NotReady) as ctx:
+                        standalone_settings({key: raw})
+                    self.assertEqual(str(ctx.exception), f"{key} must be an integer in [{minimum},{maximum}] "
+                                                         f"(got {raw!r})")
+
 
 # ------------------------------------------------------------------ http_ok --
 
@@ -215,7 +234,7 @@ class HttpOkTests(unittest.TestCase):
         for error in errors:
             with self.subTest(error=type(error).__name__):
                 self.opener(error)
-                self.assertFalse(http_ok("http://localhost:8000/health/"))
+                self.assertIs(http_ok("http://localhost:8000/health/"), False)
 
     def test_an_error_answer_is_closed(self):
         error = HTTPError("http://localhost:8000/health/", 500, "Internal Server Error", {}, io.BytesIO(b"boom"))
@@ -570,6 +589,17 @@ class OneOffContainerTests(ReadinessCase):
         self.inst.env["INSTALL_READY_TIMEOUT_SECONDS"] = "60"
         self.inst.listing = lambda t: [dict(app(id="c-run"), oneoff=True)]
         self.assertIn("still waiting on the app container to exist", self.not_ready())
+
+
+class HardeningNewestContainerTests(ReadinessCase):
+    def test_of_two_containers_the_rollout_created_the_newest_is_watched(self):
+        # Docker lists the newest first; an older one that exited (a replaced attempt) is not the app.
+        self.inst.listing = lambda t: [app(id="c-newer"), app(id="c-new", status="exited", exit_code=1)]
+        self.wait(previous_ids=["c-old"])
+        self.assertEqual(self.clock.elapsed, 15)
+        self.inst.listing = lambda t: [app(id="c-newer", status="exited", exit_code=3), app(id="c-new")]
+        self.assertEqual(self.not_ready(previous_ids=["c-old"]),
+                         "the app container stopped (status=exited exit_code=3)")
 
 
 class ComposeHintMessageTests(ReadinessCase):

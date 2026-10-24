@@ -83,7 +83,11 @@
 #   AGENTCC_GATEWAY_PORT MINIO_API_PORT           (default: 23000 28000 24317
 #                        24318 28090 29005; the ports bin/install checks)
 #   REHEARSAL_ADMIN_EMAIL                         (default: admin@example.com)
-#   KEEP_STACK=1         skip step 9 (inspect the stack; then run the
+#   REHEARSAL_READY_MAX_SECONDS  INSTALL_READY_MAX_SECONDS written to .env, so
+#                        the installer and bin/update wait longer for the
+#                        first migrations on a slow host (300-7200; default:
+#                        unset, the installer's own default)
+#   KEEP_STACK=1        skip step 9 (inspect the stack; then run the
 #                        --cleanup-only command it prints, same settings)
 #   REHEARSAL_COMPOSE    a docker-compose binary (say Compose v2.24.0, the
 #                        documented minimum) for every Compose call of the run;
@@ -699,6 +703,9 @@ log "Step 2: .env and the real installer"
 (umask 077 && cp "$CHECKOUT/.env.example" "$CHECKOUT/.env") || die "cannot create .env"
 env_set "$CHECKOUT/.env" FUTURE_AGI_VERSION "$FROM_VERSION"
 env_set "$CHECKOUT/.env" COMPOSE_PROJECT_NAME "$PROJECT"
+if [[ -n "${REHEARSAL_READY_MAX_SECONDS:-}" ]]; then
+  env_set "$CHECKOUT/.env" INSTALL_READY_MAX_SECONDS "$REHEARSAL_READY_MAX_SECONDS"
+fi
 while IFS='=' read -r var port; do
   env_set "$CHECKOUT/.env" "$var" "$port"
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then

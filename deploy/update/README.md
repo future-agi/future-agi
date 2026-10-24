@@ -10,7 +10,12 @@ It only ever changes the image version keys of the env file
 (`FUTURE_AGI_VERSION`, `FRONTEND_VERSION`, …), and on those lines only the
 value: comments, quotes, `export`, line endings and every other line of `.env`
 or `deploy/.env.production` stay byte for byte as they are. An update that
-fails before anything restarts leaves the file exactly as it found it.
+fails before anything restarts restores the file exactly as it found it, unless
+another process edited it meanwhile or the restoration could not be made durable.
+In those cases it preserves the journal and refuses to guess. At the final
+commit boundary an operator's file can move to private retention while the
+updater candidate becomes live: both entries survive and the run stops on an
+observed conflict (see recovery below). This is preservation, not compare-and-swap.
 
 ## What an update does
 
@@ -61,6 +66,32 @@ fails before anything restarts leaves the file exactly as it found it.
    initialization jobs) are left out of these checks.
 
 Each run leaves a receipt in `.futureagi-updates/`.
+
+Before a mutating run, including recovery by `rollback` without `--yes`, the
+updater proves ownership under the checkout's update lock. Every container of
+the selected project must have coherent Compose provenance: the canonical
+working directory, selected compose files in order, and the explicit env file
+when one was used. Stopped containers and one-off initialization jobs count
+for ownership even though they do not count as running application versions.
+Names, image versions and a matching project label alone are not proof. The
+check is repeated before mutating Compose commands; it is not a cached grant.
+`status` and no-stack guidance remain read-only and usable without an owner,
+but absent evidence cannot authorize an update or journal recovery.
+
+If `bin/install` used an exported `COMPOSE_PROJECT_NAME` without recording it,
+persist the intended project in this install's actual env file (the selected
+`--env-file` for production). Only unset an unrelated export: unsetting the
+intended name can select another checkout's default project. Empty names use
+Compose's fallback. Empty `COMPOSE_ENV_FILES` is equivalent to unset; nonempty
+values are refused outside production, which uses its explicit env file.
+
+Missing, conflicting or relocated provenance is refused with the owning paths
+in the diagnostic. Run from the original checkout with its original config
+and env file, or restore operator-verified symlink-equivalent paths. Absolute
+and working-directory-relative env-file label paths are checked canonically. An explicit file with no label
+cannot be proved: verify and repair the installation manually using a Compose
+release that records it. There is no adoption flag, automatic deletion, or
+ownership bypass.
 
 An install that followed `:latest` (empty version keys) is pinned to the
 release's version tags by its first update. On a Distributed install that
@@ -182,7 +213,132 @@ If the process is killed outright (power loss, `kill -9`), the next `apply` or
 it puts the version keys back as they were; if it stopped during the restart,
 it records the run as interrupted, and the next `apply` of the same release
 finishes it. Until then `status` shows the unfinished run and `check` plans as
-if it had been recovered.
+if it had been recovered, provided the exact recovery record validates.
+`status`, `check` (including JSON) and `apply --dry-run` use the same journal
+header, installation identity and operation-recoverability checks as recovery.
+Unknown/malformed journals, foreign installations and incomplete inverse
+preparation block that preview with a nonzero exit, without rewriting env,
+journal, receipts or retained entries. A complete armed inverse can recover;
+a merely preparing inverse cannot. A matching receipt does not validate an
+unknown header or authorize clearing an unfinished inverse. Do not run
+production initialization jobs on the strength of an invalid recovery record:
+images are only staged after an actual successful pull and digest verification.
+
+### Env commit and private retention
+
+Before changing the env file, journal version 2 is written durably, including
+separate random operation IDs for the forward write and its exact inverse.
+The inner `env_recovery` format 1 still records lexical edits, hashes, target
+and mode. Recovery restores duplicate definitions, escaping, interpolation
+between duplicates, comments, whitespace, BOM, CRLF, missing final newline
+and unrelated bytes exactly. Parsed last-value-wins maps are not inverses.
+
+The actual commit is **native atomic exchange**, not a destructive rename:
+Linux `renameat2(RENAME_EXCHANGE)` or macOS `renameatx_np(RENAME_SWAP)`.
+Each operation stages a candidate and a hard-linked identity anchor in
+`<canonical-env-parent>/.futureagi-updates/env-commits/<target-id>/<operation-id>/`.
+This is beside the target even for a custom production env on another volume.
+A durable `manifest.json` progresses from `preparing` to `armed` before exchange.
+At exchange the target becomes the complete candidate and `slot` becomes the
+entry that actually occupied the target, not a pre-read backup. The updater
+then verifies that displaced entry's inode, bytes, mode and ownership and the
+live candidate. Only a durable `accepted` result permits Compose work. A
+mismatch is a sticky `conflict`; an incomplete/uncertain record also blocks
+progress. There is no automatic swap-back. Ordinary restoration is a NEW
+preserving exchange, including restoration of an interrupted rollback.
+
+Both affected directories and file data are synced; macOS also requests
+`F_FULLFSYNC`, including after namespace barriers. Recovery inspects the
+anchored inode identities rather than blindly exchanging again. A complete
+armed operation can distinguish unexchanged and exchanged states; partial
+staging/missing or contradictory evidence may require manual recovery.
+An intact, demonstrably unexchanged forward operation can be durably marked
+`not_applied` when recovery leaves the original file alone. A visible finished
+receipt and retention index are synced again before removing a leftover
+journal. A matching receipt cannot bypass an unresolved operation. The receipt is
+durable before journal removal. Receipts retain schema 2, are serialized
+from an explicit public field allowlist, and include only opaque commit IDs,
+not private lexical data, full-file hashes, or retained contents. Private
+`env-retained-<id>.json` references in the checkout state directory continue
+to locate operations after the journal is cleared.
+
+**Full env files containing secrets are now retained, even on success.** All
+retention directories must be owned by the invoking user and mode 0700;
+metadata files are 0600. Content inodes keep the live file's mode/owner (for
+example 0640), protected by private directory traversal. Never chmod an
+unknown displaced entry or follow a displaced symlink. These directories
+are ignored by git, but git ignore and private permissions alone do **not**
+exclude them from Docker contexts. Repository-owned build contexts (root,
+backend, frontend, gateway, collector, serving, code-executor, Standalone and
+test-image contexts) exclude `**/.futureagi-updates/` recursively as their
+**last** Docker ignore rule. Any Dockerfile-specific `*.dockerignore` replaces
+the context policy and must carry the same final rule; later public-source
+negations must never re-include private state. Tests check all these policies
+and inspect exported layers of minimal scratch builds with synthetic retained
+before/after env files, including a stable checkout `.env` symlink.
+
+This is not universal packaging protection: operator-defined contexts or
+Dockerfile-specific ignore files outside this repository need their own final
+recursive exclusion. Arbitrarily named custom env files themselves also need
+an explicit exclusion; the retained-state rule is not a rule for every possible
+live env filename. Exclude private state from other deployment packages,
+support bundles and uploads too, and restrict any backups of it. The updater never deletes
+`candidate` or `slot`, even after success: an old editor descriptor can write
+the displaced inode later. There is no TTL/prune command. After 1,024 retained
+operations per target, or insufficient available staging space, new writes
+are refused rather than deleting potentially unique operator data.
+
+Supported commit targets are ordinary user-owned regular files on **local
+ext4 (Linux) or APFS (macOS)**, with working native exchange, hard links and
+file/directory sync. User ACLs, extended attributes, special permission bits,
+external hard links and unpreservable ownership are refused. macOS's automatic
+`com.apple.provenance` is system-managed rather than copied; other xattrs are
+refused. Private directories must also be ACL-free. NFS, SMB, FUSE, virtiofs,
+9p, overlay, Windows-native and translated WSL mounts are not enabled commit
+targets. There is no copy/delete or `os.replace` fallback. Successful syscalls
+are not a claim that every storage controller honors power-loss barriers;
+the journal volume must also provide durable file/directory sync. Stable
+configured symlinks are supported, but ancestor/alias topology and the trusted
+private namespace must stay stable. Observed retargets are conflicts.
+
+The updater lock coordinates updaters, not editors. A completed in-place edit
+or rename-published file at the exchange boundary is retained, and an observed
+mismatch stops the run with its journal intact. **The live pathname can already
+hold the updater candidate on conflict.** An open fd/mmap can continue changing
+a retained inode after inspection or even after a success receipt; retention
+keeps that inode named, not every historical byte immutable. Concurrent
+truncation, external deletion/replacement after commit, unflushed external
+data, private-state tampering by the same user/root, and arbitrary namespace
+reparenting cannot be prevented by this protocol. Do not edit concurrently.
+
+### Resolving a conflict manually
+
+1. Stop updater invocations and quiesce all editors/writers, including old open
+   descriptors. Do not rerun apply to force progress, delete the journal, or
+   overwrite the live env with a guessed version map.
+2. Preserve the current env, journal, private manifests/indexes, `candidate`
+   and `slot` separately in an access-restricted backup. Inspect only regular
+   files; do not follow a captured symlink or read devices/FIFOs. The printed
+   operation directory and journal's operation IDs locate the evidence.
+   `status`/`check` inspect without committing; if the env is missing/invalid,
+   the CLI prints a read-only journal/retention diagnostic instead of bypassing
+   ownership. No command prints retained contents.
+3. Compare the separately preserved versions locally, reconcile settings and
+   determine which versions actually run. Have the installation operator
+   complete recovery with the original checkout/Compose provenance and backups;
+   recorded conflicts are deliberately not auto-acknowledged or merged.
+4. Retained names may be removed only by an explicit operation-specific manual
+   action after writers are quiesced and needed data are durably archived. If
+   old descriptors cannot be ruled out, retain the original inode. Deleting a
+   file is not secure erasure. Never glob-prune retention to make space.
+
+Valid legacy lexical journals acquire durable operation references before an
+inverse write. Older/incomplete pre-restart journals containing only
+`found_values`/`previous_values` need an independent backup, never a lossy
+migration. Existing completed receipts and valid old rollout journals remain
+readable. Unknown journal or sidecar formats/stages are retained for manual
+diagnosis. The supported contract is preservation plus observable conflict,
+not zero failure probability or writer exclusion.
 
 `./bin/update status` shows the installed versions, an unfinished run, and the
 last receipt. It works while Docker is down (the running versions then show as

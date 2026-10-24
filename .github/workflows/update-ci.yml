@@ -14,7 +14,10 @@
 #         images in a registry on the runner, manifests signed with a test
 #         cosign key, then check, apply, failed health checks, rollback,
 #         tampered signatures and digests, interrupts and recovery, under the
-#         runner's Compose and under v2.24.7.
+#         runner's Compose and under v2.24.7. The faults suite fails, kills
+#         and interrupts bin/update at its Docker calls (here: every call that
+#         changes state and its neighbours; FUTURE_AGI_UPDATE_E2E_FAULTS_SCOPE=full
+#         runs every call of the Standalone sequences).
 name: Update CI
 
 on:
@@ -34,6 +37,10 @@ on:
       - "deploy/.env.production.example"
       - "deploy/env-reference.toml"
       - ".gitignore"
+      # Private retained env files must never enter any Docker build context.
+      - "**/.dockerignore"
+      - "**/*.dockerignore"
+      - "**/Dockerfile*"
       - ".github/actions/setup-helm-tools/**"
       - ".github/workflows/release-update-manifest.yml"
       - ".github/workflows/release-images.yml"
@@ -66,6 +73,10 @@ on:
       - "deploy/.env.production.example"
       - "deploy/env-reference.toml"
       - ".gitignore"
+      # Private retained env files must never enter any Docker build context.
+      - "**/.dockerignore"
+      - "**/*.dockerignore"
+      - "**/Dockerfile*"
       - ".github/actions/setup-helm-tools/**"
       - ".github/workflows/release-update-manifest.yml"
       - ".github/workflows/release-images.yml"
@@ -149,11 +160,12 @@ jobs:
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # faults runs bin/update once per (Docker call, fault), each run followed by its recovery.
+    timeout-minutes: ${{ matrix.suite == 'faults' && 120 || 45 }}
     strategy:
       fail-fast: false
       matrix:
-        suite: [standalone, distributed]
+        suite: [standalone, distributed, faults]
         # runner: the runner's own Compose. v2.24.7 ignores profiles in
         # `config --format json`, which bin/update must not depend on.
         compose: [runner, v2.24.7]
@@ -181,4 +193,5 @@ jobs:
           SUITE: ${{ matrix.suite }}
           FUTURE_AGI_UPDATE_E2E: "1"
           FUTURE_AGI_UPDATE_E2E_DIR: ${{ runner.temp }}/update-e2e
+          FUTURE_AGI_UPDATE_E2E_FAULTS_SCOPE: state
         run: python -m unittest discover -s deploy/tests -p "test_update_e2e_${SUITE}.py" -v

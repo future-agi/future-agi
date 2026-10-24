@@ -249,7 +249,8 @@ class Installation:
         self.env_overlay: Dict[str, Optional[str]] = {}
         if production:
             self.mode = "production"
-            self.env_file = (env_file or self.root / PRODUCTION_ENV).resolve()
+            self.env_alias = (env_file or self.root / PRODUCTION_ENV).absolute()
+            self.env_file = self.env_alias.resolve()
             if not self.env_file.exists():
                 raise InstallError(
                     f"{self.env_file} does not exist. Production installs are configured by deploy/setup.sh; "
@@ -271,6 +272,9 @@ class Installation:
                         f"`{self.production_command('check')}`")
                 raise InstallError(f"no .env in {self.root}: run bin/update from the checkout ./bin/install set up")
             self.mode = self._detect_mode()
+        # Keep the selected canonical object path separate from a configured
+        # alias: a later retarget must not redirect a proven owner's mutation.
+        self.env_target = self.env_file.resolve()
         self.env = read_env(self.env_file)
         self._check_shell_overrides()
         command = compose if compose is not None else resolve_compose_command(runner)
@@ -312,8 +316,48 @@ class Installation:
         raise InstallError(f"COMPOSE_FILE={recorded} in .env names neither {STANDALONE_FILE} nor {DISTRIBUTED_FILE}")
 
     def _check_shell_overrides(self) -> None:
+        # Compose prefers an exported project name to the env file's, so its calls could act on another install's
+        # containers while this checkout's env file changes. Export-only installs are also valid (bin/install
+        # accepts them): only the operator can decide which project owns this checkout, not this preflight.
+        # Production drops the export when its env file sets the name, so only a name the file lacks matters there.
+        shell_project = self.environ.get("COMPOSE_PROJECT_NAME")
+        recorded = self.env.get("COMPOSE_PROJECT_NAME")
+        if shell_project is not None and shell_project != (recorded or "") and not (
+                self.production and recorded is not None):
+            env_name = self.relative(self.env_file)
+            verify = ("Unsetting it can select a different project; verify the resulting Compose project belongs to "
+                      "this checkout before applying")
+            if not shell_project:
+                # Empty, it still wins over the env file's: Compose then names the project after the compose
+                # file's name: or the directory (checked with Compose v2.24.0 and v5.6.0).
+                raise InstallError(
+                    f"COMPOSE_PROJECT_NAME is set but empty in your shell, so Docker Compose ignores {env_name}'s "
+                    f"COMPOSE_PROJECT_NAME={recorded} and names the project after the compose file or the directory: "
+                    "bin/update would restart that project with this checkout's files. If this checkout really "
+                    "belongs to that fallback project, persist its resolved, nonempty COMPOSE_PROJECT_NAME in "
+                    f"{env_name} and unset the empty shell export. If this is an unrelated shell export, run "
+                    f"`unset COMPOSE_PROJECT_NAME` to use the name recorded in {env_name}. {verify}")
+            recorded_name = ("no COMPOSE_PROJECT_NAME" if recorded is None else
+                             f"COMPOSE_PROJECT_NAME={recorded}" if recorded else "COMPOSE_PROJECT_NAME is empty")
+            raise InstallError(
+                f"COMPOSE_PROJECT_NAME={shell_project} is set in your shell, and Docker Compose uses it instead of "
+                f"{env_name} ({recorded_name}), so bin/update would restart project {shell_project} with this "
+                "checkout's files. If this checkout really belongs to the exported project, persist "
+                f"COMPOSE_PROJECT_NAME={shell_project} in {env_name}. If this is an unrelated shell export, run "
+                f"`unset COMPOSE_PROJECT_NAME`. {verify}")
         if self.production:
-            return  # the subprocess environment drops them (see subprocess_env)
+            return  # the subprocess environment drops them (see subprocess_env); --env-file wins over COMPOSE_ENV_FILES
+        # Compose ignores an empty value, but a whitespace-only file list is still nonempty.
+        if self.environ.get("COMPOSE_ENV_FILES"):
+            raise InstallError(
+                f"COMPOSE_ENV_FILES={self.environ['COMPOSE_ENV_FILES']} is set in your shell, so Docker Compose would "
+                "read those files instead of .env, the file bin/update updates. Run `unset COMPOSE_ENV_FILES` and "
+                "try again")
+        if "COMPOSE_DISABLE_ENV_FILE" in self.environ:  # production passes --env-file, which Compose always reads
+            raise InstallError(
+                f"COMPOSE_DISABLE_ENV_FILE={self.environ['COMPOSE_DISABLE_ENV_FILE']} is set in your shell, and Docker "
+                "Compose skips .env, the file bin/update updates, when it is true. Run `unset "
+                "COMPOSE_DISABLE_ENV_FILE` and try again")
         # Refused even when equal to .env today: after the update .env changes
         # and the export would silently select the old image again.
         exported = [key for key in VERSION_VARIABLES if key in self.environ]
@@ -448,6 +492,7 @@ class Installation:
             for key in set(SETUP_SECRET_NAMES) | set(read_env(self.env_file)) | set(VERSION_VARIABLES):
                 env.pop(key, None)
             env.pop("COMPOSE_FILE", None)
+            env.pop("COMPOSE_ENV_FILES", None)
         for key, value in self.env_overlay.items():
             env[key] = "" if value is None else value
         return env
@@ -501,6 +546,12 @@ class Installation:
 
     def compose_run(self, *args: str, check: bool = True, stream: bool = False,
                     timeout: Optional[float] = None) -> CommandResult:
+        # Recheck immediately before a mutating Compose command, not only when the plan was made: a backup
+        # hook or another process may have changed project selection since then. Read-only config/status
+        # remains usable without an established owner (including when Docker is down).
+        if args and args[0] not in ("config", "version", "ps", "ls", "logs", "images", "top", "events") and not (
+                "--help" in args or "-h" in args):
+            self.check_ownership()
         return self.run(self.compose_args(*args), check=check, stream=stream, timeout=timeout)
 
     def docker_run(self, *args: str, check: bool = True) -> CommandResult:
@@ -724,13 +775,134 @@ class Installation:
                                  "buildable": "build" in service})
         return services
 
+    # ------------------------------------------------------- ownership --
+    def _ownership_error(self, detail: str) -> InstallError:
+        production_hint = (f" If this is the checkout's production install, use `{self.production_command('check')}` "
+                           "with its original env file." if not self.production and
+                           (self.root / PRODUCTION_ENV).exists() else "")
+        return InstallError(
+            f"cannot establish Compose project {self.project!r} ownership for checkout {str(self.root)!r}: {detail}. "
+            "Refusing to use this project's containers. Run bin/update from the original owning checkout with its "
+            "original Compose files and env file (including --production/--env-file when needed). If this checkout "
+            "was installed with an exported project name, persist that installation's COMPOSE_PROJECT_NAME in "
+            f"{self.relative(self.env_file)}; do not simply unset it and use another project's fallback name. "
+            "For missing provenance or relocated paths, restore the original paths or have the operator verify "
+            "ownership and recover the installation manually before retrying. Do not rename, remove or adopt "
+            f"another project's resources to bypass this check.{production_hint}")
+
+    @staticmethod
+    def _owner_path(value: Any, *, directory: bool = False, relative_to: Optional[Path] = None) -> Path:
+        """An existing, canonical provenance path; absent/relative/ambiguous labels are not evidence.
+
+        Compose records config_files and working_dir as absolute paths. Its
+        environment_file label preserves --env-file's spelling, so only that
+        label may be relative (to the recorded working_dir).
+        """
+
+        if not isinstance(value, str) or not value or any(ord(char) < 32 for char in value):
+            raise ValueError("missing or malformed path")
+        path = Path(value)
+        if not path.is_absolute():
+            if relative_to is None:
+                raise ValueError("path is not absolute")
+            path = relative_to / path
+        path = path.resolve(strict=True)
+        if not (path.is_dir() if directory else path.is_file()):
+            raise ValueError("path is not a directory" if directory else "path is not a file")
+        return path
+
+    def _ownership_files(self) -> List[Path]:
+        """The local files this invocation selects, in Compose's precedence order.
+
+        No upward directory search or remote/stdin configuration is adopted:
+        bin/update must act from the checkout that owns the install. Explicit
+        COMPOSE_FILE uses Compose's path separator, not the provenance label's
+        comma separator. The latter is unescaped, so comma-bearing paths fail
+        closed when the labels are compared.
+        """
+
+        if self.production:
+            paths = [self.root / DISTRIBUTED_FILE, self.root / PRODUCTION_OVERLAY]
+        else:
+            env = dict(read_env(self.env_file), **self.subprocess_env())
+            selected = env.get("COMPOSE_FILE")
+            if selected:
+                separator = env.get("COMPOSE_PATH_SEPARATOR") or os.pathsep
+                paths = [self.root / entry for entry in selected.split(separator)]
+            else:
+                names = ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
+                overrides = ("compose.override.yml", "compose.override.yaml", "docker-compose.override.yml",
+                             "docker-compose.override.yaml")
+                base = next((self.root / name for name in names if (self.root / name).is_file()), None)
+                if base is None:
+                    raise ValueError("no Compose file exists in the checkout")
+                paths = [base]
+                override = next((self.root / name for name in overrides if (self.root / name).is_file()), None)
+                if override is not None:
+                    paths.append(override)
+        return [self._owner_path(str(path)) for path in paths]
+
+    def _check_container_owners(self, records: List[Dict[str, Any]]) -> None:
+        if not records:
+            return
+        field = "selected config_files/environment_file"
+        try:
+            files = self._ownership_files()
+            env_file = self._owner_path(str(self.env_file))
+            for record in records:
+                config = record.get("Config")
+                labels = config.get("Labels") if isinstance(config, dict) else None
+                if not isinstance(labels, dict):
+                    raise ValueError(f"container {str(record.get('Id', '?'))[:12]} has no Compose provenance labels")
+                if labels.get("com.docker.compose.project") != self.project:
+                    raise ValueError("an inspected container has a different or missing project label")
+                field = "working_dir"
+                working = labels.get("com.docker.compose.project.working_dir")
+                owner = self._owner_path(working, directory=True)
+                if owner != self.root:
+                    raise ValueError(f"container {str(record.get('Id', '?'))[:12]} records working_dir {working!r}")
+                field = "config_files"
+                recorded = labels.get("com.docker.compose.project.config_files")
+                if not isinstance(recorded, str) or not recorded:
+                    raise ValueError("missing or malformed config_files label")
+                if [self._owner_path(path) for path in recorded.split(",")] != files:
+                    raise ValueError(f"container {str(record.get('Id', '?'))[:12]} records different config_files "
+                                     f"{recorded!r}")
+                field = "environment_file"
+                recorded_env = labels.get("com.docker.compose.project.environment_file")
+                # With no --env-file, supported Compose releases omit this label: their implicit .env is
+                # identified by working_dir. Production always passes --env-file and must prove which one.
+                if recorded_env is None and not self.production:
+                    continue
+                if not isinstance(recorded_env, str) or not recorded_env:
+                    raise ValueError("missing or malformed environment_file label for an explicit env file")
+                if [self._owner_path(path, relative_to=owner) for path in recorded_env.split(",")] != [env_file]:
+                    raise ValueError(f"container {str(record.get('Id', '?'))[:12]} records a different "
+                                     f"environment_file {recorded_env!r}")
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise self._ownership_error(f"{field}: {exc}") from exc
+
+    def check_ownership(self) -> None:
+        """Fresh, fail-closed mutation preflight. Call under the update lock before backup/env/recovery writes.
+
+        Unlike containers() (which still permits a read-only empty status), a
+        mutation needs positive provenance. No cached proof, image match,
+        project-name match alone, or override can authorize a different owner.
+        Stopped and one-off containers participate too: they may share data.
+        """
+
+        self.config(refresh=True)
+        if not self.containers():
+            raise self._ownership_error("no containers remain to prove ownership")
+
     # ------------------------------------------------------ containers --
     def containers(self) -> List[Dict[str, Any]]:
         """Every container of this Compose project, running or not.
 
-        A `docker compose run` container (Compose labels it oneoff=True) has
-        "oneoff": True. It is not one of the service's containers: `up`
-        never replaces it, so callers judging the running stack skip it.
+        Every record must prove this checkout owns it, including stopped and
+        one-off containers. A foreign or ambiguous record refuses the whole
+        project, never silently filters it. A `docker compose run` container
+        has "oneoff": True; callers judging versions (not ownership) skip it.
         """
 
         listing = self.docker_run("ps", "-a", "-q", "--no-trunc",
@@ -753,6 +925,14 @@ class Installation:
             raise InstallError(self.describe_failure(inspected))
         if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
             raise InstallError("docker inspect did not return a list of containers")
+        seen = [record.get("Id") for record in records]
+        if any(not isinstance(cid, str) or cid not in ids for cid in seen) or len(set(seen)) != len(seen):
+            raise self._ownership_error("docker inspect returned unexpected or duplicate containers")
+        missing = set(ids) - set(seen)
+        if missing and (inspected.returncode == 0 or any(
+                not self._only_removed(inspected.stderr, [cid]) for cid in missing)):
+            raise self._ownership_error("docker inspect omitted containers without confirming their removal")
+        self._check_container_owners(records)
         containers = []
         for record in records:
             labels = (record.get("Config") or {}).get("Labels") or {}
