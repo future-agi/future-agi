@@ -1099,7 +1099,7 @@ class WriteChangesTests(_EnvCase):
         self.assertEqual(len(calls), 1)
         temp, destination = calls[0]
         self.assertEqual(Path(destination), path.resolve())
-        self.assertEqual(Path(temp).parent.parents[3], path.resolve().parent)
+        self.assertEqual(Path(temp).parent.parents[3].resolve(), path.resolve().parent)
 
     def test_candidate_starts_private_and_is_contained_after_mode_preservation(self):
         path = self.write(f"{self.VERSION}=1.0.0\n", mode=0o644)
@@ -1176,16 +1176,44 @@ class WriteChangesTests(_EnvCase):
         link = checkout / ".env"
         os.symlink(os.path.join("..", "shared", "real.env"), link)
         before_checkout, before_shared = self.listing(checkout), self.listing(target.parent)
+        before_link = link.lstat()
         calls, patch = self.spy_replace()
         with patch:
             write_changes(link, {self.VERSION: "1.1.0"})
         self.assertTrue(link.is_symlink())
         self.assertEqual(os.readlink(link), os.path.join("..", "shared", "real.env"))
+        self.assertEqual(link.lstat().st_ino, before_link.st_ino)
         self.assertEqual(target.read_bytes(), f"A=1\n{self.VERSION}=1.1.0\n".encode())
         self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o640)
-        self.assertEqual(Path(calls[0][0]).parent.parents[3], target.resolve().parent)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(Path(calls[0][1]), target.resolve())
+        self.assertEqual(Path(calls[0][0]).parent.parents[3].resolve(), target.resolve().parent)
         self.assertEqual(self.listing(checkout), before_checkout)
         self.assertEqual(self.listing(target.parent), sorted(before_shared + ['.futureagi-updates']))
+
+    def test_symlinked_parent_keeps_alias_and_uses_target_retention(self) -> None:
+        # Exercise a /var -> /private/var-style alias even with a canonical TMPDIR.
+        target = self.write(f"{self.VERSION}=1.0.0\n", name="actual/.env")
+        alias = self.dir / "alias"
+        alias.symlink_to("actual", target_is_directory=True)
+        path = alias / ".env"
+        self.assertNotEqual(path, target.resolve())
+        self.assertTrue(path.samefile(target))
+        before_alias = alias.lstat()
+        calls, patch = self.spy_replace()
+        with open(path, encoding="utf-8") as old_reader, patch:
+            write_changes(path, {self.VERSION: "1.1.0"})
+            self.assertEqual(old_reader.read(), f"{self.VERSION}=1.0.0\n")
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(os.readlink(alias), "actual")
+        self.assertEqual(alias.lstat().st_ino, before_alias.st_ino)
+        self.assertEqual(path.read_bytes(), f"{self.VERSION}=1.1.0\n".encode())
+        self.assertTrue(path.samefile(target))
+        self.assertEqual(len(calls), 1)
+        temp, destination = calls[0]
+        self.assertEqual(Path(destination), target.resolve())
+        self.assertEqual(Path(temp).parent.parents[3].resolve(), target.parent.resolve())
+        self.assertEqual(Path(temp).read_bytes(), f"{self.VERSION}=1.0.0\n".encode())
 
     def test_symlink_chain_is_followed(self) -> None:
         target = self.write(f"{self.VERSION}=1.0.0\n", name="real.env")
@@ -1344,9 +1372,10 @@ class WriteChangesTests(_EnvCase):
                 calls, patch = self.spy_replace()
                 with patch:
                     write_changes(path, {self.VERSION: "1.1.0"})
-                temp = Path(calls[0][0])
+                self.assertEqual(len(calls), 1)
+                temp = Path(calls[0][0]).resolve()
                 self.assertEqual(temp.parent.parents[3], path.resolve().parent)
-                in_repo = (Path(relative).parent / temp.relative_to(path.parent)).as_posix()
+                in_repo = (Path(relative).parent / temp.relative_to(path.resolve().parent)).as_posix()
                 self.assertEqual(check_ignore(in_repo), 0, f"{in_repo} is not ignored by .gitignore")
 
 
@@ -2649,24 +2678,55 @@ class ExactEnvRecoveryTests(_EnvCase):
         self.assertFalse(path.exists())
         self.assertFalse((self.dir / '.futureagi-updates').exists())
 
-    def test_noop_rechecks_bytes_after_stat_before_returning_success(self):
-        path = self.write('V=v1\n')
-        real = Path.stat
-        changed = []
+    def assert_noop_rechecks_bytes_after_stat(self, path):
+        # Resolve before patching: resolve()/samefile() inside a Path.stat hook
+        # can recurse, and the production stat uses the canonical target.
+        resolved = path.resolve(strict=True)
+        real_stat, real_read = Path.stat, envfile._read_text
+        events = []
+
+        def read(target, shown):
+            self.assertEqual((target, shown), (resolved, path))
+            text = real_read(target, shown)
+            events.append(('read', text))
+            return text
 
         def stat_and_edit(target, *args, **kwargs):
-            result = real(target, *args, **kwargs)
-            if target == path and not changed:
+            result = real_stat(target, *args, **kwargs)
+            if target == resolved:
+                # Inject exactly once, after the original read and the actual
+                # stat, but before the no-op guard's second read.
+                self.assertEqual(events, [('read', 'V=v1\n')])
+                events.append(('stat', target))
                 path.write_bytes(b'V=operator\n')
-                changed.append(True)
+                events.append(('edit', b'V=operator\n'))
             return result
 
-        with mock.patch.object(Path, 'stat', stat_and_edit):
+        with mock.patch.object(Path, 'stat', stat_and_edit), \
+                mock.patch.object(envfile, '_read_text', side_effect=read):
             with self.assertRaisesRegex(EnvFileError, 'changed during the write'):
                 envfile.write_changes(path, {})
-        self.assertEqual(changed, [True])
+        self.assertEqual(events, [('read', 'V=v1\n'), ('stat', resolved),
+                                  ('edit', b'V=operator\n'), ('read', 'V=operator\n')])
         self.assertEqual(path.read_bytes(), b'V=operator\n')
-        self.assertFalse((self.dir / '.futureagi-updates').exists())
+        self.assertFalse((resolved.parent / '.futureagi-updates').exists())
+
+    def test_noop_rechecks_bytes_after_stat_before_returning_success(self):
+        self.assert_noop_rechecks_bytes_after_stat(self.write('V=v1\n'))
+
+    def test_noop_rechecks_bytes_through_a_symlinked_parent(self):
+        target = self.write('V=v1\n', name='actual/.env')
+        alias = self.dir / 'alias'
+        alias.symlink_to('actual', target_is_directory=True)
+        path = alias / '.env'
+        self.assertNotEqual(path, target.resolve())
+        self.assertTrue(path.samefile(target))
+        before_alias = alias.lstat()
+        self.assert_noop_rechecks_bytes_after_stat(path)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(os.readlink(alias), 'actual')
+        self.assertEqual(alias.lstat().st_ino, before_alias.st_ino)
+        self.assertTrue(path.samefile(target))
 
     def test_two_real_reads_with_intervening_editor_restore_do_not_authorize_write(self):
         path = self.write('V=v1\n')
