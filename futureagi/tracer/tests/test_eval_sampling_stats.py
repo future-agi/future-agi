@@ -9,6 +9,7 @@ both implementations would agree on.
 
 import json
 import math
+from decimal import Decimal, localcontext
 from fractions import Fraction
 from pathlib import Path
 
@@ -34,13 +35,54 @@ def close(actual, expected):
     )
 
 
-def test_z_table_is_exact_normal_quantiles():
-    for key, value in VECTORS["z_values"].items():
-        confidence = float(key)
+# Independent nominal two-sided quantiles, not a copy of the binary64 table.
+# Reproduce with mpmath at 80 decimal digits:
+#   mp.sqrt(2) * mp.erfinv(mp.mpf(str(confidence)))
+NORMAL_QUANTILES = {
+    0.8: "1.28155156554460046696510332944874281861990782435258",
+    0.9: "1.64485362695147271486384890799163213608319574427532",
+    0.95: "1.95996398454005423552459443052055152795555007786955",
+    0.99: "2.57582930354890076097857674860381411730601763427632",
+}
+
+
+def test_z_table_matches_shared_vectors_exactly():
+    assert stats.Z_VALUES == {
+        float(key): value for key, value in VECTORS["z_values"].items()
+    }
+    assert stats.Z_VALUES.keys() == NORMAL_QUANTILES.keys()
+    for confidence, value in stats.Z_VALUES.items():
         assert stats.z_value(confidence) == value
-        assert value == float(norm.ppf(1 - (1 - confidence) / 2))
     with pytest.raises(stats.StatsInputError):
         stats.z_value(0.97)
+
+
+@pytest.mark.parametrize("confidence, reference", NORMAL_QUANTILES.items())
+def test_z_table_matches_high_precision_normal_quantiles(confidence, reference):
+    # SciPy ppf is an approximation, not a bitwise oracle: its 90% result
+    # differs by one ULP between tested builds. Rounded tail probabilities
+    # contribute < 2 ULP and the existing approximation < 2 ULP at these four
+    # levels. Bound the *total* error against the nominal decimal quantile by
+    # 4 ULP (< 7e-16 relative), without changing the shared production values.
+    # Decimal subtraction preserves the reference rather than rounding it to
+    # binary64 first. No runtime scipy result defines this accuracy contract.
+    with localcontext() as context:
+        context.prec = 60
+        error = abs(Decimal.from_float(stats.z_value(confidence)) - Decimal(reference))
+        assert error <= Decimal.from_float(4 * math.ulp(float(reference)))
+
+
+@pytest.mark.parametrize("confidence", NORMAL_QUANTILES)
+@pytest.mark.parametrize("n", [2, 50, 499])
+def test_required_sample_size_preserves_quantile_rounding_boundaries(confidence, n):
+    margin = stats.margin_of_error(n, 500, confidence=confidence)
+    assert stats.required_sample_size(margin, 500, confidence=confidence) == n
+    assert (
+        stats.required_sample_size(
+            math.nextafter(margin, 0), 500, confidence=confidence
+        )
+        == n + 1
+    )
 
 
 @pytest.mark.parametrize("vector", VECTORS["margin_of_error"])
