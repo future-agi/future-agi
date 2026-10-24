@@ -52,7 +52,11 @@ from accounts.serializers.contracts import (
     UserIdsRequestSerializer,
 )
 from accounts.serializers.user import UpdateUserSerializer
-from accounts.services.token_service import issue_tokens
+from accounts.services.token_service import (
+    invalidate_password_reset_tokens,
+    issue_tokens,
+    remember_password_reset_token,
+)
 from accounts.utils import WorkEmailRequired, build_password_reset_link, first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
@@ -486,14 +490,16 @@ def initiate_password_reset(request):
                         {"message": oss_reset_unavailable_message()}
                     )
 
-                # Send reset password email
-                # Generate a token
+                # A second reset must kill the earlier link. Only the reset row is
+                # deactivated: a live session uses the same ACCESS type.
+                invalidate_password_reset_tokens(user)
                 access_token = AuthToken.objects.create(
                     user=user,
                     auth_type=AuthTokenType.ACCESS.value,
                     is_active=True,
                     last_used_at=timezone.now(),
                 )
+                remember_password_reset_token(user, access_token.id)
                 token = generate_encrypted_message(
                     {"user_id": str(user.id), "id": str(access_token.id)}
                 )

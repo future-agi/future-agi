@@ -1964,6 +1964,158 @@ class TestOssPasswordResetLink:
 
         assert first != second
 
+    def test_a_new_reset_invalidates_the_previous_link(
+        self, api_client, user, no_outbound_email
+    ):
+        """Ganesh RK: an older reset link must not still change the password
+        after a newer one was requested."""
+        from django.contrib.auth.hashers import check_password
+        from django.urls import reverse
+
+        def confirm_path(reset_link):
+            marker = "/auth/jwt/verify/"
+            uid_token = reset_link.split(marker, 1)[1]
+            uidb64, token = uid_token.split("/", 1)
+            return reverse(
+                "reset-password-confirm",
+                kwargs={"uidb64": uidb64, "token": token},
+            )
+
+        with _oss():
+            first = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+            second = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+
+        stale = api_client.post(
+            confirm_path(first),
+            {
+                "new_password": "StaleResetPass123!",
+                "repeat_password": "StaleResetPass123!",
+            },
+            format="json",
+        )
+        assert stale.status_code == status.HTTP_403_FORBIDDEN, stale.content
+        user.refresh_from_db()
+        assert not check_password("StaleResetPass123!", user.password)
+
+        newest = api_client.post(
+            confirm_path(second),
+            {
+                "new_password": "NewestResetPass123!",
+                "repeat_password": "NewestResetPass123!",
+            },
+            format="json",
+        )
+        assert newest.status_code == status.HTTP_200_OK, newest.content
+        user.refresh_from_db()
+        assert check_password("NewestResetPass123!", user.password)
+
+    def test_a_reset_request_leaves_a_live_session_signed_in(
+        self, api_client, user, no_outbound_email
+    ):
+        """The reset secret shares the ACCESS type with a session. Asking for
+        a reset must not sign that session out."""
+        from django.core.cache import cache
+        from django.utils import timezone
+
+        from accounts.authentication import generate_encrypted_message
+        from accounts.models.auth_token import AuthToken, AuthTokenType
+
+        session = AuthToken.objects.create(
+            user=user,
+            auth_type=AuthTokenType.ACCESS.value,
+            is_active=True,
+            last_used_at=timezone.now(),
+        )
+        session_secret = generate_encrypted_message(
+            {"user_id": str(user.id), "id": str(session.id)}
+        )
+        cache.set(f"access_token_{session.id}", {"token": session_secret, "user": user})
+
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        session.refresh_from_db()
+        assert session.is_active is True
+        assert cache.get(f"access_token_{session.id}") is not None
+
+    def test_signing_in_again_retires_an_outstanding_reset_link(
+        self, api_client, user, no_outbound_email
+    ):
+        from urllib.parse import urlparse
+
+        from accounts.services.token_service import issue_tokens
+
+        with _oss():
+            link = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+
+        issue_tokens(user)
+        uid_token = urlparse(link).path.split("/auth/jwt/verify/", 1)[1]
+        uidb64, token = uid_token.split("/", 1)
+        stale = api_client.post(
+            f"/accounts/password-reset-confirm/{uidb64}/{token}/",
+            {
+                "new_password": "AfterLoginReset123!",
+                "repeat_password": "AfterLoginReset123!",
+            },
+            format="json",
+        )
+        assert stale.status_code == status.HTTP_403_FORBIDDEN, stale.content
+
+    def test_password_login_retires_an_outstanding_reset_link(
+        self, api_client, user, no_outbound_email
+    ):
+        """POST /accounts/token/ mints the session itself. It must retire the
+        reset link, not only the helper that other sign-in paths call."""
+        from urllib.parse import urlparse
+
+        from django.contrib.auth.hashers import check_password
+
+        with _oss():
+            link = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == status.HTTP_200_OK, login.content
+        assert "access" in login.json()
+
+        uid_token = urlparse(link).path.split("/auth/jwt/verify/", 1)[1]
+        uidb64, token = uid_token.split("/", 1)
+        stale = api_client.post(
+            f"/accounts/password-reset-confirm/{uidb64}/{token}/",
+            {
+                "new_password": "AfterPasswordLogin123!",
+                "repeat_password": "AfterPasswordLogin123!",
+            },
+            format="json",
+        )
+        assert stale.status_code == status.HTTP_403_FORBIDDEN, stale.content
+        user.refresh_from_db()
+        assert not check_password("AfterPasswordLogin123!", user.password)
+
 
 @pytest.mark.integration
 @pytest.mark.api
