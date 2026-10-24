@@ -114,16 +114,6 @@ const PersonasColumnsPopover = ({
                     checked={isVisible}
                     disabled={col.locked}
                     onChange={() => onToggleColumn(col.field)}
-                    checkedIcon={
-                      <Iconify icon="solar:check-square-bold" width={20} />
-                    }
-                    icon={
-                      <Iconify
-                        icon="solar:square-linear"
-                        width={20}
-                        sx={{ color: "text.disabled" }}
-                      />
-                    }
                     sx={{ p: 0.5 }}
                   />
                 }

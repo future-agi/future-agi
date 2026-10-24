@@ -1,4 +1,5 @@
 import {
+  Checkbox,
   Badge,
   Box,
   Button,
@@ -4411,16 +4412,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         size="small"
                         onClick={() => setHasEvalFilter(!hasEvalFilter)}
                         startIcon={
-                          <Iconify
-                            icon={
-                              hasEvalFilter
-                                ? "famicons:checkbox"
-                                : "solar:square-linear"
-                            }
-                            color={
-                              hasEvalFilter ? "primary.main" : "text.disabled"
-                            }
-                            width={20}
+                          <Checkbox
+                            size="small"
+                            checked={hasEvalFilter}
+                            tabIndex={-1}
+                            disableRipple
+                            inputProps={{ "aria-hidden": true }}
+                            sx={{ p: 0 }}
                           />
                         }
                       >

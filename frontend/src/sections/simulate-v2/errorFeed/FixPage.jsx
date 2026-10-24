@@ -973,17 +973,13 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             ...focusRing,
                           }}
                         >
-                          <Iconify
-                            icon={
-                              on
-                                ? "solar:check-square-bold"
-                                : "solar:stop-linear"
-                            }
-                            width={16}
-                            sx={{
-                              color: on ? "text.primary" : "text.subtitle",
-                              flexShrink: 0,
-                            }}
+                          <Checkbox
+                            size="small"
+                            checked={on}
+                            tabIndex={-1}
+                            disableRipple
+                            inputProps={{ "aria-hidden": true }}
+                            sx={{ p: 0, flexShrink: 0 }}
                           />
                           <Box flex={1} minWidth={0}>
                             <Typography

@@ -6,6 +6,8 @@
  * keys (enum values, UUIDs) that should never be shown to the user.
  */
 import {
+  Radio,
+  Checkbox,
   Autocomplete,
   Box,
   Button,
@@ -235,17 +237,15 @@ function EnumValuePicker({
                 "&:hover": { bgcolor: "action.selected" },
               }}
             >
-              <Iconify
-                icon={
-                  filtered.every((o) => value.includes(o))
-                    ? "solar:minus-square-linear"
-                    : "solar:square-linear"
-                }
-                width={20}
-                sx={{ color: "primary.main", flexShrink: 0 }}
+              <Checkbox
+                size="small"
+                checked={filtered.every((o) => value.includes(o))}
+                tabIndex={-1}
+                disableRipple
+                sx={{ p: 0, flexShrink: 0 }}
               />
               <Typography
-                sx={{ fontSize: 12, color: "primary.main", fontWeight: 600 }}
+                sx={{ fontSize: 13, color: "text.primary", fontWeight: 500 }}
               >
                 Select all matching in list ({filtered.length})
               </Typography>
@@ -274,19 +274,13 @@ function EnumValuePicker({
                 "&:hover": { bgcolor: "action.hover" },
               }}
             >
-              <Iconify
-                icon={
-                  value.includes(search)
-                    ? "solar:check-square-bold"
-                    : "solar:square-linear"
-                }
-                width={20}
-                sx={{
-                  color: value.includes(search)
-                    ? "primary.main"
-                    : "text.secondary",
-                  flexShrink: 0,
-                }}
+              <Checkbox
+                size="small"
+                checked={value.includes(search)}
+                tabIndex={-1}
+                disableRipple
+                inputProps={{ "aria-hidden": true }}
+                sx={{ p: 0, flexShrink: 0 }}
               />
               <Typography sx={{ fontSize: 12 }}>
                 Specify: <strong>{search}</strong>
@@ -323,22 +317,25 @@ function EnumValuePicker({
                   "&:hover": { bgcolor: "action.hover" },
                 }}
               >
-                <Iconify
-                  icon={
-                    single
-                      ? isSelected
-                        ? "solar:circle-dot-linear"
-                        : "solar:circle-linear"
-                      : isSelected
-                        ? "solar:check-square-bold"
-                        : "solar:square-linear"
-                  }
-                  width={20}
-                  sx={{
-                    color: isSelected ? "primary.main" : "text.secondary",
-                    flexShrink: 0,
-                  }}
-                />
+                {single ? (
+                  <Radio
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                ) : (
+                  <Checkbox
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                )}
                 <Typography
                   noWrap
                   sx={{
@@ -1427,7 +1424,7 @@ const QueryInput = forwardRef(function QueryInput(
             )}
             {isValue && (
               <Iconify
-                icon="solar:square-linear"
+                icon="solar:tag-linear"
                 width={14}
                 sx={{ color: "text.disabled", flexShrink: 0 }}
               />

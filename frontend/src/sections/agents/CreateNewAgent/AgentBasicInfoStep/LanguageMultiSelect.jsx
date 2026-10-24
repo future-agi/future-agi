@@ -337,24 +337,6 @@ const LanguageMultiSelect = ({
                       >
                         <Checkbox
                           checked={data.includes(id)}
-                          icon={
-                            <Iconify
-                              icon="solar:square-linear"
-                              color="action.default"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
-                          checkedIcon={
-                            <Iconify
-                              icon="famicons:checkbox"
-                              color="primary.light"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
                           sx={{
                             color: "divider",
                           }}

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, IconButton, Stack, Typography } from "@mui/material";
+import { Checkbox, Box, IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PersonaBadge } from "../../components/primitives";
 import { clickable, focusRing } from "../../components/clickable";
@@ -36,13 +36,13 @@ export default function ScenarioRow({
       })}
     >
       {selectable ? (
-        <Iconify
-          icon={checked ? "solar:check-square-bold" : "solar:stop-linear"}
-          width={20}
-          sx={{
-            color: checked ? "primary.main" : "text.tertiary",
-            flexShrink: 0,
-          }}
+        <Checkbox
+          size="small"
+          checked={checked}
+          tabIndex={-1}
+          disableRipple
+          inputProps={{ "aria-hidden": true }}
+          sx={{ p: 0, flexShrink: 0 }}
         />
       ) : (
         <Typography

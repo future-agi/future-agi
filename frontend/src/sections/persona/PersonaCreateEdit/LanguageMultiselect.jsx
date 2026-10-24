@@ -365,24 +365,6 @@ const LanguageMultiSelect = ({
                         <Checkbox
                           checked={allSelected}
                           indeterminate={someSelected}
-                          icon={
-                            <Iconify
-                              icon="solar:square-linear"
-                              color="action.selected"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
-                          checkedIcon={
-                            <Iconify
-                              icon="famicons:checkbox"
-                              color="primary.light"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
                           sx={{
                             color: "divider",
                           }}
@@ -413,24 +395,6 @@ const LanguageMultiSelect = ({
                       >
                         <Checkbox
                           checked={data.includes(id)}
-                          icon={
-                            <Iconify
-                              icon="solar:square-linear"
-                              color="action.selected"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
-                          checkedIcon={
-                            <Iconify
-                              icon="famicons:checkbox"
-                              color="primary.light"
-                              width={24}
-                              height={24}
-                              style={{ display: "block" }}
-                            />
-                          }
                           sx={{
                             color: "divider",
                           }}

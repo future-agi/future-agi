@@ -72,15 +72,7 @@ const BpCheckedIcon = styled(BpIcon)(({ theme }) => ({
 }));
 
 function BpRadio(props) {
-  return (
-    <Radio
-      disableRipple
-      color="default"
-      checkedIcon={<BpCheckedIcon />}
-      icon={<BpIcon />}
-      {...props}
-    />
-  );
+  return <Radio disableRipple color="default" {...props} />;
 }
 
 // Skeleton loader for versions

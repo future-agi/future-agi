@@ -100,14 +100,6 @@ const SortableColumnRow = ({ col, isVisible, onToggle }) => {
             size="small"
             checked={isVisible}
             onChange={() => onToggle(col.field)}
-            checkedIcon={<Iconify icon="solar:check-square-bold" width={20} />}
-            icon={
-              <Iconify
-                icon="solar:square-linear"
-                width={20}
-                sx={{ color: "text.disabled" }}
-              />
-            }
             sx={{ p: 0.5 }}
           />
         }
@@ -271,16 +263,6 @@ const DisplayOptionsPopover = ({
                   size="small"
                   checked={!hiddenColumns.includes(lockedColumn.field)}
                   disabled
-                  checkedIcon={
-                    <Iconify icon="solar:check-square-bold" width={20} />
-                  }
-                  icon={
-                    <Iconify
-                      icon="solar:square-linear"
-                      width={20}
-                      sx={{ color: "text.disabled" }}
-                    />
-                  }
                   sx={{ p: 0.5 }}
                 />
               }

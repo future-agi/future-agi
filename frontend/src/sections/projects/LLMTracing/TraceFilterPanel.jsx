@@ -6,6 +6,8 @@
  *   - Query tab: inline token builder (shared FilterPanel's QueryInput)
  */
 import {
+  Checkbox,
+  Radio,
   Box,
   Button,
   Chip,
@@ -3267,29 +3269,32 @@ function ValuePicker({
                   "&:hover": { bgcolor: "action.hover" },
                 }}
               >
-                <Iconify
-                  icon={
-                    singleSelect
-                      ? isSelected
-                        ? "solar:circle-dot-linear"
-                        : "solar:circle-linear"
-                      : isSelected
-                        ? "solar:check-square-bold"
-                        : "solar:square-linear"
-                  }
-                  width={20}
-                  sx={{
-                    color: isSelected ? "primary.main" : "text.secondary",
-                    flexShrink: 0,
-                  }}
-                />
+                {singleSelect ? (
+                  <Radio
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                ) : (
+                  <Checkbox
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Typography
                     noWrap
                     title={label}
                     sx={{
-                      fontSize: 12,
-                      fontWeight: isSelected ? 600 : 400,
+                      fontSize: 13,
+                      fontWeight: isSelected ? 500 : 400,
                       color: "text.primary",
                     }}
                   >

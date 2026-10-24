@@ -76,6 +76,14 @@ module.exports = {
         "Purple selected state. Selected tabs, items and rows use text.primary; purple is for the main action only.",
       ),
       DS(
+        "JSXOpeningElement[name.name=/^(Checkbox|Radio)$/] JSXAttribute[name.name=/^(icon|checkedIcon|indeterminateIcon)$/]",
+        "Checkbox/Radio icon override. Use the theme's Checkbox or Radio as is.",
+      ),
+      DS(
+        "JSXAttribute[name.name='icon'] Literal[value=/^(solar:(check-square|square|circle-dot)-(linear|bold)$|famicons:checkbox|mdi:checkbox|mdi:radiobox)/]",
+        "Hand-drawn checkbox or radio icon. Render <Checkbox> or <Radio> (tabIndex={-1} inside a clickable row).",
+      ),
+      DS(
         "JSXOpeningElement[name.name=/^(Avatar|AvatarGroup)$/] JSXAttribute[name.name='sx'] Property[key.name=/^(bgcolor|backgroundColor|color|border|borderColor)$/]",
         "Avatar colour override. Avatars are the neutral DS avatar; only size may change.",
       ),

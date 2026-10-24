@@ -209,22 +209,6 @@ const CustomDropDownWithSearch = ({
             <Checkbox
               checked={selectedValues && selectedValues.includes(option.value)}
               sx={{ padding: "4px" }}
-              icon={
-                <Iconify
-                  icon="solar:square-linear"
-                  color="action.selected"
-                  width={16}
-                  height={16}
-                />
-              }
-              checkedIcon={
-                <Iconify
-                  icon="famicons:checkbox"
-                  color="primary.light"
-                  width={16}
-                  height={16}
-                />
-              }
             />
             <ListItemText
               primary={option.label}
@@ -246,10 +230,7 @@ const CustomDropDownWithSearch = ({
           </MenuItem>
         ))}
         {filteredOptions.length === 0 && (
-          <MenuItem
-            disabled
-            sx={{ opacity: 0.7, fontStyle: "italic" }}
-          >
+          <MenuItem disabled sx={{ opacity: 0.7, fontStyle: "italic" }}>
             No options found
           </MenuItem>
         )}

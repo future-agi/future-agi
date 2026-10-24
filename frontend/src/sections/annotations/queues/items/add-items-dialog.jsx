@@ -168,7 +168,6 @@ export function SelectionCheckboxNudge({ selectionCount }) {
     <Alert
       severity="info"
       variant="outlined"
-      icon={<Iconify icon="solar:check-square-bold" width={20} />}
       sx={{
         mt: 2,
         "& .MuiAlert-message": {

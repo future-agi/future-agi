@@ -80,27 +80,6 @@ export const FormCheckboxField = ({
                       props.onChange?.(e);
                     }}
                     inputProps={{ "aria-label": "controlled" }}
-                    icon={
-                      <Iconify
-                        icon="solar:square-linear"
-                        sx={{
-                          color:
-                            theme.palette.mode === "light"
-                              ? theme.palette.black?.o20
-                              : theme.palette.grey?.[600],
-                        }}
-                        width={isCustom ? 22 : 20}
-                      />
-                    }
-                    checkedIcon={
-                      <Iconify
-                        icon="famicons:checkbox"
-                        sx={{
-                          color: theme.palette.purple?.[300],
-                        }}
-                        width={isCustom ? 22 : 20}
-                      />
-                    }
                     size={size}
                     sx={{ ...props.checkboxSx }}
                   />

@@ -16,6 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   Box,
+  Checkbox,
   Divider,
   FormControlLabel,
   IconButton,
@@ -26,7 +27,6 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
-import { LightCheckbox } from "src/sections/project-detail/StyledComponents";
 import {
   Accordion,
   AccordionDetails,
@@ -51,7 +51,6 @@ const DraggableDropdownItem = (props) => {
     zIndex: isDragging ? 10 : 1,
     width: "100%",
   };
-  const theme = useTheme();
 
   return (
     <FormControlLabel
@@ -60,22 +59,11 @@ const DraggableDropdownItem = (props) => {
       onClick={(e) => e.stopPropagation()}
       control={
         <>
-          <LightCheckbox
+          <Checkbox
+            size="small"
             checked={checked}
             onChange={onChange}
-            sx={{
-              padding: "0px",
-              "&.Mui-checked": { color: "primary.light" },
-            }}
-            checkedIcon={<Iconify icon="solar:check-square-bold" />}
-            icon={
-              <Iconify
-                icon="solar:square-linear"
-                sx={{
-                  color: theme.palette.divider,
-                }}
-              />
-            }
+            sx={{ p: 0 }}
             inputProps={{
               "aria-label": "controlled",
             }}

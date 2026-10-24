@@ -61,19 +61,7 @@ const DraggableDropdownItem = (props) => {
           <LightCheckbox
             checked={checked}
             onChange={onChange}
-            sx={{
-              padding: "0px",
-              "&.Mui-checked": { color: "primary.light" },
-            }}
-            checkedIcon={<Iconify icon="solar:check-square-bold" />}
-            icon={
-              <Iconify
-                icon="solar:square-linear"
-                sx={{
-                  color: "divider",
-                }}
-              />
-            }
+            sx={{ p: 0 }}
             inputProps={{
               "aria-label": "controlled",
             }}

@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Checkbox,
   Box,
   Button,
   ButtonBase,
@@ -1036,15 +1037,13 @@ export default function ImprovementSetup({
                           "&:hover": { bgcolor: "action.hover" },
                         }}
                       >
-                        <Iconify
-                          icon={
-                            on ? "solar:check-square-bold" : "solar:stop-linear"
-                          }
-                          width={16}
-                          sx={{
-                            color: on ? "text.primary" : "text.tertiary",
-                            flexShrink: 0,
-                          }}
+                        <Checkbox
+                          size="small"
+                          checked={on}
+                          tabIndex={-1}
+                          disableRipple
+                          inputProps={{ "aria-hidden": true }}
+                          sx={{ p: 0, flexShrink: 0 }}
                         />
                         <Typography
                           noWrap

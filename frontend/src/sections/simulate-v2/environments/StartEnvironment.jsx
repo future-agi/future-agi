@@ -4,6 +4,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
+  Checkbox,
   Box,
   Stack,
   Typography,
@@ -2218,16 +2219,13 @@ export function PlatformTestingStep({
           }}
           sx={{ mt: 1, cursor: "pointer", width: "fit-content" }}
         >
-          <Iconify
-            icon={
-              versioningOn ? "solar:check-square-bold" : "solar:square-linear"
-            }
-            width={16}
-            sx={{
-              color: versioningOn ? "text.primary" : "text.disabled",
-              mt: 0.125,
-              flexShrink: 0,
-            }}
+          <Checkbox
+            size="small"
+            checked={versioningOn}
+            tabIndex={-1}
+            disableRipple
+            inputProps={{ "aria-hidden": true }}
+            sx={{ p: 0, flexShrink: 0 }}
           />
           <Box>
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>

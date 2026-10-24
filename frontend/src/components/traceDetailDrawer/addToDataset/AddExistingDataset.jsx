@@ -345,22 +345,6 @@ const AddExistingDataset = ({
                       onChange={() => handleCheckboxChange(index)}
                       checked={item.checked}
                       sx={{ marginRight: "5px" }}
-                      icon={
-                        <Iconify
-                          icon="solar:square-linear"
-                          color="text.disabled"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
-                      checkedIcon={
-                        <Iconify
-                          icon="famicons:checkbox"
-                          color="primary.light"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
                     />
                     <TextField
                       fullWidth

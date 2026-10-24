@@ -1,5 +1,6 @@
 /* eslint-disable react/prop-types */
 import {
+  Checkbox,
   Box,
   Chip,
   CircularProgress,
@@ -1725,19 +1726,13 @@ const ModelSelector = ({
                           }),
                         }}
                       >
-                        <Iconify
-                          icon={
-                            isSelected
-                              ? "solar:check-square-bold"
-                              : "solar:square-linear"
-                          }
-                          width={20}
-                          sx={{
-                            color: isSelected
-                              ? "primary.main"
-                              : "text.disabled",
-                            flexShrink: 0,
-                          }}
+                        <Checkbox
+                          size="small"
+                          checked={isSelected}
+                          tabIndex={-1}
+                          disableRipple
+                          inputProps={{ "aria-hidden": true }}
+                          sx={{ p: 0, flexShrink: 0 }}
                         />
                         <Typography
                           variant="s2_1"

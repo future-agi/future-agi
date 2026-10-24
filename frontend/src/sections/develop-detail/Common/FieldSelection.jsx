@@ -92,22 +92,6 @@ const FieldSelection = ({
             <Checkbox
               checked={isChecked}
               onChange={handleCheckbox}
-              icon={
-                <Iconify
-                  icon="solar:square-linear"
-                  color="action.selected"
-                  width="24px"
-                  height="24px"
-                />
-              }
-              checkedIcon={
-                <Iconify
-                  icon="famicons:checkbox"
-                  color="primary.light"
-                  width="24px"
-                  height="24px"
-                />
-              }
               sx={{
                 padding: 1,
                 color: "divider",
