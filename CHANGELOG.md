@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.54.0](https://github.com/future-agi/future-agi/compare/v1.53.0...v1.54.0) (2026-10-22)
+
+
+### Features
+
+* **simulate:** agent layer and voice observability, phase 1 (TH-7957) ([be6f2f3](https://github.com/future-agi/future-agi/commit/be6f2f3329cfef991d6dea4e6b2c877191d63946))
+* **simulate:** real data and designer updates on the environment detail page [TH-8684] ([4428549](https://github.com/future-agi/future-agi/commit/44285494beb2797506c7394f52e7383300019ace))
+
 ## [1.53.0](https://github.com/future-agi/future-agi/compare/v1.52.0...v1.53.0) (2026-10-21)
 
 
