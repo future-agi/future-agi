@@ -41,6 +41,17 @@ def _standardize_url(url):
         return "http://" + url
 
 
+def _is_valid_link(url):
+    """Check a URL with bounded, redirect-aware HTTP requests."""
+    with requests.Session() as session:
+        session.max_redirects = 5
+        with session.head(url, timeout=5, allow_redirects=True) as response:
+            if response.status_code not in (403, 405):
+                return response.status_code < 400
+        with session.get(url, timeout=5, allow_redirects=True, stream=True) as response:
+            return response.status_code < 400
+
+
 def _preprocess_strings(keywords, text, case_sensitive):
     """
     Preprocess the keywords based on the case_sensitive flag.
@@ -1342,8 +1353,7 @@ def contains_valid_link(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
+                if _is_valid_link(standardized_url):
                     return {
                         "result": True,
                         "reason": f"link {matched_url} found in output and is valid",
@@ -1353,7 +1363,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except Exception:
+            except requests.RequestException:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1378,8 +1388,7 @@ def no_invalid_links(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
+                if _is_valid_link(standardized_url):
                     return {
                         "result": True,
                         "reason": f"link {matched_url} found in output and is valid",
@@ -1389,7 +1398,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except Exception:
+            except requests.RequestException:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
