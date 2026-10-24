@@ -557,9 +557,16 @@ def _resolve_special_value(value, row, runner):
                     "and no run_prompter"
                 )
                 return None
+            from model_hub.services.experiment_config_resolver import (
+                get_snapshot_template_format,
+                resolve_template_format,
+            )
+
+            # Render in the same format the experiment run used
             epc = getattr(runner.experiment_dataset, "prompt_config", None)
             if epc:
                 messages = epc.get_messages()
+                tf = resolve_template_format(epc)
             else:
                 # Check if this is an agent experiment
                 eac = getattr(runner.experiment_dataset, "agent_config", None)
@@ -570,6 +577,9 @@ def _resolve_special_value(value, row, runner):
                     )
                     return None
                 messages = _get_agent_node_messages(eac, runner.column)
+                # The agent runtime renders the node in its saved format
+                # (llm_prompt.py), so read it before the snapshot is flattened.
+                tf = get_snapshot_template_format(messages) or "mustache"
 
             if not messages:
                 logger.warning(
@@ -588,10 +598,6 @@ def _resolve_special_value(value, row, runner):
             from model_hub.views.run_prompt import populate_placeholders
 
             col_id = runner.column.id if runner.column else None
-            # Extract template_format from experiment prompt config if available
-            tf = None
-            if epc and hasattr(epc, "configuration"):
-                tf = (epc.configuration or {}).get("template_format")
             populated_messages = populate_placeholders(
                 messages,
                 runner.dataset.id,
@@ -599,6 +605,7 @@ def _resolve_special_value(value, row, runner):
                 col_id,
                 model_name="",
                 template_format=tf,
+                escape_mustache=False,
             )
 
             return _format_messages_to_prompt_chain(populated_messages)

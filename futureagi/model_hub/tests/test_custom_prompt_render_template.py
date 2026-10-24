@@ -14,6 +14,12 @@ from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator impo
     CustomPromptEvaluator,
 )
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
+from model_hub.views.run_prompt import (
+    DEFAULT_TEMPLATE_FORMAT,
+    TEMPLATE_FORMAT_JINJA2,
+    TEMPLATE_FORMAT_MUSTACHE,
+    render_template,
+)
 
 
 @pytest.fixture
@@ -176,6 +182,60 @@ class TestRenderTemplateContextMutation:
         assert "obj.field" not in ctx
         assert isinstance(ctx.get("obj"), dict)
         assert ctx["obj"].get("field") == "world"
+
+
+class TestRenderTemplateDefaultBehavior:
+    def test_default_template_format_remains_jinja2(self):
+        assert DEFAULT_TEMPLATE_FORMAT == "jinja2"
+
+    def test_missing_template_format_preserves_run_prompt_rendering(self):
+        out = render_template(
+            "{% for item in items %}<{{item}}>{% endfor %}", {"items": ["a", "b"]}
+        )
+        assert out == "<a><b>"
+
+    def test_explicit_jinja2_still_renders_jinja(self):
+        out = render_template(
+            "Hello {% if name == 'Karthik' %}{{name}}{% endif %}",
+            {"name": "Karthik"},
+            TEMPLATE_FORMAT_JINJA2,
+        )
+        assert out == "Hello Karthik"
+
+
+class TestRenderTemplateMustacheEscaping:
+    """Experiments opt out of escaping without changing Run Prompt columns."""
+
+    VALUE = 'He said "x < y & z"'
+
+    def test_explicit_mustache_preserves_run_prompt_escaping(self):
+        out = render_template(
+            "In: {{ ctx }}", {"ctx": self.VALUE}, TEMPLATE_FORMAT_MUSTACHE
+        )
+        assert out == "In: He said &quot;x &lt; y &amp; z&quot;"
+
+    def test_experiment_variable_is_not_html_escaped(self):
+        out = render_template(
+            "In: {{ ctx }}",
+            {"ctx": self.VALUE},
+            TEMPLATE_FORMAT_MUSTACHE,
+            escape_mustache=False,
+        )
+        assert out == f"In: {self.VALUE}"
+
+    def test_missing_format_is_not_html_escaped(self):
+        assert render_template("In: {{ctx}}", {"ctx": self.VALUE}) == (
+            f"In: {self.VALUE}"
+        )
+
+    def test_sections_and_unescaped_tags_still_render(self):
+        out = render_template(
+            "{{#items}}[{{.}}]{{/items}}{{^none}} {{{ctx}}} {{&ctx}}{{/none}}",
+            {"items": ["<a>", "b&c"], "none": [], "ctx": self.VALUE},
+            TEMPLATE_FORMAT_MUSTACHE,
+            escape_mustache=False,
+        )
+        assert out == f"[<a>][b&c] {self.VALUE} {self.VALUE}"
 
 
 class TestRenderTemplateSSTIProtection:

@@ -100,6 +100,25 @@ describe("ModelHubExperimentsV2CreateBody generated zod contract", () => {
     expect(parsed.model_params.custom_provider_key).toBe("value");
   });
 
+  it("preserves template_format in prompt configuration", () => {
+    const result = ModelHubExperimentsV2CreateBody.safeParse({
+      ...MINIMAL_PAYLOAD,
+      prompt_config: [
+        {
+          ...FULL_PROMPT_CONFIG_ITEM,
+          configuration: {
+            ...FULL_PROMPT_CONFIG_ITEM.configuration,
+            template_format: "jinja",
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    expect(result.data.prompt_config[0].configuration.template_format).toBe(
+      "jinja",
+    );
+  });
+
   it("accepts a message with client-side id and string content", () => {
     const result = ModelHubExperimentsV2CreateBody.safeParse({
       ...MINIMAL_PAYLOAD,
