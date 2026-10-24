@@ -9444,6 +9444,913 @@ export const ApiHealthClickhouseListResponse = zod.object({
   error: zod.string().min(1).optional(),
 });
 
+export const apiHostUpdateStatusListResponseResultAgeSecondsOneMin = 0;
+export const apiHostUpdateStatusListResponseResultAgeSecondsOneMax = 9007199254740991;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneSequenceMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneSequenceMax = 9007199254740991;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneInstallationSlotIdMax = 32;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneInstallationSlotIdRegExp =
+  new RegExp("^[0-9a-f]{32}$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsSelectedReleaseOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsSelectedReleaseOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsRunningReleaseOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsRunningReleaseOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemSelectedVersionOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemSelectedVersionOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsItemMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsItemRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsMax = 8;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsMax = 9;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOnePolicyCheckIntervalSecondsMin = 300;
+export const apiHostUpdateStatusListResponseResultSnapshotOnePolicyCheckIntervalSecondsMax = 86400;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneOneTimezoneMax = 64;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoTimezoneMax = 64;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoDaysOfWeekItemMax = 7;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoDaysOfWeekMax = 7;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoStartMax = 5;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoStartRegExp =
+  new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoEndMax = 5;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoEndRegExp =
+  new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCandidateVersionOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCandidateVersionOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryReasonCodesMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryReasonCodesMax = 12;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadTargetVersionOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadTargetVersionOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadVerifiedComponentsMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadVerifiedComponentsMax = 9;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadReasonCodesMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneDownloadReasonCodesMax = 12;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationReasonCodesMin = 0;
+export const apiHostUpdateStatusListResponseResultSnapshotOneOperationReasonCodesMax = 12;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFromVersionOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFromVersionOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneTargetVersionOneMax = 128;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneTargetVersionOneRegExp =
+  new RegExp(
+    "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+  );
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneMin = 20;
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneMax = 20;
+
+export const apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneRegExp =
+  new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+
+export const ApiHostUpdateStatusListResponse = zod.object({
+  status: zod.literal(true),
+  result: zod.object({
+    api_schema_version: zod.literal(1),
+    availability: zod.enum(["available", "unavailable", "unsupported"]),
+    reason_code: zod.union([
+      zod.enum([
+        "not_configured",
+        "not_reported",
+        "unreadable",
+        "malformed",
+        "unsupported_schema",
+        "untrusted_file",
+        "clock_skew",
+        "installation_mismatch",
+      ]),
+      zod.null(),
+    ]),
+    freshness: zod.enum(["fresh", "stale", "unknown"]),
+    age_seconds: zod.union([
+      zod
+        .number()
+        .min(apiHostUpdateStatusListResponseResultAgeSecondsOneMin)
+        .max(apiHostUpdateStatusListResponseResultAgeSecondsOneMax),
+      zod.null(),
+    ]),
+    discovery_freshness: zod.enum(["fresh", "stale", "unknown"]),
+    versions_freshness: zod.enum(["fresh", "stale", "unknown"]),
+    progress_freshness: zod.enum(["fresh", "stale", "unknown"]),
+    snapshot: zod.union([
+      zod.object({
+        schema_version: zod.literal(1),
+        sequence: zod
+          .number()
+          .min(apiHostUpdateStatusListResponseResultSnapshotOneSequenceMin)
+          .max(apiHostUpdateStatusListResponseResultSnapshotOneSequenceMax),
+        generated_at: zod
+          .string()
+          .datetime({ offset: true })
+          .min(apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtMin)
+          .max(apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtMax)
+          .regex(
+            apiHostUpdateStatusListResponseResultSnapshotOneGeneratedAtRegExp,
+          ),
+        installation: zod.object({
+          slot_id: zod
+            .string()
+            .min(1)
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneInstallationSlotIdMax,
+            )
+            .regex(
+              apiHostUpdateStatusListResponseResultSnapshotOneInstallationSlotIdRegExp,
+            ),
+          topology: zod.enum(["standalone", "distributed"]),
+          production: zod.boolean(),
+        }),
+        versions: zod.object({
+          observed_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsObservedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          runtime_state: zod.enum(["consistent", "mixed", "unknown"]),
+          selected_release: zod.union([
+            zod
+              .string()
+              .min(1)
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsSelectedReleaseOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsSelectedReleaseOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          running_release: zod.union([
+            zod
+              .string()
+              .min(1)
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsRunningReleaseOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneVersionsRunningReleaseOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          components: zod
+            .array(
+              zod.object({
+                component: zod.enum([
+                  "standalone",
+                  "backend",
+                  "frontend",
+                  "fi_collector",
+                  "agentcc_gateway",
+                  "serving",
+                  "serving_gpu",
+                  "code_executor",
+                  "simulation_runner",
+                ]),
+                selected_version: zod.union([
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemSelectedVersionOneMax,
+                    )
+                    .regex(
+                      apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemSelectedVersionOneRegExp,
+                    ),
+                  zod.null(),
+                ]),
+                observed_versions: zod
+                  .array(
+                    zod
+                      .string()
+                      .min(1)
+                      .max(
+                        apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsItemMax,
+                      )
+                      .regex(
+                        apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsItemRegExp,
+                      ),
+                  )
+                  .min(
+                    apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsMin,
+                  )
+                  .max(
+                    apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsItemObservedVersionsMax,
+                  ),
+                observation: zod.enum(["known", "unknown", "not_deployed"]),
+              }),
+            )
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneVersionsComponentsMax,
+            ),
+        }),
+        policy: zod.object({
+          channel: zod.enum(["stable", "beta"]),
+          version_policy: zod.enum(["patch", "minor", "major"]),
+          check_interval_seconds: zod
+            .number()
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOnePolicyCheckIntervalSecondsMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOnePolicyCheckIntervalSecondsMax,
+            ),
+        }),
+        automation: zod.object({
+          mode: zod.enum(["manual", "notify", "download", "apply"]),
+          enabled: zod.boolean(),
+          state: zod.enum([
+            "not_implemented",
+            "disabled",
+            "manual",
+            "enabled",
+            "paused",
+            "blocked",
+          ]),
+          paused_until: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationPausedUntilOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          pause_indefinite: zod.boolean(),
+          maintenance_window: zod.union([
+            zod
+              .union([
+                zod.object({
+                  kind: zod.enum(["always"]),
+                  timezone: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneOneTimezoneMax,
+                    ),
+                }),
+                zod.object({
+                  kind: zod.enum(["interval"]),
+                  timezone: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoTimezoneMax,
+                    ),
+                  days_of_week: zod
+                    .array(
+                      zod
+                        .number()
+                        .min(1)
+                        .max(
+                          apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoDaysOfWeekItemMax,
+                        ),
+                    )
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoDaysOfWeekMax,
+                    ),
+                  start: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoStartMax,
+                    )
+                    .regex(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoStartRegExp,
+                    ),
+                  end: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoEndMax,
+                    )
+                    .regex(
+                      apiHostUpdateStatusListResponseResultSnapshotOneAutomationMaintenanceWindowOneTwoEndRegExp,
+                    ),
+                }),
+              ])
+              .describe(
+                "always: kind/timezone only; interval: also requires days_of_week/start/end.",
+              ),
+            zod.null(),
+          ]),
+          last_tick_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationLastTickAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          next_check_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextCheckAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          next_action_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneAutomationNextActionAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+        }),
+        discovery: zod.object({
+          state: zod.enum([
+            "not_checked",
+            "current",
+            "available",
+            "blocked",
+            "failed",
+          ]),
+          last_attempt_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryLastAttemptAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          checked_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCheckedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          candidate_version: zod.union([
+            zod
+              .string()
+              .min(1)
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCandidateVersionOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryCandidateVersionOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          verification: zod.enum(["not_checked", "verified", "rejected"]),
+          reason_codes: zod
+            .array(
+              zod.enum([
+                "manifest_unavailable",
+                "signature_rejected",
+                "channel_mismatch",
+                "version_policy_blocked",
+                "release_incomplete",
+                "discovery_incomplete",
+                "immutable_release_changed",
+                "network_unavailable",
+                "rate_limited",
+                "cache_invalid",
+                "ownership_unconfirmed",
+                "deployment_files_mismatch",
+                "required_env_missing",
+                "unsupported_contract",
+                "uncertified_release",
+                "configuration_changed",
+                "backup_required",
+                "backup_failed",
+                "backup_proof_invalid",
+                "backup_expired",
+                "stale_stage",
+                "env_conflict",
+                "initialization_required",
+                "manual_stage_present",
+                "recovery_required",
+                "readiness_failed",
+                "operation_interrupted",
+                "operation_timeout",
+                "rollback_ineligible",
+                "rollback_failed",
+                "failed_target_latched",
+                "running_versions_unknown",
+                "mixed_running_versions",
+                "outside_window",
+                "insufficient_window",
+                "clock_skew",
+                "timezone_unavailable",
+                "host_verifier_required",
+                "image_digest_mismatch",
+                "disk_space_insufficient",
+                "status_reporting_unavailable",
+                "scheduler_unregistered",
+                "unsupported_installation",
+                "control_invalid",
+                "process_failed",
+              ]),
+            )
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryReasonCodesMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneDiscoveryReasonCodesMax,
+            ),
+        }),
+        download: zod.object({
+          state: zod.enum([
+            "not_downloaded",
+            "downloading",
+            "downloaded",
+            "failed",
+            "unknown",
+          ]),
+          target_version: zod.union([
+            zod
+              .string()
+              .min(1)
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneDownloadTargetVersionOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneDownloadTargetVersionOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          completed_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneDownloadCompletedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          verified_components: zod
+            .array(
+              zod.enum([
+                "standalone",
+                "backend",
+                "frontend",
+                "fi_collector",
+                "agentcc_gateway",
+                "serving",
+                "serving_gpu",
+                "code_executor",
+                "simulation_runner",
+              ]),
+            )
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOneDownloadVerifiedComponentsMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneDownloadVerifiedComponentsMax,
+            ),
+          reason_codes: zod
+            .array(
+              zod.enum([
+                "manifest_unavailable",
+                "signature_rejected",
+                "channel_mismatch",
+                "version_policy_blocked",
+                "release_incomplete",
+                "discovery_incomplete",
+                "immutable_release_changed",
+                "network_unavailable",
+                "rate_limited",
+                "cache_invalid",
+                "ownership_unconfirmed",
+                "deployment_files_mismatch",
+                "required_env_missing",
+                "unsupported_contract",
+                "uncertified_release",
+                "configuration_changed",
+                "backup_required",
+                "backup_failed",
+                "backup_proof_invalid",
+                "backup_expired",
+                "stale_stage",
+                "env_conflict",
+                "initialization_required",
+                "manual_stage_present",
+                "recovery_required",
+                "readiness_failed",
+                "operation_interrupted",
+                "operation_timeout",
+                "rollback_ineligible",
+                "rollback_failed",
+                "failed_target_latched",
+                "running_versions_unknown",
+                "mixed_running_versions",
+                "outside_window",
+                "insufficient_window",
+                "clock_skew",
+                "timezone_unavailable",
+                "host_verifier_required",
+                "image_digest_mismatch",
+                "disk_space_insufficient",
+                "status_reporting_unavailable",
+                "scheduler_unregistered",
+                "unsupported_installation",
+                "control_invalid",
+                "process_failed",
+              ]),
+            )
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOneDownloadReasonCodesMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneDownloadReasonCodesMax,
+            ),
+        }),
+        operation: zod.object({
+          state: zod.enum([
+            "idle",
+            "checking",
+            "downloading",
+            "backing_up",
+            "staged",
+            "awaiting_initialization",
+            "applying",
+            "verifying",
+            "succeeded",
+            "failed",
+            "interrupted",
+            "rolling_back",
+            "rolled_back",
+            "blocked",
+            "unknown",
+          ]),
+          kind: zod.union([
+            zod.enum(["check", "download", "apply", "rollback"]),
+            zod.null(),
+          ]),
+          stage: zod.union([
+            zod.enum([
+              "planning",
+              "backup",
+              "image_fetch",
+              "image_verification",
+              "env_selection",
+              "production_initialization",
+              "rollout",
+              "readiness",
+              "recovery",
+            ]),
+            zod.null(),
+          ]),
+          started_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationStartedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          finished_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationFinishedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          reported_at: zod.union([
+            zod
+              .string()
+              .datetime({ offset: true })
+              .min(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneMin,
+              )
+              .max(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneMax,
+              )
+              .regex(
+                apiHostUpdateStatusListResponseResultSnapshotOneOperationReportedAtOneRegExp,
+              ),
+            zod.null(),
+          ]),
+          reason_codes: zod
+            .array(
+              zod.enum([
+                "manifest_unavailable",
+                "signature_rejected",
+                "channel_mismatch",
+                "version_policy_blocked",
+                "release_incomplete",
+                "discovery_incomplete",
+                "immutable_release_changed",
+                "network_unavailable",
+                "rate_limited",
+                "cache_invalid",
+                "ownership_unconfirmed",
+                "deployment_files_mismatch",
+                "required_env_missing",
+                "unsupported_contract",
+                "uncertified_release",
+                "configuration_changed",
+                "backup_required",
+                "backup_failed",
+                "backup_proof_invalid",
+                "backup_expired",
+                "stale_stage",
+                "env_conflict",
+                "initialization_required",
+                "manual_stage_present",
+                "recovery_required",
+                "readiness_failed",
+                "operation_interrupted",
+                "operation_timeout",
+                "rollback_ineligible",
+                "rollback_failed",
+                "failed_target_latched",
+                "running_versions_unknown",
+                "mixed_running_versions",
+                "outside_window",
+                "insufficient_window",
+                "clock_skew",
+                "timezone_unavailable",
+                "host_verifier_required",
+                "image_digest_mismatch",
+                "disk_space_insufficient",
+                "status_reporting_unavailable",
+                "scheduler_unregistered",
+                "unsupported_installation",
+                "control_invalid",
+                "process_failed",
+              ]),
+            )
+            .min(
+              apiHostUpdateStatusListResponseResultSnapshotOneOperationReasonCodesMin,
+            )
+            .max(
+              apiHostUpdateStatusListResponseResultSnapshotOneOperationReasonCodesMax,
+            ),
+        }),
+        last_run: zod.union([
+          zod.object({
+            kind: zod.enum(["apply", "rollback"]),
+            automatic: zod.boolean(),
+            outcome: zod.enum([
+              "succeeded",
+              "staged",
+              "rolled_back",
+              "failed_before_rollout",
+              "failed_during_rollout",
+              "interrupted_before_rollout",
+              "interrupted_during_rollout",
+              "blocked",
+            ]),
+            from_version: zod.union([
+              zod
+                .string()
+                .min(1)
+                .max(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFromVersionOneMax,
+                )
+                .regex(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFromVersionOneRegExp,
+                ),
+              zod.null(),
+            ]),
+            target_version: zod.union([
+              zod
+                .string()
+                .min(1)
+                .max(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneTargetVersionOneMax,
+                )
+                .regex(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneTargetVersionOneRegExp,
+                ),
+              zod.null(),
+            ]),
+            finished_at: zod.union([
+              zod
+                .string()
+                .datetime({ offset: true })
+                .min(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneMin,
+                )
+                .max(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneMax,
+                )
+                .regex(
+                  apiHostUpdateStatusListResponseResultSnapshotOneLastRunOneFinishedAtOneRegExp,
+                ),
+              zod.null(),
+            ]),
+            fallback_outcome: zod.enum([
+              "none",
+              "succeeded",
+              "failed",
+              "ineligible",
+            ]),
+          }),
+          zod.null(),
+        ]),
+        safety: zod.object({
+          backup_required: zod.boolean(),
+          backup_state: zod.enum([
+            "not_evaluated",
+            "required",
+            "reported_complete",
+            "failed",
+            "explicitly_skipped",
+          ]),
+          readiness: zod.enum(["unknown", "pending", "passed", "failed"]),
+          automatic_rollback: zod.enum([
+            "unsupported",
+            "disabled",
+            "eligible",
+            "ineligible",
+          ]),
+          operator_action: zod.enum([
+            "none",
+            "inspect_host",
+            "prepare_installation",
+            "initialize_then_apply",
+            "review_recovery",
+            "repair_status_reporting",
+          ]),
+        }),
+      }),
+      zod.null(),
+    ]),
+  }),
+});
+
 /**
  * Returns the same JSON shape as Langfuse::
 
