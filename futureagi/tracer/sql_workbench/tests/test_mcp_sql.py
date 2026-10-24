@@ -127,3 +127,23 @@ def test_viewer_can_run_readonly_sql_through_mcp(tenants):
             context_for(tenants[0]),
         )
     assert result["id"] and result["state"] == "queued"
+
+
+@pytest.mark.parametrize("tool_name", ["get_sql_result", "cancel_sql"])
+@pytest.mark.parametrize(
+    "bad_id", ["a" * 36, "------------------------------------", "abc", "not-a-uuid"]
+)
+def test_mcp_tools_answer_not_found_for_a_malformed_execution_id(
+    tenants, tool_name, bad_id
+):
+    """A malformed id from an agent is a 404, never a server error."""
+    from mcp_server.api_executor import APIExecutionError
+
+    actor, project, _ = tenants[0]
+    with pytest.raises(APIExecutionError) as failure:
+        DjangoAPIExecutor().execute_sync(
+            GeneratedToolRegistry.from_manifest().get(tool_name),
+            {"id": bad_id, "project_id": str(project.id)},
+            context_for(tenants[0]),
+        )
+    assert failure.value.status_code == 404, failure.value

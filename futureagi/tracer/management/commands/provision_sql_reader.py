@@ -8,10 +8,10 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
-from tracer.sql_workbench.catalog import MAX_CONFIGS, Scope
+from tracer.sql_workbench.catalog import Scope
 from tracer.sql_workbench.provision import direct_access_ddl
+from tracer.sql_workbench.service import eval_config_scope
 
 
 class Command(BaseCommand):
@@ -38,15 +38,9 @@ class Command(BaseCommand):
             raise CommandError(
                 "Project must belong to that active organization and workspace."
             )
-        configs = tuple(
-            CustomEvalConfig.no_workspace_objects.filter(
-                project=project,
-                project__organization_id=project.organization_id,
-                project__workspace_id=project.workspace_id,
-            ).values_list("id", flat=True)[: MAX_CONFIGS + 1]
-        )
         end = timezone.now()
         try:
+            configs, deleted = eval_config_scope(project)
             scope = Scope(
                 project.organization_id,
                 project.workspace_id,
@@ -55,6 +49,7 @@ class Command(BaseCommand):
                 end,
                 configs,
                 settings.CH25_EVAL_LOGGER_TABLE,
+                deleted_eval_config_ids=deleted,
             )
             statements = direct_access_ddl(
                 scope,

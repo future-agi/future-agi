@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1095,
+  endpointCount: 1097,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34715,6 +34715,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/eval-task/sampling_audit/": {
+      get: {
+        operationId: "tracer_eval-task_sampling_audit",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          eval_task_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          cohort_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SamplingAuditResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/eval-task/sampling_preview/": {
       post: {
         operationId: "tracer_eval-task_sampling_preview",
@@ -34729,6 +34779,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SamplingPreviewResponse",
           },
           400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
             $ref: "#/definitions/ApiErrorResponse",
           },
           503: {
@@ -39123,6 +39179,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/SQLCatalog",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/estimate/": {
+      post: {
+        operationId: "tracer_sql-query_estimate",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRun",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLEstimate",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -76775,6 +76850,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "identity_semantics",
         "version",
         "datasets",
+        "examples",
         "max_rows",
         "max_window_days",
         "can_save",
@@ -76796,6 +76872,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SQLDataset",
           },
         },
+        examples: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExample",
+          },
+        },
         max_rows: {
           title: "Max rows",
           type: "integer",
@@ -76807,6 +76889,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         can_save: {
           title: "Can save",
           type: "boolean",
+        },
+      },
+    },
+    SQLEstimate: {
+      required: [
+        "status",
+        "reason",
+        "sources",
+        "max_rows_to_read",
+        "exceeds_scan_bound",
+        "elapsed_ms",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        sources: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLEstimateSource",
+          },
+        },
+        max_rows_to_read: {
+          title: "Max rows to read",
+          type: "integer",
+        },
+        exceeds_scan_bound: {
+          title: "Exceeds scan bound",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
         },
       },
     },
@@ -77086,6 +77209,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Dashboard id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    SamplingAuditResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SamplingAuditResult",
         },
       },
     },
@@ -84996,6 +85132,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "org_level",
         "ws_level",
         "effective_level",
+        "restrict_simulate_to_environments",
       ],
       type: "object",
       properties: {
@@ -85116,6 +85253,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Org 2fa grace ends at",
           type: "string",
           format: "date-time",
+        },
+        restrict_simulate_to_environments: {
+          title: "Restrict simulate to environments",
+          type: "boolean",
         },
       },
     },
@@ -93371,6 +93512,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         default: {
           $ref: "#/definitions/SamplingRule",
+        },
+        cell_quotas: {
+          title: "Cell quotas",
+          description:
+            "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            maximum: 1000000,
+            minimum: 0,
+          },
+        },
+        coordination: {
+          title: "Coordination",
+          description:
+            "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+          type: "string",
+          enum: ["independent", "project"],
+        },
+        panel: {
+          title: "Panel",
+          description:
+            "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+          type: "string",
+          maxLength: 64,
+        },
+        prn_start: {
+          title: "Prn start",
+          description:
+            "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+          type: "number",
+          maximum: 100,
+          minimum: 0,
         },
       },
       "x-nullable": true,
@@ -104834,6 +105008,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SQLExample: {
+      required: ["id", "title", "description", "sql", "datasets"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        datasets: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    SQLEstimateSource: {
+      required: [
+        "dataset",
+        "estimated",
+        "parts",
+        "marks",
+        "max_rows",
+        "reason",
+      ],
+      type: "object",
+      properties: {
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          minLength: 1,
+        },
+        estimated: {
+          title: "Estimated",
+          type: "boolean",
+        },
+        parts: {
+          title: "Parts",
+          type: "integer",
+          "x-nullable": true,
+        },
+        marks: {
+          title: "Marks",
+          type: "integer",
+          "x-nullable": true,
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+      },
+    },
     SQLResult: {
       type: "object",
       properties: {
@@ -104896,6 +105144,87 @@ export const OPENAPI_CONTRACT = Object.freeze({
         type: "table",
       },
     },
+    SamplingAuditResult: {
+      required: [
+        "cohort_id",
+        "policy_version",
+        "mode",
+        "sampling_unit",
+        "coordination",
+        "frozen_at",
+        "complete",
+        "population_source",
+        "strata",
+        "summary",
+        "balance",
+        "notes",
+      ],
+      type: "object",
+      properties: {
+        cohort_id: {
+          title: "Cohort id",
+          type: "string",
+          format: "uuid",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          minLength: 1,
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["closed", "live"],
+        },
+        sampling_unit: {
+          title: "Sampling unit",
+          type: "string",
+          minLength: 1,
+        },
+        coordination: {
+          title: "Coordination",
+          type: "string",
+          enum: ["independent", "project"],
+        },
+        frozen_at: {
+          title: "Frozen at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        complete: {
+          title: "Complete",
+          type: "boolean",
+        },
+        population_source: {
+          title: "Population source",
+          type: "string",
+          enum: ["frozen_snapshot", "persisted_decisions"],
+        },
+        strata: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingAuditStratum",
+          },
+        },
+        summary: {
+          $ref: "#/definitions/SamplingAuditSummary",
+        },
+        balance: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingBalance",
+          },
+        },
+        notes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     SamplingPreviewResult: {
       required: [
         "policy_version",
@@ -104908,6 +105237,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluator_count",
         "expected_evaluations",
         "selected_evaluations",
+        "precision",
         "estimated_cost",
         "cost_note",
         "population_note",
@@ -104960,6 +105290,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Selected evaluations",
           type: "integer",
           "x-nullable": true,
+        },
+        precision: {
+          $ref: "#/definitions/SamplingPrecision",
         },
         estimated_cost: {
           title: "Estimated cost",
@@ -118358,6 +118691,283 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SamplingAuditStratum: {
+      required: [
+        "stratum",
+        "rule",
+        "population_size",
+        "target",
+        "expected_size",
+        "achieved",
+        "shortage",
+        "exact",
+        "inclusion_probability",
+        "design_weight",
+        "srm_z",
+        "srm_p_value",
+        "srm_flagged",
+        "population_check",
+      ],
+      type: "object",
+      properties: {
+        stratum: {
+          title: "Stratum",
+          type: "string",
+          minLength: 1,
+        },
+        rule: {
+          title: "Rule",
+          type: "string",
+          minLength: 1,
+        },
+        population_size: {
+          title: "Population size",
+          description:
+            "Closed: units in the stratum at the freeze. Live: units decided since the policy start.",
+          type: "integer",
+        },
+        target: {
+          title: "Target",
+          description:
+            "Closed: the quota the rule asks for before the population cap.",
+          type: "integer",
+          "x-nullable": true,
+        },
+        expected_size: {
+          title: "Expected size",
+          description:
+            "Closed: the exact quota k = min(N, target). Live: N times the rate.",
+          type: "number",
+          "x-nullable": true,
+        },
+        achieved: {
+          title: "Achieved",
+          type: "integer",
+        },
+        shortage: {
+          title: "Shortage",
+          type: "integer",
+          "x-nullable": true,
+        },
+        exact: {
+          title: "Exact",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        inclusion_probability: {
+          title: "Inclusion probability",
+          type: "number",
+        },
+        design_weight: {
+          title: "Design weight",
+          type: "number",
+          "x-nullable": true,
+        },
+        srm_z: {
+          title: "Srm z",
+          type: "number",
+          "x-nullable": true,
+        },
+        srm_p_value: {
+          title: "Srm p value",
+          type: "number",
+          "x-nullable": true,
+        },
+        srm_flagged: {
+          title: "Srm flagged",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        population_check: {
+          title: "Population check",
+          type: "string",
+          enum: ["match", "changed", "persisted"],
+        },
+      },
+    },
+    SamplingAuditSummary: {
+      required: [
+        "strata",
+        "population_size",
+        "achieved",
+        "kish_effective_n",
+        "design_effect",
+        "weight_cv",
+        "weighted_population",
+        "represented_population",
+        "unrepresented_strata",
+        "unrepresented_population",
+        "flagged_strata",
+        "integrity",
+        "srm_alpha",
+      ],
+      type: "object",
+      properties: {
+        strata: {
+          title: "Strata",
+          type: "integer",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        achieved: {
+          title: "Achieved",
+          type: "integer",
+        },
+        kish_effective_n: {
+          title: "Kish effective n",
+          type: "number",
+          "x-nullable": true,
+        },
+        design_effect: {
+          title: "Design effect",
+          type: "number",
+          "x-nullable": true,
+        },
+        weight_cv: {
+          title: "Weight cv",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_population: {
+          title: "Weighted population",
+          description: "Sum of design weights of the sampled units.",
+          type: "number",
+        },
+        represented_population: {
+          title: "Represented population",
+          description:
+            "Population of the strata with at least one sampled unit.",
+          type: "integer",
+        },
+        unrepresented_strata: {
+          title: "Unrepresented strata",
+          type: "integer",
+        },
+        unrepresented_population: {
+          title: "Unrepresented population",
+          type: "integer",
+        },
+        flagged_strata: {
+          title: "Flagged strata",
+          type: "integer",
+        },
+        integrity: {
+          title: "Integrity",
+          type: "string",
+          enum: ["ok", "attention"],
+        },
+        srm_alpha: {
+          title: "Srm alpha",
+          type: "number",
+        },
+      },
+    },
+    SamplingBalance: {
+      required: [
+        "attribute",
+        "source",
+        "categories",
+        "chi_square",
+        "degrees_of_freedom",
+        "p_value",
+        "max_abs_standardized_difference",
+        "max_abs_weighted_standardized_difference",
+        "weighted_imbalance",
+      ],
+      type: "object",
+      properties: {
+        attribute: {
+          title: "Attribute",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        categories: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingBalanceCategory",
+          },
+        },
+        chi_square: {
+          title: "Chi square",
+          type: "number",
+          "x-nullable": true,
+        },
+        degrees_of_freedom: {
+          title: "Degrees of freedom",
+          type: "integer",
+          "x-nullable": true,
+        },
+        p_value: {
+          title: "P value",
+          type: "number",
+          "x-nullable": true,
+        },
+        max_abs_standardized_difference: {
+          title: "Max abs standardized difference",
+          type: "number",
+          "x-nullable": true,
+        },
+        max_abs_weighted_standardized_difference: {
+          title: "Max abs weighted standardized difference",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_imbalance: {
+          title: "Weighted imbalance",
+          type: "boolean",
+        },
+      },
+    },
+    SamplingPrecision: {
+      required: [
+        "confidence",
+        "assumed_proportion",
+        "stratified_margin_of_error",
+        "kish_effective_n",
+        "design_effect",
+        "unsampled_strata",
+      ],
+      type: "object",
+      properties: {
+        confidence: {
+          title: "Confidence",
+          type: "number",
+        },
+        assumed_proportion: {
+          title: "Assumed proportion",
+          type: "number",
+        },
+        stratified_margin_of_error: {
+          title: "Stratified margin of error",
+          description:
+            "Margin of the population-weighted proportion; null when a non-empty cell selects nothing.",
+          type: "number",
+          "x-nullable": true,
+        },
+        kish_effective_n: {
+          title: "Kish effective n",
+          type: "number",
+          "x-nullable": true,
+        },
+        design_effect: {
+          title: "Design effect",
+          type: "number",
+          "x-nullable": true,
+        },
+        unsampled_strata: {
+          title: "Unsampled strata",
+          type: "integer",
+        },
+      },
+    },
     SamplingPreviewCell: {
       required: [
         "stratum",
@@ -118367,6 +118977,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "expected_rows",
         "selected_units",
         "selected_rows",
+        "margin_of_error",
       ],
       type: "object",
       properties: {
@@ -118398,6 +119009,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         selected_rows: {
           title: "Selected rows",
           type: "integer",
+        },
+        margin_of_error: {
+          title: "Margin of error",
+          description:
+            "95% margin of error of a proportion over this cell's selected units (finite-population corrected, p = 0.5); null when nothing is selected, 0 for a census.",
+          type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -122584,6 +123202,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    SamplingBalanceCategory: {
+      required: [
+        "value",
+        "present",
+        "population_size",
+        "achieved",
+        "population_share",
+        "sample_share",
+        "weighted_share",
+        "standardized_difference",
+        "weighted_standardized_difference",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        present: {
+          title: "Present",
+          type: "boolean",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        achieved: {
+          title: "Achieved",
+          type: "integer",
+        },
+        population_share: {
+          title: "Population share",
+          type: "number",
+        },
+        sample_share: {
+          title: "Sample share",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_share: {
+          title: "Weighted share",
+          type: "number",
+          "x-nullable": true,
+        },
+        standardized_difference: {
+          title: "Standardized difference",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_standardized_difference: {
+          title: "Weighted standardized difference",
+          type: "number",
+          "x-nullable": true,
         },
       },
     },

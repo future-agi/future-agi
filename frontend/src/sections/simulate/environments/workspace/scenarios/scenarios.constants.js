@@ -31,6 +31,7 @@ export const SCENARIOS_COPY = {
   addShortLabel: "Add",
   addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
+  openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
   filterLabel: "Filter",
   filterTitle: "Filter by use case",

@@ -8,7 +8,7 @@ import { useFieldArray, useWatch, useFormState } from "react-hook-form";
 import { ShowComponent } from "src/components/show";
 import PersonaDrawer from "../persona/PersonaDrawer";
 import GenericCard from "../persona/GenericCard/GenericCard";
-import { extractTagsFromPersona } from "../persona/common";
+import { PERSONAS_DOCS_URL, extractTagsFromPersona } from "../persona/common";
 import CustomTooltip from "src/components/tooltip";
 
 const PersonaSection = ({ control, description = "" }) => {
@@ -42,7 +42,7 @@ const PersonaSection = ({ control, description = "" }) => {
           "Persona type defines user behavior, tone, and intent for your scenario tests"
         }
         docLink={{
-          url: "https://docs.futureagi.com/docs/simulation/concepts/personas",
+          url: PERSONAS_DOCS_URL,
           sx: {
             color: "blue.500",
             fontWeight: "fontWeightMedium",

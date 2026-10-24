@@ -52,3 +52,40 @@ def authorize(actor: Actor, project_id, *, write=False):
     if project is None:
         raise AccessDenied("Project not available.")
     return project
+
+
+def authorization_fingerprint(actor: Actor):
+    """The membership rows the actor's access rests on, as comparable values.
+
+    A role change, deactivation, re-creation or any saved edit of either row
+    changes it, so a reused result never outlives the access it was read with.
+    """
+
+    def describe(row):
+        if row is None:
+            return None
+        return [
+            str(row.id),
+            row.level,
+            row.level_or_legacy,
+            bool(row.is_active),
+            row.updated_at.isoformat() if row.updated_at else None,
+        ]
+
+    org = (
+        OrganizationMembership.no_workspace_objects.filter(
+            user_id=actor.user_id, organization_id=actor.organization_id
+        )
+        .order_by("id")
+        .first()
+    )
+    membership = (
+        WorkspaceMembership.no_workspace_objects.filter(
+            user_id=actor.user_id,
+            workspace_id=actor.workspace_id,
+            workspace__organization_id=actor.organization_id,
+        )
+        .order_by("id")
+        .first()
+    )
+    return [describe(org), describe(membership)]

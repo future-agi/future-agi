@@ -1321,6 +1321,7 @@ export interface UserInfoResponseApi {
   two_factor_methods?: UserInfoTwoFactorMethodsApi;
   org_2fa_required?: boolean;
   org_2fa_grace_ends_at?: string;
+  restrict_simulate_to_environments: boolean;
 }
 
 export interface DeactivateUserApi {
@@ -26099,6 +26100,22 @@ export interface SamplingRuleApi {
   rare_below?: number;
 }
 
+/**
+ * independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.
+ */
+export type SamplingPolicyApiCoordination =
+  (typeof SamplingPolicyApiCoordination)[keyof typeof SamplingPolicyApiCoordination];
+
+export const SamplingPolicyApiCoordination = {
+  independent: "independent",
+  project: "project",
+} as const;
+
+/**
+ * Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.
+ */
+export type SamplingPolicyApiCellQuotas = { [key: string]: number };
+
 export interface SamplingPolicyApi {
   /**
    * @minimum 1
@@ -26113,6 +26130,21 @@ export interface SamplingPolicyApi {
   strata?: SamplingRuleApi[];
   group_by?: SamplingAttributeApi[];
   default?: SamplingRuleApi;
+  /** Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule. */
+  cell_quotas?: SamplingPolicyApiCellQuotas;
+  /** independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks. */
+  coordination?: SamplingPolicyApiCoordination;
+  /**
+   * Project coordination only: a named PRN panel; different panels draw independent numbers.
+   * @maxLength 64
+   */
+  panel?: string;
+  /**
+   * Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.
+   * @minimum 0
+   * @maximum 100
+   */
+  prn_start?: number;
 }
 
 export interface EvalTaskApi {
@@ -26426,6 +26458,136 @@ export interface EvalTaskMessageResponseApi {
   result: EvalTaskMessageResultApi;
 }
 
+export type SamplingAuditResultApiMode =
+  (typeof SamplingAuditResultApiMode)[keyof typeof SamplingAuditResultApiMode];
+
+export const SamplingAuditResultApiMode = {
+  closed: "closed",
+  live: "live",
+} as const;
+
+export type SamplingAuditResultApiCoordination =
+  (typeof SamplingAuditResultApiCoordination)[keyof typeof SamplingAuditResultApiCoordination];
+
+export const SamplingAuditResultApiCoordination = {
+  independent: "independent",
+  project: "project",
+} as const;
+
+export type SamplingAuditResultApiPopulationSource =
+  (typeof SamplingAuditResultApiPopulationSource)[keyof typeof SamplingAuditResultApiPopulationSource];
+
+export const SamplingAuditResultApiPopulationSource = {
+  frozen_snapshot: "frozen_snapshot",
+  persisted_decisions: "persisted_decisions",
+} as const;
+
+export type SamplingAuditStratumApiPopulationCheck =
+  (typeof SamplingAuditStratumApiPopulationCheck)[keyof typeof SamplingAuditStratumApiPopulationCheck];
+
+export const SamplingAuditStratumApiPopulationCheck = {
+  match: "match",
+  changed: "changed",
+  persisted: "persisted",
+} as const;
+
+export interface SamplingAuditStratumApi {
+  /** @minLength 1 */
+  stratum: string;
+  /** @minLength 1 */
+  rule: string;
+  /** Closed: units in the stratum at the freeze. Live: units decided since the policy start. */
+  population_size: number;
+  /** Closed: the quota the rule asks for before the population cap. */
+  target: number;
+  /** Closed: the exact quota k = min(N, target). Live: N times the rate. */
+  expected_size: number;
+  achieved: number;
+  shortage: number;
+  exact: boolean;
+  inclusion_probability: number;
+  design_weight: number;
+  srm_z: number;
+  srm_p_value: number;
+  srm_flagged: boolean;
+  population_check: SamplingAuditStratumApiPopulationCheck;
+}
+
+export type SamplingAuditSummaryApiIntegrity =
+  (typeof SamplingAuditSummaryApiIntegrity)[keyof typeof SamplingAuditSummaryApiIntegrity];
+
+export const SamplingAuditSummaryApiIntegrity = {
+  ok: "ok",
+  attention: "attention",
+} as const;
+
+export interface SamplingAuditSummaryApi {
+  strata: number;
+  population_size: number;
+  achieved: number;
+  kish_effective_n: number;
+  design_effect: number;
+  weight_cv: number;
+  /** Sum of design weights of the sampled units. */
+  weighted_population: number;
+  /** Population of the strata with at least one sampled unit. */
+  represented_population: number;
+  unrepresented_strata: number;
+  unrepresented_population: number;
+  flagged_strata: number;
+  integrity: SamplingAuditSummaryApiIntegrity;
+  srm_alpha: number;
+}
+
+export interface SamplingBalanceCategoryApi {
+  /** @minLength 1 */
+  value: string;
+  present: boolean;
+  population_size: number;
+  achieved: number;
+  population_share: number;
+  sample_share: number;
+  weighted_share: number;
+  standardized_difference: number;
+  weighted_standardized_difference: number;
+}
+
+export interface SamplingBalanceApi {
+  /** @minLength 1 */
+  attribute: string;
+  /** @minLength 1 */
+  source: string;
+  categories: SamplingBalanceCategoryApi[];
+  chi_square: number;
+  degrees_of_freedom: number;
+  p_value: number;
+  max_abs_standardized_difference: number;
+  max_abs_weighted_standardized_difference: number;
+  weighted_imbalance: boolean;
+}
+
+export interface SamplingAuditResultApi {
+  cohort_id: string;
+  /** @minLength 1 */
+  policy_version: string;
+  mode: SamplingAuditResultApiMode;
+  /** @minLength 1 */
+  sampling_unit: string;
+  coordination: SamplingAuditResultApiCoordination;
+  frozen_at: string;
+  complete: boolean;
+  population_source: SamplingAuditResultApiPopulationSource;
+  strata: SamplingAuditStratumApi[];
+  summary: SamplingAuditSummaryApi;
+  balance: SamplingBalanceApi[];
+  notes: string[];
+}
+
+export interface SamplingAuditResponseApi {
+  status: boolean;
+  result: SamplingAuditResultApi;
+}
+
 export type SamplingPreviewRequestApiRowType =
   (typeof SamplingPreviewRequestApiRowType)[keyof typeof SamplingPreviewRequestApiRowType];
 
@@ -26572,6 +26734,18 @@ export interface SamplingPreviewCellApi {
   expected_rows: number;
   selected_units: number;
   selected_rows: number;
+  /** 95% margin of error of a proportion over this cell's selected units (finite-population corrected, p = 0.5); null when nothing is selected, 0 for a census. */
+  margin_of_error: number;
+}
+
+export interface SamplingPrecisionApi {
+  confidence: number;
+  assumed_proportion: number;
+  /** Margin of the population-weighted proportion; null when a non-empty cell selects nothing. */
+  stratified_margin_of_error: number;
+  kish_effective_n: number;
+  design_effect: number;
+  unsampled_strata: number;
 }
 
 export interface SamplingPreviewResultApi {
@@ -26589,6 +26763,7 @@ export interface SamplingPreviewResultApi {
   evaluator_count: number;
   expected_evaluations: number;
   selected_evaluations: number;
+  precision: SamplingPrecisionApi;
   estimated_cost: number;
   /** @minLength 1 */
   cost_note: string;
@@ -30489,21 +30664,27 @@ export interface SQLDatasetApi {
   columns: SQLColumnApi[];
 }
 
+export interface SQLExampleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  sql: string;
+  datasets: string[];
+}
+
 export interface SQLCatalogApi {
   /** @minLength 1 */
   identity_semantics: string;
   version: number;
   datasets: SQLDatasetApi[];
+  examples: SQLExampleApi[];
   max_rows: number;
   max_window_days: number;
   can_save: boolean;
-}
-
-export interface SQLRunSavedApi {
-  project_id: string;
-  saved_query_id: string;
-  start?: string;
-  end?: string;
 }
 
 export interface SQLRunApi {
@@ -30515,6 +30696,40 @@ export interface SQLRunApi {
   sql: string;
   start: string;
   end: string;
+}
+
+export type SQLEstimateApiStatus =
+  (typeof SQLEstimateApiStatus)[keyof typeof SQLEstimateApiStatus];
+
+export const SQLEstimateApiStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+} as const;
+
+export interface SQLEstimateSourceApi {
+  /** @minLength 1 */
+  dataset: string;
+  estimated: boolean;
+  parts: number;
+  marks: number;
+  max_rows: number;
+  reason: string;
+}
+
+export interface SQLEstimateApi {
+  status: SQLEstimateApiStatus;
+  reason: string;
+  sources: SQLEstimateSourceApi[];
+  max_rows_to_read: number;
+  exceeds_scan_bound: boolean;
+  elapsed_ms: number;
+}
+
+export interface SQLRunSavedApi {
+  project_id: string;
+  saved_query_id: string;
+  start?: string;
+  end?: string;
 }
 
 export interface SQLProjectApi {
@@ -37489,6 +37704,14 @@ export type TracerEvalTaskListEvalTasksWithProjectNameParams = {
 
 export type TracerEvalTaskPauseEvalTaskParams = {
   eval_task_id: string;
+};
+
+export type TracerEvalTaskSamplingAuditParams = {
+  eval_task_id: string;
+  /**
+   * Audit this cohort of the task (for example an archived one) instead of the current policy's cohort.
+   */
+  cohort_id?: string;
 };
 
 export type TracerEvalTaskUnpauseEvalTaskParams = {

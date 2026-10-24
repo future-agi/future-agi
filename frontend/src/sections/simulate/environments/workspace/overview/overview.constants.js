@@ -11,6 +11,9 @@ export const OVERVIEW_COPY = {
     channel: "Channel",
     domain: "Domain",
     connector: "Connector",
+    direction: "Direction",
+    source: "Source",
+    mode: "Mode",
   },
   capabilities: "Capabilities",
   world: "The world",
@@ -34,7 +37,7 @@ export const OVERVIEW_COPY = {
   dependsSubtitle: "Built and torn down with the environment",
   dependsEmpty: "No dependencies recorded for this environment.",
   seedBlurb: (rows) =>
-    `${rows.toLocaleString()} rows that fill this environment before your agent arrives: the world it actually works in. Rebuilt for every task, so nothing carries over.`,
+    `${rows.toLocaleString()} ${rows === 1 ? "row fills" : "rows fill"} this environment before your agent arrives: the world it actually works in. Rebuilt for every task, so nothing carries over.`,
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
 };
 
@@ -48,8 +51,46 @@ export const SOURCE_READ_COPY = {
   count: (n) => `${n} found`,
 };
 
+// Display names for the real connector (§1/§6 `settings.agent.connector`, or
+// the agent definition's provider). Falls back to the raw value when unmapped.
+export const CONNECTOR_LABEL = {
+  livekit: "LiveKit",
+  vapi: "Vapi",
+  retell: "Retell",
+  retell_chat: "Retell (chat)",
+  phone: "Phone",
+  auto: "Auto",
+};
+
+// Where the agent was read from (`settings.source.kind`). A repository also
+// names itself and its ref.
+export const SOURCE_LABEL = {
+  github: "GitHub",
+  archive: "Uploaded folder",
+  provider: "Hosted platform",
+  remote: "Endpoint",
+};
+export const sourceLabel = (source) => {
+  if (!source?.kind) return null;
+  const base = SOURCE_LABEL[source.kind] || source.kind;
+  if (source.kind !== "github" || !source.repository) return base;
+  return `${source.repository}${source.ref ? `@${source.ref}` : ""}`;
+};
+
+// How the agent is run (`settings.agent.mode`).
+export const MODE_LABEL = {
+  connect_only: "Connect only",
+  environment_backed: "Environment backed",
+  provider_import: "Imported from the platform",
+};
+
+// Inbound / outbound, for a voice agent's call direction.
+export const DIRECTION_LABEL = { inbound: "Inbound", outbound: "Outbound" };
+
 export const AGENT_SUMMARY_COPY = {
   label: "Test subject",
+  viewAgent: "View agent",
+  versions: (n) => `${n} ${n === 1 ? "version" : "versions"}`,
   connected: "Connected",
   noAgentTitle: "No agent attached",
   agentTitle: (name, label) => [name || "Agent", label].filter(Boolean).join(" "),
@@ -188,3 +229,8 @@ export const CHECKLIST_COPY = {
   },
 };
 
+// The seeded tables the agent works with. The harness's own bookkeeping
+// tables (`_alk_tool_trace`, `harness_seed_sentinel`) share the store but
+// aren't the agent's world, so they stay out of Seeded data.
+export const isHarnessTable = (name = "") => name.startsWith("_") || name.startsWith("harness_");
+export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));

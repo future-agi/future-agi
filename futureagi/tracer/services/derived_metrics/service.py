@@ -297,6 +297,9 @@ def _authorized_metric(metric: DerivedMetric) -> bool:
         and metric.workspace.is_active
         and metric.workspace.organization_id == metric.organization_id
         and not project.deleted
+        # A stored FK is not admission: use the same simulation-excluding
+        # manager as the HTTP boundary, including for jobs and monitor reads.
+        and Project.no_workspace_objects.filter(pk=project.pk).exists()
         and project.organization_id == metric.organization_id
         and (
             project.workspace_id == metric.workspace_id

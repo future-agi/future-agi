@@ -78,10 +78,19 @@ class SQLDatasetSerializer(serializers.Serializer):
     columns = SQLColumnSerializer(many=True)
 
 
+class SQLExampleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    sql = serializers.CharField()
+    datasets = serializers.ListField(child=serializers.CharField())
+
+
 class SQLCatalogSerializer(serializers.Serializer):
     identity_semantics = serializers.CharField()
     version = serializers.IntegerField()
     datasets = SQLDatasetSerializer(many=True)
+    examples = SQLExampleSerializer(many=True)
     max_rows = serializers.IntegerField()
     max_window_days = serializers.IntegerField()
     can_save = serializers.BooleanField()
@@ -110,6 +119,24 @@ class SQLExecutionSerializer(serializers.Serializer):
     error = serializers.CharField(allow_blank=True)
     result = SQLResultSerializer()
     expired = serializers.BooleanField()
+
+
+class SQLEstimateSourceSerializer(serializers.Serializer):
+    dataset = serializers.CharField()
+    estimated = serializers.BooleanField()
+    parts = serializers.IntegerField(allow_null=True)
+    marks = serializers.IntegerField(allow_null=True)
+    max_rows = serializers.IntegerField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
+class SQLEstimateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("ok", "unavailable"))
+    reason = serializers.CharField(allow_blank=True)
+    sources = SQLEstimateSourceSerializer(many=True)
+    max_rows_to_read = serializers.IntegerField()
+    exceeds_scan_bound = serializers.BooleanField(allow_null=True)
+    elapsed_ms = serializers.IntegerField()
 
 
 class SQLHistorySerializer(serializers.Serializer):

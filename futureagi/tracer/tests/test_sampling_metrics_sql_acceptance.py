@@ -44,7 +44,7 @@ from tracer.services.eval_tasks.entries import (
 )
 from tracer.services.eval_tasks.reconciler import reconcile
 from tracer.sql_workbench.access import Actor, authorize
-from tracer.sql_workbench.catalog import catalog
+from tracer.sql_workbench.catalog import additional_table_filters, catalog
 from tracer.sql_workbench.compiler import compile_query
 from tracer.sql_workbench.provision import service_access_ddl
 from tracer.sql_workbench.runner import derived_metrics_availability
@@ -56,7 +56,8 @@ pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
 
 RESULT_COLUMNS = (
     "run_id, result_id, group_key, value, numerator, denominator, status, "
-    "unit_count, valid_count, missing_count, invalid_probability_count, sampling_scope"
+    "unit_count, valid_count, missing_count, invalid_probability_count, sampling_scope, "
+    "std_error, ci_low, ci_high, effective_n, ci_df, ci_method, ci_status, ci_reason, ci_interval"
 )
 
 
@@ -72,7 +73,7 @@ def acceptance_ch(settings, monkeypatch):
     """A unique guarded database and host-restricted, locked SQL service login."""
     # The SQL service provisioner limits identifiers to 48 characters, including
     # the owned-database helper's 32-character UUID suffix.
-    with _ch_test_owned_database("test_smsql_") as database:
+    with _ch_test_owned_database("test_urgent_") as database:
         _ch_test_apply_v2_schema(database)
         with _ch_test_native_client(database=database) as client:
             _reset_clients()
@@ -208,6 +209,14 @@ def _assert_weighted_result(row):
     assert row["valid_count"] == 2
     assert row["missing_count"] == 4
     assert row["invalid_probability_count"] == 0
+    # One observed unit in each non-certainty stratum supports the weighted
+    # point, not a variance estimate. Neither the view nor SQL may invent one.
+    assert row["ci_status"] == "not_estimable"
+    assert row["ci_reason"] == "single_unit_stratum"
+    assert row["ci_method"] == "stratified_wor_fpc"
+    assert row["ci_interval"] == ""
+    assert row["std_error"] is row["ci_low"] is row["ci_high"] is row["ci_df"] is None
+    assert row["effective_n"] == pytest.approx(6**2 / (2**2 + 4**2))
 
 
 def test_closed_sampling_weighted_metric_is_readable_through_scoped_sql(
@@ -474,7 +483,9 @@ def test_closed_sampling_weighted_metric_is_readable_through_scoped_sql(
     compiled = compile_query(query, scope)
     for identity in (project.organization_id, workspace.id, project.id):
         assert str(identity) in compiled
-    result = run_sql(compiled, uuid4(), lambda: False)
+    result = run_sql(
+        compiled, uuid4(), lambda: False, table_filters=additional_table_filters(scope)
+    )
     assert result["row_count"] == 1 and result["truncated"] is False
     names = [column["name"] for column in result["columns"]]
     assert names == RESULT_COLUMNS.split(", ")

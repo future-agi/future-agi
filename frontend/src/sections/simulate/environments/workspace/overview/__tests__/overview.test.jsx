@@ -22,7 +22,7 @@ const renderPanel = (props = {}) =>
       onGo={vi.fn()}
       agentConnected
       {...props}
-    />
+    />,
   );
 
 describe("OverviewPanel", () => {
@@ -68,7 +68,12 @@ describe("OverviewPanel", () => {
         stores: [],
         amendments: [],
         dependencies: [
-          { name: "postgres", kind: "datastore", what: "Stores rider rows", used_by: ["book_ride"] },
+          {
+            name: "postgres",
+            kind: "datastore",
+            what: "Stores rider rows",
+            used_by: ["book_ride"],
+          },
         ],
       },
     });
@@ -85,9 +90,133 @@ describe("OverviewPanel", () => {
     expect(screen.queryByText("Actors")).toBeNull();
   });
 
-  // The Seeded-data card was removed from Overview; stores now live only in the
-  // source→sandbox map (covered by the SourceToSandboxMap suite in
-  // overviewExtras). Its panel-level test went with it.
+  const BACKED_WORLD = { stores: [], amendments: [], dependencies: [] };
+
+  it("adds the real domain, direction, source and mode to the facts of a backed voice env", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        surface: "voice",
+        domain: "Logistics",
+        callDirection: "inbound",
+        source: { kind: "github", repository: "acme/ride-agent", ref: "main" },
+        agentMode: "connect_only",
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Logistics")).toBeInTheDocument();
+    expect(screen.getByText("Inbound")).toBeInTheDocument();
+    expect(screen.getByText("acme/ride-agent@main")).toBeInTheDocument();
+    expect(screen.getByText("Connect only")).toBeInTheDocument();
+  });
+
+  it("leaves out direction for a chat env and empty facts entirely", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        surface: "chat",
+        domain: null,
+        callDirection: "inbound",
+        source: { kind: "provider" },
+        agentMode: null,
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Direction")).toBeNull();
+    expect(screen.queryByText("Domain")).toBeNull();
+    expect(screen.queryByText("Mode")).toBeNull();
+    expect(screen.getByText("Hosted platform")).toBeInTheDocument();
+  });
+
+  it("shows the seeded tables under The world for a backed env", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: {
+          tables: [
+            { name: "bookings", rows: 900, note: "world_db · postgres" },
+          ],
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Seeded data")).toBeInTheDocument();
+    expect(screen.getByText("bookings")).toBeInTheDocument();
+    expect(screen.getByText("900")).toBeInTheDocument();
+  });
+
+  it("shows a seeded table the API sent without a row count, without breaking", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: { tables: [{ name: "bookings", rows: 900 }, { name: "fares" }] },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("fares")).toBeInTheDocument();
+    expect(screen.getByText("900")).toBeInTheDocument();
+    // The total counts only the rows the API reported.
+    expect(screen.getByText(/^900 rows fill/)).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
+  it("leaves the harness's own tables out of Seeded data, and the card with them", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: {
+          tables: [
+            { name: "_alk_tool_trace", rows: 0 },
+            { name: "harness_seed_sentinel", rows: 1 },
+          ],
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Seeded data")).toBeNull();
+    expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
+  });
+
+  it("names an agent-definition provider the way the Agents pages do", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        testSubject: {
+          id: "a",
+          name: "Ride bot",
+          provider: "livekit_bridge",
+          versions_count: 1,
+          active_version: "v1",
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("LiveKit · 1 version")).toBeInTheDocument();
+  });
+
+  it("names the agent's provider and versions, with a link to the agent", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        testSubject: {
+          id: "agent-1",
+          name: "Single Prompt Agent",
+          provider: "retell",
+          versions_count: 2,
+          active_version: "v2",
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Single Prompt Agent v2")).toBeInTheDocument();
+    expect(screen.getByText("Retell · 2 versions")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
+      "href",
+      // The Connected agent page, which every org can open; the old Agent
+      // Definition page is hidden from orgs restricted to Environments.
+      "/dashboard/agents/connected/agent-1",
+    );
+  });
 
   // The "Manage versions" agent card + its version drawer are commented out
   // (picked up later), so their tests — attach-agent disabled, open the drawer,

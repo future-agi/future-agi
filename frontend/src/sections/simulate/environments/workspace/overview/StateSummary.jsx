@@ -11,7 +11,7 @@ import Iconify from "src/components/iconify";
  * comes from the same state the Runs/Scenarios/Evaluations tabs read from, so
  * the summary and the detail can't drift.
  */
-export default function StateSummary({ env, envState, counts, onGo }) {
+export default function StateSummary({ env, envState, counts, latestRun, onGo }) {
   // A backed env passes real §6 counts; otherwise derive from the client store.
   // `??` (not `||`) so a real 0 is respected rather than falling back.
   const scenarioCount = counts?.scenarios ?? (envState?.scenarios?.length || 0);
@@ -19,8 +19,9 @@ export default function StateSummary({ env, envState, counts, onGo }) {
   const runs = envState?.runs || [];
   const runCount = counts?.runs ?? runs.length;
   const ruleCount = counts?.hardRules ?? (env?.rules?.length || 0);
-  const latest = runs[0] || null;
-  const latestPassRate = latest?.passRate != null ? Math.round(latest.passRate) : null;
+  // A backed env's runs come from the executions list, newest first; the
+  // client store only holds runs for a non-backed env.
+  const latest = latestRun || runs[0] || null;
 
   const tiles = [
     { id: "scenarios", label: "Scenarios", value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
@@ -97,16 +98,6 @@ export default function StateSummary({ env, envState, counts, onGo }) {
                 {latest.agentVersion ? ` · ${latest.agentVersion}` : ""}
               </Typography>
             </Box>
-            {latestPassRate != null && (
-              <Stack alignItems="flex-end" sx={{ flexShrink: 0 }}>
-                <Typography sx={{ typography: "s1", fontWeight: 700, color: latestPassRate >= 80 ? "#16A34A" : latestPassRate >= 50 ? "#CA8A04" : "#DC2626", fontVariantNumeric: "tabular-nums" }}>
-                  {latestPassRate}%
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  pass rate
-                </Typography>
-              </Stack>
-            )}
             <Iconify icon="solar:alt-arrow-right-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
           </Stack>
         </Box>
@@ -123,6 +114,11 @@ StateSummary.propTypes = {
     evaluations: PropTypes.number,
     runs: PropTypes.number,
     hardRules: PropTypes.number,
+  }),
+  // The newest run from the executions list (backed env); see runs.js.
+  latestRun: PropTypes.shape({
+    label: PropTypes.string,
+    agentVersion: PropTypes.string,
   }),
   onGo: PropTypes.func,
 };

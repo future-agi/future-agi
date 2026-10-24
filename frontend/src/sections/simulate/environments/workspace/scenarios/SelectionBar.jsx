@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { forwardRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -32,9 +32,11 @@ const RED = BUILD_TONES.red;
  * `matching` carries our pagination's predicate-selection context so a
  * selection can escalate to "all N matching" without every id being loaded.
  * Each of `onRun` / `onTrialsChange` is optional and gates its own button.
+ * When the environment can't run yet, `runBlockedReason` keeps Run on the bar,
+ * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -215,8 +217,10 @@ export default function SelectionBar({
           </CustomTooltip>
         )}
 
-        {/* PRIMARY — Run N selected (× k) */}
-        {onRun && (
+        {/* PRIMARY — Run N selected (× k). Unavailable: shown disabled, the
+            reason on hover (a disabled button fires no events, so its
+            tooltip sits on a wrapper). */}
+        {onRun ? (
           <CustomTooltip
             show
             arrow
@@ -225,25 +229,15 @@ export default function SelectionBar({
               ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} repeats = ${totalRuns} runs · ${timeHint}`
               : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 repeat · ${timeHint}`}
           >
-            <Button
-              size="small"
-              variant="contained"
-              onClick={() => onRun(k)}
-              startIcon={<Iconify icon="solar:play-bold" width={13} />}
-              sx={{
-                typography: "s2", fontWeight: 700, fontSize: 12.5,
-                px: 1.75, height: 32, minWidth: 0, flexShrink: 0,
-                bgcolor: "text.primary",
-                color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-                boxShadow: "none",
-                whiteSpace: "nowrap",
-                "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
-              }}
-            >
-              {runLabel}
-            </Button>
+            <RunButton label={runLabel} onClick={() => onRun(k)} />
           </CustomTooltip>
-        )}
+        ) : runBlockedReason ? (
+          <CustomTooltip show arrow size="small" title={runBlockedReason}>
+            <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
+              <RunButton label={runLabel} disabled />
+            </Box>
+          </CustomTooltip>
+        ) : null}
 
       </Stack>
 
@@ -345,11 +339,45 @@ export default function SelectionBar({
     </Stack>
   );
 }
+// The bar's primary action: Run simulation (N).
+const RunButton = forwardRef(function RunButton({ label, onClick, disabled = false, ...other }, ref) {
+  return (
+    <Button
+      ref={ref}
+      {...other}
+      size="small"
+      variant="contained"
+      disabled={disabled}
+      onClick={onClick}
+      startIcon={<Iconify icon="solar:play-bold" width={13} />}
+      sx={{
+        typography: "s2", fontWeight: 700, fontSize: 12.5,
+        px: 1.75, height: 32, minWidth: 0, flexShrink: 0,
+        bgcolor: "text.primary",
+        color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
+        boxShadow: "none",
+        whiteSpace: "nowrap",
+        "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
+        "&.Mui-disabled": { bgcolor: "action.disabledBackground", color: "text.disabled" },
+      }}
+    >
+      {label}
+    </Button>
+  );
+});
+RunButton.propTypes = {
+  label: PropTypes.string.isRequired,
+  onClick: PropTypes.func,
+  disabled: PropTypes.bool,
+};
+
 SelectionBar.propTypes = {
   count: PropTypes.number.isRequired,
   trials: PropTypes.number,
   onTrialsChange: PropTypes.func,
   onRun: PropTypes.func,
+  // Why Run is unavailable; shows the button disabled with this on hover.
+  runBlockedReason: PropTypes.string,
   onDelete: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain

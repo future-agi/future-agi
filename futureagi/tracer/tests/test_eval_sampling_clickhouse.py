@@ -3,6 +3,7 @@
 Run on the test sidecar protected by conftest's target guard, never a live DB.
 """
 
+import json
 import uuid
 from datetime import timedelta
 
@@ -25,6 +26,13 @@ from tracer.services.eval_tasks.sampling.service import preview_policy, task_pol
 from tracer.tests._ch_seed import _get_ch_client, seed_ch_spans
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
+
+
+@pytest.fixture(autouse=True)
+def immediate_closed_freeze(settings):
+    # Most fixtures seed rows and freeze in the same second. The settle margin
+    # is exercised explicitly by its own real-ClickHouse test below.
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 0
 
 
 def make_policy(**overrides):
@@ -739,3 +747,936 @@ def test_live_cross_day_first_admission_uses_snapshot_priority_and_earliest_grou
         next(member for member in members if not member.selected).inclusion_probability
         == 0
     )
+
+
+def _rows(sql_params, **settings):
+    return [
+        row
+        for block in stream_query(*sql_params, settings=settings or None)
+        for row in block
+    ]
+
+
+def _read_rows(client, comment):
+    client.command("SYSTEM FLUSH LOGS")
+    found = client.query(
+        "SELECT read_rows FROM system.query_log WHERE type = 'QueryFinish'"
+        " AND log_comment = {comment:String} AND event_date >= yesterday()",
+        parameters={"comment": comment},
+    ).result_rows
+    assert len(found) == 1, found
+    return found[0][0]
+
+
+def test_min_max_census_and_shortage_compile_to_exact_clickhouse_quotas(
+    project, ch_seed
+):
+    from tracer.services.eval_tasks.sampling.policy import target_size
+
+    cells = {"floor": 5, "cap": 6, "census": 2, "shortage": 3, "control": 4}
+    for cell, units in cells.items():
+        for index in range(units):
+            session = TraceSession.objects.create(
+                project=project, name=f"{cell}-{index}"
+            )
+            seed_contact(project, session, {"cell": cell}, traces=1)
+    rules = {
+        "floor": {"rate": 10, "min_n": 3},
+        "cap": {"rate": 100, "max_n": 2},
+        "census": {"rate": 10, "rare_below": 2, "max_n": 1},
+        "shortage": {"target_n": 10, "min_n": 8},
+    }
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            strata=[
+                {
+                    "name": name,
+                    "filters": [{"key": "cell", "op": "in", "values": [name]}],
+                    **rule,
+                }
+                for name, rule in rules.items()
+            ],
+            default={"rate": 50, "min_n": 1, "max_n": 1},
+        ),
+    )
+    expected = {name: target_size(rule, cells[name]) for name, rule in rules.items()}
+    expected["default"] = target_size({"rate": 50, "min_n": 1, "max_n": 1}, 4)
+    # Floors, caps, census-under-cap and shortage, as the portable reference.
+    assert expected == {"floor": 3, "cap": 2, "census": 1, "shortage": 3, "default": 1}
+    preview = preview_policy(task)
+    by_name = {json.loads(cell["stratum"])[0]: cell for cell in preview["strata"]}
+    assert {name: cell["selected_units"] for name, cell in by_name.items()} == expected
+    assert {name: cell["eligible_units"] for name, cell in by_name.items()} == {
+        **{name: cells[name] for name in rules},
+        "default": cells["control"],
+    }
+    policy, version = task_policy(task, now=timezone.now())
+    members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
+    counts = {}
+    for _unit, stratum, probability, population in members:
+        name = json.loads(stratum)[0]
+        counts[name] = counts.get(name, 0) + 1
+        size = cells["control" if name == "default" else name]
+        assert population == size
+        assert probability == pytest.approx(expected[name] / size)
+    assert counts == expected
+
+
+@pytest.mark.parametrize("row_type", ["traces", "sessions"])
+def test_remapped_session_expands_every_alias_row_for_trace_and_session_rows(
+    project, custom_eval_config, ch_seed, row_type
+):
+    old_a, old_b, new = (uuid.uuid4() for _ in range(3))
+    sessions = {
+        value: TraceSession.objects.create(id=value, project=project, name=str(value))
+        for value in (old_a, old_b, new)
+    }
+    client = _get_ch_client()
+    try:
+        client.insert(
+            "trace_session_id_remap",
+            [[old_a, new], [old_b, new]],
+            column_names=["old_id", "new_id"],
+        )
+    finally:
+        client.close()
+    spans = []
+    for value in (old_a, old_b, new):
+        spans += seed_contact(project, sessions[value], {"group": "remapped"}, traces=1)
+    other = TraceSession.objects.create(project=project, name="not-remapped")
+    spans_other = seed_contact(project, other, {"group": "other"}, traces=1)
+    task = EvalTask.objects.create(
+        project=project,
+        row_type=row_type,
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            strata=[
+                {
+                    "name": "remapped",
+                    "filters": [{"key": "group", "op": "in", "values": ["remapped"]}],
+                    "target_n": 1,
+                }
+            ],
+            default={"target_n": 0},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    survivor = f"session:{min(str(old_a), str(old_b))}"
+    members = list(EvalSamplingMember.objects.filter(cohort__task=task))
+    assert [member.unit_id for member in members] == [survivor]
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    if row_type == "traces":
+        assert {str(entry.trace_id) for entry in entries} == {
+            str(span.trace_id) for span in spans
+        }
+        assert not {str(entry.trace_id) for entry in entries} & {
+            str(span.trace_id) for span in spans_other
+        }
+    else:
+        # Every alias canonicalizes to one session row.
+        assert [str(entry.trace_session_id) for entry in entries] == [
+            survivor.split(":", 1)[1]
+        ]
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["sampling_unit_id"]
+        for entry in entries
+    } == {survivor}
+    assert all(
+        entry.output_metadata["_task_selection"]["sampling"]["inclusion_probability"]
+        == 1
+        for entry in entries
+    )
+
+
+def test_closed_expansion_reads_only_its_member_page_with_identical_rows(
+    project, ch_seed
+):
+    client = _get_ch_client()
+    client.command("SYSTEM STOP MERGES spans")
+
+    def add_contacts(first, count):
+        # One part per contact, so a member page can skip every other contact.
+        for index in range(first, first + count):
+            session = TraceSession.objects.create(project=project, name=f"page-{index}")
+            seed_contact(project, session, {"locale": "en"}, traces=2)
+
+    def measure(task, policy, version, batch, label):
+        now = sampling_clock()
+        tag = f"{label}-{uuid.uuid4().hex}"
+        full = _rows(
+            SamplingQuery(task, policy, version, now).rows(),
+            log_comment=f"sampling-full-{tag}",
+        )
+        page = _rows(
+            SamplingQuery(task, policy, version, now).rows(unit_ids=batch),
+            log_comment=f"sampling-page-{tag}",
+        )
+        return (
+            full,
+            page,
+            _read_rows(client, f"sampling-full-{tag}"),
+            _read_rows(client, f"sampling-page-{tag}"),
+        )
+
+    try:
+        add_contacts(0, 12)
+        task = EvalTask(
+            project=project,
+            row_type="spans",
+            filters={},
+            sampling_policy=make_policy(default={"target_n": 1}),
+        )
+        now = sampling_clock()
+        policy, version = task_policy(task, now=now)
+        batch = [
+            row[0] for row in _rows(SamplingQuery(task, policy, version, now).members())
+        ]
+        assert len(batch) == 1
+        full, page, full_read, page_read = measure(task, policy, version, batch, "a")
+        expected = {(row[0], row[1]) for row in full if row[1] in batch}
+        assert {(row[0], row[1]) for row in page} == expected
+        assert len(page) == len(expected) == 4  # two traces of two spans
+        assert len(full) == 48
+        # 24 more contacts that are not on this member page.
+        add_contacts(12, 24)
+        full_more, page_more, full_read_more, page_read_more = measure(
+            task, policy, version, batch, "b"
+        )
+        assert len(full_more) == 144
+        assert {(row[0], row[1]) for row in page_more} == expected
+        full_growth = full_read_more - full_read
+        page_growth = page_read_more - page_read
+        # The full-window form scans every new span at least once; the member
+        # page skips their parts by its pushed-down unit IDs (bloom-filter
+        # false positives may add a few rows, never a scan of the window).
+        measured = (full_read, page_read, full_read_more, page_read_more)
+        assert full_growth >= 96, measured
+        assert page_growth * 8 <= full_growth, measured
+        assert page_read_more * 2 < full_read_more, measured
+    finally:
+        client.command("SYSTEM START MERGES spans")
+        client.close()
+
+
+def _read_stats(client, comment):
+    client.command("SYSTEM FLUSH LOGS")
+    found = client.query(
+        "SELECT read_rows, read_bytes FROM system.query_log WHERE type = 'QueryFinish'"
+        " AND log_comment = {comment:String} AND event_date >= yesterday()",
+        parameters={"comment": comment},
+    ).result_rows
+    assert len(found) == 1, found
+    return found[0]
+
+
+def test_remap_lookup_reads_touched_ids_without_another_latest_state_replay(
+    project, ch_seed
+):
+    """ClickHouse inlines a CTE at every reference. The remap maps discover the
+    ids they expand from a physical scan of the same immutable scope, so a
+    statement replays the latest state once per ``sampling_source`` reference
+    (eligibility and projection for this task), never once more per map."""
+    payload = "p" * 8192
+    spans = []
+    for index in range(6):
+        session = TraceSession.objects.create(project=project, name=f"bytes-{index}")
+        spans += seed_contact(
+            project,
+            session,
+            {"locale": f"l{index % 2}", "payload": payload},
+            traces=1,
+            seed=False,
+        )
+    seed_ch_spans(spans)
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            group_by=[{"key": "locale"}], default={"rate": 100}
+        ),
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    tag = f"sampling-replays-{uuid.uuid4().hex}"
+    cells = _rows(
+        SamplingQuery(task, policy, version, sampling_clock()).preview(),
+        log_comment=tag,
+    )
+    assert sum(cell[1] for cell in cells) == 6  # eligible units
+    assert sum(cell[6] for cell in cells) == len(spans) == 12  # selected rows
+    client = _get_ch_client()
+    try:
+        _read_rows_value, read_bytes = _read_stats(client, tag)
+    finally:
+        client.close()
+    # Every latest-state replay reads the attribute map with the payload of
+    # every span (uncompressed bytes); id-only remap scans never read it.
+    one_replay = len(spans) * len(payload)
+    measured = (read_bytes, one_replay)
+    assert read_bytes >= one_replay, measured
+    assert read_bytes < 3 * one_replay, measured
+
+
+def _live_task(project, start, **overrides):
+    return EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy={
+            "version": 1,
+            "sampling_unit": "session",
+            "mode": "live",
+            "window": {"start": start.isoformat(), "end": None},
+            "default": {"rate": 100},
+            **overrides,
+        },
+    )
+
+
+def test_live_first_admission_proof_never_reads_outside_its_eligibility_hours(
+    project, custom_eval_config, ch_seed
+):
+    history = timezone.now() - timedelta(days=40)
+    session = TraceSession.objects.create(project=project, name="long-history")
+    old_trace = str(uuid.uuid4())
+    old_rows = [
+        {
+            "id": uuid.uuid4().hex[:16],
+            "trace_id": old_trace,
+            "project_id": str(project.id),
+            "org_id": str(project.organization_id),
+            "trace_session_id": session.id,
+            "name": "old-history",
+            "observation_type": "llm",
+            "start_time": history,
+            "created_at": history,
+        }
+        for _ in range(3000)
+    ]
+    seed_ch_spans(old_rows)
+    recent = seed_contact(project, session, {}, traces=1)
+    # The snapshot follows every arrival: the proof sees the recent rows and
+    # must still skip the old history by its event hours alone.
+    now = sampling_clock()
+    task = _live_task(project, now - timedelta(days=1))
+    policy, version = task_policy(task, now=now)
+    tag = uuid.uuid4().hex
+    decisions = _rows(
+        SamplingQuery(task, policy, version, now).live_member_decisions(
+            [f"session:{session.id}"]
+        ),
+        log_comment=f"sampling-proof-{tag}",
+    )
+    assert decisions == [(f"session:{session.id}", '["default",[]]', 1.0, True)]
+    client = _get_ch_client()
+    try:
+        read = _read_rows(client, f"sampling-proof-{tag}")
+    finally:
+        client.close()
+    # 3000 same-contact spans 40 days before the policy start live in another
+    # day partition; the bounded proof never reads them.
+    assert read < len(old_rows), read
+    assert len(recent) == 2  # one trace of two spans inside the eligibility hours
+
+
+@pytest.mark.parametrize("bound", ["rows", "days"])
+def test_live_first_admission_bound_fails_explicitly_without_partial_decisions(
+    project, custom_eval_config, ch_seed, settings, bound
+):
+    from tracer.services.eval_tasks.sampling.errors import SamplingProofBoundExceeded
+
+    now = sampling_clock()
+    session = TraceSession.objects.create(project=project, name="bounded-proof")
+    seed_contact(project, session, {}, traces=2)
+    task = _live_task(project, now - timedelta(days=3))
+    task.evals.add(custom_eval_config)
+    if bound == "rows":
+        settings.EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS = 1
+    else:
+        settings.EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS = 1
+    with pytest.raises(SamplingProofBoundExceeded) as raised:
+        reconcile(task)
+    assert "no partial decision" in str(raised.value)
+    assert not EvalSamplingMember.objects.filter(cohort__task=task).exists()
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.id)).exists()
+    task.refresh_from_db()
+    assert task.continuous_cursor is None
+    assert task.sampling_cohorts.get().lease_token is None
+
+
+@pytest.mark.parametrize("kind", ["unit", "group"])
+def test_oversized_identity_fails_with_an_explicit_named_cause(
+    project, ch_seed, auth_client, kind
+):
+    from django.core.cache import cache
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingValueTooLarge
+
+    cache.clear()
+    long_value = "x" * 3000
+    attributes = (
+        {"contact_id": long_value, "locale": "en"}
+        if kind == "unit"
+        else {"contact_id": "ok", "locale": long_value}
+    )
+    seed_contact(project, None, attributes, traces=1)
+    seed_contact(project, None, {"contact_id": "fine", "locale": "fr"}, traces=1)
+    policy = make_policy(
+        sampling_unit="attribute",
+        unit_attribute={"key": "contact_id"},
+        group_by=[{"key": "locale"}],
+        default={"rate": 100},
+    )
+    task = EvalTask(
+        project=project, row_type="spans", filters={}, sampling_policy=policy
+    )
+    with pytest.raises(SamplingValueTooLarge) as raised:
+        preview_policy(task)
+    named = "'contact_id'" if kind == "unit" else "'locale'"
+    assert named in str(raised.value)
+    assert long_value not in str(raised.value)
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": policy},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert named in response.content.decode()
+
+
+def test_closed_freeze_settle_margin_excludes_unsettled_arrivals(
+    project, custom_eval_config, ch_seed, settings
+):
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 600
+    now = sampling_clock()
+    settled = TraceSession.objects.create(project=project, name="settled")
+    unsettled = TraceSession.objects.create(project=project, name="unsettled")
+    spans = {}
+    for session, arrived in (
+        (settled, now - timedelta(minutes=20)),
+        (unsettled, now - timedelta(minutes=2)),
+    ):
+        rows = seed_contact(project, session, {}, traces=1, seed=False)
+        for span in rows:
+            span.start_time = now - timedelta(minutes=40)
+            span.created_at = span.updated_at = arrived
+        seed_ch_spans(rows, version_from_created_at=True)
+        spans[session.id] = rows
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            window={
+                "start": (now - timedelta(hours=1)).isoformat(),
+                "end": (now - timedelta(minutes=30)).isoformat(),
+            },
+            default={"rate": 100},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    cohort = task.sampling_cohorts.get()
+    assert now - timedelta(minutes=11) < cohort.frozen_at < now - timedelta(minutes=9)
+    assert list(
+        EvalSamplingMember.objects.filter(cohort=cohort).values_list(
+            "unit_id", flat=True
+        )
+    ) == [f"session:{settled.id}"]
+    assert set(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    ) == {span.id for span in spans[settled.id]}
+
+
+def test_identity_merge_after_freeze_is_a_new_unit_and_never_rewrites_decisions(
+    project, custom_eval_config, ch_seed
+):
+    first = uuid.UUID("f" + str(uuid.uuid4())[1:])
+    target = uuid.uuid4()
+    later = uuid.UUID("0" + str(uuid.uuid4())[1:])
+    for value in (first, target):
+        TraceSession.objects.create(id=value, project=project, name=str(value))
+    client = _get_ch_client()
+    try:
+        client.insert(
+            "trace_session_id_remap",
+            [[first, target]],
+            column_names=["old_id", "new_id"],
+        )
+    finally:
+        client.close()
+    rows = seed_contact(
+        project, TraceSession.objects.get(id=first), {}, traces=1
+    ) + seed_contact(project, TraceSession.objects.get(id=target), {}, traces=1)
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(default={"target_n": 1}),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    member = EvalSamplingMember.objects.get(cohort__task=task)
+    assert member.unit_id == f"session:{first}"
+    assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 4
+    # A later merge makes an older alias canonical for the same contact.
+    client = _get_ch_client()
+    try:
+        client.insert(
+            "trace_session_id_remap",
+            [[later, target]],
+            column_names=["old_id", "new_id"],
+        )
+    finally:
+        client.close()
+    EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=sampling_clock())
+    late = seed_contact(project, TraceSession.objects.get(id=target), {}, traces=1)
+    reconcile(task)
+    member.refresh_from_db()
+    # Documented semantics: the decision keeps its decision-time identity; the
+    # merged identity is a unit first seen after the freeze, so its pending
+    # work is dropped and its late rows are not admitted.
+    assert member.unit_id == f"session:{first}" and member.selected
+    assert EvalSamplingMember.objects.filter(cohort__task=task).count() == 1
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.id)).exists()
+    archived = EvalLogger.all_objects.filter(eval_task_id=str(task.id))
+    assert {entry.observation_span_id for entry in archived} == {
+        span.id for span in rows
+    }
+    assert all(entry.deleted for entry in archived)
+    assert not archived.filter(
+        observation_span_id__in=[span.id for span in late]
+    ).exists()
+
+
+def test_preview_and_execution_ignore_a_hidden_task_date_range(
+    project, custom_eval_config, ch_seed, auth_client
+):
+    from django.core.cache import cache
+
+    cache.clear()
+    early = TraceSession.objects.create(project=project, name="early-in-window")
+    late = TraceSession.objects.create(project=project, name="late-in-window")
+    now = sampling_clock()
+    for session, offset in ((early, 50), (late, 10)):
+        rows = seed_contact(project, session, {}, traces=1, seed=False)
+        for span in rows:
+            span.start_time = now - timedelta(minutes=offset)
+        seed_ch_spans(rows)
+    policy = make_policy(default={"rate": 100})
+    hidden = {
+        "date_range": [
+            (now - timedelta(minutes=20)).isoformat(),
+            (now - timedelta(minutes=5)).isoformat(),
+        ],
+        "date_preset": "custom",
+    }
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": policy, "filters": hidden},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    previewed = response.json()["result"]["strata"]
+    assert sum(cell["eligible_units"] for cell in previewed) == 2
+    created = auth_client.post(
+        "/tracer/eval-task/",
+        {
+            "project": str(project.id),
+            "name": "historical policy",
+            "run_type": "historical",
+            "sampling_rate": 100,
+            "sampling_policy": policy,
+            "evals": [str(custom_eval_config.id)],
+            "filters": {"project_id": str(project.id), **hidden},
+        },
+        format="json",
+    )
+    assert created.status_code == 200, created.data
+    task = EvalTask.objects.get(pk=created.data["result"]["id"])
+    assert "date_range" not in task.filters
+    reconcile(task)
+    assert set(
+        EvalSamplingMember.objects.filter(cohort__task=task).values_list(
+            "unit_id", flat=True
+        )
+    ) == {f"session:{early.id}", f"session:{late.id}"}
+
+
+@pytest.mark.parametrize("start", [0, 87.5])
+def test_coordinated_prn_sql_matches_reference_nests_and_persists(
+    project, custom_eval_config, ch_seed, start
+):
+    """Y1: ClickHouse's coordinated selection equals the portable PRN reference.
+
+    Closed bottom-k and live Bernoulli (two rules; at start 87.5% the 25%
+    interval wraps past the top of the hash circle) agree unit for unit with
+    ``prn_order_key``/``prn_selects``; quotas nest; a reconcile persists the
+    shared seed and marks every result as coordinated.
+    """
+    from tracer.models.eval_sampling import EvalSamplingCohort
+    from tracer.services.eval_tasks.sampling.policy import prn_order_key, prn_selects
+
+    units, spans, gold = [], [], set()
+    for index in range(40):
+        session = TraceSession.objects.create(project=project, name=f"prn-{index}")
+        tier = "gold" if index % 4 == 0 else "std"
+        spans += seed_contact(project, session, {"tier": tier}, traces=1, seed=False)
+        units.append(f"session:{session.id}")
+        if tier == "gold":
+            gold.add(units[-1])
+    seed_ch_spans(spans)
+    coordination = {"coordination": "project"}
+    if start:
+        coordination["prn_start"] = start
+    seed = f"prn-sha256-v1:{project.id}:"
+    reference = sorted(units, key=lambda unit: (prn_order_key(seed, unit, start), unit))
+
+    def closed_members(target):
+        task = EvalTask(
+            project=project,
+            row_type="spans",
+            filters={},
+            sampling_policy=make_policy(default={"target_n": target}, **coordination),
+        )
+        policy, version = task_policy(task, now=timezone.now())
+        statement = SamplingQuery(task, policy, version, sampling_clock()).members()
+        rows = [row for block in stream_query(*statement) for row in block]
+        assert {row[2] for row in rows} == {target / 40}  # p = k / N
+        return version, {row[0] for row in rows}
+
+    small_version, small = closed_members(5)
+    large_version, large = closed_members(12)
+    assert small_version != large_version  # each edit is its own cohort ...
+    assert small == set(reference[:5])  # ... drawn from the same numbers
+    assert large == set(reference[:12])
+    assert small < large
+
+    now = sampling_clock()
+    live_task = EvalTask(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy={
+            "version": 1,
+            "sampling_unit": "session",
+            "mode": "live",
+            "window": {"start": (now - timedelta(days=1)).isoformat(), "end": None},
+            "strata": [
+                {
+                    "name": "gold",
+                    "filters": [{"key": "tier", "op": "in", "values": ["gold"]}],
+                    "rate": 50,
+                }
+            ],
+            "default": {"rate": 25},
+            **coordination,
+        },
+    )
+    policy, version = task_policy(live_task, now=now)
+    decided = {}
+    for block in stream_query(*SamplingQuery(live_task, policy, version, now).rows()):
+        for _row, unit, _stratum, probability, selected in block:
+            assert probability == (0.5 if unit in gold else 0.25)
+            assert decided.setdefault(str(unit), bool(selected)) == bool(selected)
+    assert set(decided) == set(units)
+    assert decided == {
+        unit: prn_selects(seed, unit, 50 if unit in gold else 25, start)
+        for unit in units
+    }
+
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(default={"target_n": 5}, **coordination),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    cohort = EvalSamplingCohort.objects.get(task=task)
+    assert cohort.selection_context["coordination"] == {
+        "mode": "project",
+        "panel": "",
+        "prn_start": start,
+        "seed": seed,
+    }
+    assert {m.unit_id for m in cohort.members.all()} == set(reference[:5])
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert len(entries) == 10  # 5 contacts x 1 trace x 2 spans
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["coordination"]
+        for entry in entries
+    } == {"project"}
+
+
+def test_live_preview_and_audit_use_configured_weights_with_unequal_realizations(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Two N=10 cells at 50% realize 5 and 1; all six weights are still 2."""
+    from tracer.services.eval_tasks.sampling.policy import rate_selects
+
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            mode="live",
+            window={
+                "start": (timezone.now() - timedelta(hours=1)).isoformat(),
+                "end": None,
+            },
+            group_by=[{"key": "cell"}],
+            default={"rate": 50},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    _, version = task_policy(task, now=sampling_clock())
+    spans = []
+    for cell, selected_target in (("a", 5), ("b", 1)):
+        remaining = {True: selected_target, False: 10 - selected_target}
+        for index in range(1000):
+            identity = uuid.uuid5(project.id, f"live-precision-{cell}-{index}")
+            selected = rate_selects(version, f"session:{identity}", 50)
+            if remaining[selected]:
+                session = TraceSession.objects.create(project=project, id=identity)
+                spans += seed_contact(
+                    project, session, {"cell": cell}, traces=1, seed=False
+                )
+                remaining[selected] -= 1
+            if not any(remaining.values()):
+                break
+        assert remaining == {True: 0, False: 0}, "fixture must realize both rates"
+    seed_ch_spans(spans)
+    preview = preview_policy(task)
+    assert sorted(
+        (row["eligible_units"], row["expected_units"], row["selected_units"])
+        for row in preview["strata"]
+    ) == [(10, 5, 1), (10, 5, 5)]
+    reconcile(task)
+    response = auth_client.get(
+        "/tracer/eval-task/sampling_audit/", {"eval_task_id": str(task.id)}
+    )
+    assert response.status_code == 200, response.content
+    audit = response.json()["result"]
+    assert sorted(
+        (row["population_size"], row["achieved"]) for row in audit["strata"]
+    ) == [(10, 1), (10, 5)]
+    assert all(row["design_weight"] == 2 for row in audit["strata"])
+    assert (
+        list(
+            EvalSamplingMember.objects.filter(
+                cohort__task=task, selected=True
+            ).values_list("inclusion_probability", flat=True)
+        )
+        == [0.5] * 6
+    )
+    for key, expected in (("kish_effective_n", 6), ("design_effect", 1)):
+        assert preview["precision"][key] == pytest.approx(expected)
+        assert preview["precision"][key] == pytest.approx(audit["summary"][key])
+
+
+def test_closed_audit_endpoint_reports_frozen_design_weights_and_balance(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Y2: the audit re-reads the frozen population once and reports design math.
+
+    vip (5 units, target 2), rare (3 units, target 5: shortage 2), excluded
+    (4 units, rate 0: read from ClickHouse, nothing persisted) and the default
+    rule (rate 10%, floor 3) split by locale into two cells of 20.
+    """
+    from tracer.services.eval_tasks.sampling.audit import parse_stratum
+
+    contacts, spans = {}, []
+    layout = [("gold", "en", 5), ("rare", "en", 3), ("test", "en", 4)]
+    layout += [("std", "en", 20), ("std", "fr", 20)]
+    for tier, locale, count in layout:
+        for index in range(count):
+            session = TraceSession.objects.create(
+                project=project, name=f"{tier}-{locale}-{index}"
+            )
+            rows = seed_contact(
+                project, session, {"tier": tier, "locale": locale}, traces=1, seed=False
+            )
+            contacts.setdefault((tier, locale), []).append((session, rows))
+            spans += rows
+    seed_ch_spans(spans)
+    slices = [
+        ("vip", "gold", {"target_n": 2}),
+        ("rare", "rare", {"target_n": 5}),
+        ("excluded", "test", {"rate": 0}),
+    ]
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            group_by=[{"key": "locale"}],
+            strata=[
+                {
+                    "name": name,
+                    "filters": [{"key": "tier", "op": "in", "values": [tier]}],
+                    **quota,
+                }
+                for name, tier, quota in slices
+            ],
+            default={"rate": 10, "min_n": 3},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+
+    def audit():
+        response = auth_client.get(
+            "/tracer/eval-task/sampling_audit/", {"eval_task_id": str(task.id)}
+        )
+        assert response.status_code == 200, response.content
+        result = response.json()["result"]
+        return result, {
+            (row["rule"], parse_stratum(row["stratum"])[1][0][1]): row
+            for row in result["strata"]
+        }
+
+    result, rows = audit()
+    assert result["population_source"] == "frozen_snapshot"
+    expected = {  # (N, k, target, shortage, p)
+        ("vip", "en"): (5, 2, 2, 0, 0.4),
+        ("rare", "en"): (3, 3, 5, 2, 1.0),
+        ("excluded", "en"): (4, 0, 0, 0, 0.0),
+        ("default", "en"): (20, 3, 3, 0, 0.15),
+        ("default", "fr"): (20, 3, 3, 0, 0.15),
+    }
+    assert set(rows) == set(expected)
+    for key, (population, achieved, target, shortage, probability) in expected.items():
+        row = rows[key]
+        assert (
+            row["population_size"],
+            row["achieved"],
+            row["target"],
+            row["shortage"],
+            row["exact"],
+            row["population_check"],
+        ) == (population, achieved, target, shortage, True, "match"), key
+        assert row["inclusion_probability"] == pytest.approx(probability, rel=1e-12)
+    summary = result["summary"]
+    # Weights 2.5 x 2, 1 x 3, (20/3) x 3 x 2: sum w = 48, sum w^2 = 1693/6.
+    assert summary["weighted_population"] == pytest.approx(48, rel=1e-12)
+    assert summary["represented_population"] == 48
+    assert summary["kish_effective_n"] == pytest.approx(13824 / 1693, rel=1e-12)
+    assert summary["design_effect"] == pytest.approx(18623 / 13824, rel=1e-12)
+    assert (summary["unrepresented_strata"], summary["unrepresented_population"]) == (
+        1,
+        4,
+    )
+    assert summary["integrity"] == "ok"
+    balance = {item["attribute"]: item for item in result["balance"]}
+    locale = {row["value"]: row for row in balance["locale"]["categories"]}
+    assert locale["fr"]["population_share"] == pytest.approx(20 / 52, rel=1e-12)
+    assert locale["fr"]["sample_share"] == pytest.approx(3 / 11, rel=1e-12)
+    assert locale["fr"]["weighted_share"] == pytest.approx(20 / 48, rel=1e-12)
+    assert balance["locale"]["weighted_imbalance"] is False
+    assert balance["slice"]["weighted_imbalance"] is True  # "excluded" is not sampled
+
+    # A selected cell loses a contact after the freeze: the re-read population
+    # no longer reproduces the persisted membership and the stratum is flagged.
+    _session, deleted = contacts[("std", "en")][0]
+    for span in deleted:
+        span.deleted = True
+        span.updated_at = timezone.now()
+    seed_ch_spans(deleted)
+    result, rows = audit()
+    assert rows[("default", "en")]["population_check"] == "changed"
+    assert rows[("default", "en")]["population_size"] == 20  # persisted N kept
+    assert rows[("default", "fr")]["population_check"] == "match"
+    assert result["summary"]["integrity"] == "attention"
+
+
+def test_planned_cell_quotas_preserve_contact_groups_and_match_audit(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Applying different targets never reassigns multi-row contacts' groups."""
+    from tracer.services.eval_tasks.sampling.audit import parse_stratum, sampling_audit
+    from tracer.services.eval_tasks.sampling.stats import margin_of_error
+
+    spans = []
+    for index, locales in enumerate((("a", "b"), ("a", "b"), ("b",), ("b",), (None,))):
+        session = TraceSession.objects.create(project=project, name=f"planned-{index}")
+        for offset, locale in enumerate(locales):
+            rows = seed_contact(
+                project,
+                session,
+                {} if locale is None else {"locale": locale},
+                traces=1,
+                seed=False,
+            )
+            for span in rows:
+                span.start_time = timezone.now() - timedelta(minutes=10 - offset)
+            spans.extend(rows)
+    seed_ch_spans(spans)
+    original = make_policy(
+        coordination="project",
+        group_by=[{"key": "locale"}],
+        default={"target_n": 1, "max_n": 1, "rare_below": 100},
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=original,
+    )
+    task.evals.add(custom_eval_config)
+    before = preview_policy(task)
+    labels = {
+        parse_stratum(cell["stratum"])[1][0][1]: cell["stratum"]
+        for cell in before["strata"]
+    }
+    assert {
+        parse_stratum(cell["stratum"])[1][0][1]: cell["eligible_units"]
+        for cell in before["strata"]
+    } == {"a": 2, "b": 2, None: 1}
+    quotas = {labels["a"]: 1, labels["b"]: 2, labels[None]: 0}
+    task.sampling_policy = {**original, "cell_quotas": quotas}
+    task.save(update_fields=["sampling_policy"])
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": task.sampling_policy},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    preview = response.json()["result"]
+    cells = {cell["stratum"]: cell for cell in preview["strata"]}
+    assert {key: cell["eligible_units"] for key, cell in cells.items()} == {
+        cell["stratum"]: cell["eligible_units"] for cell in before["strata"]
+    }
+    for identity, target in quotas.items():
+        assert cells[identity]["selected_units"] == target
+        assert cells[identity]["margin_of_error"] == margin_of_error(
+            target, cells[identity]["eligible_units"]
+        )
+    assert preview["precision"]["unsampled_strata"] == 1
+    assert preview["precision"]["stratified_margin_of_error"] is None
+    reconcile(task)
+    members = list(EvalSamplingMember.objects.filter(cohort__task=task))
+    assert len(members) == 3
+    assert {key: sum(m.stratum == key for m in members) for key in quotas} == quotas
+    assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 8
+    audit = sampling_audit(task)
+    assert audit["summary"]["integrity"] == "ok"
+    for row in audit["strata"]:
+        assert row["target"] == row["achieved"] == quotas[row["stratum"]]
+        assert row["population_size"] == cells[row["stratum"]]["eligible_units"]
+        assert row["inclusion_probability"] == row["achieved"] / row["population_size"]

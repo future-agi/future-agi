@@ -226,7 +226,12 @@ import {
   useSessionsGridStore,
 } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
-import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
+import {
+  REPLAY_ACTION_ID,
+  REPLAY_TYPES,
+} from "../SessionsView/ReplaySessions/constants";
+import { withoutReplayForRestrictedOrgs } from "../SessionsView/ReplaySessions/replayAccess";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
@@ -681,6 +686,7 @@ const slotKeyFromColumnState = (columnState, fallbackSlotKey) => {
 };
 
 const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
   const { role, user } = useAuthContext();
@@ -3317,58 +3323,59 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               </Box>
               {/* Filter Button */}
               <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                {projectSource === PROJECT_SOURCE.SIMULATOR && (
-                  <LoadingButton
-                    color={selectedCallIds.length > 0 ? "primary" : "inherit"}
-                    loading={isCreatingReplaySessions}
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/navbar/ic_get_started.svg"
-                        sx={{ height: 16, width: 16 }}
-                      />
-                    }
-                    onClick={() => {
-                      if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
-                        setIsReplayDrawerCollapsed(
-                          REPLAY_MODULES.TRACES,
-                          false,
-                        );
-                        return;
+                {projectSource === PROJECT_SOURCE.SIMULATOR &&
+                  !restrictSimulateToEnvironments && (
+                    <LoadingButton
+                      color={selectedCallIds.length > 0 ? "primary" : "inherit"}
+                      loading={isCreatingReplaySessions}
+                      startIcon={
+                        <SvgColor
+                          src="/assets/icons/navbar/ic_get_started.svg"
+                          sx={{ height: 16, width: 16 }}
+                        />
                       }
-                      createReplaySessions(
-                        {
-                          project_id: observeId,
-                          replay_type: REPLAY_MODULES.TRACES,
-                          ids: selectedCallIds,
-                          select_all: false,
-                        },
-                        {
-                          onSuccess: (data) => {
-                            useSessionsGridStore
-                              .getState()
-                              .setToggledNodes(selectedCallIds);
-                            setCreatedReplay(data?.data?.result);
-                            setReplayType(REPLAY_TYPES.NEW_GROUP);
-                            setOpenReplaySessionDrawer(
-                              REPLAY_MODULES.TRACES,
-                              true,
-                            );
+                      onClick={() => {
+                        if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
+                          setIsReplayDrawerCollapsed(
+                            REPLAY_MODULES.TRACES,
+                            false,
+                          );
+                          return;
+                        }
+                        createReplaySessions(
+                          {
+                            project_id: observeId,
+                            replay_type: REPLAY_MODULES.TRACES,
+                            ids: selectedCallIds,
+                            select_all: false,
                           },
-                        },
-                      );
-                    }}
-                    size="small"
-                    variant="outlined"
-                    disabled={
-                      selectedCallIds.length === 0 ||
-                      Object.values(openReplaySessionDrawer).some(
-                        (open) => open,
-                      )
-                    }
-                  >
-                    {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
-                  </LoadingButton>
-                )}
+                          {
+                            onSuccess: (data) => {
+                              useSessionsGridStore
+                                .getState()
+                                .setToggledNodes(selectedCallIds);
+                              setCreatedReplay(data?.data?.result);
+                              setReplayType(REPLAY_TYPES.NEW_GROUP);
+                              setOpenReplaySessionDrawer(
+                                REPLAY_MODULES.TRACES,
+                                true,
+                              );
+                            },
+                          },
+                        );
+                      }}
+                      size="small"
+                      variant="outlined"
+                      disabled={
+                        selectedCallIds.length === 0 ||
+                        Object.values(openReplaySessionDrawer).some(
+                          (open) => open,
+                        )
+                      }
+                    >
+                      {`Replay Call${selectedCallIds.length !== 1 ? "s" : ""} (${selectedCallIds.length})`}
+                    </LoadingButton>
+                  )}
                 <Button
                   sx={{
                     paddingX: theme.spacing(2),
@@ -4178,35 +4185,38 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               agentGraphEnabled={Boolean(primaryAgentGraphProjectId)}
               bulkActions={(() => {
                 if (projectSource === PROJECT_SOURCE.SIMULATOR) {
-                  return [
-                    {
-                      id: "replay",
-                      label: "Replay Calls",
-                      icon: "mdi:play-outline",
-                    },
-                    {
-                      id: "dataset",
-                      label: "Move to dataset",
-                      icon: "mdi:folder-move-outline",
-                    },
-                    {
-                      id: "tags",
-                      label: "Add tags",
-                      icon: "mdi:tag-outline",
-                    },
-                    {
-                      id: "annotation-queue",
-                      label: "Add to annotation queue",
-                      icon: "mdi:clipboard-list-outline",
-                      disabled:
-                        !simCallFilterSelectionMode &&
-                        (selectedCallIds?.length || 0) > 0 &&
-                        (simCallMeta.unavailableSelectedCount || 0) >=
-                          (selectedCallIds?.length || 0),
-                      disabledReason:
-                        "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
-                    },
-                  ];
+                  return withoutReplayForRestrictedOrgs(
+                    [
+                      {
+                        id: REPLAY_ACTION_ID,
+                        label: "Replay Calls",
+                        icon: "mdi:play-outline",
+                      },
+                      {
+                        id: "dataset",
+                        label: "Move to dataset",
+                        icon: "mdi:folder-move-outline",
+                      },
+                      {
+                        id: "tags",
+                        label: "Add tags",
+                        icon: "mdi:tag-outline",
+                      },
+                      {
+                        id: "annotation-queue",
+                        label: "Add to annotation queue",
+                        icon: "mdi:clipboard-list-outline",
+                        disabled:
+                          !simCallFilterSelectionMode &&
+                          (selectedCallIds?.length || 0) > 0 &&
+                          (simCallMeta.unavailableSelectedCount || 0) >=
+                            (selectedCallIds?.length || 0),
+                        disabledReason:
+                          "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
+                      },
+                    ],
+                    restrictSimulateToEnvironments,
+                  );
                 }
                 const all = [
                   {
@@ -4288,7 +4298,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setQueueAnchorEl(anchor);
                   } else if (actionId === "dataset") {
                     setOpenAddDataset(true);
-                  } else if (actionId === "replay") {
+                  } else if (actionId === REPLAY_ACTION_ID) {
                     // Mirror the standalone "Replay Calls" button flow
                     if (openReplaySessionDrawer[REPLAY_MODULES.TRACES]) {
                       setIsReplayDrawerCollapsed(REPLAY_MODULES.TRACES, false);

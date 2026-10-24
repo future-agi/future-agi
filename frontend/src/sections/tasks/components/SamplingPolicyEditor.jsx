@@ -20,22 +20,35 @@ import { useController, useWatch } from "react-hook-form";
 import axios, { endpoints } from "src/utils/axios";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { getNewTaskFilters } from "../schema";
+import SamplingPrecisionPlanner from "./SamplingPrecisionPlanner";
 
 import {
   defaultSamplingPolicy,
+  isNumericPredicate,
+  samplingPolicyErrors,
+  samplingPolicyForApi,
+  samplingPredicateError,
   samplingStratumLabel,
+  selectionMode,
+  withCoordination,
 } from "./samplingPolicyForm";
 
 const SOURCES = ["span", "resource", "metadata"];
+// The active selection key (rate or target_n) is required: clearing it keeps
+// the key with an explicit empty value so the mode cannot change and the
+// policy cannot be previewed or saved until a value is entered. Optional
+// floors, caps and census thresholds are removed when cleared.
 const numberUpdate = (rule, key, text) => {
   const next = { ...rule };
-  if (text === "") delete next[key];
-  else next[key] = Number(text);
+  if (text !== "") next[key] = Number(text);
+  else if (key === selectionMode(rule)) next[key] = "";
+  else delete next[key];
   return next;
 };
 
-function RuleControls({ rule, onChange, live }) {
-  const target = Object.hasOwn(rule, "target_n");
+function RuleControls({ rule, onChange, live, errors = {} }) {
+  const mode = selectionMode(rule);
+  const target = mode === "target_n";
   return (
     <Stack spacing={1}>
       <Stack direction="row" spacing={1}>
@@ -43,7 +56,7 @@ function RuleControls({ rule, onChange, live }) {
           select
           size="small"
           label="Selection"
-          value={target ? "target_n" : "rate"}
+          value={mode}
           onChange={(event) => {
             const next = { ...rule };
             delete next.rate;
@@ -62,16 +75,12 @@ function RuleControls({ rule, onChange, live }) {
           size="small"
           type="number"
           label={target ? "Target units" : "Rate (%)"}
-          value={target ? rule.target_n : rule.rate}
+          value={rule[mode] ?? ""}
+          error={Boolean(errors[mode])}
+          helperText={errors[mode] || undefined}
           inputProps={{ min: 0, max: target ? 1000000 : 100 }}
           onChange={(event) =>
-            onChange(
-              numberUpdate(
-                rule,
-                target ? "target_n" : "rate",
-                event.target.value,
-              ),
-            )
+            onChange(numberUpdate(rule, mode, event.target.value))
           }
         />
       </Stack>
@@ -88,6 +97,8 @@ function RuleControls({ rule, onChange, live }) {
               type="number"
               label={label}
               value={rule[key] ?? ""}
+              error={Boolean(errors[key])}
+              helperText={errors[key] || undefined}
               inputProps={{ min: 0, max: 1000000 }}
               onChange={(event) =>
                 onChange(numberUpdate(rule, key, event.target.value))
@@ -103,7 +114,15 @@ RuleControls.propTypes = {
   rule: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   live: PropTypes.bool,
+  errors: PropTypes.object,
 };
+
+const ruleErrors = (errors, prefix) =>
+  Object.fromEntries(
+    Object.entries(errors)
+      .filter(([path]) => path.startsWith(`${prefix}.`))
+      .map(([path, message]) => [path.slice(prefix.length + 1), message]),
+  );
 
 function PredicateEditor({ predicate, onChange, onRemove }) {
   return (
@@ -174,11 +193,13 @@ function PredicateEditor({ predicate, onChange, onRemove }) {
             label="Values (comma separated)"
             size="small"
             value={predicate.values.join(",")}
+            error={Boolean(samplingPredicateError(predicate))}
+            helperText={samplingPredicateError(predicate)}
             onChange={(e) =>
               onChange({
                 ...predicate,
-                values: ["gt", "gte", "lt", "lte"].includes(predicate.op)
-                  ? [Number(e.target.value)]
+                values: isNumericPredicate(predicate)
+                  ? [e.target.value]
                   : e.target.value.split(",").map((s) => s.trim()),
               })
             }
@@ -227,9 +248,17 @@ export default function SamplingPolicyEditor({ control, getValues }) {
     setBusy(false);
   }, [scopeKey]);
   const policy = field.value;
-  const update = (next) => {
+  const policyErrors = samplingPolicyErrors(policy);
+  const invalid = Object.keys(policyErrors).length > 0;
+  const update = (next, keepCellQuotas = false) => {
     requestRef.current += 1;
     setBusy(false);
+    // Ordinary policy edits must not leave invisible planned targets overriding
+    // the visible rate/floor/census controls. Explicit Apply preserves them.
+    if (next && !keepCellQuotas) {
+      next = { ...next };
+      delete next.cell_quotas;
+    }
     field.onChange(next);
     setPreview(null);
     setError("");
@@ -240,6 +269,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
       strata: policy.strata.map((r, i) => (i === index ? rule : r)),
     });
   const runPreview = async () => {
+    if (invalid) return;
     const requestId = ++requestRef.current;
     setBusy(true);
     setError("");
@@ -250,7 +280,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
       const response = await axios.post(endpoints.project.samplingPreview(), {
         project,
         row_type: values.rowType,
-        sampling_policy: policy,
+        sampling_policy: samplingPolicyForApi(policy),
         evals: (values.evalsDetails || []).map((item) =>
           typeof item === "string" ? item : item.id,
         ),
@@ -404,6 +434,69 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             use root-span attributes; session rows use the earliest eligible
             root for contact identity.
           </Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <TextField
+              select
+              size="small"
+              label="Coordination"
+              value={policy.coordination || "independent"}
+              onChange={(e) => update(withCoordination(policy, e.target.value))}
+              fullWidth
+            >
+              <MenuItem value="independent">
+                Independent · this policy draws its own sample
+              </MenuItem>
+              <MenuItem value="project">
+                Coordinated · nested across this project
+              </MenuItem>
+            </TextField>
+            {policy.coordination === "project" && (
+              <>
+                <TextField
+                  size="small"
+                  label="PRN panel"
+                  value={policy.panel ?? ""}
+                  error={Boolean(policyErrors.panel)}
+                  helperText={
+                    policyErrors.panel ||
+                    "Optional. Different panels draw independent numbers."
+                  }
+                  onChange={(e) => {
+                    const next = { ...policy };
+                    if (e.target.value) next.panel = e.target.value;
+                    else delete next.panel;
+                    update(next);
+                  }}
+                  fullWidth
+                />
+                <TextField
+                  size="small"
+                  type="number"
+                  label="PRN start (%)"
+                  value={policy.prn_start ?? ""}
+                  error={Boolean(policyErrors.prn_start)}
+                  helperText={
+                    policyErrors.prn_start ||
+                    "Where the selection interval begins on the hash circle."
+                  }
+                  inputProps={{ min: 0, max: 100 }}
+                  onChange={(e) => {
+                    const next = { ...policy };
+                    if (e.target.value !== "")
+                      next.prn_start = Number(e.target.value);
+                    else delete next.prn_start;
+                    update(next);
+                  }}
+                  fullWidth
+                />
+              </>
+            )}
+          </Stack>
+          <Typography variant="caption" color="text.secondary">
+            {policy.coordination === "project"
+              ? "Coordinated policies in this project and panel share each contact’s random number. With the same start point, eligible population and cell assignments, raising a rate or quota keeps the smaller sample; equal quotas select the same contacts. Disjoint start intervals give disjoint live samples."
+              : "This policy draws its own sample: editing a rate or quota re-draws every contact."}
+          </Typography>
           <TextField
             label="Group by attributes (comma separated)"
             size="small"
@@ -516,6 +609,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 rule={rule}
                 onChange={(next) => setRule(index, next)}
                 live={policy.mode === "live"}
+                errors={ruleErrors(policyErrors, `strata.${index}`)}
               />
             </Stack>
           ))}
@@ -542,6 +636,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             rule={policy.default}
             onChange={(rule) => update({ ...policy, default: rule })}
             live={policy.mode === "live"}
+            errors={ruleErrors(policyErrors, "default")}
           />
           <Typography variant="caption" color="text.secondary">
             Rare-cell census includes every eligible unit below the threshold,
@@ -549,13 +644,28 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             present. Inclusion probabilities are saved with results for weighted
             metrics.
           </Typography>
+          {policy.cell_quotas && (
+            <Alert severity="info">
+              {Object.keys(policy.cell_quotas).length} explicit cell quota(s)
+              override the rules below for those cells. Any policy-control edit
+              clears the planned quotas; preview to inspect them.
+              <Button onClick={() => update(policy)}>
+                Clear planned quotas
+              </Button>
+            </Alert>
+          )}
           <Button
             variant="outlined"
             onClick={runPreview}
-            disabled={busy || !project}
+            disabled={busy || !project || invalid}
           >
             {busy ? "Previewing population…" : "Preview sampling policy"}
           </Button>
+          {invalid && (
+            <Typography variant="caption" color="error" role="status">
+              Fix the highlighted sampling values before previewing or saving.
+            </Typography>
+          )}
           {error && <Alert severity="error">{error}</Alert>}
           {preview && (
             <Box aria-label="Sampling population preview">
@@ -605,6 +715,17 @@ export default function SamplingPolicyEditor({ control, getValues }) {
               <Typography variant="caption" color="text.secondary">
                 {preview.cost_note}
               </Typography>
+              {preview.strata.every(
+                (cell) =>
+                  Number.isSafeInteger(cell.eligible_units) &&
+                  Number.isSafeInteger(cell.selected_units),
+              ) && (
+                <SamplingPrecisionPlanner
+                  policy={policy}
+                  preview={preview}
+                  onApply={(next) => update(next, true)}
+                />
+              )}
             </Box>
           )}
         </>

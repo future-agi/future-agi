@@ -14,16 +14,17 @@ from tracer.models.eval_task import (
 )
 from tracer.models.project import Project
 from tracer.serializers.eval_sampling import SamplingPolicySerializer
-from tracer.services.eval_tasks.sampling.policy import (
-    InvalidSamplingPolicy,
-    validate_policy,
-    validate_live_filter_sources,
-)
 from tracer.serializers.filters import (
     SortParamListQueryParamField,
     StrictInputSerializer,
     eval_task_filters_field,
     filter_list_query_param_field,
+)
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    policy_task_filters,
+    validate_live_filter_sources,
+    validate_policy,
 )
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
@@ -404,7 +405,8 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         existing_policy = getattr(self.instance, "sampling_policy", None)
         if "sampling_policy" in attrs or (
-            existing_policy is not None and any(key in attrs for key in ("row_type", "project"))
+            existing_policy is not None
+            and any(key in attrs for key in ("row_type", "project"))
         ):
             project = attrs.get("project") or getattr(self.instance, "project", None)
             try:
@@ -413,10 +415,14 @@ class EvalTaskSerializer(serializers.ModelSerializer):
                     row_type=attrs.get(
                         "row_type", getattr(self.instance, "row_type", RowType.SPANS)
                     ),
-                    contact_attribute=getattr(project, "sampling_contact_attribute", ""),
+                    contact_attribute=getattr(
+                        project, "sampling_contact_attribute", ""
+                    ),
                 )
             except InvalidSamplingPolicy as exc:
-                raise serializers.ValidationError({"sampling_policy": str(exc)}) from exc
+                raise serializers.ValidationError(
+                    {"sampling_policy": str(exc)}
+                ) from exc
         run_type = attrs.get("run_type")
         spans_limit = attrs.get("spans_limit")
         has_policy = attrs.get(
@@ -426,13 +432,39 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "sampling_policy" in attrs
             and not has_policy
             and getattr(self.instance, "run_type", None) == RunType.HISTORICAL
-            and not attrs.get("spans_limit", getattr(self.instance, "spans_limit", None))
+            and not attrs.get(
+                "spans_limit", getattr(self.instance, "spans_limit", None)
+            )
         ):
-            raise serializers.ValidationError({"spans_limit": "Set a row limit before disabling the sampling policy."})
-        if has_policy and has_policy["mode"] == "live" and attrs.get("run_type", getattr(self.instance, "run_type", None)) != RunType.CONTINUOUS:
-            raise serializers.ValidationError({"sampling_policy": "Live percentage policies require a continuous task."})
+            raise serializers.ValidationError(
+                {"spans_limit": "Set a row limit before disabling the sampling policy."}
+            )
+        if has_policy:
+            # The policy window is the only event-time range of a policy task:
+            # drop the task form's hidden date window instead of intersecting.
+            stored_filters = getattr(self.instance, "filters", None) or {}
+            current_filters = attrs.get("filters", stored_filters)
+            try:
+                clean_filters = policy_task_filters(current_filters)
+            except InvalidSamplingPolicy as exc:
+                raise serializers.ValidationError({"filters": str(exc)}) from exc
+            if "filters" in attrs or clean_filters != stored_filters:
+                attrs["filters"] = clean_filters
+        if (
+            has_policy
+            and has_policy["mode"] == "live"
+            and attrs.get("run_type", getattr(self.instance, "run_type", None))
+            != RunType.CONTINUOUS
+        ):
+            raise serializers.ValidationError(
+                {
+                    "sampling_policy": "Live percentage policies require a continuous task."
+                }
+            )
         try:
-            validate_live_filter_sources(has_policy, attrs.get("filters", getattr(self.instance, "filters", {})))
+            validate_live_filter_sources(
+                has_policy, attrs.get("filters", getattr(self.instance, "filters", {}))
+            )
         except InvalidSamplingPolicy as exc:
             raise serializers.ValidationError({"sampling_policy": str(exc)}) from exc
         if has_policy:
@@ -440,8 +472,12 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             evals = attrs.get("evals")
             if evals is None and self.instance is not None:
                 evals = self.instance.evals.all()
-            if project is not None and any(config.project_id != project.id for config in (evals or [])):
-                raise serializers.ValidationError({"evals": "Evaluators must belong to the sampling task project."})
+            if project is not None and any(
+                config.project_id != project.id for config in (evals or [])
+            ):
+                raise serializers.ValidationError(
+                    {"evals": "Evaluators must belong to the sampling task project."}
+                )
         if run_type == RunType.HISTORICAL and not spans_limit and not has_policy:
             raise serializers.ValidationError(
                 {"spans_limit": "spans_limit is required for historical runs."}

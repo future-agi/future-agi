@@ -13,9 +13,11 @@ import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
 import { useSnackbar } from "src/components/snackbar";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { DefaultMessages } from "../constant";
 import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
+import { visibleWorkbenchTab } from "./workbenchTab";
 import {
   getVariables,
   handleAuthFailClose,
@@ -78,7 +80,12 @@ const WorkbenchProvider = ({ children }) => {
   const queryClient = useQueryClient();
 
   //Multi States
-  const [currentTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const [urlTab, setCurrentTab] = useUrlState("tab", "Playground");
+  const currentTab = visibleWorkbenchTab(
+    urlTab,
+    restrictSimulateToEnvironments,
+  );
   const [selectedVersions, setSelectedVersions] = useUrlState(
     "selected-versions",
     [],

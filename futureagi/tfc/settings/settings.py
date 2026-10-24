@@ -1406,7 +1406,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # ~160 MB at the default) while its consumer is behind or stopped; XADD trims
 # unread events beyond it. A positive integer, as fi-collector requires.
 from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
-from tfc.utils.env import env_int  # noqa: E402
+from tfc.utils.env import env_datetime, env_int  # noqa: E402
 
 _usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
 USAGE_EVENTS_ENABLED = (
@@ -1415,6 +1415,13 @@ USAGE_EVENTS_ENABLED = (
     else usage_event_consumer_available()
 )
 USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Orgs created at or after this instant see only Environments in Simulate. Set it
+# to the start of the deploy that introduces the restriction, in UTC, the same
+# value in every region. Unset restricts no org (self-hosted installs).
+RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+)
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
 # rabbitmq. With one web process the layer lives in memory and needs no broker;
@@ -1564,6 +1571,11 @@ SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_QUE
 SQL_WORKBENCH_MAX_ORG_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_QUERIES_24H", "30000"))
 SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H", str(128 * 1024 * 1024)))
 SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H", str(512 * 1024 * 1024)))
+# Advisory pre-run estimates per user per minute (index analysis only).
+SQL_WORKBENCH_ESTIMATES_PER_MINUTE = int(os.getenv("SQL_WORKBENCH_ESTIMATES_PER_MINUTE", "30"))
+# An identical query by the same person returns their completed result from
+# this many seconds ago instead of scanning again (0 turns reuse off; max 3600).
+SQL_WORKBENCH_RESULT_CACHE_SECONDS = int(os.getenv("SQL_WORKBENCH_RESULT_CACHE_SECONDS", "60"))
 _sql_audit_retention = os.getenv("SQL_WORKBENCH_AUDIT_RETENTION_DAYS", "").strip()
 SQL_WORKBENCH_AUDIT_RETENTION_DAYS = int(_sql_audit_retention) if _sql_audit_retention else None
 

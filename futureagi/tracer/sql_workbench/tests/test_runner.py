@@ -34,6 +34,9 @@ def test_unconfigured_or_admin_connection_is_never_used(monkeypatch):
                 runner.connection_config()
 
 
+FILTERS = "{'analytics.spans': 'project_id = toUUID(\\'1\\')'}"
+
+
 class Client:
     def __init__(self, records):
         self.records = records
@@ -49,6 +52,8 @@ class Client:
     def execute_iter(self, query, **kwargs):
         assert kwargs["with_column_types"] is True
         assert kwargs["query_id"]
+        # The scope filter is the only per-query setting ever sent.
+        assert kwargs["settings"] == {"additional_table_filters": FILTERS}
         return iter(self.records)
 
     def send_cancel(self):
@@ -65,7 +70,9 @@ def test_result_rows_are_bounded_and_connection_closed(monkeypatch):
         patch("clickhouse_driver.Client", return_value=client),
         patch.object(runner, "connection_config", return_value={}),
     ):
-        result = runner.run("SELECT count() FROM scoped", uuid4(), lambda: False)
+        result = runner.run(
+            "SELECT count() FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+        )
     assert result["rows"] == [[1], [2]]
     assert result["truncated"] is True
     assert client.cancelled and client.closed
@@ -79,7 +86,9 @@ def test_output_bytes_are_bounded(monkeypatch):
         patch.object(runner, "connection_config", return_value={}),
     ):
         with pytest.raises(runner.QueryUnavailable):
-            runner.run("SELECT name FROM scoped", uuid4(), lambda: False)
+            runner.run(
+                "SELECT name FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+            )
     assert client.closed
 
 
@@ -90,7 +99,9 @@ def test_cancelled_job_never_starts_query():
         patch.object(runner, "connection_config", return_value={}),
     ):
         with pytest.raises(runner.QueryCancelled):
-            runner.run("SELECT id FROM scoped", uuid4(), lambda: True)
+            runner.run(
+                "SELECT id FROM scoped", uuid4(), lambda: True, table_filters=FILTERS
+            )
     assert client.closed
 
 
@@ -209,7 +220,12 @@ def test_watchdog_cancellation_has_exactly_one_socket_reader():
         patch.object(runner, "connection_config", return_value={}),
     ):
         with pytest.raises(QueryCancelled):
-            runner.run("SELECT n FROM bounded", uuid4(), reading.is_set)
+            runner.run(
+                "SELECT n FROM bounded",
+                uuid4(),
+                reading.is_set,
+                table_filters=FILTERS,
+            )
     assert readers == {main_thread}
     assert client.cancelled and client.closed
 
@@ -255,3 +271,152 @@ def test_metrics_probe_is_explicitly_unavailable_not_empty(monkeypatch):
     assert "unavailable" in reason
     assert "private server internals" not in reason
     assert client.closed
+
+
+@pytest.mark.parametrize("filters", [None, "", "{}", "project_id = 1"])
+def test_runner_refuses_to_execute_without_scope_filters(filters):
+    client = Client([[("n", "Int64")], (1,)])
+    with (
+        patch("clickhouse_driver.Client", return_value=client) as connect,
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryUnavailable):
+            runner.run("SELECT 1", uuid4(), lambda: False, table_filters=filters)
+    assert not connect.called
+
+
+def test_profile_without_changeable_filter_fails_closed_with_guidance():
+    class ReadonlyRejection(Exception):
+        code = 164
+
+    class Rejecting(Client):
+        def execute_iter(self, query, **kwargs):
+            raise ReadonlyRejection("Cannot modify setting in readonly mode")
+
+    client = Rejecting([])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryUnavailable, match="locked read-only"):
+            runner.run("SELECT 1", uuid4(), lambda: False, table_filters=FILTERS)
+    assert client.closed
+
+
+def _no_sleep(monkeypatch):
+    """Skip the runner's retry pauses without touching time.sleep elsewhere."""
+    import time
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        runner, "time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda _: None)
+    )
+
+
+class SimultaneousQueries(Exception):
+    code = runner.TOO_MANY_SIMULTANEOUS_QUERIES
+
+
+class Contended(Client):
+    """Turned away by the principal's concurrency cap ``busy`` times first."""
+
+    def __init__(self, records, *, busy, code=runner.TOO_MANY_SIMULTANEOUS_QUERIES):
+        super().__init__(records)
+        self.busy, self.code, self.sent, self.disconnects = busy, code, 0, 0
+
+    def execute_iter(self, query, **kwargs):
+        stream = super().execute_iter(query, **kwargs)
+        self.sent += 1
+        if self.sent <= self.busy:
+            error = SimultaneousQueries("too many simultaneous queries")
+            error.code = self.code
+
+            def rejected():
+                raise error
+                yield  # pragma: no cover
+
+            return rejected()
+        return stream
+
+    def disconnect(self):
+        self.disconnects += 1
+        super().disconnect()
+
+
+def test_a_run_turned_away_by_the_principal_cap_retries_briefly(monkeypatch):
+    """An advisory estimate may hold one of the principal's slots for a moment;
+    the run's first statement read nothing, so it is retried, not failed."""
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (7,)], busy=2)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        result = runner.run(
+            "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+        )
+    assert result["rows"] == [[7]]
+    assert client.sent == 3
+    # Reconnected before each retry, then closed once at the end.
+    assert client.disconnects == 3
+
+
+def test_a_run_still_contended_after_the_retry_window_fails(monkeypatch):
+    monkeypatch.setattr(runner, "START_RETRY_SECONDS", 0.3)
+    client = Contended([[("n", "Int64")], (1,)], busy=10_000)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(SimultaneousQueries):
+            runner.run(
+                "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert 1 < client.sent < 10
+    assert client.closed
+
+
+def test_other_server_errors_are_never_retried(monkeypatch):
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (1,)], busy=1, code=241)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(SimultaneousQueries):
+            runner.run(
+                "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert client.sent == 1
+
+
+def test_a_cancel_during_the_retry_window_stops_the_run(monkeypatch):
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (1,)], busy=10_000)
+    checks = iter([False, True])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryCancelled):
+            runner.run(
+                "SELECT n FROM scoped",
+                uuid4(),
+                lambda: next(checks, True),
+                table_filters=FILTERS,
+            )
+    assert client.sent == 1
+
+
+def test_service_profile_allows_only_the_scope_filter_to_change():
+    from tracer.sql_workbench.provision import service_access_ddl
+
+    statement = service_access_ddl(
+        database="analytics",
+        principal="sql_service",
+        password="secret" * 5,
+        cidr="10.3.0.0/24",
+    )[0]
+    assert "additional_table_filters CHANGEABLE_IN_READONLY" in statement
+    assert statement.count("CHANGEABLE_IN_READONLY") == 1
+    assert "readonly = 1 READONLY" in statement

@@ -1094,6 +1094,7 @@ import type {
   SDKStandaloneEvalV2ResponseApi,
   SOSLoginApi,
   SQLCatalogApi,
+  SQLEstimateApi,
   SQLExecutionApi,
   SQLHistoryApi,
   SQLProjectApi,
@@ -1121,6 +1122,7 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SamplingAuditResponseApi,
   SamplingPreviewRequestApi,
   SamplingPreviewResponseApi,
   SavedViewDetailResponseApi,
@@ -1344,6 +1346,7 @@ import type {
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
   TracerEvalTaskPauseEvalTaskParams,
+  TracerEvalTaskSamplingAuditParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
@@ -71929,6 +71932,104 @@ export const tracerEvalTaskPauseEvalTask = async (
   );
 };
 
+export type tracerEvalTaskSamplingAuditResponse200 = {
+  data: SamplingAuditResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingAuditResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingAuditResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerEvalTaskSamplingAuditResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerEvalTaskSamplingAuditResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingAuditResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingAuditResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingAuditResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingAuditResponseSuccess =
+  tracerEvalTaskSamplingAuditResponse200 & {
+    headers: Headers;
+  };
+export type tracerEvalTaskSamplingAuditResponseError = (
+  | tracerEvalTaskSamplingAuditResponse400
+  | tracerEvalTaskSamplingAuditResponse404
+  | tracerEvalTaskSamplingAuditResponse409
+  | tracerEvalTaskSamplingAuditResponse429
+  | tracerEvalTaskSamplingAuditResponse500
+  | tracerEvalTaskSamplingAuditResponse503
+  | tracerEvalTaskSamplingAuditResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerEvalTaskSamplingAuditResponse =
+  | tracerEvalTaskSamplingAuditResponseSuccess
+  | tracerEvalTaskSamplingAuditResponseError;
+
+export const getTracerEvalTaskSamplingAuditUrl = (
+  params: TracerEvalTaskSamplingAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/eval-task/sampling_audit/?${stringifiedParams}`
+    : `/tracer/eval-task/sampling_audit/`;
+};
+
+/**
+ * Per-stratum design, realized sample, weights, Kish and balance.
+ */
+export const tracerEvalTaskSamplingAudit = async (
+  params: TracerEvalTaskSamplingAuditParams,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingAuditResponse> => {
+  return apiMutator<tracerEvalTaskSamplingAuditResponse>(
+    getTracerEvalTaskSamplingAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerEvalTaskSamplingPreviewResponse200 = {
   data: SamplingPreviewResponseApi;
   status: 200;
@@ -71939,6 +72040,16 @@ export type tracerEvalTaskSamplingPreviewResponse400 = {
   status: 400;
 };
 
+export type tracerEvalTaskSamplingPreviewResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
 export type tracerEvalTaskSamplingPreviewResponse503 = {
   data: ApiErrorResponseApi;
   status: 503;
@@ -71946,7 +72057,7 @@ export type tracerEvalTaskSamplingPreviewResponse503 = {
 
 export type tracerEvalTaskSamplingPreviewResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 500 | 503>;
 };
 
 export type tracerEvalTaskSamplingPreviewResponseSuccess =
@@ -71955,6 +72066,8 @@ export type tracerEvalTaskSamplingPreviewResponseSuccess =
   };
 export type tracerEvalTaskSamplingPreviewResponseError = (
   | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse429
+  | tracerEvalTaskSamplingPreviewResponse500
   | tracerEvalTaskSamplingPreviewResponse503
   | tracerEvalTaskSamplingPreviewResponseDefault
 ) & {
@@ -80244,6 +80357,51 @@ export const tracerSqlQueryCatalog = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryEstimateResponse200 = {
+  data: SQLEstimateApi;
+  status: 200;
+};
+
+export type tracerSqlQueryEstimateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryEstimateResponseSuccess =
+  tracerSqlQueryEstimateResponse200 & {
+    headers: Headers;
+  };
+export type tracerSqlQueryEstimateResponseError =
+  tracerSqlQueryEstimateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerSqlQueryEstimateResponse =
+  | tracerSqlQueryEstimateResponseSuccess
+  | tracerSqlQueryEstimateResponseError;
+
+export const getTracerSqlQueryEstimateUrl = () => {
+  return `/tracer/sql-query/estimate/`;
+};
+
+/**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimate = async (
+  sQLRunApi: SQLRunApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryEstimateResponse> => {
+  return apiMutator<tracerSqlQueryEstimateResponse>(
+    getTracerSqlQueryEstimateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLRunApi),
     },
   );
 };

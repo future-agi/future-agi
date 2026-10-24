@@ -2,18 +2,18 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { episodeContract } from "src/api/simulate-environments/_fixtures/rlContract";
 import SectionCard from "../../components/SectionCard";
 // Actors section (ActorsPanel) is commented out below — it was a dummy cast from
 // the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
 // import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "./WorldInternalsSection";
+import { CONTRACT_COPY } from "./contract.constants";
 
 // Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
-// the environment carries no real end conditions, so the caller falls back to the
-// fixture `episodeContract`. `ended_reasons` is the vocabulary a finished call may
-// carry (terminate); the two limits are the run's truncation ceilings.
+// the environment carries no end conditions yet, and the card says so.
+// `ended_reasons` is the vocabulary a finished call may carry (terminate); the
+// two limits are the run's truncation ceilings.
 const CLOCK_NOTE = {
   "real-time": "Wall-clock time: the voice call runs in real time.",
   stepped: "Stepped: the chat advances a turn at a time.",
@@ -38,8 +38,6 @@ function realEpisode(env) {
       mode: ec.clock || "-",
       note: CLOCK_NOTE[ec.clock] || "How run time is measured.",
     },
-    // No §6 field for the deterministic seed note; keep the fixture's copy.
-    seed: episodeContract(env).seed,
   };
 }
 
@@ -56,13 +54,12 @@ function realEpisode(env) {
  * Twin-backed envs are out of scope in this integration, so the world is always
  * the capability graph (the designer's TwinSandboxSection branch is omitted).
  */
-export default function RlContractPanel({ env, envState, patch, locked = false, graphData }) {
-  // Prefer the real §6 `end_conditions` when authored, mapped into the same
-  // terminate/truncate/clock/seed shape the card renders: `ended_reasons` are the
-  // ways a run terminates, `max_turns`/`max_duration_seconds` are the truncation
-  // ceilings, `clock` is real-time (voice) or stepped (chat). Falls back to the
-  // fixture episode while §6 has not authored it (or the detail path is off).
-  const episode = realEpisode(env) || episodeContract(env);
+export default function RlContractPanel({ env, envState, patch, locked = false, graphData, backed = false }) {
+  // The real §6 `end_conditions`, mapped into the terminate/truncate/clock shape
+  // the card renders: `ended_reasons` are the ways a run terminates,
+  // `max_turns`/`max_duration_seconds` are the truncation ceilings, `clock` is
+  // real-time (voice) or stepped (chat). Null until the build authors them.
+  const episode = realEpisode(env);
   const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
 
   return (
@@ -80,10 +77,23 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
 
       {/* ── run end conditions ────────────────────────────────────────── */}
       <SectionCard
-        title="Run end conditions"
-        subtitle="When a run is over, and which kind of over it was"
+        title={CONTRACT_COPY.endConditions.title}
+        subtitle={CONTRACT_COPY.endConditions.subtitle}
         sx={{ mb: 2 }}
       >
+        {!episode ? (
+          <Box sx={{ px: 2.5, py: 2.25 }}>
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {CONTRACT_COPY.endConditions.notAuthored}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              {backed
+                ? CONTRACT_COPY.endConditions.notAuthoredBuilt
+                : CONTRACT_COPY.endConditions.notAuthoredUnbuilt}
+            </Typography>
+          </Box>
+        ) : (
+        <>
         <Box
           sx={{
             display: "grid", gap: "1px",
@@ -121,24 +131,19 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           </Box>
         </Box>
         <Stack
-          divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-          sx={{ borderTop: "1px solid", borderColor: "divider" }}
+          direction="row"
+          spacing={1.75}
+          alignItems="flex-start"
+          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
         >
-          <Stack direction="row" spacing={1.75} sx={{ px: 2.5, py: 1.75 }} alignItems="flex-start">
-            <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-            <Box>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
-            </Box>
-          </Stack>
-          <Stack direction="row" spacing={1.75} sx={{ px: 2.5, py: 1.75 }} alignItems="flex-start">
-            <Iconify icon="solar:dice-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-            <Box>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>Deterministic seed</Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.seed.note}</Typography>
-            </Box>
-          </Stack>
+          <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
+          <Box>
+            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
+          </Box>
         </Stack>
+        </>
+        )}
       </SectionCard>
 
       {/*
@@ -174,6 +179,8 @@ RlContractPanel.propTypes = {
   // Real §6 capability-graph data for a backed env (tools/flows/personas/
   // guardrails); undefined for a non-backed env (fixture derivation).
   graphData: PropTypes.object,
+  // A built (harness) environment; a template or fork is never built.
+  backed: PropTypes.bool,
 };
 
 function Label({ children }) {

@@ -1422,6 +1422,7 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
     samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
+    samplingAudit: () => apiPath("/tracer/eval-task/sampling_audit/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,

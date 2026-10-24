@@ -1039,6 +1039,13 @@ a Mixpanel token.
     setups = ["S", "D", "H"]
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
 
+    [[part.section.row]]
+    keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
+    default = "empty: no organization restricted"
+    setups = ["S", "D", "H"]
+    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. A value without a zone is UTC. The app refuses to start on a value that is not a date and time, including a date alone. Set it to the start of the deploy that turns the restriction on, the same value in every region."
+    audience = "internal"
+
   [[part.section]]
   heading = "Sign-up and sign-in"
 

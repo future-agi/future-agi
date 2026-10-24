@@ -107,8 +107,14 @@ export function harnessDetailToEnvironment(detail) {
     name: overview.name || environmentName({ job_id: detail.id }),
     description,
     domain: overview.domain ?? null,
+    // The header's one-line subtitle. The description already opens the
+    // Overview, so the subtitle names the domain instead; none when unset.
+    tagline: overview.domain ?? null,
     agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || null,
-    surface: contract?.modality || overview.agent_type || undefined,
+    // The channel is the backend's own voice-or-chat answer. The contract's
+    // raw modality uses the authoring vocabulary ("text" for chat), which the
+    // UI's channel list doesn't know.
+    surface: overview.agent_type || undefined,
     status: overview.status
       ? envStatusFor(overview.stage, stageToStatus(overview.status))
       : undefined,
@@ -131,7 +137,11 @@ export function harnessDetailToEnvironment(detail) {
     useCases: contract?.real_use_cases || null,
     personas: world?.personas || null,
     stores: world?.stores || null,
-    callDirection: contract?.call_direction ?? null,
+    callDirection: contract?.call_direction ?? settings.agent?.call_direction ?? null,
+    // Where the agent was read from (`settings.source`: kind, repository, ref)
+    // and how it is run (`settings.agent.mode`), for the Overview's facts.
+    source: settings.source ?? null,
+    agentMode: settings.agent?.mode ?? null,
     // Real per-table field types and per-tool callables, when ALK read them
     // from source. Empty for provider agents, which have neither.
     dataSchema: contract?.data_schema || null,

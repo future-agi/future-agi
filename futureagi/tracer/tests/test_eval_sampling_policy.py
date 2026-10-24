@@ -368,6 +368,53 @@ def test_preview_counts_evaluation_runs_without_fabricated_pricing():
     assert preview["estimated_cost"] is None
 
 
+def test_preview_reports_hand_computed_precision():
+    """Y3: per-cell 95% margins (FPC, p = 0.5) and the design's precision."""
+    from tracer.models.eval_task import EvalTask
+    from tracer.models.project import Project
+    from tracer.services.eval_tasks.sampling.service import preview_policy
+
+    project = Project(id=PROJECT, sampling_contact_attribute="")
+    task = EvalTask(
+        project=project, row_type="spans", filters={}, sampling_policy=policy()
+    )
+
+    def run(rows):
+        with patch(
+            "tracer.services.eval_tasks.sampling.service.stream_query",
+            return_value=iter([rows]),
+        ):
+            return preview_policy(task, now=NOW)
+
+    preview = run(
+        [("a", 1000, 2000, 100, 200, 100, 200), ("b", 500, 1000, 50, 100, 50, 100)]
+    )
+    margins = [cell["margin_of_error"] for cell in preview["strata"]]
+    # 1.959963984540054 * sqrt(0.25/100 * 900/999) and sqrt(0.25/50 * 450/499).
+    assert margins == [
+        pytest.approx(0.09301577436565599, rel=1e-12),
+        pytest.approx(0.13161005701441758, rel=1e-12),
+    ]
+    precision = preview["precision"]
+    assert (precision["confidence"], precision["assumed_proportion"]) == (0.95, 0.5)
+    # W = 2/3, 1/3: z * sqrt(4/9 * 0.25/100 * 900/999 + 1/9 * 0.25/50 * 450/499).
+    assert precision["stratified_margin_of_error"] == pytest.approx(
+        0.07595974389307122, rel=1e-12
+    )
+    # Proportional design: every weight is N/n = 10, so n_eff = n and deff = 1.
+    assert precision["kish_effective_n"] == pytest.approx(150, rel=1e-12)
+    assert precision["design_effect"] == pytest.approx(1, rel=1e-12)
+    assert precision["unsampled_strata"] == 0
+    preview = run([("a", 40, 80, 4, 8, 4, 8), ("b", 10, 10, 0, 0, 0, 0)])
+    assert [cell["margin_of_error"] for cell in preview["strata"]] == [
+        pytest.approx(1.959963984540054 * (0.25 / 4 * 36 / 39) ** 0.5, rel=1e-12),
+        None,
+    ]
+    assert preview["precision"]["stratified_margin_of_error"] is None
+    assert preview["precision"]["unsampled_strata"] == 1
+    assert preview["precision"]["design_effect"] == pytest.approx(1, rel=1e-12)
+
+
 def test_live_policy_is_open_ended_and_discovers_future_and_backdated_event_days():
     from datetime import date, timedelta
 
@@ -546,3 +593,586 @@ def test_live_first_admission_parameters_are_count_and_byte_bounded():
         SamplingQuery(task, value, "v", NOW).live_member_decisions(
             [f"session:{index}" for index in range(1001)]
         )
+
+
+def _spans_task(row_type="spans"):
+    return SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type=row_type, filters={}
+    )
+
+
+@pytest.mark.parametrize("row_type", ["spans", "traces", "sessions"])
+@pytest.mark.parametrize("unit", ["session", "user", "attribute"])
+def test_closed_member_expansion_pushes_its_units_into_every_physical_read(
+    row_type, unit
+):
+    clean = validate_policy(
+        policy(sampling_unit=unit), now=NOW, contact_attribute="contact_id"
+    )
+    batch = [f"{unit}:a", f"{unit}:b"]
+    sql, params = SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows(
+        unit_ids=batch
+    )
+    full, _ = SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows()
+    assert params[f"sp_member_{unit}_ids"] == ("a", "b")
+    assert params["sp_member_units"] == tuple(batch)
+    # Every physical spans scan of the expansion is bounded by the page's units
+    # and the window hours, unlike the full-window form.
+    assert f"%(sp_member_{unit}_ids)s" in sql
+    assert f"%(sp_member_{unit}_ids)s" not in full
+    assert "_version < %(sp_snapshot_ns)s" in sql
+    assert params["sp_snapshot_ns"] == int(NOW.timestamp() * 1_000_000) * 1000
+    assert "r.unit_id IN %(sp_member_units)s" in sql
+    assert "row_number()" not in sql
+    if unit in ("session", "user"):
+        assert "GROUP BY new_id" in sql  # remap aliases of the page's units
+    with pytest.raises(ValueError, match="bounded closed page"):
+        SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows(
+            unit_ids=[f"{unit}:{index}" for index in range(1001)]
+        )
+
+
+def test_live_rows_never_take_a_closed_member_page():
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    with pytest.raises(ValueError, match="bounded closed page"):
+        SamplingQuery(_spans_task(), clean, "v", NOW).rows(unit_ids=["session:a"])
+
+
+@pytest.mark.parametrize("row_type", ["spans", "traces", "sessions"])
+def test_live_first_admission_seed_is_bounded_by_window_hours_and_arrival(row_type):
+    from datetime import timedelta
+
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    snapshot = NOW + timedelta(days=3)
+    sql, params = SamplingQuery(
+        _spans_task(row_type), clean, "v", snapshot
+    ).live_member_decisions(["session:ba052ed0-921f-4aa9-972d-7bbbc79e5d30"])
+    seed = sql[sql.index("%(sp_new_session_ids)s") - 400 :]
+    assert "_version < %(sp_snapshot_ns)s" in sql
+    assert "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(sp_start)s" in sql
+    assert params["sp_snapshot_ns"] == int(snapshot.timestamp() * 1_000_000) * 1000
+    assert params["sp_start"].isoformat() == clean["window"]["start"]
+    assert "FROM spans PREWHERE project_id = %(sp_project)s AND toStartOfHour" in seed
+    assert params.proof is True
+    assert params.read_settings == {
+        "max_rows_to_read": READ_SETTINGS["max_rows_to_read"]
+    }
+    if row_type != "spans":
+        assert "WHERE parent_span_id = ''" in sql  # roots in the eligibility hours
+
+
+def test_live_first_admission_refuses_lookback_beyond_configured_bound(settings):
+    from datetime import timedelta
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingProofBoundExceeded
+
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS = 2
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    query = SamplingQuery(_spans_task(), clean, "v", NOW + timedelta(days=3))
+    with pytest.raises(SamplingProofBoundExceeded, match="2 days"):
+        query.live_member_decisions(["session:a"])
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS = 1000
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS = 30
+    _, params = SamplingQuery(
+        _spans_task(), clean, "v", NOW + timedelta(days=3)
+    ).live_member_decisions(["session:a"])
+    assert params.read_settings == {"max_rows_to_read": 1000}
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS = READ_SETTINGS["max_rows_to_read"] + 1
+    with pytest.raises(ValueError, match="must not exceed"):
+        SamplingQuery(
+            _spans_task(), clean, "v", NOW + timedelta(days=3)
+        ).live_member_decisions(["session:a"])
+
+
+def test_oversized_identity_markers_name_their_bound_per_group_position():
+    clean = validate_policy(
+        policy(group_by=[{"key": "locale"}, {"key": "category"}]), now=NOW
+    )
+    sql, _ = SamplingQuery(_spans_task(), clean, "v", NOW).members()
+    assert "throwIf(length(p.unit_id) > 2048, 'EVAL_SAMPLING_OVERSIZED_UNIT')" in sql
+    assert (
+        "throwIf(length(p.groups[1]) > 1024, 'EVAL_SAMPLING_OVERSIZED_GROUP_0')" in sql
+    )
+    assert (
+        "throwIf(length(p.groups[2]) > 1024, 'EVAL_SAMPLING_OVERSIZED_GROUP_1')" in sql
+    )
+
+
+def test_read_errors_are_typed_without_leaking_values():
+    from tracer.selectors.eval_tasks.row_resolver import (
+        EvalTaskReadBudgetExceeded,
+        EvalTaskSelectionRejected,
+    )
+    from tracer.services.eval_tasks.sampling.errors import (
+        SamplingProofBoundExceeded,
+        SamplingReadCeilingExceeded,
+        SamplingReadPressure,
+        SamplingValueTooLarge,
+        classify_read_error,
+    )
+
+    clean = validate_policy(
+        policy(
+            sampling_unit="attribute",
+            unit_attribute={"key": "contact_id"},
+            group_by=[{"key": "locale"}, {"key": "category"}],
+        ),
+        now=NOW,
+    )
+
+    def server(code, text):
+        exc = RuntimeError(f"Code: {code}. DB::Exception: {text} secret-value")
+        exc.code = code
+        return exc
+
+    unit = classify_read_error(
+        server(395, "EVAL_SAMPLING_OVERSIZED_UNIT"), policy=clean
+    )
+    group = classify_read_error(
+        server(395, "EVAL_SAMPLING_OVERSIZED_GROUP_1: while executing"), policy=clean
+    )
+    assert isinstance(unit, SamplingValueTooLarge) and "'contact_id'" in str(unit)
+    assert isinstance(group, SamplingValueTooLarge) and "'category'" in str(group)
+    assert "secret-value" not in str(unit) + str(group)
+    # The server echoes the whole failing AND expression after the thrown
+    # marker (shape captured from ClickHouse 25.3), so the other bound checks'
+    # markers appear later in the text. Only the leftmost one was thrown.
+    echoed = (
+        "EVAL_SAMPLING_OVERSIZED_GROUP_0: while executing 'FUNCTION and("
+        "equals(throwIf(greater(length(__table1.unit_id), 2048_UInt16), "
+        "'EVAL_SAMPLING_OVERSIZED_UNIT'_String), 0_UInt8) :: 5, "
+        "equals(throwIf(greater(length(arrayElement(__table1.groups, 1_UInt8)), "
+        "1024_UInt16), 'EVAL_SAMPLING_OVERSIZED_GROUP_0'_String), 0_UInt8) :: 3)"
+    )
+    thrown_group = classify_read_error(server(395, echoed), policy=clean)
+    assert isinstance(thrown_group, SamplingValueTooLarge)
+    assert "'locale'" in str(thrown_group) and "contact_id" not in str(thrown_group)
+    thrown_unit = classify_read_error(
+        server(
+            395,
+            "EVAL_SAMPLING_OVERSIZED_UNIT: while executing 'FUNCTION throwIf("
+            "greater(length(__table1.unit_id), 2048_UInt16) :: 0, "
+            "'EVAL_SAMPLING_OVERSIZED_UNIT'_String :: 1)'",
+        ),
+        policy=clean,
+    )
+    assert "'contact_id'" in str(thrown_unit) and "locale" not in str(thrown_unit)
+    ceiling = classify_read_error(server(158, "Limit for rows"), policy=clean)
+    proof = classify_read_error(
+        server(307, "Limit for bytes"), policy=clean, proof=True
+    )
+    assert type(ceiling) is SamplingReadCeilingExceeded
+    assert isinstance(proof, SamplingProofBoundExceeded)
+    assert "no partial decision" in str(proof)
+    assert isinstance(ceiling, EvalTaskSelectionRejected)  # fail fast, no retry
+    pressure = classify_read_error(server(159, "Timeout exceeded"), policy=clean)
+    assert isinstance(pressure, SamplingReadPressure)
+    assert isinstance(pressure, EvalTaskReadBudgetExceeded)
+    assert not isinstance(pressure, EvalTaskSelectionRejected)  # retry/defer
+    assert isinstance(
+        classify_read_error(TimeoutError("deadline")), SamplingReadPressure
+    )
+    assert classify_read_error(server(62, "Syntax error")) is None
+    assert classify_read_error(ValueError("other")) is None
+
+
+def test_stream_query_types_errors_and_only_tightens_budgets():
+    from contextlib import contextmanager
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingValueTooLarge
+    from tracer.services.eval_tasks.sampling.query import SamplingParams, stream_query
+
+    seen = []
+
+    @contextmanager
+    def execute(sql, params, **options):
+        seen.append(options["settings"])
+
+        def blocks():
+            exc = RuntimeError("Code: 395. EVAL_SAMPLING_OVERSIZED_GROUP_0")
+            exc.code = 395
+            raise exc
+            yield  # pragma: no cover
+
+        yield blocks()
+
+    params = SamplingParams(sp_project="p")
+    params.policy = {"group_by": [{"key": "locale"}]}
+    params.read_settings = {"max_rows_to_read": 10}
+    with patch(
+        "tracer.services.clickhouse.v2.query_service.get_v2_query_client",
+        return_value=SimpleNamespace(execute_read_block_stream=execute),
+    ):
+        with pytest.raises(SamplingValueTooLarge, match="'locale'"):
+            list(stream_query("SELECT 1", params))
+        with pytest.raises(ValueError, match="only tighten"):
+            list(stream_query("SELECT 1", {}, settings={"max_rows_to_read": 10**12}))
+    assert seen == [{**READ_SETTINGS, "max_rows_to_read": 10}]
+
+
+def test_oversized_statement_is_a_typed_rejection_before_any_read():
+    from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+    from tracer.services.eval_tasks.sampling.errors import SamplingStatementTooLarge
+    from tracer.services.eval_tasks.sampling.query import stream_query
+
+    oversized = "SELECT 1" + " " * READ_SETTINGS["max_query_size"]
+    with patch(
+        "tracer.services.clickhouse.v2.query_service.get_v2_query_client"
+    ) as client:
+        with pytest.raises(SamplingStatementTooLarge, match="compiler budget") as err:
+            list(stream_query(oversized, {}))
+    # Deterministic for the policy: fail fast as a client error, never retried
+    # as read pressure, and no statement is sent.
+    assert isinstance(err.value, EvalTaskSelectionRejected)
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "filters,expected",
+    [
+        (
+            {
+                "project_id": "p",
+                "date_range": ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"],
+                "date_preset": "custom",
+                "observation_type": ["llm"],
+            },
+            {"project_id": "p", "observation_type": ["llm"]},
+        ),
+        (None, {}),
+        (
+            {
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+                    }
+                ]
+            },
+            {
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_policy_window_is_the_only_time_authority(filters, expected):
+    from tracer.services.eval_tasks.sampling.policy import policy_task_filters
+
+    assert policy_task_filters(filters) == expected
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"created_at": "2026-10-01T00:00:00Z"},
+        {"filters": [{"column_id": "start_time", "filter_config": {}}]},
+        {
+            "span_attributes_filters": [
+                {
+                    "column_id": "created_at",
+                    "filter_config": {"col_type": "SYSTEM_METRIC"},
+                }
+            ]
+        },
+    ],
+)
+def test_explicit_policy_task_time_filters_are_rejected_not_intersected(filters):
+    from tracer.services.eval_tasks.sampling.policy import (
+        policy_task_filters,
+        require_policy_time_authority,
+    )
+
+    with pytest.raises(InvalidSamplingPolicy, match="policy window"):
+        policy_task_filters(filters)
+    with pytest.raises(InvalidSamplingPolicy):
+        require_policy_time_authority(filters)
+
+
+def test_normalized_policy_edit_is_not_a_population_change():
+    from tracer.services.eval_tasks.sampling.policy import (
+        normalize_policy_update,
+        population_changed,
+    )
+
+    task = SimpleNamespace(
+        sampling_policy=policy(),
+        filters={"project_id": "p"},
+        project="project",
+        row_type="spans",
+    )
+    changes = {"filters": {"project_id": "p", "date_range": ["a", "b"]}}
+    normalize_policy_update(task, changes)
+    assert changes == {"filters": {"project_id": "p"}}
+    assert not population_changed(task, changes)
+    legacy = SimpleNamespace(sampling_policy=None, filters={})
+    untouched = {"filters": {"date_range": ["a", "b"]}}
+    normalize_policy_update(legacy, untouched)
+    assert untouched == {"filters": {"date_range": ["a", "b"]}}
+
+
+# --- Coordinated (permanent-random-number) sampling ------------------------
+
+PROJECT = "ba052ed0-921f-4aa9-972d-7bbbc79e5d30"
+# Computed with the policy module as committed before coordination existed
+# (61977cc93..6975d9407 share it): an omitted or explicit "independent"
+# coordination must keep every existing policy version byte for byte.
+GOLDEN_VERSIONS = {
+    "closed": "5621bacf07847bc1573226f853c294815018fc9a7290a60d614486a83c4cf473",
+    "live": "16fa1b4030dcb25cfced0c7ce908a3c4d842b6b3a87c21e66c7ff9c4222abd13",
+}
+GOLDEN_POLICIES = {
+    "closed": policy(),
+    "live": policy(
+        sampling_unit="user",
+        mode="live",
+        window={"start": "2026-10-19T00:00:00Z", "end": None},
+        strata=[
+            {
+                "name": "vip",
+                "filters": [{"key": "tier", "values": ["gold"]}],
+                "rate": 50,
+            }
+        ],
+        group_by=[{"key": "locale"}],
+        default={"rate": 12.5},
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", ["closed", "live"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_independent_default_keeps_existing_policy_versions_and_seed(kind, explicit):
+    from tracer.services.eval_tasks.sampling.policy import selection_seed
+
+    raw = deepcopy(GOLDEN_POLICIES[kind])
+    if explicit:
+        raw["coordination"] = "independent"
+    clean = validate_policy(raw, now=NOW)
+    assert "coordination" not in clean and "panel" not in clean
+    version = policy_version(clean, project_id=PROJECT, row_type="spans", filters={})
+    assert version == GOLDEN_VERSIONS[kind]
+    # The historical seed: SHA-256(policy_version + ':' + unit_id).
+    assert selection_seed(clean, version=version, project_id=PROJECT) == version
+
+
+@pytest.mark.parametrize(
+    "change,message",
+    [
+        ({"coordination": "global"}, "coordination must be"),
+        ({"panel": "a"}, "require project coordination"),
+        ({"prn_start": 5}, "require project coordination"),
+        ({"coordination": "project", "panel": "-lead"}, "panel must be"),
+        ({"coordination": "project", "panel": "x" * 65}, "panel must be"),
+        ({"coordination": "project", "panel": 7}, "panel must be"),
+        ({"coordination": "project", "prn_start": 100}, "prn_start must be"),
+        ({"coordination": "project", "prn_start": -1}, "prn_start must be"),
+        ({"coordination": "project", "prn_start": True}, "prn_start must be"),
+        ({"coordination": "project", "prn_start": float("nan")}, "prn_start must be"),
+        ({"coordination": "project", "prn_start": 1.0000001}, "six decimal"),
+    ],
+)
+def test_coordination_fields_are_validated(change, message):
+    with pytest.raises(InvalidSamplingPolicy, match=message):
+        validate_policy(policy(**change), now=NOW)
+
+
+def test_coordinated_seed_ignores_rates_strata_window_and_filters():
+    from tracer.services.eval_tasks.sampling.policy import selection_seed
+
+    first = validate_policy(
+        policy(coordination="project", default={"rate": 10}), now=NOW
+    )
+    second = validate_policy(
+        policy(
+            coordination="project",
+            window={"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"},
+            strata=[
+                {"name": "a", "filters": [{"key": "x", "values": ["1"]}], "target_n": 3}
+            ],
+            default={"rate": 20},
+        ),
+        now=NOW,
+    )
+    versions = [
+        policy_version(first, project_id=PROJECT, row_type="spans", filters={}),
+        policy_version(second, project_id=PROJECT, row_type="traces", filters={"a": 1}),
+    ]
+    # Each edit is still its own cohort (lineage), but draws the same numbers.
+    assert versions[0] != versions[1]
+    seeds = {
+        selection_seed(value, version=version, project_id=PROJECT)
+        for value, version in zip((first, second), versions, strict=True)
+    }
+    assert seeds == {f"prn-sha256-v1:{PROJECT}:"}
+    panel = validate_policy(policy(coordination="project", panel="q4.audit"), now=NOW)
+    assert (
+        selection_seed(panel, version="v", project_id=PROJECT)
+        == f"prn-sha256-v1:{PROJECT}:q4.audit"
+    )
+    assert selection_seed(first, version="v", project_id="other") != next(iter(seeds))
+    # Zero start and an empty panel normalize away: one canonical stored form.
+    assert validate_policy(
+        policy(coordination="project", panel="", prn_start=0), now=NOW
+    ) == validate_policy(policy(coordination="project"), now=NOW)
+
+
+def _bottom_k(seed, units, k, start=0):
+    from tracer.services.eval_tasks.sampling.policy import prn_order_key
+
+    return set(sorted(units, key=lambda u: (prn_order_key(seed, u, start), u))[:k])
+
+
+def test_prn_nesting_overlap_and_rotation():
+    """T9: nested rates/quotas, cross-task overlap and disjoint rotations."""
+    import random
+
+    from tracer.services.eval_tasks.sampling.policy import (
+        prn_selects,
+        selection_seed,
+        unit_hash,
+    )
+
+    units = [f"session:{index:05d}" for index in range(10_000)]
+    coordinated = validate_policy(policy(coordination="project"), now=NOW)
+    seed = selection_seed(coordinated, version="unused", project_id=PROJECT)
+
+    def live(rate, start=0, population=units):
+        return {u for u in population if prn_selects(seed, u, rate, start)}
+
+    # (a) Raising a live rate keeps every previously selected unit.
+    samples = {rate: live(rate) for rate in (1, 5, 10, 20, 50, 100)}
+    for low, high in zip(sorted(samples)[:-1], sorted(samples)[1:], strict=True):
+        assert samples[low] <= samples[high]
+    assert samples[100] == set(units)
+    assert 900 <= len(samples[10]) <= 1100  # Bernoulli(0.1) over 10,000
+    # ... and raising a closed quota k keeps every previously selected unit.
+    tops = {k: _bottom_k(seed, units, k) for k in (50, 100, 500, 1000)}
+    assert tops[50] < tops[100] < tops[500] < tops[1000]
+    assert tops[1000] == set(
+        sorted(units, key=lambda u: (unit_hash(seed, u), u))[:1000]
+    )
+    # (b) Two tasks (different rates/strata/windows, same project) agree on
+    # every unit at the same rate: 100% overlap, not ~rate x rate.
+    other = validate_policy(
+        policy(coordination="project", default={"target_n": 3}), now=NOW
+    )
+    other_seed = selection_seed(other, version="different", project_id=PROJECT)
+    assert other_seed == seed
+    assert {u for u in units if prn_selects(other_seed, u, 10)} == samples[10]
+    # Independent policies draw separate samples: about 1% of units overlap.
+    independent = [
+        {u for u in units if prn_selects(version, u, 10)} for version in ("v1", "v2")
+    ]
+    overlap = len(independent[0] & independent[1])
+    assert 50 <= overlap <= 160, overlap
+    # (c) Disjoint start intervals give disjoint samples whose union is the
+    # wider interval; the same width elsewhere on the circle is the same size.
+    rotated = [live(10, start) for start in (0, 10, 95)]
+    assert not rotated[0] & rotated[1]
+    assert rotated[0] | rotated[1] == samples[20]
+    assert not rotated[1] & rotated[2]
+    assert rotated[2] == {u for u in units if prn_selects(seed, u, 5, 95)} | {
+        u for u in units if prn_selects(seed, u, 5, 0)
+    }  # [95%, 100%) plus the wrapped [0%, 5%)
+    # Rotated closed samples nest too and never depend on input order.
+    rotated_tops = [_bottom_k(seed, units, k, 37.5) for k in (100, 300)]
+    assert rotated_tops[0] < rotated_tops[1]
+    # Panels are independent coordinated families.
+    panel_seed = selection_seed(
+        validate_policy(policy(coordination="project", panel="b"), now=NOW),
+        version="x",
+        project_id=PROJECT,
+    )
+    assert (
+        50
+        <= len(samples[10] & {u for u in units if prn_selects(panel_seed, u, 10)})
+        <= 160
+    )
+    # Stable under reordering and pagination: decisions are per unit.
+    shuffled = units[:]
+    random.Random(20261023).shuffle(shuffled)
+    pages = [shuffled[i : i + 1000] for i in range(0, len(shuffled), 1000)]
+    assert set().union(*(live(10, 0, page) for page in pages)) == samples[10]
+    assert _bottom_k(seed, shuffled, 500) == tops[500]
+
+
+def test_prn_hash_uniformity_chi_square_100k():
+    """The PRN key is uniform on [0, 1) for every start point (100,000 ids)."""
+    from scipy.stats import chi2
+
+    from tracer.services.eval_tasks.sampling.policy import (
+        HASH_SPACE,
+        prn_order_key,
+        selection_seed,
+    )
+
+    seed = selection_seed(
+        validate_policy(policy(coordination="project"), now=NOW),
+        version="unused",
+        project_id=PROJECT,
+    )
+    ids = [f"user:customer-{index}" for index in range(100_000)]
+    bins = 100
+    for start in (0, 62.5):
+        counts = [0] * bins
+        for unit in ids:
+            counts[prn_order_key(seed, unit, start) * bins // HASH_SPACE] += 1
+        expected = len(ids) / bins
+        statistic = sum((count - expected) ** 2 / expected for count in counts)
+        # A uniform key fails this only 1 time in 1,000 (df = 99).
+        assert chi2.sf(statistic, bins - 1) > 0.001, (start, statistic)
+        assert max(abs(count - expected) for count in counts) < 0.15 * expected
+
+
+def _compile(policy_value, *, live=False):
+    task = SimpleNamespace(project_id=PROJECT, row_type="spans", filters={})
+    query = SamplingQuery(task, validate_policy(policy_value, now=NOW), "version", NOW)
+    return query.rows() if live else query.members()
+
+
+def test_coordinated_statements_bind_the_shared_seed_and_circle_order():
+    sql, params = _compile(policy())
+    assert "hex(SHA256(concat(%(sp_seed)s, ':', unit_id)))" in sql
+    assert params["sp_seed"] == "version"  # independent: the policy version
+    assert "PARTITION BY stratum ORDER BY unit_hash, unit_id" in sql
+    sql, params = _compile(policy(coordination="project", panel="p1"))
+    assert params["sp_seed"] == f"prn-sha256-v1:{PROJECT}:p1"
+    assert "PARTITION BY stratum ORDER BY unit_hash, unit_id" in sql
+    sql, params = _compile(policy(coordination="project", prn_start=50))
+    start = "08" + "0" * 63
+    assert start in params.values()
+    assert "ORDER BY concat('0', unit_hash) < %(sp_value_" in sql
+
+
+def test_live_start_interval_compiles_plain_and_wrapped_ranges():
+    from tracer.services.eval_tasks.sampling.policy import prn_start_offset, threshold
+
+    sql, params = _compile(
+        policy(
+            mode="live",
+            coordination="project",
+            prn_start=95,
+            strata=[{"name": "all", "filters": [], "rate": 100}],
+            default={"rate": 10},
+        ),
+        live=True,
+    )
+    begin = f"{int(threshold(95), 16):065X}"
+    wrapped = f"{int(threshold(95), 16) + int(threshold(10), 16) - (1 << 256):065X}"
+    assert begin in params.values() and wrapped in params.values()
+    assert " OR concat('0', unit_hash) < " in sql  # [95%, 100%) U [0%, 5%)
+    sql, params = _compile(
+        policy(mode="live", coordination="project", prn_start=5, default={"rate": 10}),
+        live=True,
+    )
+    # The end is S + T with the reference's own integers (floor(5%) +
+    # floor(10%)), which is one below floor(15%): never re-round the sum.
+    end = prn_start_offset(5) + int(threshold(10), 16)
+    assert end == int(threshold(15), 16) - 1
+    assert f"{end:065X}" in params.values()
+    assert " AND concat('0', unit_hash) < " in sql  # [5%, 15%)

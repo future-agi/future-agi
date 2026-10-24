@@ -54,11 +54,18 @@ class SQLExecution(models.Model):
     finished_at = models.DateTimeField(null=True)
     deadline = models.DateTimeField()
     expires_at = models.DateTimeField()
+    # Hash of everything the result and its reader's access depend on; an
+    # identical request by the same person within the reuse window gets this
+    # completed result instead of a new scan. Empty when reuse is off.
+    cache_key = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         indexes = [
             models.Index(
                 fields=["organization", "state", "deadline"], name="sql_admission_idx"
+            ),
+            models.Index(
+                fields=["created_by", "cache_key"], name="sql_result_reuse_idx"
             ),
             models.Index(
                 fields=["organization", "created_at"], name="sql_org_quota_idx"
