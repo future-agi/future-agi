@@ -11,7 +11,7 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_GRPC_MAX_RECV_MIB, FI_GZIP_INFLIGHT_MIB, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -283,6 +283,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
+	}
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.GzipInflightMiB = n
+		} else {
+			log.Warn("ignoring invalid FI_GZIP_INFLIGHT_MIB", "value", v)
+		}
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,6 +36,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
@@ -48,6 +48,10 @@ type Config struct {
 	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
 	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
 	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
+	// GzipInflightMiB caps the decompressed body bytes all gzip OTLP/HTTP
+	// requests hold at once (see inflateBudget). 0 = 128, or GOMEMLIMIT/8
+	// when lower; never below 16.
+	GzipInflightMiB int `yaml:"gzip_inflight_mib"`
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
@@ -71,6 +75,7 @@ type Server struct {
 	pricer          chexp.Pricer
 	grpc            *grpc.Server
 	httpd           *http.Server
+	inflate         *inflateBudget // decompressed gzip bytes held by in-flight HTTP requests
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -206,6 +211,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		curated: curatedwriter.New(writer),
 		pendCh:  make(chan struct{}, 1),
 		stopCh:  make(chan struct{}),
+		inflate: newInflateBudget(gzipInflightBytes(cfg.GzipInflightMiB)),
 	}
 	return s
 }
@@ -229,9 +235,20 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
 		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", s.cfg.GRPCMaxRecvMiB)
+		// No gzip decompressor is registered, on purpose: gRPC stays
+		// uncompressed-only. A grpc-go decompressor is handed only the
+		// compressed bytes, not the call, so it cannot wait on the call for a
+		// share of the inflate budget or hold that share until the handler
+		// returns, as OTLP/HTTP gzip requests do. A gzip call gets
+		// UNIMPLEMENTED before its message is read.
+		// TestGRPCGzipDecompressorIsNotRegistered (cmd/fi-collector) fails if
+		// any import registers one.
 		grpcOpts := []grpc.ServerOption{
 			grpc.MaxRecvMsgSize(s.cfg.GRPCMaxRecvMiB << 20),
 			grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+			// The nesting limit, checked before a request is decoded
+			// (nestingCheckedCodec).
+			grpc.ForceServerCodecV2(newNestingCheckedCodec()),
 		}
 		if s.auth != nil {
 			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
@@ -256,6 +273,7 @@ func (s *Server) Run(ctx context.Context) error {
 		if s.auth != nil {
 			handler = s.auth.HTTPMiddleware(mux)
 		}
+		s.log.Info("http listener", "addr", s.cfg.HTTPAddr, "gzip_inflight_mib", s.inflate.size>>20)
 		s.httpd = &http.Server{
 			Addr:              s.cfg.HTTPAddr,
 			Handler:           handler,
@@ -364,6 +382,13 @@ type otlpHandler struct {
 }
 
 func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) (ptraceotlp.ExportResponse, error) {
+	// x-project-name metadata only fills ResourceSpans that do not name a
+	// project (auth.ProjectNameHeader).
+	md, _ := metadata.FromIncomingContext(ctx)
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameMetadataValues(md)); err != nil {
+		return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	if check, ok := h.s.checkUsage(ctx); !ok {
 		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
 	}
@@ -422,8 +447,15 @@ const maxOTLPHTTPBodyBytes = 16 << 20
 
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
 // (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
-// `application/x-protobuf` and `application/json`. Any other method or
-// content type is rejected with the canonical status code.
+// `application/x-protobuf` and `application/json`, either uncompressed or
+// with `Content-Encoding: gzip` (the spec requires servers to support gzip).
+// Any other method, content type or content coding is rejected with the
+// canonical status code.
+//
+// The project may also come from the X-Project-Name header (alias
+// FI-Project-Name), for exporters that can set headers but not resource
+// attributes; a resource attribute `project_name` still wins (see
+// auth.ProjectNameHeader).
 //
 // Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
 // in the response media type that matches the request — the spec requires
@@ -444,24 +476,59 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		ct = ct[:i]
 	}
 	ct = trimSpace(ct)
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
-	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+	if ct != "application/x-protobuf" && ct != "application/json" {
+		// The spec is explicit: unsupported media types return 415.
+		w.Header().Set("Accept", "application/x-protobuf, application/json")
+		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
 		return
 	}
-	if len(body) > maxOTLPHTTPBodyBytes {
-		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
-		// equally visible server-side.
-		s.log.Error("http body over size cap, request rejected",
-			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
-		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+
+	gzipped, ok := otlpContentCoding(r.Header)
+	if !ok {
+		// RFC 7694: a 415 caused by the content coding lists the codings
+		// the server does accept.
+		w.Header().Set("Accept-Encoding", "gzip, identity")
+		http.Error(w, "unsupported content encoding: "+strings.Join(r.Header.Values("Content-Encoding"), ", "),
+			http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// The 16 MiB cap applies to the body as sent and, for gzip, again after
+	// decompression. A gzip body is read in full, then reserves 16 MiB for the
+	// count pass. On success that shrinks to the exact decompressed size and
+	// remains leased until the handler returns. The lease covers decompressed
+	// body bytes only.
+	body, release, err := readOTLPHTTPBody(w, r, gzipped, maxOTLPHTTPBodyBytes, s.inflate)
+	defer release()
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge) || errors.Is(err, errInflatedBodyTooLarge):
+			// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+			// equally visible server-side.
+			if ok, held := s.inflate.overCapLog.allow(time.Now()); ok {
+				s.log.Error("http body over size cap, request rejected",
+					"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes, "gzip", gzipped, "suppressed", held)
+			}
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		case errors.Is(err, errInflateBudgetBusy):
+			s.rejectBusy(w, r)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
 
 	req := ptraceotlp.NewExportRequest()
 	switch ct {
 	case "application/x-protobuf":
+		// pdata's protobuf decoder has no depth limit and a deep enough body
+		// overflows the stack, killing the process; jsoniter already stops
+		// JSON at the same depth.
+		if err := checkProtoNesting(body); err != nil {
+			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := req.UnmarshalProto(body); err != nil {
 			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
 			return
@@ -471,10 +538,11 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-	default:
-		// The spec is explicit: unsupported media types return 415.
-		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+	}
+
+	// X-Project-Name only fills ResourceSpans that do not name a project.
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -668,6 +736,17 @@ func trimSpace(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// rejectBusy answers a gzip request that did not get its share of the inflate
+// budget in time with 503 + Retry-After, which the OTLP spec makes retryable.
+func (s *Server) rejectBusy(w http.ResponseWriter, r *http.Request) {
+	if ok, held := s.inflate.busyLog.allow(time.Now()); ok {
+		s.log.Warn("gzip inflate budget busy, request rejected",
+			"path", r.URL.Path, "budget_bytes", s.inflate.size, "in_use_bytes", s.inflate.inUse.Load(), "suppressed", held)
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "server busy decompressing other requests, retry later", http.StatusServiceUnavailable)
 }
 
 // enqueue parks rows on the pending buffer and signals the flusher.
