@@ -404,6 +404,8 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-property-catalog-consumer",
                 "mock-llm",
                 "mock-slack",
+                "webhook-sink",
+                "smtp-sink",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",

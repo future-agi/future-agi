@@ -10,7 +10,7 @@ from agentcc.serializers.email_alert import (
     AgentccEmailAlertTestSerializer,
     AgentccEmailAlertWriteSerializer,
 )
-from agentcc.services.email_sender import send_alert_email
+from agentcc.services.email_sender import send_test_email
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -110,12 +110,8 @@ class AgentccEmailAlertViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             recipient_override = serializer.validated_data.get("recipient_override")
-            result = send_alert_email(
-                alert=instance,
-                event_type="test.email",
-                context={"message": "This is a test email from Agentcc Gateway."},
-                recipient_override=recipient_override,
-            )
+            # Sent now, outside the cooldown and without spending it.
+            result = send_test_email(instance, recipient_override=recipient_override)
 
             if result.get("success"):
                 return self._gm.success_response(

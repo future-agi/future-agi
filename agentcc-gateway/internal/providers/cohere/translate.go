@@ -84,6 +84,8 @@ type cohereUsage struct {
 type cohereBilledUnits struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// SearchUnits is what Cohere bills a rerank call by.
+	SearchUnits int `json:"search_units,omitempty"`
 }
 
 type cohereTokens struct {
@@ -371,13 +373,7 @@ func translateEmbeddingRequest(req *models.EmbeddingRequest, headers map[string]
 		}
 	}
 
-	// Determine input_type from provider headers, or default to "search_document".
-	// Cohere supports: "search_document", "search_query", "classification", "clustering".
-	// Callers should set the "x-cohere-input-type" header to control this.
-	inputType := "search_document"
-	if v, ok := headers["x-cohere-input-type"]; ok && v != "" {
-		inputType = v
-	}
+	inputType := cohereInputType(req.InputType, headers)
 
 	return &cohereEmbedRequest{
 		Model:          model,
@@ -385,6 +381,28 @@ func translateEmbeddingRequest(req *models.EmbeddingRequest, headers map[string]
 		InputType:      inputType,
 		EmbeddingTypes: []string{"float"},
 	}
+}
+
+// cohereInputTypes maps a request's input_type to Cohere's.
+var cohereInputTypes = map[string]string{
+	models.EmbeddingInputTypeQuery:          "search_query",
+	models.EmbeddingInputTypeDocument:       "search_document",
+	models.EmbeddingInputTypeClassification: "classification",
+	models.EmbeddingInputTypeClustering:     "clustering",
+}
+
+// cohereInputType is the input_type an embed request goes out with: the
+// request's own, mapped to Cohere's names; else the provider's static
+// x-cohere-input-type header, which is only the default; else
+// search_document.
+func cohereInputType(requested string, headers map[string]string) string {
+	if v, ok := cohereInputTypes[requested]; ok {
+		return v
+	}
+	if v := headers["x-cohere-input-type"]; v != "" {
+		return v
+	}
+	return "search_document"
 }
 
 func translateEmbeddingResponse(resp *cohereEmbedResponse, model string) *models.EmbeddingResponse {
@@ -467,7 +485,7 @@ func translateRerankResponse(resp *cohereRerankResponse) *models.RerankResponse 
 	if resp.Meta != nil && resp.Meta.BilledUnits != nil {
 		result.Meta = &models.RerankMeta{
 			BilledUnits: map[string]int{
-				"search_units": resp.Meta.BilledUnits.InputTokens,
+				"search_units": resp.Meta.BilledUnits.SearchUnits,
 			},
 		}
 	}

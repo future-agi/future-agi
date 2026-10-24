@@ -100,6 +100,8 @@ urlpatterns = [
     ),
     path("integrations/", include("integrations.urls")),
     path("agentcc/", include("agentcc.urls")),
+    # OAuth and MCP discovery documents must sit at /.well-known/.
+    path("", include("agentcc.urls_mcp_wellknown")),
     path("ai-tools/", include("ai_tools.urls")),
     path("mcp/", include("mcp_server.urls")),
     path(

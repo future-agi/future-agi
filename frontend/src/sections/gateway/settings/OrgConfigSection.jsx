@@ -15,15 +15,54 @@ import {
   useOrgConfig,
   useCreateOrgConfig,
 } from "../providers/hooks/useOrgConfig";
-import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
+import {
+  useGatewayConfig,
+  useProviderHealth,
+} from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
 import OrgConfigEditor from "./OrgConfigEditor";
 import ConfigHistoryDrawer from "./ConfigHistoryDrawer";
+
+// An org cache TTL as the gateway reads it: seconds (Django stores 300 for
+// "5m") or duration text such as "1h"; 300 s when none is set.
+function formatCacheTtl(value) {
+  if (value === undefined || value === null || value === "") return "5m";
+  if (typeof value === "string" && !/^\d+$/.test(value.trim())) return value;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return String(value);
+  if (seconds > 0 && seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds > 0 && seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+// The Cache card shows only what the gateway applies for an org: on or off and
+// the TTL. Whether this gateway runs response caching at all comes
+// from its own org_sections_enforced, never from anything else.
+function cacheSummary(cacheConfig, gatewayConfigQuery) {
+  const reported = gatewayConfigQuery?.data?.org_sections_enforced;
+  const known = !gatewayConfigQuery?.isLoading && Array.isArray(reported);
+  if (known && !reported.includes("cache")) {
+    return {
+      value: "Off on this gateway",
+      caption: "Saved, not applied: response caching is off on this gateway",
+    };
+  }
+  if (!cacheConfig.enabled) {
+    return { value: "Disabled", caption: "Not configured" };
+  }
+  const ttl = `TTL ${formatCacheTtl(cacheConfig.default_ttl ?? cacheConfig.defaultTtl)}`;
+  const unknown = !gatewayConfigQuery?.isLoading && !Array.isArray(reported);
+  return {
+    value: "Enabled",
+    caption: unknown ? `${ttl} · enforcement unknown` : ttl,
+  };
+}
 
 const OrgConfigSection = () => {
   const { data: activeConfig, isLoading, error } = useOrgConfig();
   const { gatewayId } = useGatewayContext();
   const { data: providerHealth } = useProviderHealth(gatewayId);
+  const gatewayConfigQuery = useGatewayConfig(gatewayId);
   const createMutation = useCreateOrgConfig();
   const [editorOpen, setEditorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -57,8 +96,7 @@ const OrgConfigSection = () => {
     Object.keys(guardrails?.checks || {}).length ||
     guardrails?.rules?.length ||
     0;
-  const cacheEnabled = cacheConfig.enabled || false;
-  const cacheBackend = cacheConfig.backend || "memory";
+  const cache = cacheSummary(cacheConfig, gatewayConfigQuery);
 
   return (
     <Stack spacing={2}>
@@ -223,13 +261,9 @@ const OrgConfigSection = () => {
               <Typography variant="caption" color="text.secondary">
                 Cache
               </Typography>
-              <Typography variant="h5" sx={{ textTransform: "capitalize" }}>
-                {cacheEnabled ? cacheBackend.replace(/-/g, " ") : "Disabled"}
-              </Typography>
+              <Typography variant="h5">{cache.value}</Typography>
               <Typography variant="caption" color="text.secondary">
-                {cacheEnabled
-                  ? `L1: ${cacheBackend}${cacheConfig.semantic?.enabled ? ` + L2: ${cacheConfig.semantic?.backend || "memory"}` : ""}`
-                  : "Not configured"}
+                {cache.caption}
               </Typography>
             </CardContent>
           </Card>

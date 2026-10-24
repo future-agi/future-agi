@@ -23,6 +23,12 @@ vi.mock("notistack", () => ({
   enqueueSnackbar: (...args) => mockEnqueueSnackbar(...args),
 }));
 
+// Batch Jobs' Submit and Cancel are Owner or Admin only (useGatewayAdmin);
+// these cases act as an Admin.
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: 8 }),
+}));
+
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual("@tanstack/react-query");
   return {

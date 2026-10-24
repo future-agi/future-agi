@@ -1,0 +1,496 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/log-entry-v2.schema.json",
+  "title": "log-entry-v2",
+  "description": "One request-log entry in the gateway's log webhook batch. The v1 fields are kept; every v2 field is omitted when empty. Log entries carry no `kind`; records with `kind` are events (outcome-event-v1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "timestamp",
+    "model",
+    "provider",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "status_code",
+    "latency_ms",
+    "is_stream",
+    "is_error",
+    "cache_hit",
+    "fallback_used",
+    "guardrail_triggered",
+    "cost"
+  ],
+  "properties": {
+    "request_id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "model": { "type": "string" },
+    "resolved_model": { "type": "string" },
+    "provider": { "type": "string" },
+    "prompt_tokens": { "type": "integer", "minimum": 0 },
+    "completion_tokens": { "type": "integer", "minimum": 0 },
+    "total_tokens": { "type": "integer", "minimum": 0 },
+    "status_code": { "type": "integer" },
+    "latency_ms": { "type": "integer", "minimum": 0 },
+    "is_stream": { "type": "boolean" },
+    "is_error": { "type": "boolean" },
+    "error_message": { "type": "string" },
+    "error_code": {
+      "type": "string",
+      "description": "The code of the gateway's error answer (its APIError code; never caller metadata). Django raises budget.exceeded from budget_exceeded, org_budget_exceeded and budget_throttled."
+    },
+    "cache_hit": { "type": "boolean" },
+    "fallback_used": { "type": "boolean" },
+    "guardrail_triggered": { "type": "boolean" },
+    "guardrail_results": {},
+    "cost": { "type": "number", "description": "Billed cost in USD." },
+    "auth_key_id": { "type": "string" },
+    "user_id": { "type": "string" },
+    "session_id": {
+      "type": "string",
+      "description": "The session stays top-level; agent{} has no session_id."
+    },
+    "routing_strategy": {
+      "type": "string",
+      "description": "The strategy the router picked the provider with (the routing_strategy metadata key, promoted)."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Gateway metadata. v2 adds the key outcome_class.",
+      "additionalProperties": { "type": "string" }
+    },
+    "request_body": {},
+    "response_body": {},
+    "request_headers": {},
+
+    "attempts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/Attempt" }
+    },
+    "attempt_count": { "type": "integer", "minimum": 1, "maximum": 16 },
+    "cached_tokens": { "type": "integer", "minimum": 0 },
+    "cache_write_tokens": { "type": "integer", "minimum": 0 },
+    "reasoning_tokens": { "type": "integer", "minimum": 0 },
+    "billing_mode": { "type": "string" },
+    "credential_type": { "$ref": "#/$defs/CredentialType" },
+    "cost_upstream": { "type": "number" },
+    "cost_markup": { "type": "number" },
+    "cost_markup_bps": { "type": "integer", "minimum": 0 },
+    "cost_source": { "$ref": "#/$defs/CostSource" },
+    "usage_estimated": { "type": "boolean" },
+    "cost_landed": {
+      "type": "number",
+      "description": "Staff-only. Never returned to customers."
+    },
+    "served_upstream_provider": { "type": "string" },
+    "upstream_key_id": {
+      "type": "string",
+      "description": "key_hash of the per-org upstream key. Never the key."
+    },
+    "content_mode": { "type": "string", "enum": ["full", "metadata", "none"] },
+    "generation_id": { "type": "string", "description": "Equals request_id." },
+    "agent": { "$ref": "#/$defs/Agent" },
+    "routing": { "$ref": "#/$defs/Routing" },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "referer": { "type": "string" }
+      }
+    },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "end_user": { "type": "string" },
+    "guardrail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool_calls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "checked": { "type": "integer", "minimum": 0 },
+            "blocked": { "type": "array", "items": { "type": "string" } },
+            "stripped": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "endpoint_type": {
+      "type": "string",
+      "description": "The API endpoint the request used. The capability values (search, fetch, crawl, documents, guardrails, evals, browser, sandbox_usage, speech_session, video, payments) are the capability endpoints'; a2a is the A2A server's (a2a/server.go).",
+      "enum": [
+        "chat",
+        "completion",
+        "embedding",
+        "image",
+        "speech",
+        "speech_stream",
+        "transcription",
+        "translation",
+        "rerank",
+        "ocr",
+        "responses",
+        "assistants",
+        "vector_stores",
+        "anthropic_messages",
+        "anthropic_count_tokens",
+        "genai_generate",
+        "genai_stream",
+        "genai_embed",
+        "genai_count_tokens",
+        "search",
+        "fetch",
+        "crawl",
+        "documents",
+        "guardrails",
+        "evals",
+        "browser",
+        "sandbox_usage",
+        "speech_session",
+        "video",
+        "payments",
+        "a2a"
+      ]
+    },
+    "evidence": { "$ref": "#/$defs/Evidence" },
+    "eval_export": {
+      "type": "string",
+      "description": "Whether the request's content may be exported to evals, set from the capability card's terms.",
+      "enum": ["allowed", "forbidden"]
+    }
+  },
+  "$defs": {
+    "EvidenceScalar": {
+      "description": "Evidence holds numbers, ids and flags, never content, so a writer may add a scalar key without a contract change.",
+      "anyOf": [
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "boolean" }
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "description": "Per-request evidence the gateway records through rc.SetLogEvidence(name, v): each entry is written as evidence.<name>. Every content mode keeps it, because it holds only numbers, ids and flags.",
+      "additionalProperties": false,
+      "properties": {
+        "budget_hold": { "$ref": "#/$defs/BudgetHoldEvidence" },
+        "envelope": { "$ref": "#/$defs/EnvelopeEvidence" },
+        "cache": { "$ref": "#/$defs/CacheEvidence" },
+        "tool_schema": { "$ref": "#/$defs/ToolSchemaEvidence" },
+        "overhead": { "$ref": "#/$defs/OverheadEvidence" }
+      }
+    },
+    "BudgetHoldEvidence": {
+      "type": "object",
+      "description": "The customer-budget hold of this request. tightest is <scope>=<available_usd>. enforced is false only under budgets.fail_mode open with budget state unreachable.",
+      "additionalProperties": { "$ref": "#/$defs/EvidenceScalar" },
+      "properties": {
+        "hold_id": { "type": "string" },
+        "tightest": { "type": "string" },
+        "enforced": { "type": "boolean" },
+        "levels": { "type": "integer", "minimum": 0 },
+        "held_usd": { "type": "number", "minimum": 0 },
+        "settled_usd": { "type": "number", "minimum": 0 },
+        "overshoot_usd": { "type": "number", "minimum": 0 },
+        "usage_estimated": { "type": "boolean" },
+        "clamped_max_tokens": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "EnvelopeEvidence": {
+      "type": "object",
+      "description": "The run envelope's state at this request. dimension and used name the tightest dimension and its used ratio.",
+      "additionalProperties": { "$ref": "#/$defs/EvidenceScalar" },
+      "properties": {
+        "run_id": { "type": "string" },
+        "root_run_id": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["ok", "warn", "downgraded", "paused", "stopped"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["warn", "downgrade", "pause", "stop"]
+        },
+        "dimension": { "type": "string" },
+        "used": { "type": "number", "minimum": 0 },
+        "limit": { "type": "number", "minimum": 0 },
+        "downgraded_from": { "type": "string" },
+        "downgraded_to": { "type": "string" },
+        "loop_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "CacheEvidence": {
+      "type": "object",
+      "description": "Prompt-cache truth for this call. cache_miss_usd prices the uncached tokens that were a prefix of the previous call in the run.",
+      "additionalProperties": { "$ref": "#/$defs/EvidenceScalar" },
+      "properties": {
+        "cache_read_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "type": "integer", "minimum": 0 },
+        "uncached_input_tokens": { "type": "integer", "minimum": 0 },
+        "cache_miss_usd": { "type": "number", "minimum": 0 },
+        "break_cause": { "type": "string" }
+      }
+    },
+    "ToolSchemaEvidence": {
+      "type": "object",
+      "description": "The size of the request's tools array; est_tokens is an estimate.",
+      "additionalProperties": { "$ref": "#/$defs/EvidenceScalar" },
+      "properties": {
+        "bytes": { "type": "integer", "minimum": 0 },
+        "est_tokens": { "type": "integer", "minimum": 0 },
+        "tools": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "OverheadEvidence": {
+      "type": "object",
+      "description": "Gateway overhead in milliseconds by category, upstream time excluded.",
+      "additionalProperties": { "$ref": "#/$defs/EvidenceScalar" },
+      "properties": {
+        "total_ms": { "type": "number", "minimum": 0 },
+        "auth_ms": { "type": "number", "minimum": 0 },
+        "policy_ms": { "type": "number", "minimum": 0 },
+        "guard_ms": { "type": "number", "minimum": 0 },
+        "budget_ms": { "type": "number", "minimum": 0 },
+        "log_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "IdentityChain": {
+      "type": "object",
+      "description": "identity-chain-v1: the human sponsor and the agents and runs acting for them, oldest first.",
+      "additionalProperties": false,
+      "required": ["actor_chain", "source"],
+      "properties": {
+        "sponsor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["user_id", "org_id"],
+          "properties": {
+            "user_id": { "type": "string", "minLength": 1 },
+            "org_id": { "type": "string", "minLength": 1 },
+            "idp": { "type": "string" },
+            "idp_subject": { "type": "string" }
+          }
+        },
+        "actor_chain": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agent_id", "run_id"],
+            "properties": {
+              "agent_id": { "type": "string", "minLength": 1 },
+              "run_id": { "type": "string", "minLength": 1 },
+              "deployment_id": { "type": "string" }
+            }
+          }
+        },
+        "grant_id": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "enum": ["oauth", "runtime", "key_owner", "grant"]
+        }
+      }
+    },
+    "Step": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "CredentialType": { "type": "string", "enum": ["managed", "byok"] },
+    "CostSource": {
+      "type": "string",
+      "enum": [
+        "provider_reported",
+        "catalog",
+        "catalog_max",
+        "price_card",
+        "modeldb",
+        "org_custom",
+        "unpriced"
+      ]
+    },
+    "Attempt": {
+      "type": "object",
+      "description": "One upstream attempt. Empty values may be omitted.",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "index",
+        "kind",
+        "provider",
+        "model",
+        "credential_type",
+        "outcome",
+        "started_at"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^.+\\.([1-9]|1[0-6])$",
+          "description": "<request_id>.<index>"
+        },
+        "index": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "",
+            "status_429",
+            "status_5xx",
+            "timeout",
+            "circuit_open",
+            "context_length",
+            "content_filter",
+            "network",
+            "skipped_insufficient_credits",
+            "retry_budget",
+            "attempt_budget",
+            "deadline",
+            "policy",
+            "tool_history_incompatible"
+          ]
+        },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "endpoint_id": { "type": "string" },
+        "upstream_provider": { "type": "string" },
+        "served_upstream_provider": { "type": "string" },
+        "upstream_key_id": { "type": "string" },
+        "credential_type": { "$ref": "#/$defs/CredentialType" },
+        "status_code": { "type": "integer" },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
+            "skipped",
+            "circuit_open",
+            "hollow"
+          ]
+        },
+        "error_class": {
+          "type": "string",
+          "enum": [
+            "rate_limited",
+            "timeout",
+            "upstream_5xx",
+            "upstream_4xx",
+            "context_length",
+            "content_filter",
+            "auth",
+            "invalid_request",
+            "network",
+            "circuit_open",
+            "policy",
+            "budget",
+            "insufficient_credits",
+            "cancelled",
+            "unknown",
+            "hollow_completion"
+          ]
+        },
+        "error_origin": {
+          "type": "string",
+          "enum": ["upstream", "gateway", "client"]
+        },
+        "error_message": { "type": "string", "maxLength": 512 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "ttfb_ms": { "type": "integer", "minimum": 0 },
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "completion_tokens": { "type": "integer", "minimum": 0 },
+        "cached_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_tokens": { "type": "integer", "minimum": 0 },
+        "upstream_cost_micros": { "type": "integer", "minimum": 0 },
+        "billed_cost_micros": { "type": "integer", "minimum": 0 },
+        "landed_cost_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Managed attempts only. Never sent to customers."
+        },
+        "upstream_fee_bps": { "type": "integer", "minimum": 0 },
+        "processing_fee_bps": { "type": "integer", "minimum": 0 },
+        "cost_source": { "$ref": "#/$defs/CostSource" },
+        "usage_estimated": { "type": "boolean" },
+        "billable": { "type": "boolean" }
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "framework": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "agent_version": { "type": "string" },
+        "run_id": { "type": "string" },
+        "parent_run_id": { "type": "string" },
+        "root_run_id": {
+          "type": "string",
+          "description": "Only from a runtime token's root_run_id claim."
+        },
+        "task_id": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "workflow": { "type": "string" },
+        "step": { "$ref": "#/$defs/Step" },
+        "step_source": { "type": "string" },
+        "turn": { "type": "integer", "minimum": 0 },
+        "env": { "type": "string" },
+        "budget_scope": { "type": "string" },
+        "attempt_id": { "type": "string" },
+        "identity_source": {
+          "type": "string",
+          "pattern": "^(runtime_token|header|body|alias:[a-z0-9-]+)$"
+        },
+        "alias_overridden": { "type": "array", "items": { "type": "string" } },
+        "identity": { "$ref": "#/$defs/IdentityChain" }
+      }
+    },
+    "Routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": { "type": "string" },
+        "policy_variant": { "type": "string", "enum": ["stable", "candidate"] },
+        "catalog_snapshot_id": { "type": "string" },
+        "auto": { "type": "boolean" },
+        "auto_step": { "$ref": "#/$defs/Step" },
+        "affinity": {
+          "type": "string",
+          "pattern": "^(hit|new|off|broken:.+)$"
+        },
+        "preset": { "type": "string" },
+        "preset_source": { "type": "string" }
+      }
+    }
+  }
+}

@@ -315,8 +315,8 @@ postgres:
       storageClass: ""
     # -- Resources of the bundled PostgreSQL.
     resources:
-      requests: {cpu: 250m, memory: 512Mi}
-      limits: {cpu: "2", memory: 2Gi}
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }
     # -- Node selector of the bundled PostgreSQL. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled PostgreSQL. Empty: the top-level `tolerations`.
@@ -369,8 +369,8 @@ clickhouse:
       storageClass: ""
     # -- Resources of the bundled ClickHouse.
     resources:
-      requests: {cpu: 500m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     # -- Node selector of the bundled ClickHouse. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled ClickHouse. Empty: the top-level `tolerations`.
@@ -421,8 +421,8 @@ redis:
       storageClass: ""
     # -- Resources of the bundled Redis.
     resources:
-      requests: {cpu: 50m, memory: 64Mi}
-      limits: {cpu: 500m, memory: 512Mi}
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 512Mi }
     # -- Node selector of the bundled Redis. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Redis. Empty: the top-level `tolerations`.
@@ -463,8 +463,8 @@ temporal:
     goMemLimit: 512MiB
     # -- Resources of the bundled Temporal server.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled Temporal. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled Temporal. Empty: the top-level `tolerations`.
@@ -522,8 +522,8 @@ objectStorage:
       downloadPort: 9005
     # -- Resources of the bundled object storage.
     resources:
-      requests: {cpu: 100m, memory: 256Mi}
-      limits: {cpu: "1", memory: 1Gi}
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
     # -- Node selector of the bundled object storage. Empty: the top-level `nodeSelector`.
     nodeSelector: {}
     # -- Tolerations of the bundled object storage. Empty: the top-level `tolerations`.
@@ -574,8 +574,8 @@ backend:
     annotations: {}
   # -- Resources of each API pod.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the API.
     enabled: false
@@ -651,8 +651,8 @@ worker:
     maxConcurrentWorkflowTasks: 50
     # -- Resources of each all-queues worker pod.
     resources:
-      requests: {cpu: 250m, memory: 1Gi}
-      limits: {cpu: "2", memory: 3Gi}
+      requests: { cpu: 250m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
     autoscaling:
       # -- HorizontalPodAutoscaler for the all-queues worker.
       enabled: false
@@ -671,8 +671,8 @@ worker:
     enabled: true
     # -- Resources of the exact-aggregation worker.
     resources:
-      requests: {cpu: 100m, memory: 512Mi}
-      limits: {cpu: "1", memory: 1536Mi}
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { cpu: "1", memory: 1536Mi }
   # -- Dedicated per-queue Deployments, added to the all-queues worker (which stops polling them, see `allQueues.excludeDedicatedQueues`), e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`; examples/sizes/large.yaml has a full split. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values), autoscaling {enabled, minReplicas, maxReplicas, targetCPUUtilizationPercentage, targetMemoryUtilizationPercentage, behavior} (gaps filled from `allQueues.autoscaling`), gracefulShutdownSeconds, preStopSleepSeconds, pdb {enabled, maxUnavailable}, and nodeSelector, tolerations, affinity, topologySpreadConstraints, priorityClassName, podAnnotations, podLabels (each falling back to the `worker` one).
   queues: []
   pdb:
@@ -728,8 +728,8 @@ frontend:
     annotations: {}
   # -- Resources of each UI pod.
   resources:
-    requests: {cpu: 50m, memory: 64Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the UI.
     enabled: false
@@ -798,8 +798,8 @@ fiCollector:
   goMemLimit: 900MiB
   # -- Resources of each collector pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the collector.
     enabled: false
@@ -893,6 +893,27 @@ agentccGateway:
       sync_interval: 60s
     logging:
       level: info
+    # Org settings (Gateway > Org Config): with the control plane sync below,
+    # every replica enforces an org's budgets, tool_policy and alerting as the
+    # org saves them, and its ip_acl with `server.trusted_proxies` (or
+    # `server.trusted_hops`) set in this config. The node switches of those
+    # four blocks stay off here; turning one on adds rules for every request.
+    # An org's ip_acl covers model calls (chat, responses, messages,
+    # embeddings, images, audio, rerank, OCR, search, async jobs) and the
+    # models list, files, job reads, MCP and the A2A request. A /-/batches
+    # item is judged by the address that submitted the batch (for a console
+    # batch, the backend's). An A2A task's model call is judged by the address
+    # of the A2A request that started it. Set `server.trusted_proxies` to the
+    # ingress or load balancer in front of the gateway, so ip_acl reads the
+    # client's address (GET /-/config lists ip_acl under org_sections_enforced).
+    # Backend calls made with an org's key (the Test Playground,
+    # console batch jobs) come from the backend's
+    # address: an org allow list without it refuses them. An org's
+    # cache needs cache.enabled here; its rate limits need
+    # rate_limiting.enabled (on by default). With more than one replica keep
+    # redis on (enabled: auto does it), so every replica shares budget spend
+    # and rate limits. GET /-/config on the
+    # gateway lists what it enforces (org_sections_enforced).
   # -- Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys.
   controlPlaneSync: true
   # -- Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL.
@@ -918,8 +939,8 @@ agentccGateway:
   goMemLimit: 450MiB
   # -- Resources of each gateway pod.
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: "1", memory: 512Mi}
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
   autoscaling:
     # -- HorizontalPodAutoscaler for the gateway.
     enabled: false
@@ -977,8 +998,8 @@ serving:
   replicas: 1
   # -- Resources of each model server pod (add `nvidia.com/gpu` for the GPU image).
   resources:
-    requests: {cpu: 500m, memory: 2Gi}
-    limits: {cpu: "4", memory: 6Gi}
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { cpu: "4", memory: 6Gi }
   persistence:
     # -- Keep downloaded models on a volume (ReadWriteOnce: one replica). Off: an emptyDir, downloaded again after each restart.
     enabled: false
@@ -1023,8 +1044,8 @@ codeExecutor:
   replicas: 1
   # -- Resources of each sandbox pod.
   resources:
-    requests: {cpu: 250m, memory: 256Mi}
-    limits: {cpu: "2", memory: 1Gi}
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
   # -- With `networkPolicy.enabled`: let eval code reach the internet (every private, link-local and metadata range stays blocked). `false` blocks all egress but DNS.
   allowInternetEgress: true
   # -- Extra environment variables, as `NAME: value`.
@@ -1061,8 +1082,8 @@ bootstrap:
   ttlSecondsAfterFinished: 86400
   # -- Resources of the bootstrap job.
   resources:
-    requests: {cpu: 250m, memory: 768Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "2", memory: 2Gi }
   serviceAccount:
     # -- Create a dedicated ServiceAccount for the job (it exists before any other resource on install).
     create: true

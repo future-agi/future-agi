@@ -142,13 +142,7 @@ func handleChunk(ctx context.Context, state *streamState, chunk models.StreamChu
 			state.messageID = generateMsgID()
 		}
 
-		var startUsage ResponseUsage
-		if chunk.Usage != nil {
-			startUsage = ResponseUsage{
-				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
-			}
-		}
+		startUsage := dialectUsage(chunk.Usage)
 		emit(ctx, events, sseFrame("message_start", MessageStartEvent{
 			Type: "message_start",
 			Message: MessageStartMsg{
@@ -301,17 +295,14 @@ func flushPendingStop(ctx context.Context, state *streamState, events chan<- []b
 		state.currentBlockType = ""
 	}
 
-	var outputTokens int
-	if state.pendingUsage != nil {
-		outputTokens = state.pendingUsage.CompletionTokens
-	}
-
 	emit(ctx, events, sseFrame("message_delta", MessageDeltaEvent{
 		Type: "message_delta",
 		Delta: MessageDelta{
 			StopReason: state.pendingStopReason,
 		},
-		Usage: ResponseUsage{OutputTokens: outputTokens},
+		// Cumulative, as Anthropic's message_delta usage is: a canonical
+		// stream reports its usage only in its last chunks.
+		Usage: dialectUsage(state.pendingUsage),
 	}))
 
 	emit(ctx, events, sseFrame("message_stop", MessageStopEvent{Type: "message_stop"}))

@@ -15,6 +15,11 @@ type streamState struct {
 	inputTokens int
 	created     int64
 
+	// cacheReadTokens and cacheWriteTokens are message_start's cache reads
+	// and writes, which inputTokens does not count.
+	cacheReadTokens  int
+	cacheWriteTokens int
+
 	// toolCallIndex tracks the current tool call index for streaming tool calls.
 	// Each content_block_start of type "tool_use" increments this.
 	toolCallIndex int
@@ -113,6 +118,8 @@ func (s *streamState) handleMessageStart(event streamEvent) (*models.StreamChunk
 	s.messageID = msg.ID
 	s.model = msg.Model
 	s.inputTokens = msg.Usage.InputTokens
+	s.cacheReadTokens = msg.Usage.CacheReadInputTokens
+	s.cacheWriteTokens = msg.Usage.CacheCreationInputTokens
 
 	role := "assistant"
 	chunk := &models.StreamChunk{
@@ -278,13 +285,17 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 		},
 	}
 
-	// Include usage if available.
+	// Include usage if available. message_delta carries the output count;
+	// newer streams repeat the input counts there too. Every count is
+	// cumulative, so the larger of message_start's and message_delta's wins.
 	if event.Usage != nil {
-		chunk.Usage = &models.Usage{
-			PromptTokens:     s.inputTokens,
-			CompletionTokens: event.Usage.OutputTokens,
-			TotalTokens:      s.inputTokens + event.Usage.OutputTokens,
+		u := anthropicUsage{
+			InputTokens:              max(s.inputTokens, event.Usage.InputTokens),
+			CacheReadInputTokens:     max(s.cacheReadTokens, event.Usage.CacheReadInputTokens),
+			CacheCreationInputTokens: max(s.cacheWriteTokens, event.Usage.CacheCreationInputTokens),
+			OutputTokens:             event.Usage.OutputTokens,
 		}
+		chunk.Usage = u.toUsage()
 	}
 
 	return chunk, false, nil

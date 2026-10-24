@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -17,33 +19,64 @@ const DefaultResultTTL = 3600 * time.Second
 // DefaultMaxWorkers is the default number of concurrent async workers.
 const DefaultMaxWorkers = 10
 
+// DefaultMaxJobTimeout is the default for the longest a job may run.
+const DefaultMaxJobTimeout = 120 * time.Second
+
+// QueueCapacity is how many jobs may wait to run, across all orgs. One org
+// may have half of them queued.
+const QueueCapacity = 1000
+
 // DefaultCleanupInterval is how often expired jobs are garbage collected.
 const DefaultCleanupInterval = 5 * time.Minute
 
-// ProviderFunc is the function that actually calls the provider for a chat completion.
-// It receives a context and request, returns the response and metadata.
-type ProviderFunc func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error)
+// WorkerConfig bounds the worker pool. Every org's jobs share it, so these
+// limits keep one org from holding it. A zero field takes its default.
+type WorkerConfig struct {
+	// MaxWorkers is how many jobs run at once, across all orgs.
+	// Default DefaultMaxWorkers.
+	MaxWorkers int
+	// MaxWorkersPerOrg is how many jobs one org may have running at once.
+	// Default half of MaxWorkers (at least 1); never more than MaxWorkers.
+	MaxWorkersPerOrg int
+	// MaxJobTimeout is the longest one job may run. The timeout its request
+	// resolved (timeout_ms) can shorten it, never lengthen it. Default
+	// DefaultMaxJobTimeout.
+	MaxJobTimeout time.Duration
+}
 
-// Worker processes async jobs from a queue.
+func (c WorkerConfig) withDefaults() WorkerConfig {
+	if c.MaxWorkers <= 0 {
+		c.MaxWorkers = DefaultMaxWorkers
+	}
+	if c.MaxWorkersPerOrg <= 0 {
+		c.MaxWorkersPerOrg = max(1, c.MaxWorkers/2)
+	}
+	c.MaxWorkersPerOrg = min(c.MaxWorkersPerOrg, c.MaxWorkers)
+	if c.MaxJobTimeout <= 0 {
+		c.MaxJobTimeout = DefaultMaxJobTimeout
+	}
+	return c
+}
+
+// Worker processes async jobs from a queue. It runs each job with the
+// executor the job carries; it has no provider of its own.
 type Worker struct {
-	store       *Store
-	queue       chan string
-	providerFn  ProviderFunc
-	maxWorkers  int
-	stopCh      chan struct{}
+	store         *Store
+	queue         *fairQueue
+	maxWorkers    int
+	maxJobTimeout time.Duration
+	stopCh        chan struct{}
 }
 
 // NewWorker creates a new async worker.
-func NewWorker(store *Store, providerFn ProviderFunc, maxWorkers int) *Worker {
-	if maxWorkers <= 0 {
-		maxWorkers = DefaultMaxWorkers
-	}
+func NewWorker(store *Store, cfg WorkerConfig) *Worker {
+	cfg = cfg.withDefaults()
 	return &Worker{
-		store:      store,
-		queue:      make(chan string, 1000),
-		providerFn: providerFn,
-		maxWorkers: maxWorkers,
-		stopCh:     make(chan struct{}),
+		store:         store,
+		queue:         newFairQueue(QueueCapacity, QueueCapacity/2, cfg.MaxWorkersPerOrg),
+		maxWorkers:    cfg.MaxWorkers,
+		maxJobTimeout: cfg.MaxJobTimeout,
+		stopCh:        make(chan struct{}),
 	}
 }
 
@@ -59,83 +92,122 @@ func (w *Worker) Start() {
 
 	slog.Info("async worker started",
 		"max_workers", w.maxWorkers,
+		"max_workers_per_org", w.queue.perOrgRunning,
+		"max_job_timeout", w.maxJobTimeout,
 	)
 }
 
-// Stop signals workers to stop.
+// Stop signals workers to stop. Jobs still queued never run.
 func (w *Worker) Stop() {
 	close(w.stopCh)
+	w.queue.close()
 }
 
-// Submit queues a job for processing. Returns the job.
-func (w *Worker) Submit(job *Job) {
+// Submit stores a job and queues it. When the queue refuses the job it
+// stores nothing and returns the reason as an API error: 429 when the job's
+// org already has its share of the queue queued, 503 when the queue is full
+// or the worker is stopped.
+func (w *Worker) Submit(job *Job) *models.APIError {
+	// Store first: a worker may take the job the moment it is queued.
 	w.store.Put(job)
-
-	select {
-	case w.queue <- job.ID:
-	default:
-		// Queue full — mark job as failed via store update.
-		w.store.Update(job.ID, func(j *Job) {
-			now := time.Now()
-			j.Status = StatusFailed
-			j.CompletedAt = &now
-			j.Error = models.ErrInternal("async job queue is full")
-		})
-		slog.Warn("async job queue full, rejecting job", "job_id", job.ID)
+	err := w.queue.push(job.OrgID, job.ID)
+	if err == nil {
+		return nil
+	}
+	w.store.Delete(job.ID)
+	slog.Warn("async job refused by the queue", "job_id", job.ID, "org_id", job.OrgID, "reason", err.Error())
+	if errors.Is(err, errOrgQueueFull) {
+		return &models.APIError{
+			Status:  http.StatusTooManyRequests,
+			Type:    models.ErrTypeRateLimit,
+			Code:    "async_org_queue_full",
+			Message: err.Error(),
+		}
+	}
+	return &models.APIError{
+		Status:  http.StatusServiceUnavailable,
+		Type:    models.ErrTypeServer,
+		Code:    "async_queue_full",
+		Message: err.Error(),
 	}
 }
 
 func (w *Worker) processLoop() {
 	for {
-		select {
-		case <-w.stopCh:
+		org, jobID, ok := w.queue.next()
+		if !ok {
 			return
-		case jobID := <-w.queue:
-			w.processJob(jobID)
 		}
+		w.runTurn(org, jobID)
 	}
 }
 
+// runTurn processes one job taken from the queue, and gives its org's turn
+// back however the job ends.
+func (w *Worker) runTurn(org, jobID string) {
+	defer w.queue.done(org)
+	w.processJob(jobID)
+}
+
+// jobTimeout is how long a job may run: the timeout its request resolved
+// (timeoutMs, from the request's timeout header, its org's or the operator's
+// model timeout, or the server default) when that is shorter than the
+// operator's cap, and the cap otherwise. Nothing a caller or an org sets can
+// make a job hold a shared worker longer than the cap.
+func (w *Worker) jobTimeout(timeoutMs string) time.Duration {
+	ms, err := strconv.ParseInt(timeoutMs, 10, 64)
+	if err == nil && ms > 0 && ms < w.maxJobTimeout.Milliseconds() {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return w.maxJobTimeout
+}
+
 func (w *Worker) processJob(jobID string) {
-	// Read initial state via snapshot to check status and extract params.
+	// Read the timeout from a snapshot; a job deleted since it was queued is
+	// gone, and start below refuses it.
 	snap := w.store.Get(jobID)
 	if snap == nil {
 		return
 	}
-	if snap.Status == StatusCancelled {
+	ctx, cancel := context.WithTimeout(context.Background(), w.jobTimeout(snap.Metadata["timeout_ms"]))
+	defer cancel()
+
+	// Mark the job processing and register cancel in one step, so a delete
+	// either stops the job before it runs or cancels ctx while it runs.
+	exec, job, ok := w.store.start(jobID, cancel)
+	if !ok {
 		return
 	}
 
-	// Mark as processing via store (mutates the real pointer).
-	w.store.Update(jobID, func(job *Job) {
-		now := time.Now()
-		job.Status = StatusProcessing
-		job.StartedAt = &now
-	})
-
-	slog.Debug("processing async job", "job_id", jobID, "model", snap.Request.Model)
-
-	// Create context with timeout from metadata.
-	timeoutMs := 120000 // default 2 minutes
-	if v, ok := snap.Metadata["timeout_ms"]; ok {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			timeoutMs = parsed
-		}
+	model := ""
+	if job.Request != nil {
+		model = job.Request.Model
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
-	defer cancel()
+	slog.Debug("processing async job", "job_id", jobID, "model", model)
 
-	w.store.Update(jobID, func(job *Job) {
-		job.CancelFn = cancel
-	})
-
-	// Call the provider function.
-	resp, respMeta, err := w.providerFn(ctx, snap.Request, snap.Metadata)
+	var result *Execution
+	var err error
+	if exec == nil {
+		err = models.ErrInternal("async job has no executor")
+	} else {
+		result, err = exec(ctx)
+	}
+	if err == nil && (result == nil || result.Response == nil) {
+		err = models.ErrInternal("no response from provider")
+	}
 
 	completedAt := time.Now()
 
 	w.store.Update(jobID, func(job *Job) {
+		job.cancel = nil
+		if job.Status != StatusProcessing {
+			return
+		}
 		job.CompletedAt = &completedAt
+		if result != nil {
+			job.Provider = result.Provider
+			job.CredentialSource = result.CredentialSource
+		}
 
 		if err != nil {
 			job.Status = StatusFailed
@@ -146,14 +218,12 @@ func (w *Worker) processJob(jobID string) {
 			}
 		} else {
 			job.Status = StatusCompleted
-			job.Response = resp
-			if respMeta != nil {
-				for k, v := range respMeta {
-					if job.Metadata == nil {
-						job.Metadata = make(map[string]string)
-					}
-					job.Metadata[k] = v
+			job.Response = result.Response
+			for k, v := range result.Metadata {
+				if job.Metadata == nil {
+					job.Metadata = make(map[string]string)
 				}
+				job.Metadata[k] = v
 			}
 		}
 

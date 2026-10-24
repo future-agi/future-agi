@@ -1,0 +1,22 @@
+# verify-local.sh fixture: a release workflow that breaks every workflow rule
+# (testdata/unpinned-workflow.expected lists what the check must report).
+name: unpinned
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@5e57cd1
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - name: SBOM
+        id: sbom
+        run: bash agentcc-gateway/scripts/release/sbom.sh --out sbom.json
+      - name: Checksums
+        id: checksums
+        run: sha256sum sbom.json > SHA256SUMS
+      - name: Sign
+        id: sign
+        run: echo "signing skipped"

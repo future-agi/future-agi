@@ -8,9 +8,76 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/video"
 )
+
+// errEndpointNotConfigured is the 501 endpoint_not_configured of an
+// endpoint this gateway has nothing behind: the video routes
+// with no video provider, and the scheduled routes.
+func errEndpointNotConfigured(message string) *models.APIError {
+	return &models.APIError{
+		Status:  http.StatusNotImplemented,
+		Type:    models.ErrTypeServer,
+		Code:    "endpoint_not_configured",
+		Message: message,
+	}
+}
+
+// videoGate writes the 501 and reports false unless a video provider is
+// registered and the job store is set. Every /v1/videos route calls it
+// first, so an unconfigured gateway stores nothing.
+func (h *Handlers) videoGate(w http.ResponseWriter) bool {
+	if h.videoStore != nil && h.videoProviderConfigured() {
+		return true
+	}
+	models.WriteError(w, errEndpointNotConfigured("Video generation is not configured on this gateway: no provider serves it"))
+	return false
+}
+
+// videoProviderConfigured reports whether a registered provider implements
+// providers.VideoProvider.
+func (h *Handlers) videoProviderConfigured() bool {
+	if h.registry == nil {
+		return false
+	}
+	for _, id := range h.registry.ProviderIDs() {
+		p, ok := h.registry.GetProvider(id)
+		if !ok {
+			continue
+		}
+		if _, ok := p.(providers.VideoProvider); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// videoCaller returns the org and key id of the key KeyAuth authenticated,
+// which scope every video job, as KeyAuth recorded them (KeyIdentity): a key
+// updated or re-synced after KeyAuth cannot change the answer. With auth off
+// there is one tenant, the no-org one. When auth is on and KeyAuth
+// authenticated no key it writes 401 and reports false, so such a call never
+// falls into the no-org tenant. A license token reaches only POST
+// /v1/chat/completions, so it never gets here.
+func (h *Handlers) videoCaller(w http.ResponseWriter, r *http.Request) (orgID, keyID string, ok bool) {
+	if h.keyStore == nil {
+		return "", "", true
+	}
+	if id, ok := middleware.KeyIdentity(r.Context()); ok {
+		return id.OrgID, id.KeyID, true
+	}
+	models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+	return "", "", false
+}
+
+// errVideoNotFound answers an unknown job id and another org's alike.
+func errVideoNotFound() *models.APIError {
+	return models.ErrNotFound("video_not_found", "Video job not found")
+}
 
 // videoSubmitRequest is the client-facing video generation request.
 type videoSubmitRequest struct {
@@ -27,13 +94,11 @@ type videoSubmitRequest struct {
 
 // SubmitVideo handles POST /v1/videos.
 func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
-	if h.videoStore == nil {
-		models.WriteError(w, &models.APIError{
-			Status:  http.StatusNotImplemented,
-			Type:    models.ErrTypeServer,
-			Code:    "not_configured",
-			Message: "Video generation is not configured",
-		})
+	if !h.videoGate(w) {
+		return
+	}
+	orgID, keyID, ok := h.videoCaller(w, r)
+	if !ok {
 		return
 	}
 
@@ -81,9 +146,28 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The checks on the request read the prompt, as on every route that
+	// sends one to a model, before the job is stored: the key is
+	// authenticated as the pipeline authenticates it, X-Guardrail-Policy
+	// applies, and a check's rewrite of the prompt is the prompt the job
+	// keeps. A refused request stores nothing.
+	setAuthMetadataFromRequest(rc, r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
+	if orgID != "" {
+		rc.Metadata["org_id"] = orgID
+	}
+	readGuardrailPolicyHeader(rc, r)
+	rc.PassThrough = requestview.VideoPrompt(req.Model, &req.Prompt)
+	if apiErr := h.engine.RunRequestPlugins(r.Context(), rc, "auth", "guardrails"); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
+
 	now := time.Now()
 	job := &video.VideoJob{
 		ID:             fmt.Sprintf("video-%s", rc.RequestID),
+		OrgID:          orgID,
+		KeyID:          keyID,
 		Status:         video.StatusQueued,
 		Model:          req.Model,
 		Prompt:         req.Prompt,
@@ -111,13 +195,7 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 
 // GetVideoStatus handles GET /v1/videos/{video_id}.
 func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
-	if h.videoStore == nil {
-		models.WriteError(w, &models.APIError{
-			Status:  http.StatusNotImplemented,
-			Type:    models.ErrTypeServer,
-			Code:    "not_configured",
-			Message: "Video generation is not configured",
-		})
+	if !h.videoGate(w) {
 		return
 	}
 
@@ -127,9 +205,13 @@ func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.videoStore.Get(videoID)
+	orgID, _, ok := h.videoCaller(w, r)
+	if !ok {
+		return
+	}
+	job, err := h.videoStore.GetForOrg(videoID, orgID)
 	if err != nil {
-		models.WriteError(w, models.ErrNotFound("video_not_found", "Video job not found"))
+		models.WriteError(w, errVideoNotFound())
 		return
 	}
 
@@ -140,13 +222,7 @@ func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
 
 // DeleteVideo handles DELETE /v1/videos/{video_id}.
 func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
-	if h.videoStore == nil {
-		models.WriteError(w, &models.APIError{
-			Status:  http.StatusNotImplemented,
-			Type:    models.ErrTypeServer,
-			Code:    "not_configured",
-			Message: "Video generation is not configured",
-		})
+	if !h.videoGate(w) {
 		return
 	}
 
@@ -156,9 +232,13 @@ func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.videoStore.Get(videoID)
+	orgID, _, ok := h.videoCaller(w, r)
+	if !ok {
+		return
+	}
+	job, err := h.videoStore.GetForOrg(videoID, orgID)
 	if err != nil {
-		models.WriteError(w, models.ErrNotFound("video_not_found", "Video job not found"))
+		models.WriteError(w, errVideoNotFound())
 		return
 	}
 
@@ -186,13 +266,7 @@ func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 
 // ListVideos handles GET /v1/videos.
 func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
-	if h.videoStore == nil {
-		models.WriteError(w, &models.APIError{
-			Status:  http.StatusNotImplemented,
-			Type:    models.ErrTypeServer,
-			Code:    "not_configured",
-			Message: "Video generation is not configured",
-		})
+	if !h.videoGate(w) {
 		return
 	}
 
@@ -221,8 +295,11 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 		filters.Order = "desc"
 	}
 
-	// Use empty orgID for now (no org filtering in basic implementation).
-	jobs, total, err := h.videoStore.ListByOrg("", filters)
+	orgID, _, ok := h.videoCaller(w, r)
+	if !ok {
+		return
+	}
+	jobs, total, err := h.videoStore.ListByOrg(orgID, filters)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("failed to list videos: "+err.Error()))
 		return

@@ -408,6 +408,42 @@ def test_the_gateway_loads_keys_from_the_app_and_sends_it_request_logs() -> None
     assert gateway["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
     assert backend["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
 
+    # The dev-only admin-token opt-in reaches the gateway and the API alike:
+    # the E2E stack runs the compose default, and an API that refused it
+    # would answer the gateway's key and org-config syncs 403.
+    insecure = "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}"
+    assert app["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert gateway["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert backend["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+
+
+def test_the_gateway_reaches_its_own_backend_through_the_egress_guard() -> None:
+    """The API fills an org
+    FutureAGI eval check's base_url with its own BASE_URL, http://localhost:8000
+    on a self-hosted install, and the gateway dials an org check's base_url
+    through its egress guard, which refuses loopback unless
+    mcp.egress.private_allow lists it. The gateway's config file is the one the
+    operator mounts, so supervisord lists the API's in-container address for
+    the gateway: with guardrails on, such a check reaches the API instead of
+    failing (agentcc-gateway internal/guardrails/orgfactory
+    standalone_backend_test.go drives that list through the egress guard)."""
+    gateway = _programs()["gateway"]
+    env = dict(re.findall(r'([A-Z][A-Z0-9_]*)="([^"]*)"', gateway["environment"]))
+    allowed = env["AGENTCC_MCP_EGRESS_PRIVATE_ALLOW"].split(",")
+    api = _programs()["api"]["command"]
+    port = re.search(r"--port (\d+)", api).group(1)
+    assert allowed == [f"localhost:{port}", f"127.0.0.1:{port}"]
+    # The API's default BASE_URL on a self-hosted install is the first entry.
+    settings = (ROOT / "futureagi" / "tfc" / "settings" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'else "http://{allowed[0]}"' in settings
+    # Only the API's own port: every other loopback port stays refused.
+    assert all(entry.endswith(f":{port}") for entry in allowed)
+    # The app's in-container callers already use that address.
+    app = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    assert app["AGENTCC_CONTROL_PLANE_URL"] == f"http://{allowed[1]}"
+
 
 @pytest.mark.parametrize("configured", ["", "from-dot-env"])
 def test_start_makes_a_webhook_secret_only_when_none_is_set(
@@ -429,6 +465,53 @@ def test_start_makes_a_webhook_secret_only_when_none_is_set(
         assert result.stdout == configured
     else:
         assert re.fullmatch(r"[0-9a-f]{64}", result.stdout)
+
+
+@pytest.mark.parametrize(
+    "configured, allow_insecure, replaced",
+    [
+        pytest.param("", "", True, id="empty"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "", True, id="compose-default"
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", "", True, id="placeholder"),
+        pytest.param("a" * 64, "", False, id="from-dot-env"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "1", False, id="dev-opt-in"
+        ),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "TRUE", False, id="dev-opt-in-true"
+        ),
+    ],
+)
+def test_start_replaces_an_empty_or_published_admin_token(
+    configured, allow_insecure, replaced
+) -> None:
+    """The gateway refuses to start on the compose default and, sharing the
+    app container, would take the API and UI down with it; the API's admin
+    endpoints refuse it too. The token holds no state, so bin/start makes one
+    for this start, for both ends, unless .env has one or the dev opt-in is on."""
+    section = _start_section("admin_token_needs_replacing() {", "fi\n")
+    out = _run_start_section(
+        section,
+        {
+            "AGENTCC_ADMIN_TOKEN": configured,
+            "AGENTCC_CONTROL_PLANE_TOKEN": configured,
+            "AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN": allow_insecure,
+        },
+        'printf "\\n%s %s" "$AGENTCC_ADMIN_TOKEN" "$AGENTCC_CONTROL_PLANE_TOKEN"',
+    )
+    log, tokens = out.rsplit("\n", 1)
+    admin, control_plane = tokens.split(" ")
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", admin)
+        assert control_plane == admin
+        assert "random one for this start" in log
+        # Never printed: it is the admin credential.
+        assert admin not in log
+    else:
+        assert (admin, control_plane) == (configured, configured)
+        assert "random one" not in log
 
 
 def test_supervisor_keeps_secrets_off_command_lines_and_out_of_tmp() -> None:

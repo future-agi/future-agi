@@ -28,6 +28,10 @@ type bedrockStreamState struct {
 	created                   int64
 	toolCallIndex             int
 	blockIndexToToolCallIndex map[int]int
+	// cacheReadTokens and cacheWriteTokens are message_start's cache reads
+	// and writes, which inputTokens does not count.
+	cacheReadTokens  int
+	cacheWriteTokens int
 }
 
 func newBedrockStreamState(model string) *bedrockStreamState {
@@ -215,6 +219,8 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 			s.model = msgStart.Model
 		}
 		s.inputTokens = msgStart.Usage.InputTokens
+		s.cacheReadTokens = msgStart.Usage.CacheReadInputTokens
+		s.cacheWriteTokens = msgStart.Usage.CacheCreationInputTokens
 
 		role := "assistant"
 		return &models.StreamChunk{
@@ -332,12 +338,16 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 				{Index: 0, FinishReason: &finishReason},
 			},
 		}
+		// message_delta carries the output count, and may repeat the input
+		// counts. Every count is cumulative, so the larger one wins.
 		if event.Usage != nil {
-			chunk.Usage = &models.Usage{
-				PromptTokens:     s.inputTokens,
-				CompletionTokens: event.Usage.OutputTokens,
-				TotalTokens:      s.inputTokens + event.Usage.OutputTokens,
+			u := bedrockUsage{
+				InputTokens:              max(s.inputTokens, event.Usage.InputTokens),
+				CacheReadInputTokens:     max(s.cacheReadTokens, event.Usage.CacheReadInputTokens),
+				CacheCreationInputTokens: max(s.cacheWriteTokens, event.Usage.CacheCreationInputTokens),
+				OutputTokens:             event.Usage.OutputTokens,
 			}
+			chunk.Usage = u.toUsage()
 		}
 		return chunk, false, nil
 

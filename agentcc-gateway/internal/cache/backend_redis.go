@@ -1,65 +1,193 @@
 package cache
 
 import (
-	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"strconv"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// RedisBackend stores cached responses in Redis using the RESP protocol.
+// RedisBackend stores cached responses in Redis: one node, a Redis Cluster,
+// or a master found through Redis Sentinel, over TLS when the config asks
+// for it.
 type RedisBackend struct {
-	pool      *redisPool
+	rdb       redis.UniversalClient
 	keyPrefix string
 	compress  bool
+	timeout   time.Duration
 }
 
-// NewRedisBackend creates a Redis-backed cache.
+// NewRedisBackend creates a cache on one Redis node, without TLS.
 func NewRedisBackend(address, password string, db int, keyPrefix string, compress bool, poolSize int, timeout time.Duration) (*RedisBackend, error) {
+	return NewRedisBackendFromConfig(config.RedisCacheConfig{
+		Address:   address,
+		Password:  password,
+		DB:        db,
+		KeyPrefix: keyPrefix,
+		Compress:  compress,
+		PoolSize:  poolSize,
+		Timeout:   timeout,
+	})
+}
+
+// NewRedisBackendFromConfig creates the cache the cache.redis block
+// describes:
+//
+//   - mode "" or "single": the node at address (else the first of
+//     addresses);
+//   - mode "cluster": a Redis Cluster found from addresses (and address);
+//     cluster has database 0 only, so a db other than 0 is refused;
+//   - mode "sentinel": address is the master set's name (the name in the
+//     sentinels' "sentinel monitor <name> ..."), addresses lists the
+//     sentinels; the password is the master's, and the sentinels are asked
+//     without one.
+//
+// With tls: true every connection (each node, each sentinel, the master) is
+// TLS 1.2 or later, verified against the system's roots for the host of the
+// address it dials. A connection that cannot be made over TLS fails, and the
+// error is returned: it is never retried in plaintext.
+func NewRedisBackendFromConfig(cfg config.RedisCacheConfig) (*RedisBackend, error) {
+	return newRedisBackend(cfg, nil)
+}
+
+// newRedisBackend is NewRedisBackendFromConfig with the CA pool TLS verifies
+// against (nil: the system's roots).
+func newRedisBackend(cfg config.RedisCacheConfig, roots *x509.CertPool) (*RedisBackend, error) {
+	poolSize := cfg.PoolSize
 	if poolSize <= 0 {
 		poolSize = 10
 	}
+	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	var tlsCfg *tls.Config
+	if cfg.TLS {
+		// ServerName stays empty: crypto/tls takes it from the host of each
+		// address dialled, so every node and sentinel is verified by its own
+		// name.
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	}
 
-	pool, err := newRedisPool(address, password, db, poolSize, timeout)
-	if err != nil {
-		return nil, fmt.Errorf("redis: %w", err)
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	var rdb redis.UniversalClient
+	switch mode {
+	case "", "single":
+		mode = "single"
+		addr := cfg.Address
+		if addr == "" && len(cfg.Addresses) > 0 {
+			addr = cfg.Addresses[0]
+			if len(cfg.Addresses) > 1 {
+				slog.Warn("redis cache: mode single uses only the first of addresses; set mode cluster or sentinel to use them all",
+					"address", addr, "ignored", len(cfg.Addresses)-1)
+			}
+		}
+		if addr == "" {
+			return nil, errors.New("address is empty")
+		}
+		rdb = redis.NewClient(&redis.Options{
+			Addr:            addr,
+			Password:        cfg.Password,
+			DB:              cfg.DB,
+			PoolSize:        poolSize,
+			DialTimeout:     timeout,
+			ReadTimeout:     timeout,
+			WriteTimeout:    timeout,
+			TLSConfig:       tlsCfg,
+			DisableIdentity: true,
+		})
+
+	case "cluster":
+		seeds := slices.Clone(cfg.Addresses)
+		if cfg.Address != "" && !slices.Contains(seeds, cfg.Address) {
+			seeds = append(seeds, cfg.Address)
+		}
+		if len(seeds) == 0 {
+			return nil, errors.New("mode cluster needs addresses: the cluster's nodes")
+		}
+		if cfg.DB != 0 {
+			return nil, fmt.Errorf("mode cluster has database 0 only; db %d cannot be used", cfg.DB)
+		}
+		rdb = redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:           seeds,
+			Password:        cfg.Password,
+			PoolSize:        poolSize,
+			DialTimeout:     timeout,
+			ReadTimeout:     timeout,
+			WriteTimeout:    timeout,
+			TLSConfig:       tlsCfg,
+			DisableIdentity: true,
+		})
+
+	case "sentinel":
+		master := strings.TrimSpace(cfg.Address)
+		if master == "" {
+			return nil, errors.New("mode sentinel needs address: the master set's name (as in the sentinels' \"sentinel monitor <name> ...\"), and addresses: the sentinels")
+		}
+		if _, _, err := net.SplitHostPort(master); err == nil {
+			return nil, fmt.Errorf("mode sentinel reads address as the master set's name, not a host:port (%q); list the sentinels under addresses", master)
+		}
+		if len(cfg.Addresses) == 0 {
+			return nil, errors.New("mode sentinel needs addresses: the sentinels")
+		}
+		rdb = redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:      master,
+			SentinelAddrs:   slices.Clone(cfg.Addresses),
+			Password:        cfg.Password,
+			DB:              cfg.DB,
+			PoolSize:        poolSize,
+			DialTimeout:     timeout,
+			ReadTimeout:     timeout,
+			WriteTimeout:    timeout,
+			TLSConfig:       tlsCfg,
+			DisableIdentity: true,
+		})
+
+	default:
+		return nil, fmt.Errorf("unknown mode %q (supported: single, cluster, sentinel)", cfg.Mode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		if cfg.TLS {
+			return nil, fmt.Errorf("mode %s over TLS (never plaintext): %w", mode, err)
+		}
+		return nil, fmt.Errorf("mode %s: %w", mode, err)
 	}
 
 	return &RedisBackend{
-		pool:      pool,
-		keyPrefix: keyPrefix,
-		compress:  compress,
+		rdb:       rdb,
+		keyPrefix: cfg.KeyPrefix,
+		compress:  cfg.Compress,
+		timeout:   timeout,
 	}, nil
 }
 
 func (r *RedisBackend) Get(key string) (*models.ChatCompletionResponse, bool) {
-	conn, err := r.pool.get()
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+	body, err := r.rdb.Get(ctx, r.keyPrefix+key).Bytes()
 	if err != nil {
-		slog.Warn("redis cache get: pool error", "error", err)
-		return nil, false
-	}
-	defer r.pool.put(conn)
-
-	data, err := conn.do("GET", r.keyPrefix+key)
-	if err != nil || data == nil {
-		return nil, false
-	}
-
-	body, ok := data.([]byte)
-	if !ok {
+		if !errors.Is(err, redis.Nil) {
+			slog.Warn("redis cache get error", "error", err)
+		}
 		return nil, false
 	}
 
@@ -92,221 +220,35 @@ func (r *RedisBackend) Set(key string, resp *models.ChatCompletionResponse, ttl 
 		return
 	}
 
-	var body []byte
+	body := data
 	if r.compress {
 		var buf bytes.Buffer
 		gw := gzip.NewWriter(&buf)
 		gw.Write(data)
 		gw.Close()
 		body = buf.Bytes()
-	} else {
-		body = data
 	}
 
-	conn, err := r.pool.get()
-	if err != nil {
-		slog.Warn("redis cache set: pool error", "error", err)
-		return
-	}
-	defer r.pool.put(conn)
-
-	ttlSec := int(ttl.Seconds())
+	// Whole seconds (SET ... EX), at least one.
+	ttlSec := int64(ttl.Seconds())
 	if ttlSec <= 0 {
 		ttlSec = 1
 	}
 
-	_, err = conn.do("SET", r.keyPrefix+key, string(body), "EX", strconv.Itoa(ttlSec))
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+	if err := r.rdb.Set(ctx, r.keyPrefix+key, body, time.Duration(ttlSec)*time.Second).Err(); err != nil {
 		slog.Warn("redis cache set error", "key", key, "error", err)
 	}
 }
 
 func (r *RedisBackend) Delete(key string) {
-	conn, err := r.pool.get()
-	if err != nil {
-		return
-	}
-	defer r.pool.put(conn)
-
-	conn.do("DEL", r.keyPrefix+key)
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+	r.rdb.Del(ctx, r.keyPrefix+key)
 }
 
-// Close closes all connections in the pool.
+// Close closes every connection.
 func (r *RedisBackend) Close() {
-	r.pool.close()
-}
-
-// --- Minimal RESP protocol client ---
-
-type redisConn struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	timeout time.Duration
-}
-
-type redisPool struct {
-	address  string
-	password string
-	db       int
-	timeout  time.Duration
-	mu       sync.Mutex
-	conns    []*redisConn
-	maxSize  int
-}
-
-func newRedisPool(address, password string, db, poolSize int, timeout time.Duration) (*redisPool, error) {
-	pool := &redisPool{
-		address:  address,
-		password: password,
-		db:       db,
-		timeout:  timeout,
-		conns:    make([]*redisConn, 0, poolSize),
-		maxSize:  poolSize,
-	}
-
-	// Test connection.
-	conn, err := pool.dial()
-	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", address, err)
-	}
-	pool.conns = append(pool.conns, conn)
-	return pool, nil
-}
-
-func (p *redisPool) dial() (*redisConn, error) {
-	conn, err := net.DialTimeout("tcp", p.address, p.timeout)
-	if err != nil {
-		return nil, err
-	}
-	rc := &redisConn{
-		conn:    conn,
-		reader:  bufio.NewReader(conn),
-		timeout: p.timeout,
-	}
-
-	// AUTH if password is set.
-	if p.password != "" {
-		_, err := rc.do("AUTH", p.password)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("auth: %w", err)
-		}
-	}
-
-	// SELECT db if not 0.
-	if p.db != 0 {
-		_, err := rc.do("SELECT", strconv.Itoa(p.db))
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("select db %d: %w", p.db, err)
-		}
-	}
-
-	return rc, nil
-}
-
-func (p *redisPool) get() (*redisConn, error) {
-	p.mu.Lock()
-	if len(p.conns) > 0 {
-		conn := p.conns[len(p.conns)-1]
-		p.conns = p.conns[:len(p.conns)-1]
-		p.mu.Unlock()
-		return conn, nil
-	}
-	p.mu.Unlock()
-	return p.dial()
-}
-
-func (p *redisPool) put(conn *redisConn) {
-	p.mu.Lock()
-	if len(p.conns) < p.maxSize {
-		p.conns = append(p.conns, conn)
-		p.mu.Unlock()
-		return
-	}
-	p.mu.Unlock()
-	conn.conn.Close()
-}
-
-func (p *redisPool) close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, c := range p.conns {
-		c.conn.Close()
-	}
-	p.conns = nil
-}
-
-// do sends a RESP command and reads the reply.
-func (rc *redisConn) do(args ...string) (interface{}, error) {
-	rc.conn.SetDeadline(time.Now().Add(rc.timeout))
-
-	// Write RESP array. Use explicit length-prefixed writes instead of
-	// fmt.Sprintf to handle binary payloads that may contain \r\n.
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("*%d\r\n", len(args)))
-	for _, arg := range args {
-		buf.WriteString(fmt.Sprintf("$%d\r\n", len(arg)))
-		buf.WriteString(arg)
-		buf.WriteString("\r\n")
-	}
-	if _, err := rc.conn.Write(buf.Bytes()); err != nil {
-		return nil, err
-	}
-
-	return rc.readReply()
-}
-
-func (rc *redisConn) readReply() (interface{}, error) {
-	line, err := rc.reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	line = strings.TrimRight(line, "\r\n")
-
-	if len(line) == 0 {
-		return nil, fmt.Errorf("empty reply")
-	}
-
-	switch line[0] {
-	case '+': // Simple string
-		return line[1:], nil
-	case '-': // Error
-		return nil, fmt.Errorf("redis: %s", line[1:])
-	case ':': // Integer
-		n, err := strconv.ParseInt(line[1:], 10, 64)
-		return n, err
-	case '$': // Bulk string
-		n, err := strconv.Atoi(line[1:])
-		if err != nil {
-			return nil, err
-		}
-		if n < 0 {
-			return nil, nil // nil bulk string
-		}
-		data := make([]byte, n+2) // +2 for \r\n
-		_, err = io.ReadFull(rc.reader, data)
-		if err != nil {
-			return nil, err
-		}
-		return data[:n], nil
-	case '*': // Array
-		n, err := strconv.Atoi(line[1:])
-		if err != nil {
-			return nil, err
-		}
-		if n < 0 {
-			return nil, nil
-		}
-		arr := make([]interface{}, n)
-		for i := 0; i < n; i++ {
-			arr[i], err = rc.readReply()
-			if err != nil {
-				return nil, err
-			}
-		}
-		return arr, nil
-	default:
-		return nil, fmt.Errorf("unknown RESP type: %c", line[0])
-	}
+	_ = r.rdb.Close()
 }

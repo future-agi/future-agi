@@ -850,7 +850,6 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
@@ -1119,6 +1118,19 @@ err_dict = {
     "ANALYTICS_METRICS_ERROR": ["Unable to fetch simulation metrics."],
     "ANALYTICS_RUNS_ERROR": ["Unable to fetch simulation runs."],
     "ANALYTICS_ERROR": ["Unable to fetch simulation analytics."],
+    "AGENTCC_KEY_METADATA_RESERVED": [
+        "These metadata keys are reserved for the platform and cannot be set "
+        "on an API key: {}."
+    ],
+    "KEY_LIMIT_NOT_ENFORCED": [
+        "The gateway does not enforce these API key settings, so they cannot "
+        "be set: {}."
+    ],
+    "AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE": [
+        "The API key was revoked but not deleted: the gateway could not revoke "
+        "it, so it keeps working there until the gateway's next key sync or "
+        "restart. Delete it again once the gateway is reachable."
+    ],
 }
 
 

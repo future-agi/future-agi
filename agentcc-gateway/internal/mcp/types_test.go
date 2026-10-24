@@ -145,3 +145,88 @@ func TestInitializeParamsRoundTrip(t *testing.T) {
 		t.Fatalf("client name mismatch")
 	}
 }
+
+// TestMCPRawFieldsFilled checks the Raw fields: the decoders keep the
+// exact upstream bytes in Raw on the tool, resource and prompt types and the
+// result types, unknown fields included, and Raw never reaches the encoded
+// output.
+func TestMCPRawFieldsFilled(t *testing.T) {
+	const tool = `{"name":"echo","title":"Echo","inputSchema":{"type":"object"},"_meta":{"x":1}}`
+	var list ListToolsResult
+	listJSON := `{"tools":[` + tool + `],"nextCursor":"c2"}`
+	if err := json.Unmarshal([]byte(listJSON), &list); err != nil {
+		t.Fatal(err)
+	}
+	if string(list.Raw) != listJSON || len(list.Tools) != 1 || string(list.Tools[0].Raw) != tool || list.Tools[0].Name != "echo" {
+		t.Fatalf("tools/list: raw %s, tool raw %s; want the input bytes", list.Raw, list.Tools[0].Raw)
+	}
+
+	const call = `{"content":[{"type":"text","text":"ok"}],"structuredContent":{"n":2},"isError":false}`
+	var res ToolCallResult
+	if err := json.Unmarshal([]byte(call), &res); err != nil {
+		t.Fatal(err)
+	}
+	if string(res.Raw) != call || len(res.Content) != 1 {
+		t.Fatalf("tools/call raw = %s, want %s", res.Raw, call)
+	}
+
+	const resource = `{"uri":"file:///a","name":"a","size":3}`
+	resList := `{"resources":[` + resource + `]}`
+	var rl ListResourcesResult
+	if err := json.Unmarshal([]byte(resList), &rl); err != nil {
+		t.Fatal(err)
+	}
+	if string(rl.Raw) != resList || string(rl.Resources[0].Raw) != resource {
+		t.Fatalf("resources/list raw = %s / %s", rl.Raw, rl.Resources[0].Raw)
+	}
+	const read = `{"contents":[{"uri":"file:///a","text":"abc"}],"_meta":{"r":1}}`
+	var rr ReadResourceResult
+	if err := json.Unmarshal([]byte(read), &rr); err != nil || string(rr.Raw) != read {
+		t.Fatalf("resources/read raw = %s, %v", rr.Raw, err)
+	}
+
+	const prompt = `{"name":"greet","title":"Greet","arguments":[{"name":"who"}]}`
+	promptList := `{"prompts":[` + prompt + `]}`
+	var pl ListPromptsResult
+	if err := json.Unmarshal([]byte(promptList), &pl); err != nil {
+		t.Fatal(err)
+	}
+	if string(pl.Raw) != promptList || string(pl.Prompts[0].Raw) != prompt || pl.Prompts[0].Arguments[0].Name != "who" {
+		t.Fatalf("prompts/list raw = %s / %s", pl.Raw, pl.Prompts[0].Raw)
+	}
+	const get = `{"messages":[{"role":"user","content":{"type":"text","text":"hi"}}],"_meta":{"p":1}}`
+	var gp GetPromptResult
+	if err := json.Unmarshal([]byte(get), &gp); err != nil || string(gp.Raw) != get {
+		t.Fatalf("prompts/get raw = %s, %v", gp.Raw, err)
+	}
+
+	// Encoding leaves Raw out: a decoded value encodes to the known fields only.
+	out, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"tools":[{"name":"echo","inputSchema":{"type":"object"}}],"nextCursor":"c2"}`; string(out) != want {
+		t.Fatalf("encoded tools/list = %s, want %s", out, want)
+	}
+	if out, _ := json.Marshal(res); string(out) != `{"content":[{"type":"text","text":"ok"}]}` {
+		t.Fatalf("encoded tools/call = %s", out)
+	}
+
+	// The raw copy is private: changing the input buffer after decoding does
+	// not change Raw.
+	buf := []byte(tool)
+	var tt Tool
+	if err := json.Unmarshal(buf, &tt); err != nil {
+		t.Fatal(err)
+	}
+	buf[2] = 'X'
+	if string(tt.Raw) != tool {
+		t.Fatal("Raw aliases the decoder's input buffer")
+	}
+
+	// A JSON null leaves the value alone, as json.Unmarshal does.
+	keep := Tool{Name: "kept"}
+	if err := json.Unmarshal([]byte(`null`), &keep); err != nil || keep.Name != "kept" || keep.Raw != nil {
+		t.Fatalf("null decoded into %+v, %v; want the value unchanged", keep, err)
+	}
+}

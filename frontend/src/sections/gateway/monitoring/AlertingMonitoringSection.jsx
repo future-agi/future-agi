@@ -36,8 +36,15 @@ import { useGatewayContext } from "../context/useGatewayContext";
 
 import CreateAlertRuleDialog from "./CreateAlertRuleDialog";
 import CreateChannelDialog from "./CreateChannelDialog";
+import { isMaskedSecret } from "../components/SecretField";
+import { GATEWAY_ADMIN_ONLY, useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
+import {
+  DEFAULT_ALERT_COOLDOWN,
+  alertRuleStatus,
+  effectiveAlertSeverity,
+} from "../constants/alerting";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,7 +93,14 @@ function getSeverityColor(severity) {
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
 
-const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
+const AlertRulesTab = ({
+  rules,
+  onDelete,
+  isDeleting,
+  alertingEnabled,
+  sectionsEnforced,
+  canEdit,
+}) => (
   <Card>
     <TableContainer>
       <Table size="small">
@@ -97,74 +111,90 @@ const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
             <TableCell>Condition</TableCell>
             <TableCell>Threshold</TableCell>
             <TableCell>Window</TableCell>
+            <TableCell>Cooldown</TableCell>
             <TableCell>Severity</TableCell>
             <TableCell>Status</TableCell>
             <TableCell align="right">Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {rules.map((rule, idx) => (
-            <TableRow key={rule.name || idx}>
-              <TableCell>
-                <Typography variant="body2" fontWeight={500}>
-                  {rule.name || `Rule ${idx + 1}`}
-                </Typography>
-              </TableCell>
-              <TableCell>
-                <Typography variant="body2">
-                  {rule.metric || "\u2014"}
-                </Typography>
-              </TableCell>
-              <TableCell>
-                <Typography variant="body2">
-                  {rule.condition || rule.operator || "\u2014"}
-                </Typography>
-              </TableCell>
-              <TableCell>
-                <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                  {rule.threshold ?? "\u2014"}
-                </Typography>
-              </TableCell>
-              <TableCell>
-                <Typography variant="body2">
-                  {rule.window || rule.duration || "\u2014"}
-                </Typography>
-              </TableCell>
-              <TableCell>
-                <Chip
-                  label={rule.severity || "info"}
-                  color={getSeverityColor(rule.severity)}
-                  size="small"
-                />
-              </TableCell>
-              <TableCell>
-                <Chip
-                  label={rule.enabled !== false ? "Active" : "Disabled"}
-                  color={rule.enabled !== false ? "success" : "default"}
-                  size="small"
-                  variant="outlined"
-                />
-              </TableCell>
-              <TableCell align="right">
-                <Tooltip title="Delete rule">
-                  <span>
-                    <IconButton
+          {rules.map((rule, idx) => {
+            const severity = effectiveAlertSeverity(rule.severity);
+            const status = alertRuleStatus({
+              rule,
+              alertingEnabled,
+              sectionsEnforced,
+            });
+            return (
+              <TableRow key={rule.name || idx}>
+                <TableCell>
+                  <Typography variant="body2" fontWeight={500}>
+                    {rule.name || `Rule ${idx + 1}`}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {rule.metric || "\u2014"}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {rule.condition || rule.operator || "\u2014"}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                    {rule.threshold ?? "\u2014"}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {rule.window || rule.duration || "\u2014"}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {rule.cooldown || `${DEFAULT_ALERT_COOLDOWN} (default)`}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    label={severity}
+                    color={getSeverityColor(severity)}
+                    size="small"
+                  />
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={status.tooltip}>
+                    <Chip
+                      label={status.label}
+                      color={status.color}
                       size="small"
-                      color="error"
-                      disabled={isDeleting}
-                      onClick={() => onDelete(idx)}
-                      aria-label={`Delete rule ${rule.name || idx + 1}`}
-                    >
-                      <Iconify icon="mdi:delete-outline" width={18} />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </TableCell>
-            </TableRow>
-          ))}
+                      variant="outlined"
+                    />
+                  </Tooltip>
+                </TableCell>
+                <TableCell align="right">
+                  <Tooltip title={canEdit ? "Delete rule" : GATEWAY_ADMIN_ONLY}>
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        disabled={isDeleting || !canEdit}
+                        onClick={() => onDelete(idx)}
+                        aria-label={`Delete rule ${rule.name || idx + 1}`}
+                      >
+                        <Iconify icon="mdi:delete-outline" width={18} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </TableCell>
+              </TableRow>
+            );
+          })}
           {rules.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} align="center">
+              <TableCell colSpan={9} align="center">
                 <Typography variant="body2" color="text.secondary" py={4}>
                   No alert rules configured. Click &quot;Create Rule&quot; to
                   add your first alert rule.
@@ -191,6 +221,9 @@ const CHANNEL_ICONS = {
 
 function maskUrl(url) {
   if (!url) return "\u2014";
+  // A URL that carries a credential reads back as a mask: say it is
+  // stored, never show the mask.
+  if (isMaskedSecret(url)) return "Stored, hidden";
   try {
     const u = new URL(url);
     return `${u.protocol}//${u.host}/\u2026`;
@@ -199,7 +232,7 @@ function maskUrl(url) {
   }
 }
 
-const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
+const ChannelsTab = ({ channels, onDelete, isDeleting, canEdit }) => (
   <Stack spacing={2}>
     {channels.length === 0 ? (
       <Card sx={{ p: 4 }}>
@@ -239,12 +272,14 @@ const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
                   color={ch.enabled !== false ? "success" : "default"}
                   size="small"
                 />
-                <Tooltip title="Delete channel">
+                <Tooltip
+                  title={canEdit ? "Delete channel" : GATEWAY_ADMIN_ONLY}
+                >
                   <span>
                     <IconButton
                       size="small"
                       color="error"
-                      disabled={isDeleting}
+                      disabled={isDeleting || !canEdit}
                       onClick={() => onDelete(idx)}
                       aria-label={`Delete channel ${ch.name || idx + 1}`}
                     >
@@ -305,7 +340,10 @@ const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
                   >
                     Severity Filter
                   </Typography>
-                  <Typography variant="body2">{ch.severity_filter}</Typography>
+                  <Typography variant="body2">
+                    {ch.severity_filter} (not applied: the gateway sends this
+                    channel every severity)
+                  </Typography>
                 </Stack>
               )}
               {ch.description && (
@@ -359,17 +397,14 @@ const LiveMetricsTab = ({
         <Grid item xs={6} sm={3}>
           <Card>
             <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics?tab=usage")}
+              onClick={() => navigate("/dashboard/gateway/analytics/usage")}
               sx={{ textAlign: "center", py: 2, px: 1 }}
             >
               <Typography variant="caption" color="text.secondary">
-                Request Rate
+                Requests (24h)
               </Typography>
               <Typography variant="h4">
                 {Number(val(overview?.total_requests) ?? 0).toLocaleString()}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                total
               </Typography>
             </CardActionArea>
           </Card>
@@ -377,13 +412,11 @@ const LiveMetricsTab = ({
         <Grid item xs={6} sm={3}>
           <Card>
             <CardActionArea
-              onClick={() =>
-                navigate("/dashboard/gateway/analytics?tab=errors")
-              }
+              onClick={() => navigate("/dashboard/gateway/analytics/errors")}
               sx={{ textAlign: "center", py: 2, px: 1 }}
             >
               <Typography variant="caption" color="text.secondary">
-                Error Rate
+                Error Rate (24h)
               </Typography>
               <Typography
                 variant="h4"
@@ -403,13 +436,11 @@ const LiveMetricsTab = ({
         <Grid item xs={6} sm={3}>
           <Card>
             <CardActionArea
-              onClick={() =>
-                navigate("/dashboard/gateway/analytics?tab=latency")
-              }
+              onClick={() => navigate("/dashboard/gateway/analytics/latency")}
               sx={{ textAlign: "center", py: 2, px: 1 }}
             >
               <Typography variant="caption" color="text.secondary">
-                Avg Latency
+                Avg Latency (24h)
               </Typography>
               <Typography variant="h4">
                 {val(overview?.avg_latency_ms) != null
@@ -422,11 +453,11 @@ const LiveMetricsTab = ({
         <Grid item xs={6} sm={3}>
           <Card>
             <CardActionArea
-              onClick={() => navigate("/dashboard/gateway/analytics?tab=cost")}
+              onClick={() => navigate("/dashboard/gateway/analytics/cost")}
               sx={{ textAlign: "center", py: 2, px: 1 }}
             >
               <Typography variant="caption" color="text.secondary">
-                Total Cost
+                Cost (24h)
               </Typography>
               <Typography variant="h4" color="primary.main">
                 {formatCost(val(overview?.total_cost))}
@@ -493,6 +524,8 @@ const AlertingMonitoringSection = () => {
 
   const [createRuleOpen, setCreateRuleOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  // Rules and channels are the org's gateway config: Owner or Admin only.
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
 
   const { data: config, isLoading: configLoading } =
@@ -601,6 +634,8 @@ const AlertingMonitoringSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setCreateRuleOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
           {
             label: "Add Channel",
@@ -608,6 +643,8 @@ const AlertingMonitoringSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setCreateChannelOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
         ]}
       />
@@ -634,6 +671,9 @@ const AlertingMonitoringSection = () => {
           rules={rules}
           onDelete={handleDeleteRule}
           isDeleting={updateConfig.isPending}
+          alertingEnabled={(config?.alerting || config?.alerts)?.enabled}
+          sectionsEnforced={config?.org_sections_enforced}
+          canEdit={canEdit}
         />
       )}
       {tab === 2 && (
@@ -641,6 +681,7 @@ const AlertingMonitoringSection = () => {
           channels={channels}
           onDelete={handleDeleteChannel}
           isDeleting={updateConfig.isPending}
+          canEdit={canEdit}
         />
       )}
 

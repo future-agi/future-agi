@@ -30,6 +30,9 @@ class AgentccWebhook(BaseModel):
     is_active = models.BooleanField(default=True)
     headers = models.JSONField(default=dict, blank=True)
     description = models.TextField(blank=True, default="")
+    # budget.exceeded keys this webhook already received ({key: expires_at}),
+    # so a refusal storm yields one event per budget level and period.
+    budget_event_keys = models.JSONField(default=dict, blank=True, db_default={})
 
     class Meta:
         db_table = "agentcc_webhook"

@@ -1,0 +1,31 @@
+{
+  "provider": "mock-direct",
+  "upstream_slug": "mock-direct",
+  "upstream_fee_bps": 0,
+  "as_of": "2026-10-16",
+  "source_url": "https://example.test/mock-direct/pricing",
+  "notes": "Scenario fixture (scripts/scenarios/32_sources.sh): a direct provider served by the mock upstream. The scenario rewrites as_of to the day it runs, so the card is never stale.",
+  "data_collection": "deny",
+  "models": [
+    {
+      "id": "claude-sonnet-5-5-20260928",
+      "canonical": "anthropic/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5 (direct)",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "cache_read": "0.0000002",
+        "cache_write": "0.0000025"
+      },
+      "supported_parameters": ["tools", "max_tokens", "temperature"],
+      "modalities": { "input": ["text", "image"], "output": ["text"] }
+    },
+    {
+      "id": "mock-direct-unpriced",
+      "canonical": "mockvendor/mock-direct-unpriced",
+      "context_length": 8192
+    }
+  ]
+}

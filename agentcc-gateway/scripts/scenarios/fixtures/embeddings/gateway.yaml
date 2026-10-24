@@ -1,0 +1,96 @@
+# Embeddings scenario gateway config (scripts/scenarios/10_embeddings.sh).
+# The scenario first replaces @@EMBED_URL@@ with its stand-in's URL
+# (fixtures/embeddings/embed_standin.py), then scn_up renders it like
+# config/base.yaml (same placeholders; scn_up appends redis:). Request logs
+# go to the mock upstream's /__logs.
+#
+# Providers: two Cohere hosts (cohere-a, cohere-b, at the stand-in's
+# /host-a and /host-b) that both serve embed-multilingual-v3.0, the model
+# whose target is down; Gemini (gemini, at /host-g); and an OpenAI-format
+# operator provider on the mock upstream serving text-embedding-3-small, the
+# model-fallback target. Routing spreads embed-multilingual-v3.0 over both
+# Cohere hosts with failover, retries and a model fallback on, so an
+# embedding that failed over would be seen calling another host or model.
+# The org calls Cohere and Gemini with its own keys (BYOK; org config set by
+# the scenario), and an internal key reaches the operator providers, which
+# routing and failover apply to.
+#
+# Every key and token below is a fake value for the local stand-ins.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "acme-internal"
+      key: "scn-test-key-internal"
+      owner: "acme"
+      key_type: "internal"
+      metadata:
+        org_id: "org-acme"
+providers:
+  cohere-a:
+    base_url: "@@EMBED_URL@@/host-a"
+    api_key: "scn-test-operator-cohere-a"
+    api_format: "cohere"
+    auto_discover: false
+    models: ["embed-english-v3.0", "embed-multilingual-v3.0"]
+  cohere-b:
+    base_url: "@@EMBED_URL@@/host-b"
+    api_key: "scn-test-operator-cohere-b"
+    api_format: "cohere"
+    auto_discover: false
+    models: ["embed-multilingual-v3.0"]
+  gemini:
+    base_url: "@@EMBED_URL@@/host-g"
+    api_key: "scn-test-operator-gemini"
+    api_format: "gemini"
+    auto_discover: false
+    models: ["gemini-embedding-001"]
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["text-embedding-3-small"]
+routing:
+  default_strategy: "least-latency"
+  targets:
+    embed-multilingual-v3.0:
+      - provider: "cohere-a"
+        weight: 1
+      - provider: "cohere-b"
+        weight: 1
+  failover:
+    enabled: true
+    max_attempts: 3
+    on_status_codes: [429, 500, 502, 503, 504]
+  retry:
+    enabled: true
+    max_retries: 2
+    initial_delay: 10ms
+    max_delay: 10ms
+    on_status_codes: [429, 500, 502, 503, 504]
+  model_fallbacks:
+    embed-multilingual-v3.0: ["text-embedding-3-small"]
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs. No org or
+# key sync runs (sync_on_startup false, no interval).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

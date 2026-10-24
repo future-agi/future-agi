@@ -1,0 +1,13 @@
+{
+  "report_cost": false,
+  "balance_usd": "1000",
+  "prompt_tokens": 1200,
+  "completion_tokens": 300,
+  "stream_chunks": 6,
+  "default_pricing": {
+    "prompt": "0.000001",
+    "completion": "0.000002"
+  },
+  "image_price_usd": "0.04",
+  "speech_price_per_char_usd": "0.000015"
+}

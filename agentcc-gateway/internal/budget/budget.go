@@ -46,6 +46,13 @@ type CheckResult struct {
 	Warnings  []string // Levels that exceeded warn threshold
 	BlockedBy string   // Level:key that blocked (empty if allowed)
 	BlockMsg  string   // Human-readable block message
+
+	// The level that blocked, as a budget refusal names it ("org", "team:<id>",
+	// "user:<id>", "key:<id>", "tag:<name>"), its period (daily, weekly,
+	// monthly or total) and that period's start (UTC).
+	BlockedLevel       string
+	BlockedPeriod      string
+	BlockedPeriodStart time.Time
 }
 
 // NewTracker creates a Tracker from config.
@@ -111,6 +118,12 @@ func newLevelBudget(lc config.BudgetLevelConfig, defaultPeriod string) *levelBud
 
 // CheckBudget verifies all applicable budgets for a request.
 func (t *Tracker) CheckBudget(team, user, keyName, model string, tags map[string]string) CheckResult {
+	return t.CheckBudgetUsers(team, []string{user}, keyName, model, tags)
+}
+
+// CheckBudgetUsers is CheckBudget for a request with several users (the
+// request's user and the key's owner): each user's budget applies.
+func (t *Tracker) CheckBudgetUsers(team string, users []string, keyName, model string, tags map[string]string) CheckResult {
 	now := time.Now().UTC()
 	result := CheckResult{Allowed: true, Remaining: -1}
 
@@ -121,7 +134,7 @@ func (t *Tracker) CheckBudget(team, user, keyName, model string, tags map[string
 			t.checkLevel(lb, "team", team, model, now, &result)
 		}
 	}
-	if user != "" {
+	for _, user := range distinctUsers(users) {
 		if lb, ok := t.users[user]; ok {
 			t.checkLevel(lb, "user", user, model, now, &result)
 		}
@@ -174,6 +187,7 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 			result.BlockedBy = level + ":" + key
 			result.BlockMsg = "budget exceeded: " + level + " '" + key + "' has spent $" +
 				formatUSD(lb.counter.totalSpend) + " of $" + formatUSD(lb.limit) + " " + lb.period + " limit"
+			result.setBlockedLevel(level, key, lb.period, now)
 		}
 	}
 
@@ -193,6 +207,7 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 				result.BlockedBy = level + ":" + key + ":model:" + model
 				result.BlockMsg = "budget exceeded: " + level + " '" + key + "' has spent $" +
 					formatUSD(modelSpend) + " of $" + formatUSD(modelLimit) + " " + lb.period + " limit on model '" + model + "'"
+				result.setBlockedLevel(level, key, lb.period, now)
 			}
 			if modelSpend >= modelLimit*t.warnThreshold {
 				result.Warnings = append(result.Warnings, level+":"+key+":model:"+model)
@@ -203,6 +218,12 @@ func (t *Tracker) checkLevel(lb *levelBudget, level, key, model string, now time
 
 // RecordSpend records actual cost against all applicable budgets.
 func (t *Tracker) RecordSpend(team, user, keyName, model string, tags map[string]string, cost float64) {
+	t.RecordSpendUsers(team, []string{user}, keyName, model, tags, cost)
+}
+
+// RecordSpendUsers is RecordSpend for a request with several users: each
+// user's budget is charged once.
+func (t *Tracker) RecordSpendUsers(team string, users []string, keyName, model string, tags map[string]string, cost float64) {
 	if cost <= 0 {
 		return
 	}
@@ -215,7 +236,7 @@ func (t *Tracker) RecordSpend(team, user, keyName, model string, tags map[string
 			t.recordLevel(lb, model, cost, now)
 		}
 	}
-	if user != "" {
+	for _, user := range distinctUsers(users) {
 		if lb, ok := t.users[user]; ok {
 			t.recordLevel(lb, model, cost, now)
 		}

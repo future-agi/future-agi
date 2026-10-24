@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/auto-decision-v2.schema.json",
+  "title": "auto-decision-v2",
+  "description": "The replayable record of one model:auto decision. The whole record is capped at 8 KB by the producer. fallbacks are drawn only from the filtered pool. score_components.switch_cost is the USD cost of leaving the pinned model's cached prefix. selector is present only when the LLM selector ran; in observe mode the request routes on chosen whatever the selector picked.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "step",
+    "step_source",
+    "affinity",
+    "policy_version",
+    "policy_variant",
+    "catalog_snapshot_id",
+    "constraints",
+    "inputs",
+    "candidates",
+    "rejected",
+    "chosen",
+    "fallbacks"
+  ],
+  "properties": {
+    "v": { "const": 2 },
+    "step": { "$ref": "#/$defs/Step" },
+    "step_source": { "type": "string" },
+    "step_profile": {
+      "anyOf": [{ "$ref": "#/$defs/StepProfile" }, { "type": "null" }]
+    },
+    "affinity": { "type": "string", "pattern": "^(hit|new|off|broken:.+)$" },
+    "policy_version": { "type": "string" },
+    "policy_variant": { "type": "string", "enum": ["stable", "candidate"] },
+    "catalog_snapshot_id": { "type": "string" },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "call_cap_usd": { "type": ["number", "null"], "minimum": 0 },
+        "deadline_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "require": { "type": "array", "items": { "type": "string" } },
+        "route_hint": {
+          "anyOf": [{ "$ref": "#/$defs/Preference" }, { "type": "null" }]
+        },
+        "data_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "zdr": { "type": "boolean" },
+            "data_collection": { "type": "string", "enum": ["allow", "deny"] }
+          }
+        },
+        "request_provider": {
+          "description": "The request's provider preferences as received (ProviderPrefs), or null.",
+          "type": ["object", "null"]
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "needs": { "type": "array", "items": { "type": "string" } },
+        "task_tier": { "$ref": "#/$defs/Tier" },
+        "complexity": { "type": "integer", "minimum": 0 },
+        "est_input_tokens": { "type": "integer", "minimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 0 },
+        "candidate_health": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+              "p50": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "outcome_stats": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "samples": { "type": "integer", "minimum": 0 },
+              "bad_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "candidates": { "type": "array", "items": { "$ref": "#/$defs/Candidate" } },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "reason"],
+        "properties": {
+          "model": { "type": "string" },
+          "provider": { "type": "string" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "chosen": { "$ref": "#/$defs/ModelRef" },
+    "fallbacks": { "type": "array", "items": { "$ref": "#/$defs/ModelRef" } },
+    "clamped_max_tokens": { "type": "integer", "minimum": 1 },
+    "selector": { "$ref": "#/$defs/Selector" }
+  },
+  "$defs": {
+    "Step": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "Tier": { "type": "string", "enum": ["simple", "standard", "complex"] },
+    "Preference": {
+      "type": "string",
+      "enum": ["cost", "balanced", "quality", "latency"]
+    },
+    "StepProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_tier": { "$ref": "#/$defs/Tier" },
+        "max_tier": { "$ref": "#/$defs/Tier" },
+        "require": { "type": "array", "items": { "type": "string" } },
+        "prefer": { "$ref": "#/$defs/Preference" }
+      }
+    },
+    "ModelRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "provider"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 }
+      }
+    },
+    "Candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "provider", "tier", "price", "score_components"],
+      "properties": {
+        "model": { "type": "string" },
+        "provider": { "type": "string" },
+        "tier": { "$ref": "#/$defs/Tier" },
+        "price": {
+          "type": "object",
+          "description": "Billed prices (markup included) and this call's estimated cost, switch cost included.",
+          "additionalProperties": false,
+          "properties": {
+            "prompt_usd_per_mtok": { "type": "number", "minimum": 0 },
+            "completion_usd_per_mtok": { "type": "number", "minimum": 0 },
+            "est_cost_usd": { "type": "number", "minimum": 0 }
+          }
+        },
+        "score_components": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "price",
+            "latency",
+            "quality_prior",
+            "tier_fit",
+            "affinity",
+            "outcome_penalty",
+            "switch_cost"
+          ],
+          "properties": {
+            "price": { "type": "number" },
+            "latency": { "type": "number" },
+            "quality_prior": { "type": "number" },
+            "tier_fit": { "type": "number" },
+            "affinity": { "type": "number" },
+            "outcome_penalty": { "type": "number" },
+            "switch_cost": {
+              "type": "number",
+              "minimum": 0,
+              "description": "USD."
+            }
+          }
+        }
+      }
+    },
+    "Selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "used", "agrees_with_deterministic"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["observe", "enforce"] },
+        "used": { "type": "boolean" },
+        "model": { "type": "string" },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "cost": { "type": "number", "minimum": 0 },
+        "fallback_reason": { "type": ["string", "null"] },
+        "agrees_with_deterministic": { "type": ["boolean", "null"] }
+      }
+    }
+  }
+}

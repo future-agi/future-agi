@@ -1,0 +1,9 @@
+{
+  "session_id": "{{id}}",
+  "cdp_ws_url": "wss://capmock.invalid/kernel/{{id}}/cdp",
+  "browser_live_view_url": "https://capmock.invalid/kernel/{{id}}/live",
+  "created_at": "{{now}}",
+  "headless": false,
+  "stealth": false,
+  "timeout_seconds": 60
+}

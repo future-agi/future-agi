@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "6e8772ff979be41f435b0a066a824965c83c484182d35c107bbd8d38d0284be1",
+  "source_contract_sha256": "1391c1ea1ea82632a6dc630ad963e35136a8efe5c6e94eed9ddedb61d541e4ea",
   "tool_count": 105,
   "tools": [
     {
@@ -9173,11 +9173,13 @@
           },
           "started_after": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Requests that started at or after the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC."
           },
           "started_before": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Requests that started at or before the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC."
           },
           "min_latency": {
             "type": "integer"
@@ -9206,6 +9208,61 @@
           "ordering": {
             "type": "string",
             "minLength": 1
+          },
+          "billing_mode": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated billing modes (managed, byok)."
+          },
+          "credential_type": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated credential types (managed, byok)."
+          },
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent ids."
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent run ids."
+          },
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent steps."
+          },
+          "policy_variant": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated routing policy variants (stable, candidate)."
+          },
+          "env": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated agent environments."
+          },
+          "error_class": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated attempt error classes: requests with at least one attempt in one of them."
+          },
+          "application": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated values of the request's application tag."
+          },
+          "service": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated values of the request's service tag."
+          },
+          "tags": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated key:value custom tags; any listed value of a key matches, and every key must match."
           }
         },
         "additionalProperties": false
@@ -9248,7 +9305,18 @@
             "max_tokens",
             "q",
             "search",
-            "ordering"
+            "ordering",
+            "billing_mode",
+            "credential_type",
+            "agent_id",
+            "run_id",
+            "step",
+            "policy_variant",
+            "env",
+            "error_class",
+            "application",
+            "service",
+            "tags"
           ],
           "body": []
         }

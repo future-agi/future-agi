@@ -40,6 +40,11 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     All endpoints are read-only GET actions that aggregate data from
     AgentccRequestLog. The base mixin handles organization/workspace
     scoping automatically.
+
+    The time-bucketed endpoints (usage-timeseries, latency-stats,
+    error-breakdown, guardrail-trends) bucket by ``granularity`` (5m, 15m, 1h,
+    6h, 1d, minute, hour, day, week, month; default hour) and answer 400 for
+    any other value. The others do not bucket and ignore it.
     """
 
     permission_classes = [IsAuthenticated]
@@ -59,7 +64,9 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     def overview(self, request):
         """KPI cards with trend comparison."""
         try:
-            period_start, period_end, _ = parse_time_range(request.query_params)
+            period_start, period_end, _ = parse_time_range(
+                request.query_params, validate_granularity=False
+            )
             result = get_overview_kpis(self.get_queryset(), period_start, period_end)
             return self._gm.success_response(result)
         except Exception as e:
@@ -86,7 +93,9 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     def cost_breakdown(self, request):
         """Cost breakdown by dimension."""
         try:
-            period_start, period_end, _ = parse_time_range(request.query_params)
+            period_start, period_end, _ = parse_time_range(
+                request.query_params, validate_granularity=False
+            )
             group_by = request.query_params.get("group_by", "model")
             top_n = _parse_int(request.query_params.get("top_n"), 10)
             result = get_cost_breakdown(
@@ -139,7 +148,9 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     def model_comparison(self, request):
         """Side-by-side model performance comparison."""
         try:
-            period_start, period_end, _ = parse_time_range(request.query_params)
+            period_start, period_end, _ = parse_time_range(
+                request.query_params, validate_granularity=False
+            )
             models_param = request.query_params.get("models")
             models_list = None
             if models_param:
@@ -157,7 +168,9 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     def guardrail_overview(self, request):
         """Guardrail aggregate KPIs."""
         try:
-            period_start, period_end, _ = parse_time_range(request.query_params)
+            period_start, period_end, _ = parse_time_range(
+                request.query_params, validate_granularity=False
+            )
             result = get_guardrail_overview(
                 self.get_queryset(), period_start, period_end
             )
@@ -170,7 +183,9 @@ class AgentccAnalyticsViewSet(BaseModelViewSetMixinWithUserOrg, GenericViewSet):
     def guardrail_rules(self, request):
         """Per-rule guardrail trigger breakdown."""
         try:
-            period_start, period_end, _ = parse_time_range(request.query_params)
+            period_start, period_end, _ = parse_time_range(
+                request.query_params, validate_granularity=False
+            )
             result = get_guardrail_rules(self.get_queryset(), period_start, period_end)
             return self._gm.success_response(result)
         except Exception as e:

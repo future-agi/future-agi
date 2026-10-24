@@ -1,0 +1,40 @@
+# Gateway config template for 62_mcpmock.sh: one static YAML MCP server,
+# "primary", on the mock scn_mcp_up started as "primary".
+#
+# scn_mcp_gateway_template (lib_mcp.sh) renders @@MCP_<NAME>_URL@@,
+# @@MCPMOCK_BIN@@ and @@MCP_FIXTURES@@ and adds the fixed test state key under
+# `mcp:`; scn_up then renders base.yaml's placeholders (see config/base.yaml)
+# and appends `redis:`. Every key and token below is a fake value for the
+# local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  servers:
+    primary:
+      url: "@@MCP_PRIMARY_URL@@"
+      transport: "http"
+      auth:
+        type: "bearer"
+        token: "scn-test-mcp-upstream-token"

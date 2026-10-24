@@ -1,4 +1,4 @@
-.PHONY: build run test test-race lint clean docker update-pricing
+.PHONY: build run test test-race lint clean docker update-pricing update-catalog scenarios
 
 BINARY=agentcc-gateway
 BUILD_DIR=bin
@@ -38,3 +38,12 @@ docker-run: docker
 
 update-pricing:
 	bash scripts/update-litellm-pricing.sh
+
+update-catalog:
+	bash scripts/update-openrouter-catalog.sh
+
+# Real-binary scenarios against the mock upstream (scripts/scenarios).
+# SCN_REDIS and SCN_REDIS_DB (a dedicated DB, never 0) are required:
+# run_all.sh exits 1 without them.
+scenarios:
+	bash scripts/scenarios/run_all.sh

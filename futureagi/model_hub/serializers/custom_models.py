@@ -1,6 +1,5 @@
 from rest_framework import serializers
 
-from model_hub.models.api_key import mask_key
 from model_hub.models.custom_models import CustomAIModel
 
 
@@ -25,7 +24,7 @@ class CustomAIModelSerializer(serializers.ModelSerializer):
 
     def get_config_json(self, obj):
         if obj.key_config:
-            return mask_key(obj.actual_json)
+            return obj.masked_json
         else:
             return None
 

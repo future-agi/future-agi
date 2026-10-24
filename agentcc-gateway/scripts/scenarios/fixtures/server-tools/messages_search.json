@@ -1,0 +1,84 @@
+{
+  "id": "msg_scn_search",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_scn_1",
+      "name": "web_search",
+      "input": { "query": "euro 2024 winner" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_scn_1",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.uefa.com/euro2024",
+          "title": "EURO 2024",
+          "encrypted_content": "EqgfCioIARgBIiQ3YTAwMjY1Mi1mZjM5LTQ1NGUtODgxNC1kNjNjNTk1ZWI3Y2QSDFhy+/ZpZ8m9qQp==",
+          "page_age": "2024-07-15"
+        }
+      ]
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_scn_2",
+      "name": "web_search",
+      "input": { "query": "euro 2024 final score" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_scn_2",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.uefa.com/final",
+          "title": "Final",
+          "encrypted_content": "Eo8BCioIAhgBIiQ0ZGQ5N2Y3Ny1hNDRhLTQ3YWYtYmQwYy1mNWE0ZjRkNmJjZDISDGs=",
+          "page_age": "2024-07-14"
+        }
+      ]
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_scn_3",
+      "name": "web_search",
+      "input": { "query": "euro 2024 top scorer" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_scn_3",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.uefa.com/scorers",
+          "title": "Scorers",
+          "encrypted_content": "EpQBCioIAxgBIiQ5YzE3ZWRlOC0wNDk1LTQ1ODctOTk0Ny1lNTJmZmQ4ZmEwZTkSDA==",
+          "page_age": "2024-07-15"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": "Spain won Euro 2024, beating England 2-1 in the final.",
+      "citations": [
+        {
+          "type": "web_search_result_location",
+          "url": "https://www.uefa.com/final",
+          "title": "Final",
+          "encrypted_index": "Eo8BCioIAhgBIiQ=",
+          "cited_text": "Spain beat England 2-1"
+        }
+      ]
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 1000,
+    "output_tokens": 100,
+    "server_tool_use": { "web_search_requests": 3 }
+  }
+}

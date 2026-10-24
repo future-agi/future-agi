@@ -16,8 +16,12 @@ import {
 import Iconify from "src/components/iconify";
 import InheritedBadge from "../components/InheritedBadge";
 import GuardrailCheckDialog from "./GuardrailCheckDialog";
+import { isStoredChecksMap } from "../hooks/useConfigPatch";
 
-const GUARDRAIL_CHECKS = [
+// The check catalogs are exported for checkActions.test.jsx, which pins them
+// to api_contracts/gateway/guardrail-check-actions.json.
+// eslint-disable-next-line react-refresh/only-export-components
+export const GUARDRAIL_CHECKS = [
   { name: "pii-detection", label: "PII Detection", icon: "mdi:shield-account" },
   {
     name: "content-moderation",
@@ -153,7 +157,8 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
   </svg>
 );
 
-const MODEL_GUARDRAIL_CHECKS = [
+// eslint-disable-next-line react-refresh/only-export-components
+export const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "futureagi-eval",
     label: "Future AGI Eval",
@@ -375,7 +380,7 @@ const MODEL_GUARDRAIL_CHECKS = [
     label: "Aporia Guardrails",
     icon: "mdi:shield-check-outline",
     provider: "aporia",
-    description: "Hallucination, injection, PII & topic restriction guardrails",
+    description: "Checks the request with your Aporia project's guardrails",
     fields: [
       { key: "api_key", label: "API Key", type: "password", required: true },
       {
@@ -390,19 +395,9 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "text",
         required: true,
       },
-      {
-        key: "policies",
-        label: "Policies",
-        type: "multiselect",
-        options: [
-          "hallucination",
-          "injection",
-          "pii",
-          "topic_restriction",
-          "rag_validation",
-        ],
-        defaultValue: ["hallucination", "injection", "pii"],
-      },
+      // No "Policies": the gateway sends the project the request text and no
+      // selection, and an org's check reads the request only, so answer
+      // policies (hallucination, RAG validation) are not offered.
     ],
   },
   {
@@ -461,13 +456,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "text",
         placeholder: "Optional DynamoGuard model ID",
       },
-      {
-        key: "text_type",
-        label: "Text Type",
-        type: "select",
-        options: ["MODEL_INPUT", "MODEL_RESPONSE"],
-        defaultValue: "MODEL_INPUT",
-      },
+      // No text type: an org's check reads the request only, so the text it
+      // sends is model input (MODEL_INPUT, the gateway's default).
     ],
   },
   {
@@ -542,7 +532,8 @@ const MODEL_GUARDRAIL_CHECKS = [
           "profanity",
           "sexual_content",
           "unethical_behavior",
-          "groundedness",
+          // No "groundedness": it judges a response against its context, and
+          // an org's check reads the request only.
         ],
         defaultValue: "harm",
       },
@@ -701,13 +692,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         required: true,
         placeholder: "Comma-separated tool patterns, e.g. file_*, db_write",
       },
-      {
-        key: "apply_to",
-        label: "Apply To",
-        type: "select",
-        options: ["request", "response", "both"],
-        defaultValue: "both",
-      },
+      // No "Apply To": an org's check reads the request only, so it checks
+      // the tools the request offers and never the model's tool calls.
     ],
   },
   {
@@ -716,7 +702,7 @@ const MODEL_GUARDRAIL_CHECKS = [
     icon: "mdi:shield-link-variant",
     provider: "mcp_security",
     description:
-      "Model Context Protocol safety — validate MCP tool inputs/outputs",
+      "Model Context Protocol safety — check the tools and tool calls a request carries",
     fields: [
       {
         key: "allowed_servers",
@@ -737,13 +723,8 @@ const MODEL_GUARDRAIL_CHECKS = [
         options: ["true", "false"],
         defaultValue: "true",
       },
-      {
-        key: "validate_outputs",
-        label: "Validate Outputs",
-        type: "select",
-        options: ["true", "false"],
-        defaultValue: "true",
-      },
+      // No "Validate Outputs": an org's check reads the request only, so it
+      // never sees the model's tool calls.
       {
         key: "max_calls_per_request",
         label: "Max Calls Per Request",
@@ -847,13 +828,42 @@ function normalizeGuardrails(raw) {
   return { ...raw, checks };
 }
 
-const GuardrailConfigTab = ({ guardrails, onChange }) => {
+// What the gateway runs a check with when it carries no action or no
+// threshold, by how the saved section is stored (see GuardrailCheckDialog).
+const RULE_DEFAULTS = { action: "block", threshold: 0.8 };
+const CHECKS_MAP_DEFAULTS = { action: "log", threshold: 0 };
+
+// `saved` is the section as stored, which decides that meaning: a draft of a
+// section stored as rules or as a list becomes a checks map once edited.
+// How the gateway runs an organization's checks (GET /-/config
+// guardrail_pipeline: enabled, fail_open, mode), shown read-only in place of
+// the org's own Mode and Fail Open, which the gateway stores but does not
+// read. Never a claim the gateway did not make.
+function nodePipelineSentence(node) {
+  const tail =
+    "This organization's own Mode and Fail Open are saved and not applied.";
+  if (!node || typeof node !== "object") {
+    return `Set by this gateway, read-only: this gateway does not report how it runs organization checks. ${tail}`;
+  }
+  if (node.enabled === false) {
+    return `Set by this gateway, read-only: guardrails are off on this gateway, so no check runs. ${tail}`;
+  }
+  const errors = node.fail_open
+    ? "lets the request through"
+    : "blocks the request";
+  return `Set by this gateway, read-only: it runs your checks in turn and stops at the first block, and a check that errors or times out ${errors}. ${tail}`;
+}
+
+const GuardrailConfigTab = ({ guardrails, saved, onChange, nodePipeline }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCheck, setEditingCheck] = useState(null);
   const [editingMeta, setEditingMeta] = useState(null);
 
   const config = normalizeGuardrails(guardrails || {});
   const checks = config.checks || {};
+  const absent = isStoredChecksMap(saved ?? guardrails)
+    ? CHECKS_MAP_DEFAULTS
+    : RULE_DEFAULTS;
 
   const handlePipelineChange = (field, value) => {
     onChange({ ...config, [field]: value });
@@ -865,18 +875,14 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     setDialogOpen(true);
   };
 
+  // The dialog gives the whole check: a saved check as stored apart from the
+  // fields the admin changed, or a new one.
   const handleSaveCheck = (checkName, data) => {
-    const existing = checks[checkName] || {};
-
     onChange({
       ...config,
       checks: {
         ...checks,
-        [checkName]: {
-          ...existing,
-          ...data,
-          config: data.config ?? existing.config,
-        },
+        [checkName]: data,
       },
     });
   };
@@ -911,9 +917,11 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     const check = checks[name];
     const isCustom = Boolean(check);
     const enabled = check?.enabled ?? false;
-    const action = check?.action || "block";
+    const action = check?.action || absent.action;
     const threshold =
-      check?.confidence_threshold ?? check?.confidenceThreshold ?? 0.8;
+      check?.confidence_threshold ??
+      check?.confidenceThreshold ??
+      absent.threshold;
     const hasMeta = Boolean(meta);
     const summary = meta?.provider ? getProviderSummary(check, meta) : null;
 
@@ -1005,23 +1013,20 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
               select
               size="small"
               label="Mode"
-              value={config.pipeline_mode || config.pipelineMode || "parallel"}
-              onChange={(e) =>
-                handlePipelineChange("pipeline_mode", e.target.value)
-              }
+              value={nodePipeline?.mode === "sequential" ? "sequential" : ""}
+              disabled
+              SelectProps={{ displayEmpty: true }}
               sx={{ minWidth: 140 }}
             >
-              <MenuItem value="parallel">Parallel</MenuItem>
+              <MenuItem value="">Not reported</MenuItem>
               <MenuItem value="sequential">Sequential</MenuItem>
             </TextField>
             <FormControlLabel
               control={
                 <Switch
                   size="small"
-                  checked={config.fail_open ?? config.failOpen ?? true}
-                  onChange={(e) =>
-                    handlePipelineChange("fail_open", e.target.checked)
-                  }
+                  checked={nodePipeline?.fail_open === true}
+                  disabled
                 />
               }
               label={<Typography variant="body2">Fail Open</Typography>}
@@ -1037,6 +1042,14 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
               sx={{ width: 120 }}
             />
           </Stack>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            display="block"
+            mt={1}
+          >
+            {nodePipelineSentence(nodePipeline)}
+          </Typography>
         </CardContent>
       </Card>
 
@@ -1064,6 +1077,8 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
         checkName={editingCheck}
         initialData={editingCheck ? checks[editingCheck] : null}
         providerMeta={editingMeta}
+        absentAction={absent.action}
+        absentThreshold={absent.threshold}
       />
     </Stack>
   );

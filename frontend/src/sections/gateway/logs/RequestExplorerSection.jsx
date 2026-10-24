@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Stack,
   Button,
@@ -13,6 +15,11 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -26,6 +33,7 @@ import SessionExplorer from "./SessionExplorer";
 import useRequestColumns from "./columns/useRequestColumns";
 import ColumnsPickerPopover from "./columns/ColumnsPickerPopover";
 import { COLUMNS_POPOVER_ID } from "./columns/columnModel";
+import { requestLogQueryParams } from "./hooks/useRequestLogs";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -56,6 +64,204 @@ function activeQuickFilter(filters) {
 }
 
 // ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+// The most rows one export holds: futureagi/agentcc/services/export.py
+// MAX_EXPORT_ROWS. Above it the server streams the first EXPORT_ROW_CAP rows
+// in the table's order when asked (max_rows), and the dialog says so first.
+const EXPORT_ROW_CAP = 10000;
+
+// URL keys that shape the table without filtering it.
+const NON_FILTER_KEYS = new Set(["view", "page", "pageSize", "sort"]);
+
+function hasFilters(filters) {
+  return Object.entries(filters).some(([key, value]) => {
+    if (NON_FILTER_KEYS.has(key) || value === undefined || value === "") {
+      return false;
+    }
+    return key === "search" ? String(value).trim().length >= 2 : true;
+  });
+}
+
+const formatCount = (n) => Number(n).toLocaleString("en-US");
+
+function countSentence(count) {
+  if (count.state === "loading") return "Counting the matching requests...";
+  if (count.state === "error") {
+    return `The matching requests could not be counted (${count.message}). The download stops at ${formatCount(EXPORT_ROW_CAP)} rows.`;
+  }
+  if (count.n === 0) {
+    return "No requests match these filters, so there is nothing to export.";
+  }
+  if (count.n > EXPORT_ROW_CAP) {
+    return `${formatCount(count.n)} requests match. An export holds at most ${formatCount(EXPORT_ROW_CAP)} rows, so this one holds the first ${formatCount(EXPORT_ROW_CAP)} in the table's order. Narrow the filters (a date range, for example) to export the rest.`;
+  }
+  return count.n === 1
+    ? "1 request will be exported."
+    : `${formatCount(count.n)} requests will be exported.`;
+}
+
+function blobText(blob) {
+  if (typeof blob === "string") return Promise.resolve(blob);
+  if (typeof blob?.text === "function") return blob.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+// A refused export's body is a Blob (responseType "blob"): read its message.
+async function readBlobMessage(blob, fallback) {
+  try {
+    const body = JSON.parse(await blobText(blob));
+    const message =
+      body?.message ||
+      body?.detail ||
+      (typeof body?.result === "string" ? body.result : "");
+    return message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveBlob(blob, format) {
+  const dateStr = new Date().toISOString().split("T")[0];
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = `agentcc-logs-${dateStr}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(blobUrl);
+}
+
+// Counts what the table's query matches, states the scope and the cap, then
+// downloads exactly the table's query (its filters, search and order).
+const ExportDialog = ({ format, filters, onClose }) => {
+  const open = Boolean(format);
+  const params = useMemo(() => requestLogQueryParams(filters), [filters]);
+  const [count, setCount] = useState({ state: "loading" });
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setCount({ state: "loading" });
+    setError("");
+    axiosInstance
+      .get(endpoints.gateway.requestLogs, {
+        params: { ...params, page: 1, limit: 1 },
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const n = Number(res?.data?.result?.count ?? res?.data?.count);
+        setCount(
+          Number.isFinite(n)
+            ? { state: "ok", n }
+            : { state: "error", message: "the server sent no count" },
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCount({
+          state: "error",
+          message: err?.message || "the request failed",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, params]);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError("");
+    try {
+      const response = await axiosInstance.get(
+        endpoints.gateway.requestLogExport,
+        {
+          params: {
+            ...params,
+            export_format: format,
+            max_rows: EXPORT_ROW_CAP,
+          },
+          responseType: "blob",
+          // A refusal (400) resolves, so its body (a Blob) can be read; a
+          // 401 still goes through the session refresh, a 5xx through the
+          // app's error path.
+          validateStatus: (status) => status !== 401 && status < 500,
+        },
+      );
+      if (response.status >= 400) {
+        setError(
+          await readBlobMessage(
+            response.data,
+            `The export was refused (HTTP ${response.status}).`,
+          ),
+        );
+        return;
+      }
+      saveBlob(response.data, format);
+      onClose();
+    } catch (err) {
+      setError(err?.message || "The export failed.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const filtered = hasFilters(filters);
+  const order =
+    (filters.sort || "-started_at") === "-started_at"
+      ? "newest first"
+      : "in the table's order";
+  const nothingToExport = count.state === "ok" && count.n === 0;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Export {String(format || "").toUpperCase()}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={1.5}>
+          <Typography variant="body2">
+            {filtered
+              ? "The export holds the requests that match the table's filters and search, in the table's order."
+              : `No filters are set: the export holds every request the table lists, ${order}.`}
+          </Typography>
+          <Typography variant="body2" fontWeight={500}>
+            {countSentence(count)}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Times in the file are in UTC.
+          </Typography>
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="contained"
+          onClick={handleDownload}
+          disabled={count.state === "loading" || nothingToExport || downloading}
+        >
+          {downloading ? "Downloading..." : "Download"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+ExportDialog.propTypes = {
+  format: PropTypes.oneOf(["csv", "json", null]),
+  filters: PropTypes.object.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -69,7 +275,7 @@ const RequestExplorerSection = () => {
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search || "");
   const [exportAnchor, setExportAnchor] = useState(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState(null);
   const [columnsAnchor, setColumnsAnchor] = useState(null);
 
   // --- Debounced search -----------------------------------------------------
@@ -127,70 +333,10 @@ const RequestExplorerSection = () => {
   const handleExportOpen = (event) => setExportAnchor(event.currentTarget);
   const handleExportClose = () => setExportAnchor(null);
 
-  const handleExport = useCallback(
-    async (format) => {
-      setExportAnchor(null);
-      setIsExporting(true);
-      try {
-        const params = {};
-        if (filters.search) params.search = filters.search;
-        if (filters.model) params.model = filters.model;
-        if (filters.provider) params.provider = filters.provider;
-        if (filters.application) params.application = filters.application;
-        if (filters.service) params.service = filters.service;
-        if (filters.tags) params.tags = filters.tags;
-        if (filters.startedAfter) params.started_after = filters.startedAfter;
-        if (filters.startedBefore)
-          params.started_before = filters.startedBefore;
-        if (filters.isError) params.is_error = filters.isError;
-        if (filters.cacheHit) params.cache_hit = filters.cacheHit;
-        if (filters.guardrailTriggered)
-          params.guardrail_triggered = filters.guardrailTriggered;
-        if (filters.minLatency) params.min_latency = filters.minLatency;
-        if (filters.maxLatency) params.max_latency = filters.maxLatency;
-        if (filters.minCost) params.min_cost = filters.minCost;
-        if (filters.maxCost) params.max_cost = filters.maxCost;
-        if (filters.userId) params.user_id = filters.userId;
-        if (filters.sessionId) params.session_id = filters.sessionId;
-        if (filters.gatewayId) params.gateway_id = filters.gatewayId;
-        if (filters.apiKeyId) params.api_key_id = filters.apiKeyId;
-        if (filters.requestId) params.request_id = filters.requestId;
-        if (filters.isStream) params.is_stream = filters.isStream;
-        if (filters.minTokens) params.min_tokens = filters.minTokens;
-        if (filters.maxTokens) params.max_tokens = filters.maxTokens;
-        if (filters.fallbackUsed) params.fallback_used = filters.fallbackUsed;
-        if (filters.sort) params.ordering = filters.sort;
-        if (filters.statusCode) params.status_code = filters.statusCode;
-        if (filters.statusCodeMin)
-          params.min_status_code = filters.statusCodeMin;
-        if (filters.statusCodeMax)
-          params.max_status_code = filters.statusCodeMax;
-
-        params.export_format = format;
-
-        const response = await axiosInstance.get(
-          endpoints.gateway.requestLogExport,
-          { params, responseType: "blob" },
-        );
-
-        const dateStr = new Date().toISOString().split("T")[0];
-        const filename = `agentcc-logs-${dateStr}.${format}`;
-        const blobUrl = URL.createObjectURL(response.data);
-        const link = document.createElement("a");
-        link.href = blobUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(blobUrl);
-      } catch {
-        // Silently handle -- could add a snackbar notification in the future
-      } finally {
-        setIsExporting(false);
-      }
-    },
-    [filters],
-  );
+  const handleExport = useCallback((format) => {
+    setExportAnchor(null);
+    setExportFormat(format);
+  }, []);
 
   // --- Filter panel apply ---------------------------------------------------
   const handleApplyFilters = useCallback(
@@ -217,9 +363,8 @@ const RequestExplorerSection = () => {
           size="small"
           startIcon={<Iconify icon="mdi:download-outline" width={20} />}
           onClick={handleExportOpen}
-          disabled={isExporting}
         >
-          {isExporting ? "Exporting..." : "Export"}
+          Export
         </Button>
 
         <Menu
@@ -361,6 +506,13 @@ const RequestExplorerSection = () => {
         logId={selectedLogId}
         open={Boolean(selectedLogId)}
         onClose={() => setSelectedLogId(null)}
+      />
+
+      {/* ---- Export dialog ---- */}
+      <ExportDialog
+        format={exportFormat}
+        filters={filters}
+        onClose={() => setExportFormat(null)}
       />
 
       {/* ---- Filter panel drawer ---- */}

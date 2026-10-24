@@ -11,7 +11,12 @@ import (
 // defaultCORSMethods are the methods allowed by default if none are configured.
 var defaultCORSMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 
-// defaultCORSHeaders are the headers allowed by default if none are configured.
+// defaultCORSHeaders are the headers allowed by default if none are
+// configured: every documented per-request header. Of the agent context
+// headers it holds three, x-agentcc-trace-id, x-agentcc-user-id and
+// x-agentcc-session-id; the others need cors.allowed_headers. A
+// preflight that asks for x-agentcc-property-<name> headers is answered
+// with those names too (requestedPropertyHeaders).
 var defaultCORSHeaders = []string{
 	"Authorization",
 	"Content-Type",
@@ -23,6 +28,21 @@ var defaultCORSHeaders = []string{
 	"X-Agentcc-Config",
 	"X-Guardrail-Policy",
 	"Cache-Control",
+	"X-Agentcc-Session-Name",
+	"X-Agentcc-Session-Path",
+	"X-Agentcc-Request-Id",
+	"X-Agentcc-Metadata",
+	"X-Agentcc-Cache-Ttl",
+	"X-Agentcc-Cache-Namespace",
+	"X-Agentcc-Cache-Force-Refresh",
+	"X-Agentcc-Provider-Lock",
+	"X-Agentcc-Complexity-Override",
+	"X-Agentcc-Guardrail-Policy",
+	"X-Agentcc-Max-Attempts",
+	"X-Agentcc-Retry-Delay-Ms",
+	"X-Agentcc-Backoff",
+	"X-Agentcc-Auto-Preference",
+	"X-Agentcc-Log-Content",
 }
 
 // defaultExposedHeaders are the response headers browsers are allowed to read.
@@ -38,6 +58,17 @@ var defaultExposedHeaders = []string{
 	"X-RateLimit-Limit",
 	"X-RateLimit-Remaining",
 	"X-RateLimit-Reset",
+	"X-Agentcc-Client-Request-Id",
+	"X-Agentcc-Config-Ignored",
+	"X-Agentcc-Guardrail-Triggered",
+	"X-Agentcc-Guardrail-Action",
+	"X-Agentcc-Guardrails-Triggered",
+	"X-Agentcc-Fallback-Used",
+	"X-Agentcc-Routing-Strategy",
+	"X-Agentcc-Credits-Remaining",
+	"X-Ratelimit-Limit-Requests",
+	"X-Ratelimit-Remaining-Requests",
+	"X-Ratelimit-Reset-Requests",
 }
 
 // CORS returns middleware that handles CORS preflight and response headers.
@@ -53,7 +84,8 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 	}
 
 	headers := cfg.AllowedHeaders
-	if len(headers) == 0 {
+	defaultHeaders := len(headers) == 0
+	if defaultHeaders {
 		headers = defaultCORSHeaders
 	}
 
@@ -112,7 +144,13 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 			// Handle preflight.
 			if r.Method == http.MethodOptions {
 				w.Header().Set("Access-Control-Allow-Methods", methodsStr)
-				w.Header().Set("Access-Control-Allow-Headers", headersStr)
+				allowHeaders := headersStr
+				if defaultHeaders {
+					if props := requestedPropertyHeaders(r.Header.Get("Access-Control-Request-Headers")); props != "" {
+						allowHeaders += ", " + props
+					}
+				}
+				w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
 				w.Header().Set("Access-Control-Max-Age", maxAgeStr)
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -121,4 +159,19 @@ func CORS(cfg config.CORSConfig) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// requestedPropertyHeaders is the x-agentcc-property-<name> headers a
+// preflight's Access-Control-Request-Headers asks for, comma-separated: a
+// property's name is the caller's own, so the default list cannot name it.
+func requestedPropertyHeaders(requested string) string {
+	var out []string
+	for _, name := range strings.Split(requested, ",") {
+		name = strings.TrimSpace(name)
+		if len(name) > len(hdrPropertyPrefix) && len(name) <= len(hdrPropertyPrefix)+maxPropertyNameLen &&
+			isPropertyHeader(name) && validPropertyName(strings.ToLower(name[len(hdrPropertyPrefix):])) {
+			out = append(out, name)
+		}
+	}
+	return strings.Join(out, ", ")
 }

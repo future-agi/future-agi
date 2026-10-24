@@ -70,7 +70,7 @@ func TestPlugin_CacheHit(t *testing.T) {
 
 	// Pre-populate cache.
 	req := makeReq("gpt-4o", "hello")
-	key := BuildCacheKey("default", req)
+	key := BuildCacheKey(cache.NoOrgScope, "default", req)
 	cachedResp := makeResp("cached-1")
 	store.Set(key, cachedResp, 5*time.Minute)
 
@@ -118,7 +118,7 @@ func TestPlugin_ForceRefresh(t *testing.T) {
 
 	// Pre-populate cache.
 	req := makeReq("gpt-4o", "hello")
-	key := BuildCacheKey("default", req)
+	key := BuildCacheKey(cache.NoOrgScope, "default", req)
 	store.Set(key, makeResp("old"), 5*time.Minute)
 
 	rc := models.AcquireRequestContext()
@@ -160,7 +160,7 @@ func TestPlugin_CacheControlNoCache(t *testing.T) {
 
 	// Pre-populate cache.
 	req := makeReq("gpt-4o", "hello")
-	key := BuildCacheKey("default", req)
+	key := BuildCacheKey(cache.NoOrgScope, "default", req)
 	store.Set(key, makeResp("old"), 5*time.Minute)
 
 	rc := models.AcquireRequestContext()
@@ -263,6 +263,9 @@ func TestPlugin_PostResponseSkipsOnNoStore(t *testing.T) {
 	}
 }
 
+// TestPlugin_CustomTTL: the per-request TTL is honoured, clamped to the
+// 60 s floor of x-agentcc-cache-ttl, so a 50 ms value keeps the entry for
+// 60 s.
 func TestPlugin_CustomTTL(t *testing.T) {
 	p, store := newTestPlugin()
 
@@ -288,11 +291,11 @@ func TestPlugin_CustomTTL(t *testing.T) {
 		t.Fatal("expected entry in cache immediately after set")
 	}
 
-	// Wait for custom TTL to expire.
+	// The 50 ms asked for is raised to the 60 s floor.
 	time.Sleep(60 * time.Millisecond)
 
-	if _, ok := store.Get(key); ok {
-		t.Error("expected cache entry to expire after custom TTL")
+	if _, ok := store.Get(key); !ok {
+		t.Error("a 50ms TTL is clamped to 60s; the entry must still be cached")
 	}
 }
 
@@ -302,7 +305,7 @@ func TestPlugin_NamespaceIsolation(t *testing.T) {
 	req := makeReq("gpt-4o", "hello")
 
 	// Store in namespace "ns1".
-	key1 := BuildCacheKey("ns1", req)
+	key1 := BuildCacheKey(cache.NoOrgScope, "ns1", req)
 	store.Set(key1, makeResp("ns1-resp"), 5*time.Minute)
 
 	// Request in namespace "ns2" — should miss.
@@ -336,8 +339,8 @@ func TestBuildCacheKey_SameRequestSameKey(t *testing.T) {
 	req1 := makeReq("gpt-4o", "hello world")
 	req2 := makeReq("gpt-4o", "hello world")
 
-	k1 := BuildCacheKey("default", req1)
-	k2 := BuildCacheKey("default", req2)
+	k1 := BuildCacheKey(cache.NoOrgScope, "default", req1)
+	k2 := BuildCacheKey(cache.NoOrgScope, "default", req2)
 
 	if k1 != k2 {
 		t.Errorf("same requests should produce same key:\n  k1=%s\n  k2=%s", k1, k2)
@@ -348,8 +351,8 @@ func TestBuildCacheKey_DifferentMessagesDifferentKey(t *testing.T) {
 	req1 := makeReq("gpt-4o", "hello")
 	req2 := makeReq("gpt-4o", "world")
 
-	k1 := BuildCacheKey("default", req1)
-	k2 := BuildCacheKey("default", req2)
+	k1 := BuildCacheKey(cache.NoOrgScope, "default", req1)
+	k2 := BuildCacheKey(cache.NoOrgScope, "default", req2)
 
 	if k1 == k2 {
 		t.Error("different messages should produce different keys")
@@ -360,8 +363,8 @@ func TestBuildCacheKey_DifferentModelsDifferentKey(t *testing.T) {
 	req1 := makeReq("gpt-4o", "hello")
 	req2 := makeReq("gpt-4o-mini", "hello")
 
-	k1 := BuildCacheKey("default", req1)
-	k2 := BuildCacheKey("default", req2)
+	k1 := BuildCacheKey(cache.NoOrgScope, "default", req1)
+	k2 := BuildCacheKey(cache.NoOrgScope, "default", req2)
 
 	if k1 == k2 {
 		t.Error("different models should produce different keys")
@@ -371,8 +374,8 @@ func TestBuildCacheKey_DifferentModelsDifferentKey(t *testing.T) {
 func TestBuildCacheKey_DifferentNamespacesDifferentKey(t *testing.T) {
 	req := makeReq("gpt-4o", "hello")
 
-	k1 := BuildCacheKey("ns1", req)
-	k2 := BuildCacheKey("ns2", req)
+	k1 := BuildCacheKey(cache.NoOrgScope, "ns1", req)
+	k2 := BuildCacheKey(cache.NoOrgScope, "ns2", req)
 
 	if k1 == k2 {
 		t.Error("different namespaces should produce different keys")
@@ -389,8 +392,8 @@ func TestBuildCacheKey_TemperatureAffectsKey(t *testing.T) {
 	req2 := makeReq("gpt-4o", "hello")
 	req2.Temperature = &temp2
 
-	k1 := BuildCacheKey("default", req1)
-	k2 := BuildCacheKey("default", req2)
+	k1 := BuildCacheKey(cache.NoOrgScope, "default", req1)
+	k2 := BuildCacheKey(cache.NoOrgScope, "default", req2)
 
 	if k1 == k2 {
 		t.Error("different temperatures should produce different keys")

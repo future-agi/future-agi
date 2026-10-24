@@ -67,6 +67,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// UpstreamModelName is the id every call sends Cohere for model
+// (providers.UpstreamModelNamer).
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
@@ -294,6 +298,10 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	return translateEmbeddingResponse(&cr2, model), nil
 }
+
+// AcceptsEmbeddingInputType reports that an embed request's input_type is
+// sent per request (Cohere's input_type).
+func (p *Provider) AcceptsEmbeddingInputType() bool { return true }
 
 // Rerank sends a rerank request to Cohere.
 func (p *Provider) Rerank(ctx context.Context, req *models.RerankRequest) (*models.RerankResponse, error) {

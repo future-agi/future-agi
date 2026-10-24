@@ -1383,6 +1383,10 @@ RECAPTCHA_ENABLED = _recaptcha_enabled(
 
 # Integration encryption key (Fernet) for storing external platform credentials
 INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
+# True when the key below is made up for this process (lost on restart, and
+# different in every process): model_hub's key migration never encrypts
+# stored keys with it.
+INTEGRATION_ENCRYPTION_KEY_EPHEMERAL = False
 if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     # Generate a throwaway key for local dev so the app starts without config.
     # Data encrypted with this key is lost on restart — production MUST set
@@ -1393,6 +1397,7 @@ if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
     INTEGRATION_ENCRYPTION_KEY = base64.urlsafe_b64encode(
         _secrets.token_bytes(32)
     ).decode()
+    INTEGRATION_ENCRYPTION_KEY_EPHEMERAL = True
 ENABLE_INTEGRATIONS = os.getenv("ENABLE_INTEGRATIONS", "false").lower() == "true"
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

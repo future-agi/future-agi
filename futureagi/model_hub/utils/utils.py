@@ -704,11 +704,11 @@ def load_hf_dataset_with_retries(
     auth_token = ApiKey.objects.filter(
         organization_id=organization_id, provider="huggingface"
     ).first()
+    # The org's own token when it has one: one this deployment cannot decrypt
+    # raises (KeyUnreadable) rather than being swapped for the platform token.
     hf_token = (
-        auth_token._actual_key
-        if auth_token and auth_token._actual_key
-        else HUGGINGFACE_API_TOKEN
-    )
+        auth_token.actual_key if auth_token and auth_token.key else None
+    ) or HUGGINGFACE_API_TOKEN
     for attempt in range(max_reties):
         try:
             if not streaming:

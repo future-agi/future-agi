@@ -114,21 +114,44 @@ class TestRejectedConfigDoesNotBecomeActive:
         assert _versions(organization) == [(1, False), (2, True)]
         mock_push.assert_not_called()
 
-    @patch("agentcc.services.config_push.push_org_config", return_value=True)
-    def test_routing_policy_sync_keeps_the_active_version(
+    @patch(
+        "agentcc.views.org_config.AgentccOrgConfigViewSet._push_config_to_gateway",
+        return_value=True,
+    )
+    def test_create_rejects_a_kept_section_too(
         self, mock_push, auth_client, organization
     ):
-        # The sync writes routing as {"policies": ...}, which the contract has
-        # no field for, so it must not replace the active version.
-        _make_config(organization, routing={"strategy": "round_robin"})
+        # POST copies the sections it does not name from the active version,
+        # so the merged version is what gets validated, not the payload alone.
+        _make_config(organization, routing=REJECTED_ROUTING)
 
         response = auth_client.post(
+            "/agentcc/org-configs/", {"cache": {"enabled": True}}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "routing.default_strategy" in json.dumps(response.json())
+        assert _versions(organization) == [(1, True)]
+        mock_push.assert_not_called()
+
+    @patch("agentcc.services.config_push.push_org_config", return_value=True)
+    def test_routing_policy_write_leaves_the_org_config_alone(
+        self, mock_push, auth_client, organization
+    ):
+        # Routing is versioned in org configs: a routing-policy save writes no
+        # org-config version and pushes nothing, and the routing-policy sync
+        # answers 410.
+        _make_config(organization, routing={"strategy": "round_robin"})
+
+        created = auth_client.post(
             "/agentcc/routing-policies/",
             {"name": "fastest", "config": {"strategy": "fastest"}},
             format="json",
         )
+        synced = auth_client.post("/agentcc/routing-policies/sync/")
 
-        assert response.status_code == status.HTTP_200_OK, response.json()
-        assert response.json()["result"]["gateway_synced"] is False
+        assert created.status_code == status.HTTP_200_OK, created.json()
+        assert synced.status_code == status.HTTP_410_GONE
+        assert synced.json()["code"] == "routing_policies_retired"
         assert _versions(organization) == [(1, True)]
         mock_push.assert_not_called()

@@ -54,3 +54,22 @@ func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
 	errType := MapStatusToErrorType(apiErr.Status)
 	WriteError(w, apiErr.Status, errType, apiErr.Message)
 }
+
+// StreamErrorEvent is apiErr as an Anthropic stream's error event, the frame
+// Anthropic sends when a stream fails:
+//
+//	event: error
+//	data: {"type":"error","error":{"type":...,"message":...}}
+func StreamErrorEvent(apiErr *models.APIError) []byte {
+	resp := struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{Type: "error"}
+	resp.Error.Type = MapStatusToErrorType(apiErr.Status)
+	resp.Error.Message = apiErr.Message
+	data, _ := json.Marshal(resp)
+	return []byte("event: error\ndata: " + string(data) + "\n\n")
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/credits-granted-push-v1.schema.json",
+  "title": "credits-granted-push-v1",
+  "description": "PUT /-/orgs/{org_id}/credits/granted. The golden pairs one request body ($defs/Request) with its response ($defs/Response). granted is applied only when version is newer than the stored one; spent = max(spent, settled_spend_floor_micros) is always applied. available_micros = granted - spent - held and can be negative with an overdraft.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "response"],
+  "properties": {
+    "request": { "$ref": "#/$defs/Request" },
+    "response": { "$ref": "#/$defs/Response" }
+  },
+  "$defs": {
+    "Request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "granted_total_micros",
+        "version",
+        "settled_spend_floor_micros"
+      ],
+      "properties": {
+        "granted_total_micros": { "type": "integer", "minimum": 0 },
+        "version": { "type": "integer", "minimum": 0 },
+        "settled_spend_floor_micros": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "applied",
+        "granted_total_micros",
+        "granted_version",
+        "spent_micros",
+        "held_micros",
+        "available_micros"
+      ],
+      "properties": {
+        "applied": { "type": "boolean" },
+        "granted_total_micros": { "type": "integer", "minimum": 0 },
+        "granted_version": { "type": "integer", "minimum": 0 },
+        "spent_micros": { "type": "integer", "minimum": 0 },
+        "held_micros": { "type": "integer", "minimum": 0 },
+        "available_micros": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "status": "succeeded",
+  "createdDateTime": "{{created}}",
+  "lastUpdatedDateTime": "{{now}}",
+  "analyzeResult": {
+    "apiVersion": "2024-11-30",
+    "modelId": "{{model}}",
+    "stringIndexType": "textElements",
+    "content": "Capmock document",
+    "pages": [
+      {
+        "pageNumber": 1,
+        "angle": 0,
+        "width": 8.5,
+        "height": 11,
+        "unit": "inch",
+        "words": [
+          {
+            "content": "Capmock",
+            "confidence": 0.99,
+            "span": { "offset": 0, "length": 7 }
+          }
+        ],
+        "lines": [
+          {
+            "content": "Capmock document",
+            "spans": [{ "offset": 0, "length": 16 }]
+          }
+        ],
+        "spans": [{ "offset": 0, "length": 16 }]
+      }
+    ]
+  }
+}

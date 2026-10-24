@@ -1,0 +1,20 @@
+# The benchmark pin read by `baseline_bench.sh release`.
+#
+# The guard compares this tree with the pinned commit.
+# RELEASE_BENCH_ALLOCS_BUDGET is the number of allocations per chat completion
+# this tree may add over the pin, for BenchmarkChatCompletionNonStreaming and
+# BenchmarkChatCompletionParallel. baseline_bench.sh builds both sides with this
+# tree's Go toolchain, so the budget counts this tree's own allocations only:
+# with go1.26.10 the pin reads 304/303 allocs/op at GOMAXPROCS=4, so this tree
+# may read at most 311/310.
+#
+# BenchmarkChatCompletionOwnKey is not in the pin, so it is reported with this
+# tree's figures and judged as soon as the pin has it.
+#
+# When the pin moves, update the three values together, in the commit that
+# records the new measurement.
+#
+# Plain KEY=VALUE lines; baseline_bench.sh reads them without running this file.
+RELEASE_BENCH_PIN=44285494beb2797506c7394f52e7383300019ace
+RELEASE_BENCH_ALLOCS_BUDGET=7
+RELEASE_BENCH_UNPINNED=BenchmarkChatCompletionOwnKey

@@ -93,9 +93,7 @@ describe("api surface contract", () => {
     expect(
       apiPath("/usage/v2/invoices/{invoice_id}/", { invoice_id: "invoice/1" }),
     ).toBe("/usage/v2/invoices/invoice%2F1/");
-    expect(getContractedApiMethods("/v1/internal/licenses")).toEqual([
-      "post",
-    ]);
+    expect(getContractedApiMethods("/v1/internal/licenses")).toEqual(["post"]);
     expect(getContractedApiMethods("/falcon-ai/conversations/")).toEqual([
       "get",
       "post",
@@ -109,8 +107,19 @@ describe("api surface contract", () => {
     );
   });
 
-  it("keeps the endpoint registry fully backed by generated contracts", () => {
-    expect(API_CONTRACT_EXCEPTIONS).toEqual({});
+  it("lets only pending gateway console endpoints bypass the contract", () => {
+    const exceptions = Object.entries(API_CONTRACT_EXCEPTIONS);
+    expect(exceptions.length).toBeLessThanOrEqual(30);
+    for (const [template, meta] of exceptions) {
+      expect(template).toMatch(/^\/agentcc\//);
+      expect(isContractedApiPath(template)).toBe(false);
+      expect(meta).toEqual({
+        group: "agentcc",
+        status: "active_uncontracted",
+        reason: expect.stringContaining("Gateway console"),
+        next: expect.stringContaining("apiPath()"),
+      });
+    }
     expect(isApiContractExceptionPath("/usage/v2/usage-overview/")).toBe(false);
     expect(() => uncontractedApiPath("/model-hub/legacy/")).toThrow(
       "API contract exception path is not registered",

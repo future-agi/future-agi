@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
@@ -22,7 +23,13 @@ type geminiEmbedRequest struct {
 }
 
 type geminiEmbedResponse struct {
-	Embedding *geminiEmbeddingValues `json:"embedding"`
+	Embedding     *geminiEmbeddingValues `json:"embedding"`
+	UsageMetadata *geminiEmbedUsage      `json:"usageMetadata,omitempty"`
+}
+
+// geminiEmbedUsage is the usage an embed response may report.
+type geminiEmbedUsage struct {
+	PromptTokenCount int `json:"promptTokenCount"`
 }
 
 type geminiEmbeddingValues struct {
@@ -41,7 +48,8 @@ type geminiBatchEmbedItem struct {
 }
 
 type geminiBatchEmbedResponse struct {
-	Embeddings []geminiEmbeddingValues `json:"embeddings"`
+	Embeddings    []geminiEmbeddingValues `json:"embeddings"`
+	UsageMetadata *geminiEmbedUsage       `json:"usageMetadata,omitempty"`
 }
 
 // CreateEmbedding sends an embedding request to Gemini.
@@ -66,18 +74,55 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	}
 
 	// Use single embedContent for one input, batchEmbedContents for multiple.
+	taskType := geminiTaskTypes[req.InputType]
 	if len(texts) == 1 {
-		return p.doSingleEmbed(ctx, model, texts[0], req.Dimensions)
+		return p.doSingleEmbed(ctx, model, texts[0], req.Dimensions, taskType)
 	}
-	return p.doBatchEmbed(ctx, model, texts, req.Dimensions)
+	return p.doBatchEmbed(ctx, model, texts, req.Dimensions, taskType)
+}
+
+// geminiTaskTypes maps a request's input_type to Gemini's taskType. A
+// request that names none sends no taskType.
+var geminiTaskTypes = map[string]string{
+	models.EmbeddingInputTypeQuery:          "RETRIEVAL_QUERY",
+	models.EmbeddingInputTypeDocument:       "RETRIEVAL_DOCUMENT",
+	models.EmbeddingInputTypeClassification: "CLASSIFICATION",
+	models.EmbeddingInputTypeClustering:     "CLUSTERING",
+}
+
+// AcceptsEmbeddingInputType reports that an embed request's input_type is
+// sent per request (Gemini's taskType).
+func (p *Provider) AcceptsEmbeddingInputType() bool { return true }
+
+// EstimateEmbeddingUsage is a token estimate for embedding req's input, for
+// a response whose upstream reported no usage, so a paid call is never
+// costed at $0: about 4 characters (or 1.3 words) a token, at least one per
+// input. It is nil for an input the adapter cannot embed.
+func (p *Provider) EstimateEmbeddingUsage(req *models.EmbeddingRequest) *models.EmbeddingUsage {
+	texts, err := parseEmbeddingInput(req.Input)
+	if err != nil || len(texts) == 0 {
+		return nil
+	}
+	n := 0
+	for _, text := range texts {
+		n += max(estimateTextTokens(text), 1)
+	}
+	return &models.EmbeddingUsage{PromptTokens: n, TotalTokens: n}
+}
+
+// estimateTextTokens is the larger of ~4 characters a token and ~1.3 tokens
+// a word, the heuristic the tokenizer package uses for chat.
+func estimateTextTokens(s string) int {
+	return max((len(s)+3)/4, len(strings.Fields(s))*13/10)
 }
 
 // doSingleEmbed calls the embedContent endpoint for a single text.
-func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string, dimensions *int) (*models.EmbeddingResponse, error) {
+func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string, dimensions *int, taskType string) (*models.EmbeddingResponse, error) {
 	gemReq := geminiEmbedRequest{
 		Content: &geminiContent{
 			Parts: []geminiPart{{Text: text}},
 		},
+		TaskType:             taskType,
 		OutputDimensionality: dimensions,
 	}
 
@@ -90,7 +135,7 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: creating embed request: %v", err))
+		return nil, models.ErrInternal("gemini: creating embed request: " + withoutURL(err))
 	}
 
 	p.setAuthHeaders(httpReq)
@@ -100,7 +145,7 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 		if ctx.Err() != nil {
 			return nil, models.ErrGatewayTimeout("gemini: embed request timed out")
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: embed request failed: %v", err))
+		return nil, models.ErrUpstreamProvider(0, "gemini: embed request failed: "+withoutURL(err))
 	}
 	defer resp.Body.Close()
 
@@ -122,7 +167,7 @@ func (p *Provider) doSingleEmbed(ctx context.Context, model string, text string,
 }
 
 // doBatchEmbed calls the batchEmbedContents endpoint for multiple texts.
-func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []string, dimensions *int) (*models.EmbeddingResponse, error) {
+func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []string, dimensions *int, taskType string) (*models.EmbeddingResponse, error) {
 	// Build the Gemini model reference for batch requests.
 	// Gemini requires the full model path in each batch item.
 	modelRef := "models/" + model
@@ -134,6 +179,7 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 			Content: &geminiContent{
 				Parts: []geminiPart{{Text: text}},
 			},
+			TaskType:             taskType,
 			OutputDimensionality: dimensions,
 		})
 	}
@@ -149,7 +195,7 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: creating batch embed request: %v", err))
+		return nil, models.ErrInternal("gemini: creating batch embed request: " + withoutURL(err))
 	}
 
 	p.setAuthHeaders(httpReq)
@@ -159,7 +205,7 @@ func (p *Provider) doBatchEmbed(ctx context.Context, model string, texts []strin
 		if ctx.Err() != nil {
 			return nil, models.ErrGatewayTimeout("gemini: batch embed request timed out")
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: batch embed request failed: %v", err))
+		return nil, models.ErrUpstreamProvider(0, "gemini: batch embed request failed: "+withoutURL(err))
 	}
 	defer resp.Body.Close()
 
@@ -236,17 +282,22 @@ func translateSingleEmbedResponse(resp *geminiEmbedResponse, model string, text 
 		})
 	}
 
-	// Gemini doesn't return token counts for embeddings.
-	// Return 0 rather than a misleading estimate.
 	return &models.EmbeddingResponse{
 		Object: "list",
 		Data:   data,
 		Model:  model,
-		Usage: &models.EmbeddingUsage{
-			PromptTokens: 0,
-			TotalTokens:  0,
-		},
+		Usage:  reportedEmbedUsage(resp.UsageMetadata),
 	}
+}
+
+// reportedEmbedUsage is the usage an embed response reported, nil when it
+// reported none (or a zero count): the handler then asks for
+// EstimateEmbeddingUsage instead of costing the call at $0.
+func reportedEmbedUsage(u *geminiEmbedUsage) *models.EmbeddingUsage {
+	if u == nil || u.PromptTokenCount <= 0 {
+		return nil
+	}
+	return &models.EmbeddingUsage{PromptTokens: u.PromptTokenCount, TotalTokens: u.PromptTokenCount}
 }
 
 // translateBatchEmbedResponse converts a Gemini batchEmbedContents response to OpenAI format.
@@ -261,15 +312,10 @@ func translateBatchEmbedResponse(resp *geminiBatchEmbedResponse, model string, t
 		})
 	}
 
-	// Gemini doesn't return token counts for embeddings.
-	// Return 0 rather than a misleading estimate.
 	return &models.EmbeddingResponse{
 		Object: "list",
 		Data:   data,
 		Model:  model,
-		Usage: &models.EmbeddingUsage{
-			PromptTokens: 0,
-			TotalTokens:  0,
-		},
+		Usage:  reportedEmbedUsage(resp.UsageMetadata),
 	}
 }

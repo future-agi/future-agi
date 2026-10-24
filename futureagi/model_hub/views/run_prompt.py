@@ -2271,7 +2271,10 @@ class DefaultProviderView(APIView):
             ).first()
 
             if api_key:
-                data = {"provider": api_key.provider, "key": api_key.key}
+                data = {
+                    "provider": api_key.provider,
+                    "key": api_key.masked_actual_key,
+                }
                 return self._gm.success_response(data)
 
             return self._gm.not_found(get_error_message("PROVIDER_CONFIG_NOT_FOUND"))

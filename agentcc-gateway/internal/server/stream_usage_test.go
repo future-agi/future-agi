@@ -17,7 +17,7 @@ func TestTeeStreamUsage_ConsumerAbandonsStream(t *testing.T) {
 	defer cancel()
 
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(ctx, in)
+	out, usageCh := teeStreamUsage(ctx, in, nil)
 
 	go func() {
 		defer close(in)
@@ -61,7 +61,7 @@ func TestTeeStreamUsage_ConsumerAbandonsStream(t *testing.T) {
 
 func TestTeeStreamUsage_ForwardsEveryChunk(t *testing.T) {
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(context.Background(), in)
+	out, usageCh := teeStreamUsage(context.Background(), in, nil)
 
 	go func() {
 		defer close(in)
@@ -94,7 +94,7 @@ func TestTeeStreamUsage_ForwardsEveryChunk(t *testing.T) {
 // skips the request rather than pricing it at zero.
 func TestTeeStreamUsage_NoUsageLeavesResponseNil(t *testing.T) {
 	in := make(chan models.StreamChunk)
-	out, usageCh := teeStreamUsage(context.Background(), in)
+	out, usageCh := teeStreamUsage(context.Background(), in, nil)
 
 	go func() {
 		defer close(in)

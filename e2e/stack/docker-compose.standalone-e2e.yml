@@ -12,6 +12,12 @@
 #     register a custom model with the Distributed gateway URL
 #     (http://agentcc-gateway:8080/v1, e2e/lib/managed-mock.ts MOCK_BASE).
 #     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
+#   - the public-classified `e2e-public` network (e2e/lib/public-network.ts):
+#     internal, 11.88.0.0/24, so the product's SSRF guards save and call a
+#     webhook or an org provider there with their defaults on. `app` joins it;
+#     mock-llm (llm.e2e-public.test, scoped routes, host port 28082 for reads)
+#     and webhook-sink (hooks.e2e-public.test, host port 28083 for reads) sit on
+#     it at fixed addresses, with those aliases defined there only.
 services:
   app:
     # Never read the checkout's own .env: it belongs to the developer's
@@ -26,6 +32,10 @@ services:
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
+    # A service that names its networks must list `default` too.
+    networks:
+      - default
+      - e2e-public
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
   postgres:
@@ -43,4 +53,43 @@ services:
     volumes:
       # Paths resolve against the project directory (repo root).
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.11
+        aliases: [llm.e2e-public.test]
+    ports:
+      - "127.0.0.1:28082:8080"
     restart: "no"
+  webhook-sink:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/webhook-sink/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.10
+        aliases: [hooks.e2e-public.test]
+    ports:
+      - "127.0.0.1:28083:8080"
+    restart: "no"
+  smtp-sink:
+    # e2e/lib/sinks.ts MailSink: the console saves SMTP alerts with use_tls
+    # true, so the product uses STARTTLS; mailpit generates a self-signed
+    # certificate for smtp-sink at start. SMTP smtp-sink:1025 on the default
+    # network only (it carries no model traffic and is not inspected); HTTP API
+    # on host 127.0.0.1:28025 for reads.
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: sans:smtp-sink
+      MP_SMTP_TLS_KEY: sans:smtp-sink
+    ports:
+      - "127.0.0.1:28025:8025"
+    restart: "no"
+networks:
+  e2e-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.88.0.0/24

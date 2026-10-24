@@ -16,6 +16,7 @@ import {
   Button,
 } from "@mui/material";
 import { Icon } from "@iconify/react";
+import { hasStoredCredential } from "../mcp/utils";
 
 const MCPConfigTab = ({ mcp, onChange }) => {
   const config = mcp || {};
@@ -26,12 +27,10 @@ const MCPConfigTab = ({ mcp, onChange }) => {
   // Server form state
   const [newServerId, setNewServerId] = useState("");
   const [newServerUrl, setNewServerUrl] = useState("");
-  const [newServerTransport, setNewServerTransport] = useState("http");
   const [newServerAuthType, setNewServerAuthType] = useState("none");
   const [newServerAuthToken, setNewServerAuthToken] = useState("");
   const [newServerAuthHeader, setNewServerAuthHeader] = useState("");
   const [newServerAuthKey, setNewServerAuthKey] = useState("");
-  const [newServerCacheTTL, setNewServerCacheTTL] = useState("");
 
   // Guardrails state
   const [newBlockedTool, setNewBlockedTool] = useState("");
@@ -51,9 +50,11 @@ const MCPConfigTab = ({ mcp, onChange }) => {
   // Server handlers
   const addServer = () => {
     if (!newServerId.trim() || !newServerUrl.trim()) return;
+    // An org config never starts a local process: stdio servers come only
+    // from the operator's gateway config.
     const serverCfg = {
       url: newServerUrl.trim(),
-      transport: newServerTransport,
+      transport: "http",
     };
     if (newServerAuthType !== "none") {
       serverCfg.auth = { type: newServerAuthType };
@@ -67,18 +68,13 @@ const MCPConfigTab = ({ mcp, onChange }) => {
           serverCfg.auth.key = newServerAuthKey.trim();
       }
     }
-    if (newServerCacheTTL.trim()) {
-      serverCfg.tools_cache_ttl = newServerCacheTTL.trim();
-    }
     update("servers", { ...servers, [newServerId.trim()]: serverCfg });
     setNewServerId("");
     setNewServerUrl("");
-    setNewServerTransport("http");
     setNewServerAuthType("none");
     setNewServerAuthToken("");
     setNewServerAuthHeader("");
     setNewServerAuthKey("");
-    setNewServerCacheTTL("");
   };
 
   const removeServer = (id) => {
@@ -194,6 +190,18 @@ const MCPConfigTab = ({ mcp, onChange }) => {
                               variant="outlined"
                             />
                           )}
+                          {((srv.auth?.type && srv.auth.type !== "none") ||
+                            srv.credential) && (
+                            <Chip
+                              label={
+                                hasStoredCredential(srv)
+                                  ? "Credential: set"
+                                  : "Credential: not set"
+                              }
+                              size="small"
+                              variant="outlined"
+                            />
+                          )}
                         </Stack>
                         <Typography
                           variant="caption"
@@ -243,17 +251,6 @@ const MCPConfigTab = ({ mcp, onChange }) => {
                 <TextField
                   select
                   size="small"
-                  label="Transport"
-                  value={newServerTransport}
-                  onChange={(e) => setNewServerTransport(e.target.value)}
-                  sx={{ width: 130 }}
-                >
-                  <MenuItem value="http">HTTP</MenuItem>
-                  <MenuItem value="stdio">Stdio</MenuItem>
-                </TextField>
-                <TextField
-                  select
-                  size="small"
                   label="Auth Type"
                   value={newServerAuthType}
                   onChange={(e) => setNewServerAuthType(e.target.value)}
@@ -263,14 +260,6 @@ const MCPConfigTab = ({ mcp, onChange }) => {
                   <MenuItem value="bearer">Bearer Token</MenuItem>
                   <MenuItem value="api_key">API Key</MenuItem>
                 </TextField>
-                <TextField
-                  size="small"
-                  label="Cache TTL"
-                  placeholder="5m"
-                  value={newServerCacheTTL}
-                  onChange={(e) => setNewServerCacheTTL(e.target.value)}
-                  sx={{ width: 100 }}
-                />
               </Stack>
               {newServerAuthType === "bearer" && (
                 <TextField

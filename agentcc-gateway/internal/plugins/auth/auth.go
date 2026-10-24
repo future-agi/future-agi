@@ -99,14 +99,10 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 		))
 	}
 
-	// Per-key IP restriction.
-	if len(apiKey.AllowedIPs) > 0 {
-		clientIP := net.ParseIP(rc.Metadata["client_ip"])
-		if clientIP == nil || !ipacl.CheckIP(clientIP, apiKey.AllowedIPs) {
-			return pipeline.ResultError(models.ErrForbidden(
-				"API key is not authorized from this IP address",
-			))
-		}
+	// Per-key IP restriction. KeyAuth applies the same rule on every key-gated
+	// path, including the routes that never run this pipeline.
+	if err := ipacl.CheckKeyIP(net.ParseIP(rc.Metadata["client_ip"]), apiKey.AllowedIPs); err != nil {
+		return pipeline.ResultError(err)
 	}
 
 	// Note: provider ACL (CanAccessProvider) is not checked here because
@@ -126,21 +122,26 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 		rc.Metadata["auth_denied_tools"] = strings.Join(apiKey.DeniedTools, ",")
 	}
 
-	// Populate RequestContext with key info.
-	rc.Metadata["auth_key_id"] = apiKey.ID
-	rc.Metadata["auth_key_name"] = apiKey.Name
-	rc.Metadata["auth_key_owner"] = apiKey.Owner
-	rc.Metadata["key_type"] = apiKey.KeyType
-
-	// Copy key metadata to request context.
+	// Copy the key's metadata labels to the request context, then write the
+	// key's identity and authority after them.
 	slog.Debug("auth plugin: key metadata",
 		"key_id", apiKey.ID,
 		"key_name", apiKey.Name,
 		"metadata_len", len(apiKey.Metadata),
 	)
-	for k, v := range apiKey.Metadata {
+	// Read once: KeyStore.Update swaps in a new map, and the labels and the
+	// authority below must come from the same one.
+	metadata := apiKey.Metadata
+	for k, v := range metadata {
+		// A reserved name is never a label: key_type and the key's id, name and
+		// owner always come from the key itself. Authority entries are written
+		// below.
+		if authpkg.IsReservedMetadataKey(k) {
+			continue
+		}
 		rc.Metadata["key_"+k] = v
 	}
+	writeKeyAuthority(rc, apiKey, metadata)
 
 	// Set user ID from key owner if not already set.
 	if rc.UserID == "" {
@@ -148,6 +149,28 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// authorityMetadataKeys are the reserved key metadata entries the gateway
+// reads as authority (org_id, access_groups, role, team, allow_policy_override).
+var authorityMetadataKeys = authpkg.AuthorityMetadataKeys()
+
+// writeKeyAuthority writes what the request knows about its key from the key
+// itself, after the metadata labels, so no label can stand in for it. Each
+// authority entry is the key's own value, or absent when the key has none:
+// nothing written earlier for another key survives.
+func writeKeyAuthority(rc *models.RequestContext, apiKey *authpkg.APIKey, metadata map[string]string) {
+	rc.Metadata["auth_key_id"] = apiKey.ID
+	rc.Metadata["auth_key_name"] = apiKey.Name
+	rc.Metadata["auth_key_owner"] = apiKey.Owner
+	rc.Metadata["key_type"] = apiKey.KeyType
+	for _, name := range authorityMetadataKeys {
+		if v, ok := metadata[name]; ok {
+			rc.Metadata["key_"+name] = v
+		} else {
+			delete(rc.Metadata, "key_"+name)
+		}
+	}
 }
 
 // ProcessResponse is a no-op for auth.

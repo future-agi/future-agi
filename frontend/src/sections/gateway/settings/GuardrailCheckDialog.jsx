@@ -21,8 +21,12 @@ import {
 
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
+import {
+  MASK_ACTION_HELP,
+  actionLabel,
+  actionOptionsFor,
+} from "../constants/guardrailCheckActions";
 
-const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 const CREDENTIAL_KEYS = new Set(["api_key", "secret_key", "access_key"]);
 
@@ -43,6 +47,12 @@ const parseMultilineList = (value) => {
     });
 };
 
+// absentAction and absentThreshold are what the gateway runs a saved check
+// with when it carries no action or no threshold: block and 0.8 for a rule or
+// a check of the policy sync's list (the config push's defaults), log and 0
+// for a check of a section stored as a checks map, which the push forwards as
+// stored. The form opens on them, so choosing another value is an edit, and
+// re-saving the shown value is not.
 const GuardrailCheckDialog = ({
   open,
   onClose,
@@ -50,6 +60,8 @@ const GuardrailCheckDialog = ({
   checkName,
   initialData,
   providerMeta,
+  absentAction = "block",
+  absentThreshold = 0.8,
 }) => {
   const [form, setForm] = useState({
     enabled: true,
@@ -57,6 +69,9 @@ const GuardrailCheckDialog = ({
     confidence_threshold: 0.8,
   });
   const [providerFields, setProviderFields] = useState({});
+  // What the form showed when it opened on a saved check, so a re-save writes
+  // only the fields the admin changed (see handleSave).
+  const [shownAtOpen, setShownAtOpen] = useState(null);
   // Track which credential fields had existing values (to avoid overwriting with mask)
   const [maskedCredentials, setMaskedCredentials] = useState({});
   // Async options cache for async-select fields
@@ -67,14 +82,16 @@ const GuardrailCheckDialog = ({
     if (!open) return;
 
     if (initialData) {
-      setForm({
+      const shownForm = {
         enabled: initialData.enabled !== false,
-        action: initialData.action || "block",
+        action: initialData.action || absentAction,
         confidence_threshold:
           initialData.confidence_threshold ??
           initialData.confidenceThreshold ??
-          0.8,
-      });
+          absentThreshold,
+      };
+      setForm(shownForm);
+      let shownFields = {};
 
       // Extract provider-specific fields from initialData (check both top-level and config sub-object)
       if (providerMeta?.fields) {
@@ -99,11 +116,14 @@ const GuardrailCheckDialog = ({
         });
         setProviderFields(pf);
         setMaskedCredentials(mc);
+        shownFields = pf;
       } else {
         setProviderFields({});
         setMaskedCredentials({});
       }
+      setShownAtOpen({ form: shownForm, fields: shownFields });
     } else {
+      setShownAtOpen(null);
       setForm({ enabled: true, action: "block", confidence_threshold: 0.8 });
       // Set defaults for provider fields
       if (providerMeta?.fields) {
@@ -117,7 +137,7 @@ const GuardrailCheckDialog = ({
       }
       setMaskedCredentials({});
     }
-  }, [open, initialData, providerMeta]);
+  }, [open, initialData, providerMeta, absentAction, absentThreshold]);
 
   // Fetch async options for async-select fields when dialog opens
   useEffect(() => {
@@ -165,44 +185,93 @@ const GuardrailCheckDialog = ({
     }
   };
 
-  const handleSave = () => {
+  // The value a provider field's input holds, as the check stores it: a
+  // masked credential the admin left alone is its stored value, a list is
+  // parsed, text is trimmed. undefined when the input is empty.
+  const storedValue = (key, type) => {
+    const val = providerFields[key];
+    if (CREDENTIAL_KEYS.has(key) && val === CREDENTIAL_MASK) {
+      return maskedCredentials[key];
+    }
+    if (type === "multiline-list") {
+      const parsed = parseMultilineList(val);
+      return parsed.length > 0 ? parsed : undefined;
+    }
+    if (val === undefined || val === "") return undefined;
+    return typeof val === "string" ? val.trim() : val;
+  };
+
+  // A new check is built from the form, defaults included.
+  const buildNewCheck = () => {
     const data = {
       enabled: form.enabled,
       action: form.action,
       confidence_threshold: form.confidence_threshold,
     };
-
-    // Add provider field
     if (providerMeta?.provider) {
       data.provider = providerMeta.provider;
     }
-
-    // Add provider-specific fields inside config sub-object
     if (providerMeta?.fields) {
       const cfg = {};
       providerMeta.fields.forEach(({ key, type }) => {
-        const val = providerFields[key];
-        if (
-          CREDENTIAL_KEYS.has(key) &&
-          val === CREDENTIAL_MASK &&
-          maskedCredentials[key]
-        ) {
-          cfg[key] = maskedCredentials[key];
-        } else if (type === "multiline-list") {
-          const parsed = parseMultilineList(val);
-          if (parsed.length > 0) {
-            cfg[key] = parsed;
-          }
-        } else if (val !== undefined && val !== "") {
-          cfg[key] = typeof val === "string" ? val.trim() : val;
-        }
+        const val = storedValue(key, type);
+        if (val !== undefined) cfg[key] = val;
       });
       if (Object.keys(cfg).length > 0) {
         data.config = cfg;
       }
     }
+    return data;
+  };
 
-    onSave(checkName, data);
+  // A saved check is saved again exactly as it was, apart from the fields the
+  // admin changed: re-saving must never change what a check does. A stored
+  // setting the form does not show (such as
+  // DynamoAI's text_type, Tool Permissions' apply_to or MCP Security's
+  // validate_outputs), one it shows with a default (an absent threshold, an
+  // absent max_calls_per_request) and one it would normalize (untrimmed
+  // text, a list) all stay as stored, in their place. A changed field is
+  // written where the check keeps it (the top level or config), and a field
+  // the admin cleared is removed.
+  const resaveCheck = () => {
+    // The check came from the API, so a JSON copy is exact.
+    const data = JSON.parse(JSON.stringify(initialData));
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    ["enabled", "action"].forEach((key) => {
+      if (!same(form[key], shownAtOpen.form[key])) data[key] = form[key];
+    });
+    if (
+      !same(form.confidence_threshold, shownAtOpen.form.confidence_threshold)
+    ) {
+      data.confidence_threshold = form.confidence_threshold;
+      if ("confidenceThreshold" in data) {
+        data.confidenceThreshold = form.confidence_threshold;
+      }
+    }
+    (providerMeta?.fields || []).forEach(({ key, type }) => {
+      if (same(providerFields[key], shownAtOpen.fields[key])) return;
+      const inTop = key in initialData;
+      const inConfig = key in (initialData.config || {});
+      const val = storedValue(key, type);
+      if (val === undefined) {
+        if (inTop) delete data[key];
+        if (inConfig) delete data.config[key];
+        return;
+      }
+      if (inTop) data[key] = val;
+      if (inConfig || !inTop) {
+        data.config = data.config || {};
+        data.config[key] = val;
+      }
+    });
+    return data;
+  };
+
+  const handleSave = () => {
+    onSave(
+      checkName,
+      initialData && shownAtOpen ? resaveCheck() : buildNewCheck(),
+    );
     onClose();
   };
 
@@ -423,6 +492,12 @@ const GuardrailCheckDialog = ({
   };
 
   const hideConfidence = providerMeta?.hideConfidence === true;
+  // Mask only for a check that can rewrite the request (pii-detection); a
+  // stored action the check does not take stays listed, disabled.
+  const actionOptions = actionOptionsFor(checkName, form.action);
+  const storedOnly = actionOptions.some(
+    (o) => o.disabled && o.value === form.action,
+  );
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -454,10 +529,18 @@ const GuardrailCheckDialog = ({
             value={form.action}
             onChange={(e) => setForm((p) => ({ ...p, action: e.target.value }))}
             fullWidth
+            helperText={
+              storedOnly
+                ? "This check cannot take this action; the gateway runs it as Log."
+                : form.action === "mask"
+                  ? MASK_ACTION_HELP
+                  : undefined
+            }
           >
-            {ACTION_OPTIONS.map((a) => (
-              <MenuItem key={a} value={a}>
-                {a.charAt(0).toUpperCase() + a.slice(1)}
+            {actionOptions.map(({ value, disabled }) => (
+              <MenuItem key={value} value={value} disabled={disabled}>
+                {actionLabel(value)}
+                {disabled ? " (runs as Log)" : ""}
               </MenuItem>
             ))}
           </TextField>

@@ -7,6 +7,8 @@ import { E2E } from './env';
 import type { TestActor } from './provisioning';
 import type { StateProbe } from './state-probe';
 import { standaloneMockStack } from './managed-mock-standalone';
+import { PUBLIC_NETWORK } from './public-network';
+import { gatewayProfile, PROFILE_FILES, validateAltProfile, type GatewayProfile } from './profile';
 
 // docker-compose.distributed.yml backend-env; gateway.e2e.yaml providers.openai.
 export const MOCK_MODEL = 'gpt-4o';
@@ -14,16 +16,45 @@ export const MOCK_BASE = 'http://agentcc-gateway:8080/v1';
 export const MOCK_SERVING_BASE = 'http://mock-llm:8080';
 export const MOCK_KEY = 'local-dev-only-shared-secret-replace-me';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-export const gatewayFile = `${root}e2e/stack/gateway.e2e.yaml`;
+export const gatewayFile = `${root}${PROFILE_FILES.stock}`;
+/** The gateway config file the declared profile mounts (lib/profile.ts). */
+export const profileFile = (profile: GatewayProfile) => `${root}${PROFILE_FILES[profile]}`;
+/** The mount rule's own message, so a wrong profile mount names what was expected. */
+export const profileMountReason = (profile: GatewayProfile) =>
+  `gateway profile ${profile} expects ${PROFILE_FILES[profile]} mounted`;
 export const mockFile = `${root}e2e/stack/mock-llm/server.mjs`;
+export const sinkFile = `${root}e2e/stack/webhook-sink/server.mjs`;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export const requireSafe = (ok: unknown, reason: string): void => {
   if (!ok) throw new Error(`STOP: managed mock ${reason}`);
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** The one managed provider gateway.e2e.yaml may declare: FutureAGI-credentialed
+ * (`managed: true`) but on the same deterministic mock and dummy key. `type:
+ * openrouter` is allowed here only, and only beside an explicit mock base_url,
+ * which the gateway keeps over the preset's (providers/presets.go adds just the
+ * /v1 path prefix); it is what seeds the bundled OpenRouter catalog snapshot.
+ */
+export const MANAGED_PROVIDER = 'fagi-managed';
+/** The managed section the E2E gateway runs with: the bundled catalog only (no
+ * live fetch) and the in-memory, test-only credit ledger (no Redis in this config). */
+export const MANAGED_SETTINGS = { markup_percent: 5, require_credits: true, require_redis: false, catalog_refresh: '0s' };
+
+export function validateManagedMock(provider: Record<string, unknown> | undefined, managed: unknown): void {
+  requireSafe(provider && same(Object.keys(provider).sort(), ['api_format', 'api_key', 'auto_discover', 'base_url',
+    'conn_pool_size', 'default_timeout', 'managed', 'max_concurrent', 'type']), 'unexpected managed provider fields');
+  requireSafe(provider!.base_url === 'http://mock-llm:8080' && provider!.api_key === 'e2e-mock' &&
+    provider!.api_format === 'openai' && provider!.type === 'openrouter' && provider!.managed === true &&
+    provider!.auto_discover === false, 'managed provider is not the deterministic mock');
+  requireSafe(managed && typeof managed === 'object' && same(Object.keys(managed).sort(),
+    Object.keys(MANAGED_SETTINGS).sort()) && Object.entries(MANAGED_SETTINGS).every(
+    ([key, value]) => (managed as Record<string, unknown>)[key] === value), 'unexpected managed settings');
+}
+
 /** Strict safety contract, not a general gateway config validator. No env expansion,
- * aliases, extra providers, presets, model maps, mirrors, tools or control plane.
+ * aliases, extra providers, presets, model maps, mirrors, tools or control plane;
+ * the one exception is the managed provider and section validateManagedMock pins.
  * Gateway config.Load expands env; registry.NewRegistry applies these routing knobs.
  */
 export function validateMockRouting(source: string, evalBackground = false): void {
@@ -32,8 +63,12 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   let cfg;
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
-  requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
-  requireSafe(same(Object.keys(cfg.providers ?? {}), ['openai']), 'provider set is not mock-only');
+  const sections = cfg ? Object.keys(cfg).sort() : [];
+  const withManaged = same(sections, ['logging', 'managed', 'providers', 'server']);
+  requireSafe(withManaged || same(sections, ['logging', 'providers', 'server']), 'unexpected gateway sections');
+  requireSafe(same(Object.keys(cfg.providers ?? {}), withManaged ? ['openai', MANAGED_PROVIDER] : ['openai']),
+    'provider set is not mock-only');
+  if (withManaged) validateManagedMock(cfg.providers[MANAGED_PROVIDER], cfg.managed);
   const provider = cfg.providers.openai;
   requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
     'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
@@ -80,7 +115,11 @@ function gatewayValues({ gateway, controlPlane }: MockTopology) {
   // credential or network allowance: private provider URLs stay refused.
   const wiring: Record<string, string> = { AGENTCC_CONTROL_PLANE_URL: controlPlane,
     AGENTCC_CONTROL_PLANE_TOKEN: allowed.AGENTCC_ADMIN_TOKEN, AGENTCC_SYNC_ON_STARTUP: 'true',
-    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false' };
+    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false',
+    // The stack keeps the published admin token, which the gateway and the
+    // API's admin endpoints refuse without this dev-only opt-in (e2e/stack/*.env
+    // set it; the backend and workers carry it too).
+    AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: '1' };
   return { allowed, wiring };
 }
 
@@ -153,13 +192,29 @@ export function validateMockEnvironment(service: string, env: Record<string, str
   }
 }
 
+export interface NetworkEndpoint { NetworkID: string; Aliases: string[] | null; IPAddress: string }
 export interface Container {
   Id: string; Image: string; State: { Running: boolean; StartedAt: string };
   Config: { Labels: Record<string, string>; Env: string[]; Cmd: string[]; Entrypoint: string[] };
   HostConfig: { ExtraHosts: string[] | null; Dns?: string[]; DnsSearch?: string[] };
   Mounts: { Type: string; Source: string; Destination: string; RW: boolean }[];
-  NetworkSettings: { Networks: Record<string, { NetworkID: string; Aliases: string[]; IPAddress: string }>;
+  NetworkSettings: { Networks: Record<string, NetworkEndpoint>;
     Ports: Record<string, { HostIp: string; HostPort: string }[] | null> };
+}
+
+/** A member of the public-classified network (lib/public-network.ts): a pinned
+ * member sits at its address with its alias there; nobody else carries a pinned
+ * alias, and no pinned alias is defined on the default network, so Docker DNS
+ * answers it with the public address alone.
+ */
+export function validatePublicMember(service: string, onDefault: NetworkEndpoint, onPublic: NetworkEndpoint): void {
+  const pin = (PUBLIC_NETWORK.pinned as Record<string, { ip: string; alias: string }>)[service];
+  const aliases: string[] = Object.values(PUBLIC_NETWORK.pinned).map(p => p.alias);
+  const carries = (endpoint: NetworkEndpoint, alias: string) => (endpoint.Aliases ?? []).includes(alias);
+  requireSafe(!aliases.some(alias => carries(onDefault, alias)) && (pin
+    ? onPublic.IPAddress === pin.ip && carries(onPublic, pin.alias) &&
+      aliases.every(alias => alias === pin.alias || !carries(onPublic, alias))
+    : !aliases.some(alias => carries(onPublic, alias))), `service ${service} public address or alias mismatch`);
 }
 
 export function validateBackgroundMockMounts(service: string, mounts: Container['Mounts']): void {
@@ -179,7 +234,9 @@ export function validateBackgroundMockMounts(service: string, mounts: Container[
   }
 }
 export interface MockReceipt {
-  context: string; project: string; networkId: string; gatewaySha: string; mockSha: string;
+  context: string; project: string; networkId: string; publicNetworkId: string;
+  /** The declared gateway profile and the hash of the file it mounts. */
+  profile: GatewayProfile; gatewaySha: string; mockSha: string;
   services: { service: string; id: string; image: string; startedAt: string }[];
   background?: { capability: 'eval-clustering'; sourceHashes: Record<string, string>; probeSha: string;
     processes: unknown[] };
@@ -197,21 +254,25 @@ export function managedMockInspectionError(error: unknown): Error {
 }
 
 /** One E2E stack's shape for inspectMockStack, which checks what every stack
- * shares: a local daemon, the managed project's services on its one bridge
- * network, the published harness ports, the mock's read-only sources and the
- * gateway routing. `check` adds the rest: entrypoints, mounts, environment.
+ * shares: a local daemon, the managed project's services on its default bridge
+ * network (the public members also on its internal public-classified one), the
+ * published harness ports, the mock's read-only sources and the gateway routing. `check` adds the rest: entrypoints, mounts, environment.
  */
 export interface MockStack {
   /** The Compose project bin/e2e must resolve to, where the stack pins one. */
   project?: string;
   /** Compose SERVICE keys, never machine-specific/generated container names. */
   services: string[];
+  /** The services also on the public-classified network (PUBLIC_NETWORK.members); every other one is on default only. */
+  publicMembers: readonly string[];
   /** Exact extra_hosts per service; every other service has none. */
   extraHosts?: Record<string, string[]>;
   /** [service, container port, the harness endpoint it must publish]. */
   endpoints: [string, string, string][];
-  /** [service, mount destination, repo source, exact command]: read-only binds. */
-  sources: [string, string, string, string[]?][];
+  /** The declared gateway profile; its file is the gateway's mounted config. */
+  profile: GatewayProfile;
+  /** [service, mount destination, repo source, exact command, wrong-source reason]: read-only binds. */
+  sources: [string, string, string, string[]?, string?][];
   check(inspection: StackInspection): MockReceipt['background'];
 }
 export interface StackInspection {
@@ -229,13 +290,17 @@ export const containerEnvironment = (c: Container): Record<string, string> =>
  * select their context explicitly. An unattested attach target FAILS, never skips.
  */
 export function inspectManagedMock({ evalBackground = false }: { evalBackground?: boolean } = {}): MockReceipt {
+  let profile: GatewayProfile;
+  try { profile = gatewayProfile(); } catch { throw new Error('STOP: managed mock gateway profile is not declared correctly'); }
   // Standalone: one `app` container instead of backend/worker/gateway/frontend.
-  return inspectMockStack(process.env.E2E_STACK === 'standalone'
-    ? standaloneMockStack(evalBackground) : distributedMockStack(evalBackground), evalBackground);
+  if (process.env.E2E_STACK === 'standalone') return inspectMockStack(standaloneMockStack(evalBackground, profile), evalBackground);
+  requireSafe(profile === 'stock', `gateway profile ${profile} is Standalone only`);
+  return inspectMockStack(distributedMockStack(evalBackground), evalBackground);
 }
 
 function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
-  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]) {
+  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl,
+    E2E.mockLlmUrl, E2E.webhookSinkUrl, E2E.mailSinkUrl]) {
     requireSafe(new URL(endpoint).hostname === 'localhost', 'requires localhost endpoints');
   }
   const context = process.env.DOCKER_CONTEXT || (process.env.CI ? 'default' : '');
@@ -261,16 +326,23 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
   const containers: Container[] = JSON.parse(docker('inspect', ...ids));
   const selected: Record<string, Container> = {};
   const network = config.networks.default.name;
+  const publicNetwork: string = config.networks[PUBLIC_NETWORK.key]?.name;
+  requireSafe(publicNetwork && stack.publicMembers.every(s => stack.services.includes(s)), 'public network is not declared');
   for (const service of stack.services) {
     const matches = containers.filter(c => c.Config.Labels['com.docker.compose.service'] === service);
     requireSafe(matches.length === 1, `service ${service} is ambiguous`);
     const c = selected[service] = matches[0];
     requireSafe(c.State.Running && c.Config.Labels['com.docker.compose.project'] === config.name,
       `service ${service} is not running in the managed project`);
-    requireSafe(same(Object.keys(c.NetworkSettings.Networks), [network]) &&
-      c.NetworkSettings.Networks[network].Aliases.includes(service) &&
+    // Members are on exactly default and the public network; everyone else on default only.
+    const member = stack.publicMembers.includes(service);
+    requireSafe(same(Object.keys(c.NetworkSettings.Networks).sort(), member ? [network, publicNetwork].sort() : [network]) &&
+      (c.NetworkSettings.Networks[network].Aliases ?? []).includes(service) &&
       !c.HostConfig.Dns?.length && !c.HostConfig.DnsSearch?.length,
     `service ${service} network or DNS override`);
+    if (member) {
+      validatePublicMember(service, c.NetworkSettings.Networks[network], c.NetworkSettings.Networks[publicNetwork]);
+    }
     requireSafe(same([...(c.HostConfig.ExtraHosts ?? [])].sort(), stack.extraHosts?.[service] ?? []),
       `service ${service} extra_hosts override`);
   }
@@ -279,39 +351,63 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
   const [net] = JSON.parse(docker('network', 'inspect', networkId));
   requireSafe(net.Driver === 'bridge' && net.Labels['com.docker.compose.project'] === config.name &&
     net.Labels['com.docker.compose.network'] === 'default', 'unmanaged network');
+  // The public-classified network: the project's own internal bridge on exactly
+  // its subnet, attached to exactly the members (an unlisted container is STOP
+  // even when the inspection does not otherwise look at it).
+  const members = stack.publicMembers.map(service => selected[service]);
+  const publicNetworkId = members[0].NetworkSettings.Networks[publicNetwork].NetworkID;
+  requireSafe(members.every(c => c.NetworkSettings.Networks[publicNetwork].NetworkID === publicNetworkId),
+    'public network identity mismatch');
+  const [pub] = JSON.parse(docker('network', 'inspect', publicNetworkId));
+  requireSafe(pub.Driver === 'bridge' && pub.Labels?.['com.docker.compose.project'] === config.name &&
+    pub.Labels?.['com.docker.compose.network'] === PUBLIC_NETWORK.key, 'unmanaged public network');
+  requireSafe(pub.Internal === true, 'public network is not internal');
+  requireSafe(pub.IPAM?.Config?.length === 1 && pub.IPAM.Config[0].Subnet === PUBLIC_NETWORK.subnet,
+    `public network subnet is not ${PUBLIC_NETWORK.subnet}`);
+  requireSafe(same(Object.keys(pub.Containers ?? {}).sort(), members.map(c => c.Id).sort()),
+    'public network has an unlisted member');
   for (const [service, port, endpoint] of stack.endpoints) {
     requireSafe(selected[service].NetworkSettings.Ports[port]?.some(p =>
       p.HostPort === new URL(endpoint).port && ['127.0.0.1', '0.0.0.0', '::'].includes(p.HostIp)),
     `endpoint is not published by ${service}`);
   }
-  for (const [service, destination, source, command] of stack.sources) {
+  for (const [service, destination, source, command, wrongSource] of stack.sources) {
     const c = selected[service];
     const mounts = c.Mounts.filter(m => m.Destination === destination);
-    requireSafe(mounts.length === 1 && mounts[0].Type === 'bind' && !mounts[0].RW &&
-      realpathSync(mounts[0].Source) === realpathSync(source), `unexpected ${service} source mount`);
+    requireSafe(mounts.length === 1 && mounts[0].Type === 'bind' && !mounts[0].RW, `unexpected ${service} source mount`);
+    requireSafe(realpathSync(mounts[0].Source) === realpathSync(source), wrongSource ?? `unexpected ${service} source mount`);
     if (command) requireSafe(same(c.Config.Cmd, command), `unexpected ${service} command`);
     requireSafe(statSync(source).mtimeMs <= Date.parse(c.State.StartedAt), `${service} source changed after startup`);
   }
-  validateMockRouting(readFileSync(gatewayFile, 'utf8'), evalBackground);
+  // The routing contract is the stock file's; another profile must be exactly
+  // stock plus its declared delta (lib/profile.ts).
+  const stockSource = readFileSync(gatewayFile, 'utf8');
+  validateMockRouting(stockSource, evalBackground);
+  if (stack.profile === 'alt') validateAltProfile(stockSource, readFileSync(profileFile('alt'), 'utf8'));
   const background = stack.check({ context, network, selected, config, run, docker });
-  return { context, project: config.name, networkId, gatewaySha: hash(readFileSync(gatewayFile)),
+  return { context, project: config.name, networkId, publicNetworkId, profile: stack.profile,
+    gatewaySha: hash(readFileSync(profileFile(stack.profile))),
     mockSha: hash(readFileSync(mockFile)), ...(background ? { background } : {}), services: stack.services.map(service => ({ service,
       id: selected[service].Id, image: selected[service].Image, startedAt: selected[service].State.StartedAt })) };
 }
 
 function distributedMockStack(evalBackground: boolean): MockStack {
   return {
-    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
-      ...(evalBackground ? ['temporal'] : [])],
+    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'webhook-sink', 'backend', 'worker', 'frontend', 'postgres',
+      'clickhouse', ...(evalBackground ? ['temporal'] : [])],
+    publicMembers: PUBLIC_NETWORK.members.distributed,
+    profile: 'stock',
     endpoints: [
       ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
       ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
       ['clickhouse', '8123/tcp', E2E.chUrl], ['mock-slack', '8080/tcp', E2E.slackMockUrl],
+      ['mock-llm', '8080/tcp', E2E.mockLlmUrl], ['webhook-sink', '8080/tcp', E2E.webhookSinkUrl],
     ],
     sources: [
-      ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
+      ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml'], profileMountReason('stock')],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
       ['mock-slack', '/srv/server.mjs', `${root}e2e/stack/mock-slack/server.mjs`, ['node', '/srv/server.mjs']],
+      ['webhook-sink', '/srv/server.mjs', sinkFile, ['node', '/srv/server.mjs']],
     ],
     check: ({ context, network, selected, config, run, docker }) => {
       if (evalBackground) {
@@ -320,9 +416,11 @@ function distributedMockStack(evalBackground: boolean): MockStack {
       requireSafe(same(selected['agentcc-gateway'].Config.Entrypoint, ['/app/agentcc-gateway']) &&
         same(selected['mock-llm'].Config.Entrypoint, ['docker-entrypoint.sh']) &&
         same(selected['mock-slack'].Config.Entrypoint, ['docker-entrypoint.sh']) &&
-        selected['mock-slack'].Mounts.length === 1, 'unexpected gateway/mock entrypoint or mount');
+        same(selected['webhook-sink'].Config.Entrypoint, ['docker-entrypoint.sh']) &&
+        selected['mock-slack'].Mounts.length === 1 && selected['webhook-sink'].Mounts.length === 1,
+      'unexpected gateway/mock entrypoint or mount');
       const environments: Record<string, Record<string, string>> = {};
-      for (const service of ['agentcc-gateway', 'mock-llm', 'backend', 'worker']) {
+      for (const service of ['agentcc-gateway', 'mock-llm', 'webhook-sink', 'backend', 'worker']) {
         const env = environments[service] = containerEnvironment(selected[service]);
         validateMockEnvironment(service, env, evalBackground, selected[service].Mounts);
       }

@@ -76,6 +76,23 @@ class AgentccOrgConfig(BaseModel):
     # Per-org model map (model name → provider ID aliasing)
     model_map = models.JSONField(default=dict, blank=True)
 
+    # The three sections added by prism 0029 and 0045 also carry a database
+    # default (prism 0046): during a rolling deploy, and after a code rollback,
+    # pods whose model predates them insert rows that omit these NOT NULL
+    # columns. New code still writes the Python default.
+
+    # Opt-in to FutureAGI-managed models ({"enabled": bool}): the gateway's
+    # managed providers, billed at upstream cost plus the managed markup.
+    managed_models = models.JSONField(default=dict, db_default={}, blank=True)
+
+    # Per-org capability tools (tools.capabilities, tools.policy).
+    tools = models.JSONField(default=dict, db_default={}, blank=True)
+
+    # Per-org agent identity (require_human_sponsor, grants, idp
+    # {issuer, token_endpoint, client_id}). The IdP client secret and the
+    # delegated grants are push-only, added by config_push at push time.
+    identity = models.JSONField(default=dict, db_default={}, blank=True)
+
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

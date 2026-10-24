@@ -28,6 +28,8 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const STATUS_COLORS = {
   active: "success",
@@ -51,6 +53,9 @@ const KeyManagementSection = () => {
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
+  // Every API key write (create, update, revoke, sync) is Owner or Admin
+  // only (useGatewayAdmin, the backend's is_gateway_admin). Reads stay open.
+  const { canEdit, disabledReason } = useGatewayAdmin();
 
   // Client-side filters
   const filteredKeys = useMemo(() => {
@@ -145,7 +150,8 @@ const KeyManagementSection = () => {
             size: "small",
             icon: "mdi:sync",
             onClick: handleSync,
-            disabled: syncMutation.isPending,
+            disabled: syncMutation.isPending || !canEdit,
+            tooltip: disabledReason || undefined,
           },
           {
             label: "Create Key",
@@ -153,6 +159,8 @@ const KeyManagementSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setCreateDialogOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
         ]}
       />
@@ -217,13 +225,16 @@ const KeyManagementSection = () => {
               : "No keys match your filters"}
           </Typography>
           {keys?.length === 0 && (
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="mdi:plus" width={20} />}
-              onClick={() => setCreateDialogOpen(true)}
-            >
-              Create Your First Key
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                variant="outlined"
+                startIcon={<Iconify icon="mdi:plus" width={20} />}
+                onClick={() => setCreateDialogOpen(true)}
+                disabled={!canEdit}
+              >
+                Create Your First Key
+              </Button>
+            </GatewayAdminOnly>
           )}
         </Box>
       ) : (

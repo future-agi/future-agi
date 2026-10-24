@@ -18,6 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { fDateTime } from "src/utils/format-time";
 import {
   useEmailAlerts,
   useUpdateEmailAlert,
@@ -125,6 +126,24 @@ export default function EmailAlertsCard() {
                         <Typography sx={{ typography: "s2", fontWeight: 500 }}>
                           {alert.name}
                         </Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {alert.last_triggered_at
+                            ? `Last sent ${fDateTime(alert.last_triggered_at)}`
+                            : "Never sent"}
+                        </Typography>
+                        {alert.last_error && (
+                          <Typography
+                            sx={{ typography: "s3", color: "error.main" }}
+                          >
+                            {`Last delivery failed${
+                              alert.last_error_at
+                                ? ` ${fDateTime(alert.last_error_at)}`
+                                : ""
+                            }: ${alert.last_error}`}
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Stack

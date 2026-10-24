@@ -3,28 +3,43 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/privacy"
 )
+
+var errClientClosed = errors.New("client closed")
 
 // Client manages a connection to a single upstream MCP server.
 type Client struct {
 	serverID  string
-	transport Transport
+	transport Transport                  // read with currentTransport; tests set it before use
+	tmu       sync.RWMutex               // guards transport
 	tools     atomic.Pointer[[]Tool]     // cached tool list (lock-free reads)
-	resources atomic.Pointer[[]Resource]  // cached resource list
-	prompts   atomic.Pointer[[]Prompt]    // cached prompt list
+	resources atomic.Pointer[[]Resource] // cached resource list
+	prompts   atomic.Pointer[[]Prompt]   // cached prompt list
 	healthy   atomic.Bool
-	mu        sync.Mutex // serializes reconnection
+	mu        sync.Mutex // serializes connect, reconnect and close
 	closed    atomic.Bool
 
-	// Callbacks.
-	onToolsChanged func(serverID string, tools []Tool)
+	// life is cancelled only by Close. A transport's health loop and every
+	// reconnect run under it; a stdio child lives until its transport closes.
+	life         context.Context
+	stopLife     context.CancelFunc
+	stopMonitors context.CancelFunc // ends the current transport's health loop; under mu
+	reconnecting atomic.Bool
 
-	// Config.
+	ids       atomic.Int64 // request ids, unique for the client's lifetime
+	stderrCut atomic.Int64 // stdio stderr lines cut to the cap, across reconnects
+
+	onToolsChanged atomic.Pointer[func(serverID string, tools []Tool)]
+
 	cfg ClientConfig
 }
 
@@ -38,6 +53,19 @@ type ClientConfig struct {
 	Auth          AuthConfig
 	PingInterval  time.Duration
 	ToolsCacheTTL time.Duration
+
+	// The stdio child's environment is built from these alone: BaseEnv names
+	// copied from the host (nil = DefaultStdioBaseEnv(); empty = none), then
+	// EnvFromHost names, then Env values.
+	Env         map[string]string
+	EnvFromHost []string
+	BaseEnv     []string
+
+	Launcher           StdioLauncher     // nil = the local launcher
+	StdioGrace         time.Duration     // after stdin closes, before SIGTERM; <= 0 = 5 s
+	MaxMessageBytes    int               // largest stdio message; <= 0 = 16 MiB
+	StderrMaxLineBytes int               // stderr lines are cut to this; <= 0 = 1,024
+	StderrRedactor     *privacy.Redactor // the operator's log redactor, applied after the credential patterns
 }
 
 // NewClient creates a new MCP client for an upstream server.
@@ -48,27 +76,71 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.ToolsCacheTTL <= 0 {
 		cfg.ToolsCacheTTL = 5 * time.Minute
 	}
+	if cfg.BaseEnv == nil {
+		cfg.BaseEnv = DefaultStdioBaseEnv()
+	}
+	if cfg.Launcher == nil {
+		cfg.Launcher = LocalStdioLauncher{}
+	}
+	if cfg.StdioGrace <= 0 {
+		cfg.StdioGrace = DefaultStdioGrace
+	}
+	if cfg.MaxMessageBytes <= 0 {
+		cfg.MaxMessageBytes = DefaultStdioMaxMessageBytes
+	}
+	if cfg.StderrMaxLineBytes <= 0 {
+		cfg.StderrMaxLineBytes = DefaultStdioStderrMaxLineBytes
+	}
 
 	c := &Client{
 		serverID: cfg.ServerID,
 		cfg:      cfg,
 	}
+	c.life, c.stopLife = context.WithCancel(context.Background())
 	return c
 }
 
-// Connect establishes the connection, performs the MCP handshake, and discovers tools.
+// Connect establishes the connection, performs the MCP handshake, and
+// discovers tools. ctx bounds the handshake only: a stdio child keeps running
+// after it ends, until Close.
 func (c *Client) Connect(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(c.life, cancel)() // Close aborts a handshake in flight
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	// Create transport.
-	transport, err := c.createTransport(ctx)
-	if err != nil {
-		return fmt.Errorf("create transport: %w", err)
+	if c.closed.Load() {
+		return errClientClosed
 	}
-	c.transport = transport
+	t, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	c.install(t)
+	slog.Info("mcp client connected", "server", c.serverID, "tools", c.ToolCount())
+	return nil
+}
 
-	// Send initialize.
+// dial starts a transport and runs the handshake on it; on any failure the
+// transport is closed, so no stdio child outlives a failed connect.
+func (c *Client) dial(ctx context.Context) (Transport, error) {
+	t, err := c.createTransport(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create transport: %w", err)
+	}
+	if err := c.handshake(ctx, t); err != nil {
+		t.Close()
+		return nil, err
+	}
+	if c.closed.Load() {
+		t.Close()
+		return nil, errClientClosed
+	}
+	return t, nil
+}
+
+func (c *Client) handshake(ctx context.Context, t Transport) error {
 	initParams := InitializeParams{
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    ClientCapabilities{},
@@ -77,20 +149,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			Version: "1.0.0",
 		},
 	}
-
-	paramsData, err := json.Marshal(initParams)
-	if err != nil {
-		return fmt.Errorf("marshal init params: %w", err)
-	}
-
-	initMsg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`1`),
-		Method:  MethodInitialize,
-		Params:  paramsData,
-	}
-
-	resp, err := c.transport.Send(ctx, initMsg)
+	resp, err := c.request(ctx, t, MethodInitialize, initParams)
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
@@ -98,49 +157,100 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("initialize error: %s", resp.Error.Message)
 	}
 
-	// Send initialized notification.
-	notif := &Message{
-		JSONRPC: "2.0",
-		Method:  MethodInitialized,
-	}
-	if _, err := c.transport.Send(ctx, notif); err != nil {
+	notif := &Message{JSONRPC: "2.0", Method: MethodInitialized}
+	if _, err := t.Send(ctx, notif); err != nil {
 		slog.Warn("failed to send initialized notification", "server", c.serverID, "error", err)
 	}
 
-	// Discover tools.
-	if err := c.discoverTools(ctx); err != nil {
+	// Discovery failures are non-fatal: a server may not have tools yet, and
+	// resources and prompts are optional.
+	if err := c.discoverTools(ctx, t); err != nil {
 		slog.Warn("tool discovery failed", "server", c.serverID, "error", err)
-		// Non-fatal: server might not have tools yet.
 	}
-
-	// Discover resources (non-fatal).
-	if err := c.discoverResources(ctx); err != nil {
+	if err := c.discoverResources(ctx, t); err != nil {
 		slog.Debug("resource discovery failed (may not be supported)", "server", c.serverID, "error", err)
 	}
-
-	// Discover prompts (non-fatal).
-	if err := c.discoverPrompts(ctx); err != nil {
+	if err := c.discoverPrompts(ctx, t); err != nil {
 		slog.Debug("prompt discovery failed (may not be supported)", "server", c.serverID, "error", err)
 	}
+	// A stdio upstream that stopped during discovery is not connected.
+	return transportErr(t)
+}
 
-	c.healthy.Store(true)
-
-	// Start health monitoring.
-	go c.healthLoop()
-
-	slog.Info("mcp client connected", "server", c.serverID, "tools", c.ToolCount())
+// transportErr is why t stopped on its own, for a transport that can tell.
+func transportErr(t Transport) error {
+	if s, ok := t.(interface{ Err() error }); ok {
+		return s.Err()
+	}
 	return nil
 }
 
-// discoverTools calls tools/list and caches the result.
-func (c *Client) discoverTools(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`2`),
-		Method:  MethodToolsList,
+// install makes t the client's transport, closes the one it replaces and
+// starts t's health loop. Called with c.mu held.
+func (c *Client) install(t Transport) {
+	if c.stopMonitors != nil {
+		c.stopMonitors()
+	}
+	c.tmu.Lock()
+	old := c.transport
+	c.transport = t
+	c.tmu.Unlock()
+	if old != nil && old != t {
+		old.Close()
 	}
 
-	resp, err := c.transport.Send(ctx, msg)
+	monitors, stop := context.WithCancel(c.life)
+	c.stopMonitors = stop
+	c.healthy.Store(true)
+	go c.healthLoop(monitors, t)
+
+	// t may have stopped between the handshake and the swap, before
+	// transportStopped could see it as current.
+	if err := transportErr(t); err != nil {
+		c.transportStopped(t, err)
+	}
+}
+
+func (c *Client) currentTransport() Transport {
+	c.tmu.RLock()
+	defer c.tmu.RUnlock()
+	return c.transport
+}
+
+// newID returns a request id no other request of this client has used.
+func (c *Client) newID() json.RawMessage {
+	return json.RawMessage(strconv.FormatInt(c.ids.Add(1), 10))
+}
+
+// request sends a request with a fresh id; params may be nil.
+func (c *Client) request(ctx context.Context, t Transport, method string, params interface{}) (*Message, error) {
+	msg := &Message{JSONRPC: "2.0", ID: c.newID(), Method: method}
+	if params != nil {
+		data, err := json.Marshal(params)
+		if err != nil {
+			return nil, fmt.Errorf("marshal %s params: %w", method, err)
+		}
+		msg.Params = data
+	}
+	return t.Send(ctx, msg)
+}
+
+// readyTransport is the transport for a call, or an error when the client
+// cannot take one.
+func (c *Client) readyTransport() (Transport, error) {
+	if c.closed.Load() {
+		return nil, errClientClosed
+	}
+	t := c.currentTransport()
+	if t == nil || !c.healthy.Load() {
+		return nil, fmt.Errorf("server %s is unhealthy", c.serverID)
+	}
+	return t, nil
+}
+
+// discoverTools calls tools/list and caches the result.
+func (c *Client) discoverTools(ctx context.Context, t Transport) error {
+	resp, err := c.request(ctx, t, MethodToolsList, nil)
 	if err != nil {
 		return fmt.Errorf("tools/list: %w", err)
 	}
@@ -155,43 +265,19 @@ func (c *Client) discoverTools(ctx context.Context) error {
 
 	c.tools.Store(&result.Tools)
 
-	// Notify callback.
-	if c.onToolsChanged != nil {
-		c.onToolsChanged(c.serverID, result.Tools)
+	if fn := c.onToolsChanged.Load(); fn != nil {
+		(*fn)(c.serverID, result.Tools)
 	}
-
 	return nil
 }
 
 // CallTool forwards a tool call to the upstream server.
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]interface{}) (*ToolCallResult, error) {
-	if c.closed.Load() {
-		return nil, fmt.Errorf("client closed")
-	}
-	if !c.healthy.Load() {
-		return nil, fmt.Errorf("server %s is unhealthy", c.serverID)
-	}
-
-	params := ToolCallParams{
-		Name:      name,
-		Arguments: args,
-	}
-	paramsData, err := json.Marshal(params)
+	t, err := c.readyTransport()
 	if err != nil {
-		return nil, fmt.Errorf("marshal tool call params: %w", err)
+		return nil, err
 	}
-
-	// Use a unique ID based on timestamp.
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
-
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`"` + id + `"`),
-		Method:  MethodToolsCall,
-		Params:  paramsData,
-	}
-
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.request(ctx, t, MethodToolsCall, ToolCallParams{Name: name, Arguments: args})
 	if err != nil {
 		return nil, fmt.Errorf("tools/call: %w", err)
 	}
@@ -246,13 +332,8 @@ func (c *Client) Prompts() []Prompt {
 }
 
 // discoverResources calls resources/list and caches the result.
-func (c *Client) discoverResources(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`3`),
-		Method:  MethodResourcesList,
-	}
-	resp, err := c.transport.Send(ctx, msg)
+func (c *Client) discoverResources(ctx context.Context, t Transport) error {
+	resp, err := c.request(ctx, t, MethodResourcesList, nil)
 	if err != nil {
 		return err
 	}
@@ -268,13 +349,8 @@ func (c *Client) discoverResources(ctx context.Context) error {
 }
 
 // discoverPrompts calls prompts/list and caches the result.
-func (c *Client) discoverPrompts(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`4`),
-		Method:  MethodPromptsList,
-	}
-	resp, err := c.transport.Send(ctx, msg)
+func (c *Client) discoverPrompts(ctx context.Context, t Transport) error {
+	resp, err := c.request(ctx, t, MethodPromptsList, nil)
 	if err != nil {
 		return err
 	}
@@ -291,19 +367,11 @@ func (c *Client) discoverPrompts(ctx context.Context) error {
 
 // ReadResource reads a specific resource from the upstream server.
 func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
-	if c.closed.Load() || !c.healthy.Load() {
+	t, err := c.readyTransport()
+	if err != nil {
 		return nil, fmt.Errorf("server %s is unavailable", c.serverID)
 	}
-	params := ReadResourceParams{URI: uri}
-	paramsData, _ := json.Marshal(params)
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`"` + id + `"`),
-		Method:  MethodResourcesRead,
-		Params:  paramsData,
-	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.request(ctx, t, MethodResourcesRead, ReadResourceParams{URI: uri})
 	if err != nil {
 		return nil, err
 	}
@@ -319,19 +387,11 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceRes
 
 // GetPrompt gets a prompt from the upstream server.
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*GetPromptResult, error) {
-	if c.closed.Load() || !c.healthy.Load() {
+	t, err := c.readyTransport()
+	if err != nil {
 		return nil, fmt.Errorf("server %s is unavailable", c.serverID)
 	}
-	params := GetPromptParams{Name: name, Arguments: arguments}
-	paramsData, _ := json.Marshal(params)
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`"` + id + `"`),
-		Method:  MethodPromptsGet,
-		Params:  paramsData,
-	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.request(ctx, t, MethodPromptsGet, GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {
 		return nil, err
 	}
@@ -355,141 +415,174 @@ func (c *Client) Healthy() bool {
 	return c.healthy.Load() && !c.closed.Load()
 }
 
-// SetOnToolsChanged sets a callback for when the tool list changes.
-func (c *Client) SetOnToolsChanged(fn func(serverID string, tools []Tool)) {
-	c.onToolsChanged = fn
+// StderrLinesCut is how many stdio stderr lines were cut to the cap, across
+// every reconnect.
+func (c *Client) StderrLinesCut() int64 {
+	return c.stderrCut.Load()
 }
 
-// Close disconnects from the upstream server.
+// SetOnToolsChanged sets a callback for when the tool list changes.
+func (c *Client) SetOnToolsChanged(fn func(serverID string, tools []Tool)) {
+	c.onToolsChanged.Store(&fn)
+}
+
+// Close disconnects from the upstream server. For a stdio server it returns
+// once the child has gone (the transport's shutdown ladder).
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
 	c.healthy.Store(false)
-	if c.transport != nil {
-		return c.transport.Close()
+	if c.stopLife != nil {
+		c.stopLife() // ends the health loop and any reconnect, aborts a handshake
+	}
+	c.mu.Lock()
+	c.tmu.Lock()
+	t := c.transport
+	c.tmu.Unlock()
+	c.mu.Unlock()
+	if t != nil {
+		return t.Close()
 	}
 	return nil
 }
 
-// healthLoop periodically pings the upstream server.
-func (c *Client) healthLoop() {
+// transportStopped is a stdio transport's report that it stopped on its own
+// (the child exited, or sent a message over the limit). Only the current
+// transport counts; one still being dialled fails its handshake instead.
+func (c *Client) transportStopped(t Transport, cause error) {
+	if c.closed.Load() || c.currentTransport() != t {
+		return
+	}
+	c.healthy.Store(false)
+	slog.Warn("mcp upstream stopped; reconnecting", "server", c.serverID, "error", cause)
+	c.startReconnect()
+}
+
+func (c *Client) startReconnect() {
+	if c.reconnecting.CompareAndSwap(false, true) {
+		go c.reconnect()
+	}
+}
+
+// healthLoop pings t until its monitors end; three failures in a row mark
+// the client unhealthy and start a reconnect.
+func (c *Client) healthLoop(ctx context.Context, t Transport) {
 	ticker := time.NewTicker(c.cfg.PingInterval)
 	defer ticker.Stop()
 
 	failures := 0
-	for range ticker.C {
-		if c.closed.Load() {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := c.request(pingCtx, t, MethodPing, nil)
+		cancel()
+		if ctx.Err() != nil {
 			return
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		msg := &Message{
-			JSONRPC: "2.0",
-			ID:      json.RawMessage(`"ping"`),
-			Method:  MethodPing,
-		}
-
-		_, err := c.transport.Send(ctx, msg)
-		cancel()
-
-		if err != nil {
-			failures++
-			slog.Warn("mcp ping failed", "server", c.serverID, "failures", failures, "error", err)
-			if failures >= 3 {
-				c.healthy.Store(false)
-				slog.Error("mcp server marked unhealthy", "server", c.serverID)
-				go c.reconnect()
-				return
-			}
-		} else {
+		if err == nil {
 			failures = 0
-			c.healthy.Store(true)
+			continue
+		}
+		failures++
+		slog.Warn("mcp ping failed", "server", c.serverID, "failures", failures, "error", err)
+		if failures >= 3 {
+			c.healthy.Store(false)
+			slog.Error("mcp server marked unhealthy", "server", c.serverID)
+			c.startReconnect()
+			return
 		}
 	}
 }
 
-// reconnect attempts to re-establish the connection with exponential backoff.
+// reconnect re-establishes the connection with exponential backoff until it
+// succeeds or the client closes.
 func (c *Client) reconnect() {
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
 
-	for attempt := 1; !c.closed.Load(); attempt++ {
+	for attempt := 1; ; attempt++ {
 		slog.Info("mcp reconnecting", "server", c.serverID, "attempt", attempt, "backoff", backoff)
-		time.Sleep(backoff)
-
-		if c.closed.Load() {
+		timer := time.NewTimer(backoff)
+		select {
+		case <-c.life.Done():
+			timer.Stop()
+			c.reconnecting.Store(false)
+			return
+		case <-timer.C:
+		}
+		if c.redial() {
 			return
 		}
-
-		c.mu.Lock()
-		// Close old transport.
-		if c.transport != nil {
-			c.transport.Close()
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		transport, err := c.createTransport(ctx)
-		if err != nil {
-			cancel()
-			c.mu.Unlock()
-			slog.Warn("mcp reconnect transport failed", "server", c.serverID, "error", err)
-			backoff = min(backoff*2, maxBackoff)
-			continue
-		}
-		c.transport = transport
-
-		// Re-initialize.
-		initParams := InitializeParams{
-			ProtocolVersion: ProtocolVersion,
-			Capabilities:    ClientCapabilities{},
-			ClientInfo:      Implementation{Name: "agentcc-gateway", Version: "1.0.0"},
-		}
-		paramsData, _ := json.Marshal(initParams)
-		initMsg := &Message{
-			JSONRPC: "2.0",
-			ID:      json.RawMessage(`1`),
-			Method:  MethodInitialize,
-			Params:  paramsData,
-		}
-		resp, err := c.transport.Send(ctx, initMsg)
-		if err != nil || resp.Error != nil {
-			cancel()
-			c.mu.Unlock()
-			slog.Warn("mcp reconnect init failed", "server", c.serverID, "error", err)
-			backoff = min(backoff*2, maxBackoff)
-			continue
-		}
-
-		// Send initialized notification.
-		notif := &Message{JSONRPC: "2.0", Method: MethodInitialized}
-		c.transport.Send(ctx, notif)
-
-		// Re-discover tools, resources, prompts.
-		c.discoverTools(ctx)
-		c.discoverResources(ctx)
-		c.discoverPrompts(ctx)
-		cancel()
-		c.mu.Unlock()
-
-		c.healthy.Store(true)
-		slog.Info("mcp reconnected", "server", c.serverID, "tools", c.ToolCount())
-
-		// Restart health loop.
-		go c.healthLoop()
-		return
+		backoff = min(backoff*2, maxBackoff)
 	}
+}
+
+// redial replaces the transport; false means try again later. The 30 s
+// context bounds the handshake only, as Connect's does.
+func (c *Client) redial() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Load() {
+		c.reconnecting.Store(false)
+		return true
+	}
+	if c.stopMonitors != nil {
+		c.stopMonitors()
+	}
+	// Close the old transport first, so its stdio server is gone before the
+	// new one starts.
+	if old := c.currentTransport(); old != nil {
+		old.Close()
+	}
+
+	ctx, cancel := context.WithTimeout(c.life, 30*time.Second)
+	defer cancel()
+	t, err := c.dial(ctx)
+	if err != nil {
+		slog.Warn("mcp reconnect failed", "server", c.serverID, "error", err)
+		return false
+	}
+	// Cleared before install, so a transport dead on arrival reconnects again.
+	c.reconnecting.Store(false)
+	c.install(t)
+	slog.Info("mcp reconnected", "server", c.serverID, "tools", c.ToolCount())
+	return true
 }
 
 func (c *Client) createTransport(ctx context.Context) (Transport, error) {
 	switch c.cfg.TransportType {
 	case "stdio":
-		t := NewStdioTransport(c.cfg.Command, c.cfg.Args)
-		if err := t.Start(ctx); err != nil {
-			return nil, err
-		}
-		return t, nil
+		return c.startStdio(ctx)
 	default: // "http" or empty
 		return NewHTTPTransport(c.cfg.URL, c.cfg.Auth), nil
 	}
+}
+
+func (c *Client) startStdio(ctx context.Context) (*StdioTransport, error) {
+	cfg := c.cfg
+	spec := StdioSpec{
+		ServerID: c.serverID,
+		Command:  cfg.Command,
+		Args:     cfg.Args,
+		Env:      buildStdioEnv(cfg.BaseEnv, cfg.EnvFromHost, cfg.Env),
+	}
+	t := newStdioTransport(spec, stdioOptions{
+		launcher:        cfg.Launcher,
+		grace:           cfg.StdioGrace,
+		termWait:        stdioTermWait,
+		maxMessageBytes: cfg.MaxMessageBytes,
+		stderrMaxLine:   cfg.StderrMaxLineBytes,
+		stderrRedactor:  cfg.StderrRedactor,
+		stderrCut:       &c.stderrCut,
+	})
+	t.opts.onDead = func(err error) { c.transportStopped(t, err) }
+	if err := t.Start(ctx); err != nil {
+		return nil, err
+	}
+	return t, nil
 }

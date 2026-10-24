@@ -3,6 +3,7 @@ import logging
 from rest_framework import serializers
 
 from agentcc.models.email_alert import AgentccEmailAlert
+from agentcc.services.alert_dispatcher import threshold_errors
 from integrations.services.credentials import CredentialManager
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ class AgentccEmailAlertSerializer(serializers.ModelSerializer):
             "is_active",
             "cooldown_minutes",
             "last_triggered_at",
+            "last_error",
+            "last_error_at",
             "created_at",
             "updated_at",
         ]
@@ -35,6 +38,8 @@ class AgentccEmailAlertSerializer(serializers.ModelSerializer):
             "id",
             "organization",
             "last_triggered_at",
+            "last_error",
+            "last_error_at",
             "created_at",
             "updated_at",
         ]
@@ -93,6 +98,16 @@ class AgentccEmailAlertWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Invalid event '{event}'. Valid: {', '.join(VALID_EVENTS)}"
                 )
+        return value
+
+    def validate_thresholds(self, value):
+        """The dispatcher's threshold keys must be valid numbers (other keys are
+        stored as sent and never read)."""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("thresholds must be a JSON object")
+        errors = threshold_errors(value)
+        if errors:
+            raise serializers.ValidationError(errors)
         return value
 
     def validate_provider(self, value):

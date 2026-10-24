@@ -70,6 +70,10 @@ type Task struct {
 	Artifacts []Artifact      `json:"artifacts,omitempty"`
 	History   []Message       `json:"history,omitempty"`
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
+
+	// owner is the key that created the task on this gateway. It is set once,
+	// when the task is created, and is never serialized.
+	owner Caller
 }
 
 // TaskStatus describes the current state of a task.

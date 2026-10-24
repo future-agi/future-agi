@@ -1,5 +1,9 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
+import {
+  AGENT_BILLING_FILTER_PARAMS,
+  dateFilterParam,
+} from "../explorerFilters";
 
 // ---------------------------------------------------------------------------
 // Maps camelCase filter keys to the snake_case param names expected by the API.
@@ -22,7 +26,12 @@ const FILTER_KEY_MAP = {
   maxCost: "max_cost",
   startedAfter: "started_after",
   startedBefore: "started_before",
+  ...AGENT_BILLING_FILTER_PARAMS,
 };
+
+// Date filters go out with an offset: a naive value is the local time it was
+// typed in, never UTC.
+const DATE_PARAMS = new Set(["started_after", "started_before"]);
 
 /**
  * Convert a camelCase filters object into query-param-ready snake_case params.
@@ -34,9 +43,30 @@ export function buildFilterParams(filters = {}) {
   Object.entries(filters).forEach(([key, value]) => {
     if (value === null || value === undefined || value === "") return;
     const paramKey = FILTER_KEY_MAP[key] || key;
-    params[paramKey] = value;
+    params[paramKey] = DATE_PARAMS.has(paramKey)
+      ? dateFilterParam(value)
+      : value;
   });
 
+  return params;
+}
+
+// The query the Requests table sends for these filters, without its page:
+// the filters, the search as `q` (2+ characters, as the table searches), and
+// the table's order. Export counts and downloads with exactly this, so what
+// it downloads is what the table lists.
+export function requestLogQueryParams(filters = {}) {
+  const params = {
+    ...buildFilterParams(filters),
+    ordering: filters.sort || "-started_at",
+  };
+  delete params.sort;
+  delete params.view;
+  delete params.page;
+  delete params.pageSize;
+  delete params.search;
+  const searchTerm = (filters.search || "").trim();
+  if (searchTerm.length >= 2) params.q = searchTerm;
   return params;
 }
 
@@ -61,21 +91,13 @@ export default function useRequestLogs({
     queryKey: ["requestLogs", filters, page, pageSize],
     queryFn: async () => {
       const params = {
-        ...buildFilterParams(filters),
+        ...requestLogQueryParams({ ...filters, sort }),
         page,
         limit: pageSize,
-        ordering: sort,
       };
-
-      // Remove keys that are URL-only, not API params
-      delete params.sort;
-      delete params.view;
-      delete params.pageSize;
-      delete params.search;
 
       // Use the dedicated search endpoint when a search term is present
       if (searchTerm.length >= 2) {
-        params.q = searchTerm;
         const res = await axiosInstance.get(
           endpoints.gateway.requestLogSearch,
           {

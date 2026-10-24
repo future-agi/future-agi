@@ -1,4 +1,6 @@
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 
 import { withApiPathPrefix } from "../utils";
@@ -55,6 +57,75 @@ export function gatewayConfigRefreshFailed(queryClient) {
     .some((query) => query.state.status === "error");
 }
 
+// A config write Django stored but could not push to the gateway: it answers
+// 200 with gateway_synced:false and gateway_warning. The change is saved, so
+// it is not a failure, and the gateway does not run it, so it is not a
+// success either.
+export class SavedButNotAppliedError extends Error {
+  constructor(result) {
+    const warning =
+      result?.gateway_warning || "the gateway did not confirm the change.";
+    super(`Saved, but the gateway did not apply it: ${warning}`);
+    this.name = "SavedButNotAppliedError";
+    this.savedButNotApplied = true;
+    // Deliberately no `result` field: the app-wide MutationCache handler
+    // (utils/queryErrorHandler) toasts errors that carry one, and this
+    // warning is already shown once, by the hook.
+    this.response = result;
+  }
+}
+
+export function isSavedButNotApplied(error) {
+  return Boolean(error?.savedButNotApplied);
+}
+
+function requireGatewayApplied(result) {
+  if (result?.gateway_synced === false) {
+    throw new SavedButNotAppliedError(result);
+  }
+  return result;
+}
+
+// The caller's onError says "Failed to ..." for a request that failed; for a
+// change that was saved that would be untrue, so it is skipped for this one
+// error. onSuccess (and its success toast) never runs, because the mutation
+// rejects. onSettled runs as usual.
+function skipCallerErrorWhenSaved(options) {
+  if (!options?.onError) return options;
+  return {
+    ...options,
+    onError: (error, ...rest) =>
+      isSavedButNotApplied(error) ? undefined : options.onError(error, ...rest),
+  };
+}
+
+// A gateway config write. `request` returns Django's `result`; `refresh`
+// re-reads what the write changed. On gateway_synced:false the hook shows
+// "Saved, but the gateway did not apply it: <gateway_warning>" as a warning,
+// re-reads the config (the save did land), and rejects with
+// SavedButNotAppliedError, whose message the callers' dialogs show in their
+// error Alert.
+export function useGatewayConfigWrite(request, refresh) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: async (variables) =>
+      requireGatewayApplied(await request(variables)),
+    onSuccess: () => refresh(queryClient),
+    onError: (error) => {
+      if (!isSavedButNotApplied(error)) return undefined;
+      enqueueSnackbar(error.message, { variant: "warning" });
+      return refresh(queryClient);
+    },
+  });
+  const { mutate: mutateOnce } = mutation;
+  const mutate = useCallback(
+    (variables, options) =>
+      mutateOnce(variables, skipCallerErrorWhenSaved(options)),
+    [mutateOnce],
+  );
+  return { ...mutation, mutate };
+}
+
 export function useGatewayConfig(gatewayId) {
   return useQuery({
     queryKey: [GATEWAY_CONFIG_QUERY_KEY, gatewayId],
@@ -86,152 +157,88 @@ export function useProviderHealth(gatewayId) {
   });
 }
 
-export function useUpdateProvider() {
-  const queryClient = useQueryClient();
+const refreshWithProviderHealth = (queryClient) =>
+  refreshGatewayConfig(queryClient, ["agentcc-provider-health"]);
+const refreshWithOrgConfig = (queryClient) =>
+  refreshGatewayConfig(queryClient, ["agentcc-org-config"]);
 
-  return useMutation({
-    mutationFn: async ({ gatewayId, name, config }) => {
-      try {
-        const { data } = await axios.post(
-          endpoints.gateway.updateProvider(gatewayId),
-          {
-            name,
-            config,
-          },
-          REQUEST_CONFIG,
-        );
-        return data.result;
-      } catch (err) {
-        throw asRequestError(err, "Saving the provider");
-      }
-    },
-    onSuccess: () =>
-      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
-  });
+async function postForResult(url, body) {
+  const { data } = await axios.post(url, body, REQUEST_CONFIG);
+  return data.result;
+}
+
+export function useUpdateProvider() {
+  return useGatewayConfigWrite(async ({ gatewayId, name, config }) => {
+    try {
+      return await postForResult(endpoints.gateway.updateProvider(gatewayId), {
+        name,
+        config,
+      });
+    } catch (err) {
+      throw asRequestError(err, "Saving the provider");
+    }
+  }, refreshWithProviderHealth);
 }
 
 export function useRemoveProvider() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, name }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.removeProvider(gatewayId),
-        { name },
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () =>
-      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, name }) =>
+      postForResult(endpoints.gateway.removeProvider(gatewayId), { name }),
+    refreshWithProviderHealth,
+  );
 }
 
 export function useToggleGuardrail() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, name, enabled }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.toggleGuardrail(gatewayId),
-        {
-          name,
-          enabled,
-        },
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, name, enabled }) =>
+      postForResult(endpoints.gateway.toggleGuardrail(gatewayId), {
+        name,
+        enabled,
+      }),
+    refreshWithOrgConfig,
+  );
 }
 
 export function useUpdateGuardrail() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, name, config }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.updateGuardrail(gatewayId),
-        {
-          name,
-          config,
-        },
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, name, config }) =>
+      postForResult(endpoints.gateway.updateGuardrail(gatewayId), {
+        name,
+        config,
+      }),
+    refreshWithOrgConfig,
+  );
 }
 
 export function useSetBudget() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, level, config }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.setBudget(gatewayId),
-        {
-          level,
-          config,
-        },
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () => refreshGatewayConfig(queryClient),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, level, config }) =>
+      postForResult(endpoints.gateway.setBudget(gatewayId), { level, config }),
+    (queryClient) => refreshGatewayConfig(queryClient),
+  );
 }
 
 export function useRemoveBudget() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, level }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.removeBudget(gatewayId),
-        { level },
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, level }) =>
+      postForResult(endpoints.gateway.removeBudget(gatewayId), { level }),
+    refreshWithOrgConfig,
+  );
 }
 
 export function useUpdateConfig() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ gatewayId, config }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.updateConfig(gatewayId),
-        config,
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () =>
-      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
-  });
+  return useGatewayConfigWrite(
+    ({ gatewayId, config }) =>
+      postForResult(endpoints.gateway.updateConfig(gatewayId), config),
+    refreshWithProviderHealth,
+  );
 }
 
 export function useReloadConfig() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (gatewayId) => {
-      const { data } = await axios.post(
-        endpoints.gateway.reload(gatewayId),
-        {},
-        REQUEST_CONFIG,
-      );
-      return data.result;
-    },
-    onSuccess: () =>
-      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
-  });
+  return useGatewayConfigWrite(
+    (gatewayId) => postForResult(endpoints.gateway.reload(gatewayId), {}),
+    refreshWithProviderHealth,
+  );
 }
 
 export function useFetchProviderModels() {

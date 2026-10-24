@@ -736,6 +736,8 @@ import type {
   MCPToolGroupConfigUpdateApi,
   MCPToolGroupsResponseApi,
   MCPToolListResponseApi,
+  ManagedCatalogResponseApi,
+  ManagedModelsStatusResponseApi,
   ManagementAPIErrorResponseApi,
   ManualDatasetCreateRequestApi,
   ManualDatasetCreateResponseApi,
@@ -12213,6 +12215,10 @@ export const getAgentccApiKeysDeleteUrl = (id: string) => {
   return `/agentcc/api-keys/${id}/`;
 };
 
+/**
+ * Delete a key: revoke it on the gateway first, so it stops working
+at once.
+ */
 export const agentccApiKeysDelete = async (
   id: string,
   options?: RequestInit,
@@ -13890,8 +13896,9 @@ export const getAgentccGatewaysProvidersUrl = (id: string) => {
 };
 
 /**
- * Stateless proxy to the Go gateway (configured via env vars).
-No DB model — returns a virtual singleton gateway with live health.
+ * The org's providers, each with its health from the org's own
+request logs of the last 24 h, and whether the config push sends it to the
+gateway at all.
  */
 export const agentccGatewaysProviders = async (
   id: string,
@@ -14221,8 +14228,9 @@ export const getAgentccGatewaysSubmitBatchUrl = (id: string) => {
 };
 
 /**
- * Stateless proxy to the Go gateway (configured via env vars).
-No DB model — returns a virtual singleton gateway with live health.
+ * Submit a batch that runs as the caller's org: a key minted for the
+org (24 h) is named to the gateway, which runs each item as a request
+authenticated by it.
  */
 export const agentccGatewaysSubmitBatch = async (
   id: string,
@@ -14250,9 +14258,14 @@ export type agentccGatewaysTestMcpToolResponse400 = {
   status: 400;
 };
 
+export type agentccGatewaysTestMcpToolResponse404 = {
+  data: AgentccErrorResponseApi;
+  status: 404;
+};
+
 export type agentccGatewaysTestMcpToolResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type agentccGatewaysTestMcpToolResponseSuccess =
@@ -14261,6 +14274,7 @@ export type agentccGatewaysTestMcpToolResponseSuccess =
   };
 export type agentccGatewaysTestMcpToolResponseError = (
   | agentccGatewaysTestMcpToolResponse400
+  | agentccGatewaysTestMcpToolResponse404
   | agentccGatewaysTestMcpToolResponseDefault
 ) & {
   headers: Headers;
@@ -14995,7 +15009,8 @@ export const getAgentccGuardrailFeedbackSummaryUrl = (
 };
 
 /**
- * Aggregate feedback stats per check_name.
+ * Aggregate feedback stats per check_name: one answer per
+(request log, check, reviewer), the reviewer's latest.
  */
 export const agentccGuardrailFeedbackSummary = async (
   params?: AgentccGuardrailFeedbackSummaryParams,
@@ -15081,7 +15096,8 @@ export const getAgentccGuardrailFeedbackUpdateUrl = (id: string) => {
 };
 
 /**
- * Feedback on guardrail decisions. Org-scoped.
+ * Change a saved answer: its feedback and comment only, and only by
+the reviewer who gave it.
  */
 export const agentccGuardrailFeedbackUpdate = async (
   id: string,
@@ -15234,7 +15250,11 @@ export const getAgentccGuardrailPoliciesListUrl = (
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesList = async (
   params?: AgentccGuardrailPoliciesListParams,
@@ -15277,7 +15297,11 @@ export const getAgentccGuardrailPoliciesCreateUrl = () => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesCreate = async (
   agentccGuardrailPolicyApi: NonReadonly<AgentccGuardrailPolicyApi>,
@@ -15367,7 +15391,11 @@ export const getAgentccGuardrailPoliciesReadUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesRead = async (
   id: string,
@@ -15410,7 +15438,11 @@ export const getAgentccGuardrailPoliciesUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesUpdate = async (
   id: string,
@@ -15456,7 +15488,11 @@ export const getAgentccGuardrailPoliciesPartialUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesPartialUpdate = async (
   id: string,
@@ -15502,7 +15538,11 @@ export const getAgentccGuardrailPoliciesDeleteUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesDelete = async (
   id: string,
@@ -15559,6 +15599,104 @@ export const agentccGuardrailPoliciesApply = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentccGuardrailPolicyApi),
+    },
+  );
+};
+
+export type agentccManagedModelsListResponse200 = {
+  data: ManagedModelsStatusResponseApi;
+  status: 200;
+};
+
+export type agentccManagedModelsListResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccManagedModelsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type agentccManagedModelsListResponseSuccess =
+  agentccManagedModelsListResponse200 & {
+    headers: Headers;
+  };
+export type agentccManagedModelsListResponseError = (
+  | agentccManagedModelsListResponse400
+  | agentccManagedModelsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentccManagedModelsListResponse =
+  | agentccManagedModelsListResponseSuccess
+  | agentccManagedModelsListResponseError;
+
+export const getAgentccManagedModelsListUrl = () => {
+  return `/agentcc/managed-models/`;
+};
+
+/**
+ * Whether managed models are offered, enabled for this org, and its balance.
+ */
+export const agentccManagedModelsList = async (
+  options?: RequestInit,
+): Promise<agentccManagedModelsListResponse> => {
+  return apiMutator<agentccManagedModelsListResponse>(
+    getAgentccManagedModelsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type agentccManagedModelsCatalogResponse200 = {
+  data: ManagedCatalogResponseApi;
+  status: 200;
+};
+
+export type agentccManagedModelsCatalogResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
+};
+
+export type agentccManagedModelsCatalogResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type agentccManagedModelsCatalogResponseSuccess =
+  agentccManagedModelsCatalogResponse200 & {
+    headers: Headers;
+  };
+export type agentccManagedModelsCatalogResponseError = (
+  | agentccManagedModelsCatalogResponse400
+  | agentccManagedModelsCatalogResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type agentccManagedModelsCatalogResponse =
+  | agentccManagedModelsCatalogResponseSuccess
+  | agentccManagedModelsCatalogResponseError;
+
+export const getAgentccManagedModelsCatalogUrl = () => {
+  return `/agentcc/managed-models/catalog/`;
+};
+
+/**
+ * Every managed model, with upstream and billed (marked-up) prices.
+ */
+export const agentccManagedModelsCatalog = async (
+  options?: RequestInit,
+): Promise<agentccManagedModelsCatalogResponse> => {
+  return apiMutator<agentccManagedModelsCatalogResponse>(
+    getAgentccManagedModelsCatalogUrl(),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -15652,7 +15790,14 @@ export const getAgentccOrgConfigsCreateUrl = () => {
 };
 
 /**
- * Create a new config version. Auto-increments version and activates it.
+ * Each section the payload names replaces the active one whole; an
+explicit `{}` or `null` clears it. Sections it leaves out, including
+`managed_models`, are copied from the active version.
+
+A guardrails section may name only policies the org may name (400
+`guardrail_policy_not_in_org`), and every clear-text credential in it
+is stored encrypted in the console policy, whichever shape it has.
+ * @summary Create a new config version from the active one and activate it.
  */
 export const agentccOrgConfigsCreate = async (
   agentccOrgConfigApi: NonReadonly<AgentccOrgConfigApi>,
@@ -15988,7 +16133,9 @@ export const getAgentccOrgConfigsActivateUrl = (id: string) => {
 };
 
 /**
- * Roll back to a specific config version by activating it.
+ * `warnings` carries `managed_models_change` when the rollback turns
+managed models on or off.
+ * @summary Roll back to a specific config version by activating it.
  */
 export const agentccOrgConfigsActivate = async (
   id: string,
@@ -16513,7 +16660,12 @@ export const getAgentccRequestLogsExportUrl = (
 };
 
 /**
- * Export filtered request logs as CSV or JSON.
+ * The filters are the list's, validated the same way. 0 matching rows
+answers 400 export_empty; more than the cap answers 400
+export_too_large with the count and the cap, unless max_rows asks for
+the first rows in the list's order. The console reads the list's
+count first and shows the count and the cap before it downloads.
+ * @summary Export filtered request logs as CSV or JSON (at most 10,000 rows).
  */
 export const agentccRequestLogsExport = async (
   params?: AgentccRequestLogsExportParams,
@@ -16847,9 +16999,6 @@ export const getAgentccRoutingPoliciesListUrl = (
     : `/agentcc/routing-policies/`;
 };
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const agentccRoutingPoliciesList = async (
   params?: AgentccRoutingPoliciesListParams,
   options?: RequestInit,
@@ -16890,9 +17039,6 @@ export const getAgentccRoutingPoliciesCreateUrl = () => {
   return `/agentcc/routing-policies/`;
 };
 
-/**
- * Create a new routing policy. Auto-increments version for same name.
- */
 export const agentccRoutingPoliciesCreate = async (
   agentccRoutingPolicyApi: NonReadonly<AgentccRoutingPolicyApi>,
   options?: RequestInit,
@@ -16935,9 +17081,6 @@ export const getAgentccRoutingPoliciesSyncUrl = () => {
   return `/agentcc/routing-policies/sync/`;
 };
 
-/**
- * Manual sync all active routing policies to gateway.
- */
 export const agentccRoutingPoliciesSync = async (
   agentccRoutingPolicyApi: NonReadonly<AgentccRoutingPolicyApi>,
   options?: RequestInit,
@@ -16980,9 +17123,6 @@ export const getAgentccRoutingPoliciesReadUrl = (id: string) => {
   return `/agentcc/routing-policies/${id}/`;
 };
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const agentccRoutingPoliciesRead = async (
   id: string,
   options?: RequestInit,
@@ -17069,9 +17209,6 @@ export const getAgentccRoutingPoliciesPartialUpdateUrl = (id: string) => {
   return `/agentcc/routing-policies/${id}/`;
 };
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const agentccRoutingPoliciesPartialUpdate = async (
   id: string,
   agentccRoutingPolicyApi: NonReadonly<AgentccRoutingPolicyApi>,
@@ -17115,9 +17252,6 @@ export const getAgentccRoutingPoliciesDeleteUrl = (id: string) => {
   return `/agentcc/routing-policies/${id}/`;
 };
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const agentccRoutingPoliciesDelete = async (
   id: string,
   options?: RequestInit,
@@ -17158,9 +17292,6 @@ export const getAgentccRoutingPoliciesActivateUrl = (id: string) => {
   return `/agentcc/routing-policies/${id}/activate/`;
 };
 
-/**
- * Activate a specific version (rollback).
- */
 export const agentccRoutingPoliciesActivate = async (
   id: string,
   agentccRoutingPolicyApi: NonReadonly<AgentccRoutingPolicyApi>,
@@ -18172,8 +18303,10 @@ export const getAgentccSpendSummaryListUrl = (
 };
 
 /**
- * Returns aggregated spend data so the gateway can seed budget counters
-on startup.  Authenticated by admin token (not user JWT).
+ * Returns aggregated spend data: the gateway seeds its budget counters
+from it on startup (admin token: every org), and the console's Budgets
+page reads its own organization's spend for each budget's period (a
+signed-in user: that organization only, present even at $0).
 
 GET /agentcc/spend-summary/?period=monthly
  */
@@ -18322,7 +18455,9 @@ export const getAgentccWebhookEventsRetryUrl = (id: string) => {
 };
 
 /**
- * Manually retry a failed webhook event delivery.
+ * The delivery runs on Temporal, off the request thread; when the start
+fails, the agentcc-webhook-delivery schedule delivers it within 30 s.
+ * @summary Retry a webhook event now: reset it to pending and start its delivery.
  */
 export const agentccWebhookEventsRetry = async (
   id: string,
@@ -18350,9 +18485,14 @@ export type agentccWebhookLogsCreateResponse400 = {
   status: 400;
 };
 
+export type agentccWebhookLogsCreateResponse503 = {
+  data: AgentccErrorResponseApi;
+  status: 503;
+};
+
 export type agentccWebhookLogsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
 };
 
 export type agentccWebhookLogsCreateResponseSuccess =
@@ -18361,6 +18501,7 @@ export type agentccWebhookLogsCreateResponseSuccess =
   };
 export type agentccWebhookLogsCreateResponseError = (
   | agentccWebhookLogsCreateResponse400
+  | agentccWebhookLogsCreateResponse503
   | agentccWebhookLogsCreateResponseDefault
 ) & {
   headers: Headers;

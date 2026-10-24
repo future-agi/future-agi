@@ -130,7 +130,7 @@ func mapErrorTypeToGeminiStatus(errType string) string {
 		return "INVALID_ARGUMENT"
 	case models.ErrTypeAuthentication:
 		return "UNAUTHENTICATED"
-	case models.ErrTypePermission:
+	case models.ErrTypePermission, models.ErrTypeGuardrail: // a guardrail's refusal is a 403
 		return "PERMISSION_DENIED"
 	case models.ErrTypeNotFound:
 		return "NOT_FOUND"

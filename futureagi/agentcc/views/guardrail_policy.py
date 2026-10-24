@@ -1,10 +1,12 @@
 import structlog
+from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
 from agentcc.services.guardrail_sync import sync_guardrail_policies
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -15,12 +17,26 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+# Another organization's policy, a deleted one and an unknown id answer the
+# same 404 on every action.
+_NOT_FOUND = "Guardrail policy not found"
 
 
-class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
-    """CRUD for reusable guardrail policies. Org-scoped."""
+class AgentccGuardrailPolicyViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
+    """CRUD for reusable guardrail policies. Org-scoped.
+
+    A policy's checks are merged into the org config and pushed to the
+    gateway (``sync_guardrail_policies``), so every write is an org Owner's
+    or Admin's, as every other gateway config write is; every member keeps
+    read access.
+    """
 
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "apply", "sync"}
+    )
     serializer_class = AgentccGuardrailPolicySerializer
     queryset = AgentccGuardrailPolicy.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -42,7 +58,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             )
         except Exception as e:
             logger.exception("guardrail_policy_retrieve_error", error=str(e))
-            return self._gm.not_found("Guardrail policy not found")
+            return self._gm.not_found(_NOT_FOUND)
 
     def create(self, request, *args, **kwargs):
         try:
@@ -87,6 +103,8 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
         except Exception as e:
             logger.exception("guardrail_policy_update_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -109,6 +127,8 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
         except Exception as e:
             logger.exception("guardrail_policy_delete_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -146,9 +166,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                         deleted=False,
                     ).values_list("id", flat=True)
                 )
-                invalid_keys = set(str(k) for k in key_ids) - set(
-                    str(k) for k in valid_keys
-                )
+                invalid_keys = {str(k) for k in key_ids} - {str(k) for k in valid_keys}
                 if invalid_keys:
                     return self._gm.bad_request(
                         f"Invalid or unauthorized key IDs: {list(invalid_keys)}"
@@ -169,9 +187,9 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                         deleted=False,
                     ).values_list("id", flat=True)
                 )
-                invalid_projects = set(str(p) for p in project_ids) - set(
+                invalid_projects = {str(p) for p in project_ids} - {
                     str(p) for p in valid_projects
-                )
+                }
                 if invalid_projects:
                     return self._gm.bad_request(
                         f"Invalid or unauthorized project IDs: {list(invalid_projects)}"
@@ -189,6 +207,8 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found(_NOT_FOUND)
         except Exception as e:
             logger.exception("guardrail_policy_apply_error", error=str(e))
             return self._gm.bad_request(str(e))

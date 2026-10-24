@@ -2,6 +2,50 @@
 
 package generated
 
+type Step = string
+
+type Tier = string
+
+type AutoPreference = string
+
+type DataCollection = string
+
+type ContentMode = string
+
+type ProviderSortSpec struct {
+	By        string  `json:"by"`
+	Partition *string `json:"partition,omitempty"`
+}
+
+type PercentileThresholds struct {
+	P50 *float64 `json:"p50,omitempty"`
+	P75 *float64 `json:"p75,omitempty"`
+	P90 *float64 `json:"p90,omitempty"`
+	P99 *float64 `json:"p99,omitempty"`
+}
+
+type ProviderMaxPrice struct {
+	Prompt     *float64 `json:"prompt,omitempty"`
+	Completion *float64 `json:"completion,omitempty"`
+	Request    *float64 `json:"request,omitempty"`
+	Image      *float64 `json:"image,omitempty"`
+}
+
+type ProviderPrefs struct {
+	Order                  []string          `json:"order,omitempty"`
+	Only                   []string          `json:"only,omitempty"`
+	Ignore                 []string          `json:"ignore,omitempty"`
+	AllowFallbacks         *bool             `json:"allow_fallbacks,omitempty"`
+	RequireParameters      *bool             `json:"require_parameters,omitempty"`
+	DataCollection         *DataCollection   `json:"data_collection,omitempty"`
+	ZDR                    *bool             `json:"zdr,omitempty"`
+	Quantizations          []string          `json:"quantizations,omitempty"`
+	Sort                   interface{}       `json:"sort,omitempty"`
+	MaxPrice               *ProviderMaxPrice `json:"max_price,omitempty"`
+	PreferredMaxLatency    interface{}       `json:"preferred_max_latency,omitempty"`
+	PreferredMinThroughput interface{}       `json:"preferred_min_throughput,omitempty"`
+}
+
 type ProviderConfig struct {
 	APIKey             *string  `json:"api_key,omitempty"`
 	BaseURL            *string  `json:"base_url,omitempty"`
@@ -18,6 +62,8 @@ type ProviderConfig struct {
 	AWSRegion          *string  `json:"aws_region,omitempty"`
 	AWSSessionToken    *string  `json:"aws_session_token,omitempty"`
 	ServiceAccountJson *string  `json:"service_account_json,omitempty"`
+	ZDRAttested        *bool    `json:"zdr_attested,omitempty"`
+	DataRegion         *string  `json:"data_region,omitempty"`
 }
 
 type GuardrailCheck struct {
@@ -32,6 +78,16 @@ type GuardrailConfig struct {
 	FailOpen     *bool                      `json:"fail_open,omitempty"`
 	TimeoutMs    *int                       `json:"timeout_ms,omitempty"`
 	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+	ToolCalls    *ToolCallGuardrailConfig   `json:"tool_calls,omitempty"`
+}
+
+type ToolCallGuardrailConfig struct {
+	Enabled        *bool    `json:"enabled,omitempty"`
+	Checks         []string `json:"checks,omitempty"`
+	OnBlock        *string  `json:"on_block,omitempty"`
+	ApplyTo        *string  `json:"apply_to,omitempty"`
+	MaxArgsBytes   *int     `json:"max_args_bytes,omitempty"`
+	StopRunOnBlock *bool    `json:"stop_run_on_block,omitempty"`
 }
 
 type ConditionalRoute struct {
@@ -59,6 +115,9 @@ type FastestResponseConfig struct {
 	MaxConcurrent     *int     `json:"max_concurrent,omitempty"`
 	CancelDelay       *string  `json:"cancel_delay,omitempty"`
 	ExcludedProviders []string `json:"excluded_providers,omitempty"`
+	HedgeAfterMs      *int     `json:"hedge_after_ms,omitempty"`
+	MaxHedges         *int     `json:"max_hedges,omitempty"`
+	AllowManaged      *bool    `json:"allow_managed,omitempty"`
 }
 
 type ScheduledConfig struct {
@@ -135,24 +194,194 @@ type MirrorConfig struct {
 	Rules   []*MirrorRule `json:"rules,omitempty"`
 }
 
+type AutoStepProfile struct {
+	MinTier *Tier           `json:"min_tier,omitempty"`
+	MaxTier *Tier           `json:"max_tier,omitempty"`
+	Require []string        `json:"require,omitempty"`
+	Prefer  *AutoPreference `json:"prefer,omitempty"`
+}
+
+type AutoAffinityConfig struct {
+	Enabled    *bool `json:"enabled,omitempty"`
+	TTLSeconds *int  `json:"ttl_seconds,omitempty"`
+}
+
+type AutoOutcomeFeedbackConfig struct {
+	Enabled       *bool    `json:"enabled,omitempty"`
+	WindowSeconds *int     `json:"window_seconds,omitempty"`
+	MinSamples    *int     `json:"min_samples,omitempty"`
+	PenaltyWeight *float64 `json:"penalty_weight,omitempty"`
+}
+
+type AutoSelectorConfig struct {
+	Enabled            *bool    `json:"enabled,omitempty"`
+	Mode               *string  `json:"mode,omitempty"`
+	Model              *string  `json:"model,omitempty"`
+	TimeoutMs          *int     `json:"timeout_ms,omitempty"`
+	MaxCostUSD         *float64 `json:"max_cost_usd,omitempty"`
+	DailyBudgetUSD     *float64 `json:"daily_budget_usd,omitempty"`
+	AmbiguityThreshold *float64 `json:"ambiguity_threshold,omitempty"`
+	MaxCandidates      *int     `json:"max_candidates,omitempty"`
+}
+
+type AutoRoutingConfig struct {
+	Preference              *AutoPreference             `json:"preference,omitempty"`
+	Candidates              []string                    `json:"candidates,omitempty"`
+	MaxInputPerMTok         *float64                    `json:"max_input_per_mtok,omitempty"`
+	MaxOutputPerMTok        *float64                    `json:"max_output_per_mtok,omitempty"`
+	StepProfiles            map[string]*AutoStepProfile `json:"step_profiles,omitempty"`
+	Affinity                *AutoAffinityConfig         `json:"affinity,omitempty"`
+	OutcomeFeedback         *AutoOutcomeFeedbackConfig  `json:"outcome_feedback,omitempty"`
+	DeadlineLatencyFraction *float64                    `json:"deadline_latency_fraction,omitempty"`
+	LatencyTargetMs         *int                        `json:"latency_target_ms,omitempty"`
+	QualityPriors           map[string]float64          `json:"quality_priors,omitempty"`
+	ExcludeStates           []string                    `json:"exclude_states,omitempty"`
+	Selector                *AutoSelectorConfig         `json:"selector,omitempty"`
+}
+
+type DataPolicyConfig struct {
+	ZDR                *bool           `json:"zdr,omitempty"`
+	DataCollection     *DataCollection `json:"data_collection,omitempty"`
+	AllowedRegions     []string        `json:"allowed_regions,omitempty"`
+	BlockPreviewInEnvs []string        `json:"block_preview_in_envs,omitempty"`
+}
+
+type AgentsPriceCeiling struct {
+	PromptUSDPerMTok     *float64 `json:"prompt_usd_per_mtok,omitempty"`
+	CompletionUSDPerMTok *float64 `json:"completion_usd_per_mtok,omitempty"`
+	RequestUSD           *float64 `json:"request_usd,omitempty"`
+}
+
+type AgentsEnvelopeDefaults struct {
+	MaxUSD                        *float64 `json:"max_usd,omitempty"`
+	MaxUncachedInputTokensPerHour *int     `json:"max_uncached_input_tokens_per_hour,omitempty"`
+	MaxCalls                      *int     `json:"max_calls,omitempty"`
+	MaxWallMs                     *int     `json:"max_wall_ms,omitempty"`
+	MaxConcurrentChildren         *int     `json:"max_concurrent_children,omitempty"`
+}
+
+type AgentsEnvelopeLoop struct {
+	Action *string `json:"action,omitempty"`
+}
+
+type AgentsEnvelopesConfig struct {
+	Defaults       *AgentsEnvelopeDefaults `json:"defaults,omitempty"`
+	OnBreach       *string                 `json:"on_breach,omitempty"`
+	SoftThreshold  *float64                `json:"soft_threshold,omitempty"`
+	AllowDowngrade *bool                   `json:"allow_downgrade,omitempty"`
+	DowngradeModel *string                 `json:"downgrade_model,omitempty"`
+	Loop           *AgentsEnvelopeLoop     `json:"loop,omitempty"`
+}
+
+type AgentsConfig struct {
+	DefaultModel          *string                `json:"default_model,omitempty"`
+	BudgetScopeTTLSeconds *int                   `json:"budget_scope_ttl_seconds,omitempty"`
+	StepPresets           map[string]string      `json:"step_presets,omitempty"`
+	AlwaysEmitMetadata    *bool                  `json:"always_emit_metadata,omitempty"`
+	UnpricedUnderCap      *string                `json:"unpriced_under_cap,omitempty"`
+	FrameworkAliases      *bool                  `json:"framework_aliases,omitempty"`
+	PriceCeiling          *AgentsPriceCeiling    `json:"price_ceiling,omitempty"`
+	Envelopes             *AgentsEnvelopesConfig `json:"envelopes,omitempty"`
+}
+
+type RoutingPresetAuto struct {
+	Preference *AutoPreference `json:"preference,omitempty"`
+}
+
+type RoutingPresetParams struct {
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"top_p,omitempty"`
+	MaxTokens       *int     `json:"max_tokens,omitempty"`
+	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
+}
+
+type RoutingPreset struct {
+	Model    *string              `json:"model,omitempty"`
+	Models   []string             `json:"models,omitempty"`
+	Provider *ProviderPrefs       `json:"provider,omitempty"`
+	Auto     *RoutingPresetAuto   `json:"auto,omitempty"`
+	Params   *RoutingPresetParams `json:"params,omitempty"`
+}
+
+type IdempotencyConfig struct {
+	Enabled         *bool `json:"enabled,omitempty"`
+	TTLSeconds      *int  `json:"ttl_seconds,omitempty"`
+	AcceptAttemptID *bool `json:"accept_attempt_id,omitempty"`
+}
+
+type PromptCachingConfig struct {
+	Mode *string `json:"mode,omitempty"`
+}
+
+type RetryBudgetConfig struct {
+	MaxRetryRatio      *float64 `json:"max_retry_ratio,omitempty"`
+	MaxHedgesPerMinute *int     `json:"max_hedges_per_minute,omitempty"`
+}
+
+type RolloutRoutingConfig struct {
+	Strategy              *string                   `json:"strategy,omitempty"`
+	FallbackEnabled       *bool                     `json:"fallback_enabled,omitempty"`
+	FallbackOnStatusCodes []int                     `json:"fallback_on_status_codes,omitempty"`
+	ModelFallbacks        map[string][]string       `json:"model_fallbacks,omitempty"`
+	ConditionalRoutes     []*ConditionalRoute       `json:"conditional_routes,omitempty"`
+	DefaultModel          *string                   `json:"default_model,omitempty"`
+	Complexity            *ComplexityRoutingConfig  `json:"complexity,omitempty"`
+	Fastest               *FastestResponseConfig    `json:"fastest,omitempty"`
+	Scheduled             *ScheduledConfig          `json:"scheduled,omitempty"`
+	Adaptive              *AdaptiveRoutingConfig    `json:"adaptive,omitempty"`
+	ProviderLock          *ProviderLockConfig       `json:"provider_lock,omitempty"`
+	AccessGroups          map[string]*AccessGroup   `json:"access_groups,omitempty"`
+	Failover              *FailoverConfig           `json:"failover,omitempty"`
+	CircuitBreaker        *CircuitBreakerConfig     `json:"circuit_breaker,omitempty"`
+	Retry                 *RetryConfig              `json:"retry,omitempty"`
+	Mirror                *MirrorConfig             `json:"mirror,omitempty"`
+	ModelTimeouts         map[string]string         `json:"model_timeouts,omitempty"`
+	Auto                  *AutoRoutingConfig        `json:"auto,omitempty"`
+	DataPolicy            *DataPolicyConfig         `json:"data_policy,omitempty"`
+	Agents                *AgentsConfig             `json:"agents,omitempty"`
+	Presets               map[string]*RoutingPreset `json:"presets,omitempty"`
+	Idempotency           *IdempotencyConfig        `json:"idempotency,omitempty"`
+	PromptCaching         *PromptCachingConfig      `json:"prompt_caching,omitempty"`
+	MaxTotalAttempts      *int                      `json:"max_total_attempts,omitempty"`
+	RetryBudget           *RetryBudgetConfig        `json:"retry_budget,omitempty"`
+}
+
+type RolloutConfig struct {
+	Version       string               `json:"version"`
+	Percent       int                  `json:"percent"`
+	StickyBy      string               `json:"sticky_by"`
+	StartedAt     *string              `json:"started_at,omitempty"`
+	Routing       RolloutRoutingConfig `json:"routing"`
+	ManagedModels *ManagedModelsConfig `json:"managed_models,omitempty"`
+}
+
 type RoutingConfig struct {
-	Strategy              *string                  `json:"strategy,omitempty"`
-	FallbackEnabled       *bool                    `json:"fallback_enabled,omitempty"`
-	FallbackOnStatusCodes []int                    `json:"fallback_on_status_codes,omitempty"`
-	ModelFallbacks        map[string][]string      `json:"model_fallbacks,omitempty"`
-	ConditionalRoutes     []*ConditionalRoute      `json:"conditional_routes,omitempty"`
-	DefaultModel          *string                  `json:"default_model,omitempty"`
-	Complexity            *ComplexityRoutingConfig `json:"complexity,omitempty"`
-	Fastest               *FastestResponseConfig   `json:"fastest,omitempty"`
-	Scheduled             *ScheduledConfig         `json:"scheduled,omitempty"`
-	Adaptive              *AdaptiveRoutingConfig   `json:"adaptive,omitempty"`
-	ProviderLock          *ProviderLockConfig      `json:"provider_lock,omitempty"`
-	AccessGroups          map[string]*AccessGroup  `json:"access_groups,omitempty"`
-	Failover              *FailoverConfig          `json:"failover,omitempty"`
-	CircuitBreaker        *CircuitBreakerConfig    `json:"circuit_breaker,omitempty"`
-	Retry                 *RetryConfig             `json:"retry,omitempty"`
-	Mirror                *MirrorConfig            `json:"mirror,omitempty"`
-	ModelTimeouts         map[string]string        `json:"model_timeouts,omitempty"`
+	Strategy              *string                   `json:"strategy,omitempty"`
+	FallbackEnabled       *bool                     `json:"fallback_enabled,omitempty"`
+	FallbackOnStatusCodes []int                     `json:"fallback_on_status_codes,omitempty"`
+	ModelFallbacks        map[string][]string       `json:"model_fallbacks,omitempty"`
+	ConditionalRoutes     []*ConditionalRoute       `json:"conditional_routes,omitempty"`
+	DefaultModel          *string                   `json:"default_model,omitempty"`
+	Complexity            *ComplexityRoutingConfig  `json:"complexity,omitempty"`
+	Fastest               *FastestResponseConfig    `json:"fastest,omitempty"`
+	Scheduled             *ScheduledConfig          `json:"scheduled,omitempty"`
+	Adaptive              *AdaptiveRoutingConfig    `json:"adaptive,omitempty"`
+	ProviderLock          *ProviderLockConfig       `json:"provider_lock,omitempty"`
+	AccessGroups          map[string]*AccessGroup   `json:"access_groups,omitempty"`
+	Failover              *FailoverConfig           `json:"failover,omitempty"`
+	CircuitBreaker        *CircuitBreakerConfig     `json:"circuit_breaker,omitempty"`
+	Retry                 *RetryConfig              `json:"retry,omitempty"`
+	Mirror                *MirrorConfig             `json:"mirror,omitempty"`
+	ModelTimeouts         map[string]string         `json:"model_timeouts,omitempty"`
+	Auto                  *AutoRoutingConfig        `json:"auto,omitempty"`
+	DataPolicy            *DataPolicyConfig         `json:"data_policy,omitempty"`
+	Agents                *AgentsConfig             `json:"agents,omitempty"`
+	Presets               map[string]*RoutingPreset `json:"presets,omitempty"`
+	Idempotency           *IdempotencyConfig        `json:"idempotency,omitempty"`
+	PromptCaching         *PromptCachingConfig      `json:"prompt_caching,omitempty"`
+	MaxTotalAttempts      *int                      `json:"max_total_attempts,omitempty"`
+	RetryBudget           *RetryBudgetConfig        `json:"retry_budget,omitempty"`
+	Rollout               *RolloutConfig            `json:"rollout,omitempty"`
 }
 
 type DiskCacheConfig struct {
@@ -250,23 +479,27 @@ type CacheConfig struct {
 }
 
 type RateLimitConfig struct {
-	Enabled     *bool `json:"enabled,omitempty"`
-	GlobalRPM   *int  `json:"global_rpm,omitempty"`
-	GlobalTPM   *int  `json:"global_tpm,omitempty"`
-	PerKeyRPM   *int  `json:"per_key_rpm,omitempty"`
-	PerKeyTPM   *int  `json:"per_key_tpm,omitempty"`
-	PerModelRPM *int  `json:"per_model_rpm,omitempty"`
-	PerUserRPM  *int  `json:"per_user_rpm,omitempty"`
+	Enabled           *bool `json:"enabled,omitempty"`
+	GlobalRPM         *int  `json:"global_rpm,omitempty"`
+	GlobalTPM         *int  `json:"global_tpm,omitempty"`
+	PerKeyRPM         *int  `json:"per_key_rpm,omitempty"`
+	PerKeyTPM         *int  `json:"per_key_tpm,omitempty"`
+	PerModelRPM       *int  `json:"per_model_rpm,omitempty"`
+	PerUserRPM        *int  `json:"per_user_rpm,omitempty"`
+	PerKeyMaxParallel *int  `json:"per_key_max_parallel,omitempty"`
 }
 
 type BudgetLevelConfig struct {
-	Limit      *float64           `json:"limit,omitempty"`
-	Period     *string            `json:"period,omitempty"`
-	Hard       *bool              `json:"hard,omitempty"`
-	Action     *string            `json:"action,omitempty"`
-	ActionMode *string            `json:"action_mode,omitempty"`
-	OnExceed   *string            `json:"on_exceed,omitempty"`
-	PerModel   map[string]float64 `json:"per_model,omitempty"`
+	Limit           *float64           `json:"limit,omitempty"`
+	Period          *string            `json:"period,omitempty"`
+	Hard            *bool              `json:"hard,omitempty"`
+	Action          *string            `json:"action,omitempty"`
+	ActionMode      *string            `json:"action_mode,omitempty"`
+	OnExceed        *string            `json:"on_exceed,omitempty"`
+	PerModel        map[string]float64 `json:"per_model,omitempty"`
+	IncludeByok     *bool              `json:"include_byok,omitempty"`
+	AlertThresholds []float64          `json:"alert_thresholds,omitempty"`
+	ThrottleRPM     *int               `json:"throttle_rpm,omitempty"`
 }
 
 type BudgetsConfig struct {
@@ -279,12 +512,15 @@ type BudgetsConfig struct {
 	Action        *string                       `json:"action,omitempty"`
 	ActionMode    *string                       `json:"action_mode,omitempty"`
 	OnExceed      *string                       `json:"on_exceed,omitempty"`
+	ThrottleRPM   *int                          `json:"throttle_rpm,omitempty"`
 	Organization  *BudgetLevelConfig            `json:"organization,omitempty"`
 	Org           *BudgetLevelConfig            `json:"org,omitempty"`
 	Teams         map[string]*BudgetLevelConfig `json:"teams,omitempty"`
 	Users         map[string]*BudgetLevelConfig `json:"users,omitempty"`
 	Keys          map[string]*BudgetLevelConfig `json:"keys,omitempty"`
 	Tags          map[string]*BudgetLevelConfig `json:"tags,omitempty"`
+	FailMode      *string                       `json:"fail_mode,omitempty"`
+	NoMaxTokens   *string                       `json:"no_max_tokens,omitempty"`
 }
 
 type CustomPricing struct {
@@ -311,6 +547,7 @@ type AlertRuleConfig struct {
 	Window    *string  `json:"window,omitempty"`
 	Cooldown  *string  `json:"cooldown,omitempty"`
 	Channels  []string `json:"channels,omitempty"`
+	Severity  *string  `json:"severity,omitempty"`
 }
 
 type AlertChannelConfig struct {
@@ -332,9 +569,17 @@ type RedactPatternConfig struct {
 }
 
 type PrivacyConfig struct {
-	Enabled        *bool                  `json:"enabled,omitempty"`
-	Mode           *string                `json:"mode,omitempty"`
-	RedactPatterns []*RedactPatternConfig `json:"redact_patterns,omitempty"`
+	Enabled        *bool                   `json:"enabled,omitempty"`
+	Mode           *string                 `json:"mode,omitempty"`
+	RedactPatterns []*RedactPatternConfig  `json:"redact_patterns,omitempty"`
+	Retention      *PrivacyRetentionConfig `json:"retention,omitempty"`
+	ContentMode    *ContentMode            `json:"content_mode,omitempty"`
+}
+
+type PrivacyRetentionConfig struct {
+	RequestLogDays *int  `json:"request_log_days,omitempty"`
+	AttemptDays    *int  `json:"attempt_days,omitempty"`
+	StoreBodies    *bool `json:"store_bodies,omitempty"`
 }
 
 type ToolPolicyConfig struct {
@@ -352,11 +597,52 @@ type MCPAuthOrgConfig struct {
 	Key    *string `json:"key,omitempty"`
 }
 
+type MCPCredentialMode = string
+
+type MCPCredentialState = string
+
+type MCPCredentialSecret struct {
+	Type   string  `json:"type"`
+	Header *string `json:"header,omitempty"`
+	Value  string  `json:"value"`
+}
+
+type MCPIdentityBinding struct {
+	In   string `json:"in"`
+	Name string `json:"name"`
+}
+
+type MCPServerCredential struct {
+	Mode            *MCPCredentialMode   `json:"mode,omitempty"`
+	CredentialID    *string              `json:"credential_id,omitempty"`
+	Header          *string              `json:"header,omitempty"`
+	State           *MCPCredentialState  `json:"state,omitempty"`
+	Secret          *MCPCredentialSecret `json:"secret,omitempty"`
+	Vendor          *string              `json:"vendor,omitempty"`
+	IdentityBinding *MCPIdentityBinding  `json:"identity_binding,omitempty"`
+}
+
+type MCPServerOAuthConfig struct {
+	Adapter *string `json:"adapter,omitempty"`
+}
+
+type MCPToolLabel = string
+
 type MCPServerOrgConfig struct {
-	URL           *string           `json:"url,omitempty"`
-	Transport     *string           `json:"transport,omitempty"`
-	Auth          *MCPAuthOrgConfig `json:"auth,omitempty"`
-	ToolsCacheTTL *string           `json:"tools_cache_ttl,omitempty"`
+	URL                  *string               `json:"url,omitempty"`
+	Transport            *string               `json:"transport,omitempty"`
+	Era                  *string               `json:"era,omitempty"`
+	Credential           *MCPServerCredential  `json:"credential,omitempty"`
+	Auth                 *MCPAuthOrgConfig     `json:"auth,omitempty"`
+	TrustedAnnotations   *bool                 `json:"trusted_annotations,omitempty"`
+	TimeoutMs            *int                  `json:"timeout_ms,omitempty"`
+	ToolsCacheTTL        *string               `json:"tools_cache_ttl,omitempty"`
+	ToolsCacheTTLSeconds *int                  `json:"tools_cache_ttl_seconds,omitempty"`
+	ForwardHeaders       []string              `json:"forward_headers,omitempty"`
+	PropagateDepth       *bool                 `json:"propagate_depth,omitempty"`
+	Enabled              *bool                 `json:"enabled,omitempty"`
+	Oauth                *MCPServerOAuthConfig `json:"oauth,omitempty"`
+	Labels               []*MCPToolLabel       `json:"labels,omitempty"`
 }
 
 type MCPGuardrailOrgConfig struct {
@@ -368,10 +654,304 @@ type MCPGuardrailOrgConfig struct {
 	ToolRateLimits  map[string]int `json:"tool_rate_limits,omitempty"`
 }
 
+type MCPAccessConfig struct {
+	Default *string `json:"default,omitempty"`
+}
+
+type MCPToolFilter struct {
+	Include []string `json:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+type MCPToolOverride struct {
+	Name        *string         `json:"name,omitempty"`
+	Title       *string         `json:"title,omitempty"`
+	Description *string         `json:"description,omitempty"`
+	Hidden      *bool           `json:"hidden,omitempty"`
+	Labels      []*MCPToolLabel `json:"labels,omitempty"`
+}
+
+type MCPStepProfile struct {
+	Include []string `json:"include,omitempty"`
+}
+
+type MCPAccessRuleMatch struct {
+	KeyIds   []string `json:"key_ids,omitempty"`
+	AgentIds []string `json:"agent_ids,omitempty"`
+	UserIds  []string `json:"user_ids,omitempty"`
+}
+
+type MCPAccessRule struct {
+	Match MCPAccessRuleMatch `json:"match"`
+	Allow []string           `json:"allow,omitempty"`
+	Deny  []string           `json:"deny,omitempty"`
+}
+
+type MCPVirtualServerAccess struct {
+	Keys          []string         `json:"keys,omitempty"`
+	Agents        []string         `json:"agents,omitempty"`
+	Users         []string         `json:"users,omitempty"`
+	DefaultForOrg *bool            `json:"default_for_org,omitempty"`
+	Rules         []*MCPAccessRule `json:"rules,omitempty"`
+}
+
+type MCPApprovalConfig struct {
+	Require    *string  `json:"require,omitempty"`
+	Tools      []string `json:"tools,omitempty"`
+	Validity   *string  `json:"validity,omitempty"`
+	TTLSeconds *int     `json:"ttl_seconds,omitempty"`
+}
+
+type MCPPerToolBudget struct {
+	MaxCallsPerRun *int `json:"max_calls_per_run,omitempty"`
+	RPM            *int `json:"rpm,omitempty"`
+}
+
+type MCPVirtualServerBudgets struct {
+	MaxToolCallsPerRun *int                         `json:"max_tool_calls_per_run,omitempty"`
+	MaxToolUSDPerRun   *float64                     `json:"max_tool_usd_per_run,omitempty"`
+	RPMPerKey          *int                         `json:"rpm_per_key,omitempty"`
+	PerTool            map[string]*MCPPerToolBudget `json:"per_tool,omitempty"`
+}
+
+type MCPVirtualServerConfig struct {
+	ID           *string                     `json:"id,omitempty"`
+	Title        *string                     `json:"title,omitempty"`
+	Description  *string                     `json:"description,omitempty"`
+	Members      []string                    `json:"members,omitempty"`
+	Tools        *MCPToolFilter              `json:"tools,omitempty"`
+	Overrides    map[string]*MCPToolOverride `json:"overrides,omitempty"`
+	Naming       *string                     `json:"naming,omitempty"`
+	Mode         *string                     `json:"mode,omitempty"`
+	StepProfiles map[string]*MCPStepProfile  `json:"step_profiles,omitempty"`
+	Access       *MCPVirtualServerAccess     `json:"access,omitempty"`
+	Approval     *MCPApprovalConfig          `json:"approval,omitempty"`
+	Budgets      *MCPVirtualServerBudgets    `json:"budgets,omitempty"`
+	CacheScope   *string                     `json:"cache_scope,omitempty"`
+}
+
+type MCPManagedToolCredential struct {
+	Mode         *string              `json:"mode,omitempty"`
+	CredentialID *string              `json:"credential_id,omitempty"`
+	State        *MCPCredentialState  `json:"state,omitempty"`
+	Secret       *MCPCredentialSecret `json:"secret,omitempty"`
+}
+
+type MCPManagedToolsConfig struct {
+	Enabled           *bool                                `json:"enabled,omitempty"`
+	Allow             []string                             `json:"allow,omitempty"`
+	Deny              []string                             `json:"deny,omitempty"`
+	MaxCallCostUSD    *float64                             `json:"max_call_cost_usd,omitempty"`
+	FallbackToManaged *bool                                `json:"fallback_to_managed,omitempty"`
+	AllowUserTokens   *bool                                `json:"allow_user_tokens,omitempty"`
+	Credentials       map[string]*MCPManagedToolCredential `json:"credentials,omitempty"`
+}
+
+type MCPPinningConfig struct {
+	Mode         *string           `json:"mode,omitempty"`
+	NewTools     *string           `json:"new_tools,omitempty"`
+	AutoBaseline *bool             `json:"auto_baseline,omitempty"`
+	Pins         map[string]string `json:"pins,omitempty"`
+}
+
+type MCPScanningConfig struct {
+	Descriptions *string  `json:"descriptions,omitempty"`
+	Arguments    []string `json:"arguments,omitempty"`
+	Results      []string `json:"results,omitempty"`
+	Shadow       *bool    `json:"shadow,omitempty"`
+}
+
+type MCPFlowControlConfig struct {
+	Mode               *string `json:"mode,omitempty"`
+	OnEgressAfterTaint *string `json:"on_egress_after_taint,omitempty"`
+}
+
+type MCPPolicyMatch struct {
+	Tools   []string `json:"tools"`
+	Servers []string `json:"servers,omitempty"`
+	Agents  []string `json:"agents,omitempty"`
+	Steps   []*Step  `json:"steps,omitempty"`
+	Env     []string `json:"env,omitempty"`
+}
+
+type MCPPolicyAction = string
+
+type MCPPolicyRule struct {
+	ID     string          `json:"id"`
+	Match  MCPPolicyMatch  `json:"match"`
+	When   *string         `json:"when,omitempty"`
+	Action MCPPolicyAction `json:"action"`
+	Reason string          `json:"reason"`
+	Shadow *bool           `json:"shadow,omitempty"`
+}
+
+type MCPPolicyCombo struct {
+	ID       string   `json:"id"`
+	Sequence []string `json:"sequence"`
+	Within   string   `json:"within"`
+	Action   string   `json:"action"`
+}
+
+type MCPPolicyDefaultTier struct {
+	ReadOnly        *MCPPolicyAction `json:"read_only,omitempty"`
+	Undeclared      *MCPPolicyAction `json:"undeclared,omitempty"`
+	Destructive     *MCPPolicyAction `json:"destructive,omitempty"`
+	DestructiveProd *MCPPolicyAction `json:"destructive_prod,omitempty"`
+}
+
+type MCPPolicyConfig struct {
+	Rules       []*MCPPolicyRule      `json:"rules,omitempty"`
+	Combos      []*MCPPolicyCombo     `json:"combos,omitempty"`
+	DefaultTier *MCPPolicyDefaultTier `json:"default_tier,omitempty"`
+}
+
+type MCPShapingToolConfig struct {
+	BudgetBytes *int     `json:"budget_bytes,omitempty"`
+	Project     []string `json:"project,omitempty"`
+}
+
+type MCPShapingConfig struct {
+	PerTool map[string]*MCPShapingToolConfig `json:"per_tool,omitempty"`
+}
+
 type MCPOrgConfig struct {
-	Enabled    *bool                          `json:"enabled,omitempty"`
-	Servers    map[string]*MCPServerOrgConfig `json:"servers,omitempty"`
-	Guardrails *MCPGuardrailOrgConfig         `json:"guardrails,omitempty"`
+	Enabled        *bool                              `json:"enabled,omitempty"`
+	Access         *MCPAccessConfig                   `json:"access,omitempty"`
+	Servers        map[string]*MCPServerOrgConfig     `json:"servers,omitempty"`
+	VirtualServers map[string]*MCPVirtualServerConfig `json:"virtual_servers,omitempty"`
+	ManagedTools   *MCPManagedToolsConfig             `json:"managed_tools,omitempty"`
+	Pinning        *MCPPinningConfig                  `json:"pinning,omitempty"`
+	Scanning       *MCPScanningConfig                 `json:"scanning,omitempty"`
+	Guardrails     *MCPGuardrailOrgConfig             `json:"guardrails,omitempty"`
+	FlowControl    *MCPFlowControlConfig              `json:"flow_control,omitempty"`
+	Policy         *MCPPolicyConfig                   `json:"policy,omitempty"`
+	Shaping        *MCPShapingConfig                  `json:"shaping,omitempty"`
+}
+
+type MCPAdminServerStatus struct {
+	ServerID        string  `json:"server_id"`
+	Era             *string `json:"era,omitempty"`
+	Transport       *string `json:"transport,omitempty"`
+	Healthy         bool    `json:"healthy"`
+	ToolCount       int     `json:"tool_count"`
+	LastError       *string `json:"last_error,omitempty"`
+	LastRefreshedAt *string `json:"last_refreshed_at,omitempty"`
+}
+
+type MCPAdminStatus struct {
+	Enabled    bool                    `json:"enabled"`
+	OrgEnabled bool                    `json:"org_enabled"`
+	Servers    []*MCPAdminServerStatus `json:"servers"`
+	Sessions   int                     `json:"sessions"`
+	Tools      int                     `json:"tools"`
+	Resources  int                     `json:"resources"`
+	Prompts    int                     `json:"prompts"`
+}
+
+type MCPToolPrice struct {
+	Sku              string  `json:"sku"`
+	USDPerUnitBilled float64 `json:"usd_per_unit_billed"`
+	MarkupPercent    float64 `json:"markup_percent"`
+}
+
+type MCPAdminTool struct {
+	Name         string                 `json:"name"`
+	ServerID     string                 `json:"server_id"`
+	UpstreamName string                 `json:"upstream_name"`
+	Revision     *string                `json:"revision,omitempty"`
+	Quarantined  bool                   `json:"quarantined"`
+	Annotations  map[string]interface{} `json:"annotations,omitempty"`
+	Price        *MCPToolPrice          `json:"price,omitempty"`
+}
+
+type MCPAdminTools struct {
+	Tools []*MCPAdminTool `json:"tools"`
+}
+
+type MCPProbeAuth struct {
+	Type   string  `json:"type"`
+	Header *string `json:"header,omitempty"`
+	Value  string  `json:"value"`
+}
+
+type MCPProbeRequest struct {
+	OrgID        string        `json:"org_id"`
+	URL          string        `json:"url"`
+	Transport    *string       `json:"transport,omitempty"`
+	CredentialID *string       `json:"credential_id,omitempty"`
+	Auth         *MCPProbeAuth `json:"auth,omitempty"`
+}
+
+type MCPProbeServerInfo struct {
+	Name    string  `json:"name"`
+	Title   *string `json:"title,omitempty"`
+	Version *string `json:"version,omitempty"`
+}
+
+type MCPProbeResult struct {
+	Ok         bool                `json:"ok"`
+	Era        *string             `json:"era,omitempty"`
+	ServerInfo *MCPProbeServerInfo `json:"server_info,omitempty"`
+	ToolCount  *int                `json:"tool_count,omitempty"`
+	ToolsHash  *string             `json:"tools_hash,omitempty"`
+	LatencyMs  int                 `json:"latency_ms"`
+	Error      *string             `json:"error,omitempty"`
+}
+
+type MCPRevisionDiff struct {
+	Field  string      `json:"field"`
+	Before interface{} `json:"before,omitempty"`
+	After  interface{} `json:"after,omitempty"`
+}
+
+type MCPRevision struct {
+	OrgID              string                 `json:"org_id"`
+	ServerID           string                 `json:"server_id"`
+	Tool               string                 `json:"tool"`
+	Revision           string                 `json:"revision"`
+	PreviousRevision   *string                `json:"previous_revision,omitempty"`
+	Definition         map[string]interface{} `json:"definition"`
+	PreviousDefinition map[string]interface{} `json:"previous_definition,omitempty"`
+	Diff               []*MCPRevisionDiff     `json:"diff"`
+	FirstSeenAt        string                 `json:"first_seen_at"`
+	Reason             string                 `json:"reason"`
+	CollidesWith       *string                `json:"collides_with,omitempty"`
+}
+
+type MCPApprovalPrincipal struct {
+	Kind     string  `json:"kind"`
+	KeyID    *string `json:"key_id,omitempty"`
+	UserID   *string `json:"user_id,omitempty"`
+	ClientID *string `json:"client_id,omitempty"`
+}
+
+type MCPApproval struct {
+	ApprovalID      string               `json:"approval_id"`
+	OrgID           string               `json:"org_id"`
+	VirtualServerID string               `json:"virtual_server_id"`
+	Tool            string               `json:"tool"`
+	ArgsHash        string               `json:"args_hash"`
+	AgentRunID      *string              `json:"agent_run_id,omitempty"`
+	Principal       MCPApprovalPrincipal `json:"principal"`
+	Status          string               `json:"status"`
+	RequestedAt     string               `json:"requested_at"`
+	ExpiresAt       string               `json:"expires_at"`
+	DecidedBy       *string              `json:"decided_by,omitempty"`
+	DecidedAt       *string              `json:"decided_at,omitempty"`
+	Note            *string              `json:"note,omitempty"`
+}
+
+type MCPApprovalDecision struct {
+	OrgID    string  `json:"org_id"`
+	Decision string  `json:"decision"`
+	Actor    string  `json:"actor"`
+	Note     *string `json:"note,omitempty"`
+}
+
+type MCPOAuthKeysPush struct {
+	Issuer  string                   `json:"issuer"`
+	Version int                      `json:"version"`
+	Keys    []map[string]interface{} `json:"keys"`
 }
 
 type AuditSinkConfig struct {
@@ -452,6 +1032,107 @@ type ModelDatabaseOrgConfig struct {
 	Overrides map[string]*ModelOverrideOrgConfig `json:"overrides,omitempty"`
 }
 
+type ManagedUpstreamKey struct {
+	APIKey  string  `json:"api_key"`
+	KeyHash string  `json:"key_hash"`
+	Label   *string `json:"label,omitempty"`
+}
+
+type ManagedSpendGuardConfig struct {
+	MaxUSDPerMinute   *float64 `json:"max_usd_per_minute,omitempty"`
+	MaxUSDPerHour     *float64 `json:"max_usd_per_hour,omitempty"`
+	AlertUSDPerHour   *float64 `json:"alert_usd_per_hour,omitempty"`
+	NewOrgDailyCapUSD *float64 `json:"new_org_daily_cap_usd,omitempty"`
+	AutoPause         *bool    `json:"auto_pause,omitempty"`
+}
+
+type ManagedTopupConfig struct {
+	MinUSD *float64 `json:"min_usd,omitempty"`
+}
+
+type ManagedModelsConfig struct {
+	Enabled                  *bool                          `json:"enabled,omitempty"`
+	AllowModels              []string                       `json:"allow_models,omitempty"`
+	DenyModels               []string                       `json:"deny_models,omitempty"`
+	AllowVendors             []string                       `json:"allow_vendors,omitempty"`
+	DenyVendors              []string                       `json:"deny_vendors,omitempty"`
+	FallbackToManaged        *bool                          `json:"fallback_to_managed,omitempty"`
+	AllowFree                *bool                          `json:"allow_free,omitempty"`
+	Hedging                  *bool                          `json:"hedging,omitempty"`
+	AllowDataCollection      *bool                          `json:"allow_data_collection,omitempty"`
+	UpstreamKeys             map[string]*ManagedUpstreamKey `json:"upstream_keys,omitempty"`
+	MaxCallCostUSD           *float64                       `json:"max_call_cost_usd,omitempty"`
+	DefaultMaxTokensEstimate *int                           `json:"default_max_tokens_estimate,omitempty"`
+	SpendGuard               *ManagedSpendGuardConfig       `json:"spend_guard,omitempty"`
+	Topup                    *ManagedTopupConfig            `json:"topup,omitempty"`
+}
+
+type ConfigMeta struct {
+	Version  int     `json:"version"`
+	ConfigID *string `json:"config_id,omitempty"`
+	PushedAt *string `json:"pushed_at,omitempty"`
+}
+
+type ToolsCapabilityConfig struct {
+	Enabled           *bool                  `json:"enabled,omitempty"`
+	Providers         []string               `json:"providers,omitempty"`
+	MaxCostUSDPerCall *float64               `json:"max_cost_usd_per_call,omitempty"`
+	Defaults          map[string]interface{} `json:"defaults,omitempty"`
+	Pinned            map[string]interface{} `json:"pinned,omitempty"`
+}
+
+type ToolsDomainsPolicy struct {
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+type ToolsPolicyConfig struct {
+	Domains               *ToolsDomainsPolicy `json:"domains,omitempty"`
+	NoTrainingVendorsOnly *bool               `json:"no_training_vendors_only,omitempty"`
+	ZDRRequired           *bool               `json:"zdr_required,omitempty"`
+	Regions               []string            `json:"regions,omitempty"`
+	RetentionOverride     *string             `json:"retention_override,omitempty"`
+}
+
+type ToolsConfig struct {
+	Capabilities map[string]*ToolsCapabilityConfig `json:"capabilities,omitempty"`
+	Policy       *ToolsPolicyConfig                `json:"policy,omitempty"`
+}
+
+type IdentityGrantsConfig struct {
+	MaxTTLDays *int `json:"max_ttl_days,omitempty"`
+}
+
+type IdentityIdPConfig struct {
+	Issuer        *string `json:"issuer,omitempty"`
+	TokenEndpoint *string `json:"token_endpoint,omitempty"`
+	ClientID      *string `json:"client_id,omitempty"`
+	ClientSecret  *string `json:"client_secret,omitempty"`
+}
+
+type DelegatedGrantScopes struct {
+	Servers []string `json:"servers,omitempty"`
+	Tools   []string `json:"tools,omitempty"`
+	Models  []string `json:"models,omitempty"`
+}
+
+type DelegatedGrant struct {
+	GrantID          string               `json:"grant_id"`
+	AgentID          string               `json:"agent_id"`
+	GrantorUserID    string               `json:"grantor_user_id"`
+	Scopes           DelegatedGrantScopes `json:"scopes"`
+	MaxUSD           *float64             `json:"max_usd,omitempty"`
+	PreapprovedRules []string             `json:"preapproved_rules,omitempty"`
+	ExpiresAt        string               `json:"expires_at"`
+}
+
+type IdentityConfig struct {
+	RequireHumanSponsor *bool                      `json:"require_human_sponsor,omitempty"`
+	Grants              *IdentityGrantsConfig      `json:"grants,omitempty"`
+	Idp                 *IdentityIdPConfig         `json:"idp,omitempty"`
+	DelegatedGrants     map[string]*DelegatedGrant `json:"delegated_grants,omitempty"`
+}
+
 type OrgConfig struct {
 	Providers     map[string]*ProviderConfig `json:"providers,omitempty"`
 	Guardrails    *GuardrailConfig           `json:"guardrails,omitempty"`
@@ -469,6 +1150,10 @@ type OrgConfig struct {
 	A2A           *A2AOrgConfig              `json:"a2a,omitempty"`
 	ModelDatabase *ModelDatabaseOrgConfig    `json:"model_database,omitempty"`
 	ModelMap      map[string]string          `json:"model_map,omitempty"`
+	ManagedModels *ManagedModelsConfig       `json:"managed_models,omitempty"`
+	Tools         *ToolsConfig               `json:"tools,omitempty"`
+	Identity      *IdentityConfig            `json:"identity,omitempty"`
+	Meta          *ConfigMeta                `json:"meta,omitempty"`
 }
 
 type CreateKeyRequest struct {

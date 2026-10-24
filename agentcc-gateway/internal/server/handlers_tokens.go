@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/futureagi/agentcc-gateway/internal/modeldb/orgdb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 	"github.com/futureagi/agentcc-gateway/internal/tokenizer"
 )
 
@@ -52,21 +54,70 @@ func (h *Handlers) CountTokens(w http.ResponseWriter, r *http.Request) {
 		TokenCount: tokenCount,
 	}
 
-	// Look up model context window from modelDB if available.
+	// Look up model context window from modelDB if available. The key's org's
+	// Model Database max_input_tokens replaces it: that is the limit
+	// the validation plugin holds the org's requests to.
+	maxInput, known := 0, false
 	if db := h.ModelDB(); db != nil {
 		if info, ok := db.Get(req.Model); ok {
-			resp.MaxContextTokens = info.MaxInputTokens
-			if info.MaxInputTokens > 0 {
-				remaining := info.MaxInputTokens - tokenCount
-				if remaining < 0 {
-					remaining = 0
-				}
-				resp.RemainingTokens = remaining
+			maxInput, known = info.MaxInputTokens, true
+		}
+	}
+	if limit := orgdb.MaxInputTokens(h.countTokensOverride(r, req.Model)); limit > 0 {
+		maxInput, known = limit, true
+	}
+	if known {
+		resp.MaxContextTokens = maxInput
+		if maxInput > 0 {
+			remaining := maxInput - tokenCount
+			if remaining < 0 {
+				remaining = 0
 			}
+			resp.RemainingTokens = remaining
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// countTokensOverride is the Model Database override the request's key's org
+// has for model, or nil, matched as chat matches it (orgdb.Override) on the
+// org's own provider that serves model, when one does.
+func (h *Handlers) countTokensOverride(r *http.Request, model string) *tenant.ModelOverrideOrgConfig {
+	if h.tenantStore == nil || h.keyStore == nil {
+		return nil
+	}
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	setAuthMetadataFromRequest(rc, r)
+	key := h.lookupRequestKey(rc)
+	if key == nil || key.Metadata["org_id"] == "" {
+		return nil
+	}
+	orgCfg := h.tenantStore.Get(key.Metadata["org_id"])
+	if orgCfg == nil || orgCfg.ModelDatabase == nil || len(orgCfg.ModelDatabase.Overrides) == 0 {
+		return nil
+	}
+	return orgdb.Override(orgCfg, orgProviderServing(orgCfg, model), model)
+}
+
+// orgProviderServing is the id of an org provider holding credentials that
+// lists model (orgModelMatches, as chat resolves it), or "". With several,
+// the first in id order.
+func orgProviderServing(orgCfg *tenant.OrgConfig, model string) string {
+	best := ""
+	for id, pc := range orgCfg.Providers {
+		if pc == nil || !pc.Enabled || !pc.HasCredentials() || (best != "" && id > best) {
+			continue
+		}
+		for _, m := range pc.Models {
+			if orgModelMatches(m, model, id) {
+				best = id
+				break
+			}
+		}
+	}
+	return best
 }

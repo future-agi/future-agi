@@ -37,6 +37,22 @@ HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
 # mutation hooks during AppConfig initialization.
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
+        # Gateway (agentcc) repair and report commands: agentcc_check_key_org
+        # (a dry-run report; --fix repairs the keys it lists), the
+        # managed-credit ledger, upstream-key and ledger-export commands
+        # (agentcc_managed_upstream_keys reaches the live OpenRouter API only
+        # with its own three switches, --live among them), and
+        # agentcc_scrub_request_log_credentials (a dry-run report by org and
+        # key id; --apply masks credential headers in stored request-log rows).
+        "agentcc_check_key_org",
+        "agentcc_export_ledger",
+        "agentcc_managed_credits",
+        "agentcc_managed_upstream_keys",
+        "agentcc_scrub_request_log_credentials",
+        # Reports (--check), finishes (--encrypt) or, only with
+        # --to-legacy --confirm, reverses the encryption of model-hub keys at
+        # rest that migration 0125 does.
+        "model_hub_keys_at_rest",
         "ch25_apply_schema",
         "ch25_remove_pg",
         "backfill_harness_agent_prompts",
@@ -261,6 +277,13 @@ class ModelHubConfig(AppConfig):
                     sender=self,
                     dispatch_uid="model_hub_seed_default_prompt_labels",
                 )
+        # Every Django process (backend, Celery and Temporal workers,
+        # management commands) names a malformed INTEGRATION_ENCRYPTION_KEY
+        # once at startup; model-hub keys stay in the old encoding until it is
+        # fixed. Reads settings only.
+        from model_hub.services import key_at_rest
+
+        key_at_rest.warn_at_startup()
         logger.info("Mutation-free startup; no implicit seed or schema setup")
 
 

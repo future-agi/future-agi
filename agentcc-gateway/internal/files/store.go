@@ -1,7 +1,8 @@
 package files
 
 import (
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ type StoredFile struct {
 type Store struct {
 	mu    sync.RWMutex
 	files map[string]*StoredFile
-	seq   int64
 }
 
 // NewStore creates a new file store.
@@ -34,8 +34,10 @@ func (s *Store) Upload(orgID, filename, purpose string, content []byte) *models.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.seq++
-	id := fmt.Sprintf("file-%d-%d", time.Now().Unix(), s.seq)
+	id := newFileID()
+	for s.files[id] != nil {
+		id = newFileID()
+	}
 
 	meta := models.FileObject{
 		ID:        id,
@@ -56,7 +58,18 @@ func (s *Store) Upload(orgID, filename, purpose string, content []byte) *models.
 	return &meta
 }
 
-// Get retrieves a file by ID with org isolation.
+// newFileID returns "file-" and 96 random bits in hex, as async job ids are.
+// An id carries nothing about other uploads or other orgs.
+func newFileID() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	return "file-" + hex.EncodeToString(b)
+}
+
+// Get retrieves a file by ID. It returns nil unless the file belongs to orgID
+// exactly: "" is the no-org tenant, not a wildcard.
 func (s *Store) Get(id, orgID string) *StoredFile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -65,13 +78,14 @@ func (s *Store) Get(id, orgID string) *StoredFile {
 	if f == nil {
 		return nil
 	}
-	if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+	if f.OrgID != orgID {
 		return nil
 	}
 	return f
 }
 
-// List returns all files for an org.
+// List returns the files that belong to orgID exactly ("" lists only no-org
+// files, not every org's).
 func (s *Store) List(orgID, purpose string) []models.FileObject {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -79,7 +93,7 @@ func (s *Store) List(orgID, purpose string) []models.FileObject {
 	var result []models.FileObject
 	for _, f := range s.files {
 		// Filter by org.
-		if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+		if f.OrgID != orgID {
 			continue
 		}
 		// Filter by purpose if specified.
@@ -91,7 +105,7 @@ func (s *Store) List(orgID, purpose string) []models.FileObject {
 	return result
 }
 
-// Delete removes a file with org isolation. Returns true if deleted.
+// Delete removes a file that belongs to orgID exactly. Returns true if deleted.
 func (s *Store) Delete(id, orgID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,7 +114,7 @@ func (s *Store) Delete(id, orgID string) bool {
 	if f == nil {
 		return false
 	}
-	if f.OrgID != "" && orgID != "" && f.OrgID != orgID {
+	if f.OrgID != orgID {
 		return false
 	}
 	delete(s.files, id)

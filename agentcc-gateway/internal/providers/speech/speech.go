@@ -149,16 +149,19 @@ type Session struct {
 	Header http.Header // upstream credential
 	Kind   Kind
 	// AdmitModel, when set, decides whether the client may use a model it names in a message
-	// (in the gateway's form, cartesia/sonic-3). A model in the URL is known before connecting
-	// and checked there instead.
+	// (in the gateway's form, cartesia/sonic-3), or, with "", a request that names none and so
+	// runs on the vendor's default model; it is asked for every such request with text, also
+	// after an earlier request named a model. A model in the URL is known before connecting and
+	// checked there instead.
 	AdmitModel func(model string) error
 
-	vendor         string
-	model          string
-	voice          string
-	bytesPerSecond int // transcription: raw audio bytes per second
-	audioBytes     int64
-	characters     int
+	vendor          string
+	modelPerMessage bool
+	model           string
+	voice           string
+	bytesPerSecond  int // transcription: raw audio bytes per second
+	audioBytes      int64
+	characters      int
 }
 
 // Open prepares a session for one of the vendor's paths and the client's query and headers.
@@ -166,6 +169,24 @@ func (p *Provider) Open(path string, query url.Values, header http.Header) (*Ses
 	kind, ok := vendors[p.vendor].endpoints[path]
 	if !ok {
 		return nil, models.ErrNotFound("unknown_endpoint", fmt.Sprintf("%s has no relayed endpoint %s", p.vendor, path))
+	}
+	// The session is checked and metered by exactly one value of each of these, spelled exactly
+	// so: a query that names one more than once, or under another spelling of the name (Model,
+	// MODEL), is refused. strings.EqualFold folds by Unicode rules, which refuses more spellings
+	// than ASCII folding does, never fewer.
+	for _, name := range checkedParams {
+		if len(query[name]) > 1 {
+			return nil, models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
+				"the query names %s more than once; the gateway checks and meters a session by a single %s, so name it once",
+				name, name))
+		}
+		for key := range query {
+			if key != name && strings.EqualFold(key, name) {
+				return nil, models.ErrBadRequest("ambiguous_parameter", fmt.Sprintf(
+					"the query names %q, another spelling of %s; the gateway checks and meters a session by a single %s spelled exactly so, so name it once, as %s",
+					key, name, name, name))
+			}
+		}
 	}
 	q := url.Values{}
 	for k, v := range query {
@@ -185,6 +206,8 @@ func (p *Provider) Open(path string, query url.Values, header http.Header) (*Ses
 		s.model = q.Get("model")
 	case p.vendor == "deepgram":
 		s.model, s.voice = splitAura(q.Get("model"))
+	default: // cartesia synthesis: each request names its model
+		s.modelPerMessage = true
 	}
 
 	s.Header = http.Header{}
@@ -201,8 +224,9 @@ func (p *Provider) Open(path string, query url.Values, header http.Header) (*Ses
 	return s, nil
 }
 
-// ClientMessage meters one message the client sent, or refuses it, unmetered, when it names a
-// model AdmitModel rejects; a refused message must not be relayed.
+// ClientMessage meters one message the client sent, or refuses it, unmetered, when AdmitModel
+// rejects the model it names or, for a request that names none, the vendor's default model; a
+// refused message must not be relayed.
 func (s *Session) ClientMessage(binary bool, data []byte) error {
 	switch {
 	case s.Kind == Transcription:
@@ -231,13 +255,20 @@ func (s *Session) ClientMessage(binary bool, data []byte) error {
 		json.Unmarshal(fields["model_id"], &model)
 		json.Unmarshal(fields["transcript"], &transcript)
 		json.Unmarshal(fields["voice"], &voice)
-		if model != "" && model != s.model {
+		switch {
+		case model != "" && model != s.model:
 			if s.AdmitModel != nil {
 				if err := s.AdmitModel(s.vendor + "/" + model); err != nil {
 					return err
 				}
 			}
 			s.model = model
+		case model == "" && transcript != "" && s.AdmitModel != nil:
+			// A request for speech that names no model leaves the model to the vendor,
+			// whatever an earlier request of the session named, so each one is checked.
+			if err := s.AdmitModel(""); err != nil {
+				return err
+			}
 		}
 		s.characters += utf8.RuneCountInString(transcript)
 		if voice.ID != "" {
@@ -247,8 +278,13 @@ func (s *Session) ClientMessage(binary bool, data []byte) error {
 	return nil
 }
 
+// ModelPerMessage reports whether the session's requests name the model (Cartesia synthesis)
+// rather than its URL, so the model is unknown when the session opens.
+func (s *Session) ModelPerMessage() bool { return s.modelPerMessage }
+
 // Model is the session's model as the gateway names it (deepgram/nova-3, cartesia/sonic-3),
-// or "" while it is not yet known: Cartesia synthesis names it in its first message.
+// or "" while it is not yet known: Cartesia synthesis names it in its first message, and a
+// session that names none runs on the vendor's default model.
 func (s *Session) Model() string {
 	if s.model == "" {
 		return ""
@@ -269,6 +305,11 @@ func (s *Session) AudioSeconds() float64 {
 
 // Characters is how much text the client sent for synthesis.
 func (s *Session) Characters() int { return s.characters }
+
+// checkedParams are the query parameters a session is checked (model) or metered (encoding,
+// sample_rate, channels) by. Each may appear once, spelled exactly so. Other parameters may
+// repeat, as the vendors' own repeated options do, and travel as sent, in any spelling.
+var checkedParams = []string{"model", "encoding", "sample_rate", "channels"}
 
 // sampleWidth is the bytes per sample of the raw encodings a transcription can be metered by.
 var sampleWidth = map[string]int{

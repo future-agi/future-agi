@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-admin-tools-v1.schema.json",
+  "title": "mcp-admin-tools-v1",
+  "description": "An org's MCP tools. price is the published managed price, present only for managed tools. The shape is the MCPAdminTools definition of the admin contract.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/MCPAdminTools"
+}

@@ -16,11 +16,12 @@ import {
   Typography,
   Chip,
   Box,
+  Alert,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import {
   buildCustomPropertyPayload,
-  getDefaultValueError,
+  hasStoredDefault,
 } from "./customPropertyForm";
 
 const PROPERTY_TYPES = [
@@ -36,7 +37,7 @@ const EMPTY_FORM = {
   property_type: "string",
   required: false,
   allowed_values: [],
-  default_value: "",
+  clearStoredDefault: false,
 };
 
 const CreateEditPropertyDialog = ({
@@ -59,8 +60,7 @@ const CreateEditPropertyDialog = ({
         property_type: property.property_type || "string",
         required: property.required || false,
         allowed_values: property.allowed_values || [],
-        default_value:
-          property.default_value != null ? String(property.default_value) : "",
+        clearStoredDefault: false,
       });
     } else {
       setForm(EMPTY_FORM);
@@ -96,11 +96,11 @@ const CreateEditPropertyDialog = ({
     onSubmit(payload);
   };
 
-  const defaultValueError = getDefaultValueError(form);
   const isValid =
     form.name.trim() &&
-    (form.property_type !== "enum" || form.allowed_values.length > 0) &&
-    !defaultValueError;
+    (form.property_type !== "enum" || form.allowed_values.length > 0);
+  const showStoredDefault =
+    isEdit && hasStoredDefault(property) && !form.clearStoredDefault;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -128,8 +128,9 @@ const CreateEditPropertyDialog = ({
           />
 
           <FormControl fullWidth>
-            <InputLabel>Type</InputLabel>
+            <InputLabel id="custom-property-type-label">Type</InputLabel>
             <Select
+              labelId="custom-property-type-label"
               value={form.property_type}
               onChange={handleField("property_type")}
               label="Type"
@@ -153,6 +154,15 @@ const CreateEditPropertyDialog = ({
             }
             label="Required"
           />
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ mt: -1.5 }}
+          >
+            Required and Allowed Values are checked by the Validate API (POST
+            /agentcc/custom-properties/validate/); they are not applied by the
+            gateway to requests.
+          </Typography>
 
           {form.property_type === "enum" && (
             <Box>
@@ -186,23 +196,25 @@ const CreateEditPropertyDialog = ({
             </Box>
           )}
 
-          <TextField
-            label="Default Value (optional)"
-            value={form.default_value}
-            onChange={handleField("default_value")}
-            error={Boolean(defaultValueError)}
-            helperText={defaultValueError}
-            fullWidth
-            placeholder={
-              form.property_type === "boolean"
-                ? "true or false"
-                : form.property_type === "number"
-                  ? "0"
-                  : form.property_type === "enum"
-                    ? "Select from allowed values"
-                    : "Default string value"
-            }
-          />
+          {showStoredDefault && (
+            <Alert
+              severity="info"
+              variant="outlined"
+              action={
+                <Button
+                  size="small"
+                  onClick={() =>
+                    setForm((f) => ({ ...f, clearStoredDefault: true }))
+                  }
+                >
+                  Remove stored default
+                </Button>
+              }
+            >
+              Stored default: {String(property.default_value)}. Not applied: the
+              gateway and the request logs never fill in a default.
+            </Alert>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>

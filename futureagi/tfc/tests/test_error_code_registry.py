@@ -48,6 +48,13 @@ UNKNOWN = "An unknown error occurred."
             "FILTER_VALUE_INVENTORY_TOO_BROAD",
             "Too many values to browse exactly. Enter a more specific search.",
         ),
+        (
+            ApiErrorCode.KEY_LIMIT_NOT_ENFORCED,
+            "key_limit_not_enforced",
+            "KEY_LIMIT_NOT_ENFORCED",
+            "The gateway does not enforce these API key settings, so they cannot "
+            "be set: {}.",
+        ),
     ],
 )
 def test_registered_code_and_message(code, wire, message_key, message):

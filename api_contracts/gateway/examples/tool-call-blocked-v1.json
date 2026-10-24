@@ -1,0 +1,16 @@
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "tool_call_blocked",
+    "message": "A tool call was blocked by the secrets guardrail.",
+    "param": null,
+    "metadata": {
+      "tool": "send_email",
+      "tool_call_id": "call_4QpX9",
+      "check": "secrets",
+      "action": "error",
+      "reason": "argument contains a credential",
+      "remedy_hint": "remove_secret_from_arguments"
+    }
+  }
+}

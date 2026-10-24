@@ -607,3 +607,63 @@ func assertEntityFound(t *testing.T, r *guardrails.CheckResult, entityType strin
 	}
 	t.Errorf("entity type %q not found in detections", entityType)
 }
+
+// pii-detection says it rewrites the request (guardrails.RequestRewriter)
+// exactly when its remediation rewrites what it reads.
+func TestRewritesRequest(t *testing.T) {
+	var _ guardrails.RequestRewriter = New(nil)
+	for _, tc := range []struct {
+		remediation string
+		want        bool
+	}{{"", false}, {"block", false}, {"mask", true}, {"redact", true}, {"hash", true}} {
+		g := New(map[string]interface{}{"remediation": tc.remediation})
+		if got := g.RewritesRequest(); got != tc.want {
+			t.Errorf("remediation %q: RewritesRequest = %v, want %v", tc.remediation, got, tc.want)
+		}
+	}
+}
+
+// pii-detection can rewrite the request it reads whatever one check of it
+// does (guardrails.Masker), so an organization's check of it may take the
+// action "mask". Masked is a check that rewrites: a copy that masks for a
+// check that only reports (remediation block, the default), the check
+// itself for one whose remediation already rewrites. The copy leaves the
+// check it came from as it was.
+func TestMasked(t *testing.T) {
+	var _ guardrails.Masker = New(nil)
+	for _, tc := range []struct {
+		remediation, want string
+		self              bool
+	}{
+		{"", "My SSN is ***.", false},
+		{"block", "My SSN is ***.", false},
+		{"mask", "My SSN is ***.", true},
+		{"redact", "My SSN is [REDACTED:ssn].", true},
+	} {
+		t.Run(tc.remediation, func(t *testing.T) {
+			g := New(map[string]interface{}{"remediation": tc.remediation})
+			masked := g.Masked()
+			if (masked == guardrails.Guardrail(g)) != tc.self {
+				t.Errorf("Masked returned the check itself: %v, want %v", masked == guardrails.Guardrail(g), tc.self)
+			}
+			input := makeInput("My SSN is 123-45-6789.")
+			result := masked.Check(context.Background(), input)
+			if result.Pass {
+				t.Fatal("the masked check did not match the number")
+			}
+			var got string
+			_ = json.Unmarshal(input.Request.Messages[0].Content, &got)
+			if got != tc.want {
+				t.Errorf("the masked check left %q, want %q", got, tc.want)
+			}
+
+			plain := makeInput("My SSN is 123-45-6789.")
+			g.Check(context.Background(), plain)
+			var kept string
+			_ = json.Unmarshal(plain.Request.Messages[0].Content, &kept)
+			if !tc.self && kept != "My SSN is 123-45-6789." {
+				t.Errorf("the check Masked was taken from rewrites: %q", kept)
+			}
+		})
+	}
+}

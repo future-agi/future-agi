@@ -2374,6 +2374,39 @@ export interface AgentccRequestLogApi {
   readonly organization?: string;
   readonly workspace?: string;
   readonly created_at?: string;
+  /** @minLength 1 */
+  readonly generation_id?: string;
+  readonly attempt_count?: number;
+  /** @minLength 1 */
+  readonly billing_mode?: string;
+  /** @minLength 1 */
+  readonly credential_type?: string;
+  readonly cost_upstream?: string;
+  readonly cost_markup?: string;
+  /** @minLength 1 */
+  readonly cost_source?: string;
+  readonly usage_estimated?: boolean;
+  /** @minLength 1 */
+  readonly agent_framework?: string;
+  /** @minLength 1 */
+  readonly agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_parent_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_root_run_id?: string;
+  /** @minLength 1 */
+  readonly agent_workflow?: string;
+  /** @minLength 1 */
+  readonly agent_step?: string;
+  /** @minLength 1 */
+  readonly agent_env?: string;
+  /** @minLength 1 */
+  readonly policy_version?: string;
+  /** @minLength 1 */
+  readonly policy_variant?: string;
+  readonly auto_routed?: boolean;
 }
 
 export type AgentccAPIKeyApiStatus =
@@ -2500,10 +2533,16 @@ export const AgentccCustomPropertySchemaApiPropertyType = {
   enum: "enum",
 } as const;
 
+/**
+ * For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.
+ */
 export type AgentccCustomPropertySchemaApiAllowedValues = {
   [key: string]: unknown;
 };
 
+/**
+ * Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.
+ */
 export type AgentccCustomPropertySchemaApiDefaultValue = {
   [key: string]: unknown;
 };
@@ -2519,8 +2558,11 @@ export interface AgentccCustomPropertySchemaApi {
   name: string;
   description?: string;
   property_type?: AgentccCustomPropertySchemaApiPropertyType;
+  /** Checked by POST custom-properties/validate/; the gateway does not apply it to requests. */
   required?: boolean;
+  /** For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests. */
   allowed_values?: AgentccCustomPropertySchemaApiAllowedValues;
+  /** Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null. */
   default_value?: AgentccCustomPropertySchemaApiDefaultValue;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -2561,6 +2603,9 @@ export interface AgentccEmailAlertApi {
    */
   cooldown_minutes?: number;
   readonly last_triggered_at?: string;
+  /** @minLength 1 */
+  readonly last_error?: string;
+  readonly last_error_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -2576,6 +2621,13 @@ export interface GatewaySummaryResultApi {
   status: string;
   provider_count?: number;
   model_count?: number;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayListResponseApi {
@@ -2603,6 +2655,11 @@ export interface GatewayBatchRequestApi {
 export interface GatewayBatchCancelResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
   /** @minLength 1 */
   status: string;
 }
@@ -2636,6 +2693,46 @@ export interface GatewayStatusApi {
   status: string;
 }
 
+export interface GatewayServerSettingsApi {
+  host?: string;
+  port?: number;
+  read_timeout_ms?: number;
+  write_timeout_ms?: number;
+  idle_timeout_ms?: number;
+  max_request_timeout_ms?: number;
+}
+
+export interface GatewayLoggingSettingsApi {
+  level?: string;
+  request_logging?: boolean;
+  include_bodies?: boolean;
+  content_mode?: string;
+}
+
+export interface GatewayBatchSettingsApi {
+  /**
+   * Where batches live: memory (the node's).
+   * @minLength 1
+   */
+  storage?: string;
+  /** The concurrency a submission that sets none runs at. */
+  default_max_concurrency?: number;
+  /** The largest submit body the gateway reads. */
+  max_body_bytes?: number;
+}
+
+export interface GatewayGuardrailPipelineApi {
+  /** guardrails.enabled on the node: without it no org check runs. */
+  enabled: boolean;
+  /** The node's guardrails.fail_open: an org check that errors or times out lets the request through when true. */
+  fail_open: boolean;
+  /**
+   * sequential: org checks run in turn and the first block stops the rest.
+   * @minLength 1
+   */
+  mode: string;
+}
+
 export type GatewayConfigResultApiGuardrails = { [key: string]: unknown };
 
 export type GatewayConfigResultApiRouting = { [key: string]: unknown };
@@ -2666,8 +2763,21 @@ export type GatewayConfigResultApiModelDatabase = { [key: string]: unknown };
 
 export type GatewayConfigResultApiModelMap = { [key: string]: unknown };
 
+export type GatewayConfigResultApiManagedModels = { [key: string]: unknown };
+
+export type GatewayConfigResultApiTools = { [key: string]: unknown };
+
+export type GatewayConfigResultApiIdentity = { [key: string]: unknown };
+
 export type GatewayConfigResultApiProviders = {
   [key: string]: GatewayConfigProviderApi;
+};
+
+/**
+ * Org config section -> the reason this gateway node gives for not enforcing it. Absent: no such section, or the gateway did not say.
+ */
+export type GatewayConfigResultApiOrgSectionsNotEnforced = {
+  [key: string]: string;
 };
 
 export interface GatewayConfigResultApi {
@@ -2689,13 +2799,33 @@ export interface GatewayConfigResultApi {
   audit?: GatewayConfigResultApiAudit;
   model_database?: GatewayConfigResultApiModelDatabase;
   model_map?: GatewayConfigResultApiModelMap;
+  managed_models?: GatewayConfigResultApiManagedModels;
+  tools?: GatewayConfigResultApiTools;
+  identity?: GatewayConfigResultApiIdentity;
   is_active?: boolean;
   created_by?: string;
   change_description?: string;
   created_at?: string;
   updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value. */
+  secrets_set?: string[];
   providers: GatewayConfigResultApiProviders;
   gateway: GatewayStatusApi;
+  server?: GatewayServerSettingsApi;
+  logging?: GatewayLoggingSettingsApi;
+  batch?: GatewayBatchSettingsApi;
+  /** The org config sections this gateway node enforces, from alerting, budgets, cache, ip_acl, rate_limiting and tool_policy. Absent: the gateway did not say. */
+  org_sections_enforced?: string[];
+  guardrail_pipeline?: GatewayGuardrailPipelineApi;
+  /** Org config section -> the reason this gateway node gives for not enforcing it. Absent: no such section, or the gateway did not say. */
+  org_sections_not_enforced?: GatewayConfigResultApiOrgSectionsNotEnforced;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayConfigResponseApi {
@@ -2717,14 +2847,35 @@ export type GatewayBatchDetailResultApiResultsItem = { [key: string]: unknown };
 export interface GatewayBatchDetailResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
+  /**
+   * The gateway id of the key the batch's items run as.
+   * @minLength 1
+   */
+  key_id?: string;
   /** @minLength 1 */
   status: string;
   total: number;
-  max_concurrency: number;
+  /** Absent when the gateway does not hold the batch (see error). */
+  max_concurrency?: number;
   created_at: string;
   completed_at?: string;
   results?: GatewayBatchDetailResultApiResultsItem[];
   summary?: GatewayBatchSummaryApi;
+  /**
+   * unknown: the gateway lost the batch before it was seen to end (status failed).
+   * @minLength 1
+   */
+  outcome?: string;
+  /**
+   * Set when the gateway does not hold the batch: the answer is the status recorded when it finished, without results or summary.
+   * @minLength 1
+   */
+  error?: string;
 }
 
 export interface GatewayBatchDetailResponseApi {
@@ -2759,12 +2910,30 @@ export interface GatewayHealthResultApi {
   providers: GatewayConfiguredProvidersApi;
   provider_count: number;
   model_count: number;
+  /** Whether this check re-pushed every org's config to the gateway. Only an Owner or Admin's check does, at most once per 5 minutes. */
+  org_configs_pushed?: boolean;
+  /** When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded. */
+  last_health_check?: string;
+  /**
+   * What the org's last health check found: healthy or unreachable.
+   * @minLength 1
+   */
+  last_health_check_status?: string;
 }
 
 export interface GatewayHealthResponseApi {
   status: boolean;
   result: GatewayHealthResultApi;
 }
+
+export type GatewayMCPStatusResultApiReason =
+  (typeof GatewayMCPStatusResultApiReason)[keyof typeof GatewayMCPStatusResultApiReason];
+
+export const GatewayMCPStatusResultApiReason = {
+  gateway_mcp_disabled: "gateway_mcp_disabled",
+  gateway_unreachable: "gateway_unreachable",
+  gateway_not_org_scoped: "gateway_not_org_scoped",
+} as const;
 
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };
 
@@ -2774,8 +2943,9 @@ export interface GatewayMCPStatusResultApi {
   tools: number;
   resources: number;
   prompts: number;
-  /** Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status. */
+  /** The gateway's MCP server statuses (mcp-admin-status-v1, keyed by server_id), limited to the org's own servers. */
   servers: GatewayMCPStatusResultApiServersItem[];
+  reason?: GatewayMCPStatusResultApiReason;
 }
 
 export interface GatewayMCPStatusResponseApi {
@@ -2806,6 +2976,13 @@ export interface GatewayProviderStatusApi {
   request_count?: number;
   avg_latency?: number;
   error_rate?: number;
+  /**
+   * Why the status is what it is: the org's own error rate over the last 24 h (unhealthy at 50% or more, degraded at 10% or more, both from 5 requests), or why the provider is not pushed.
+   * @minLength 1
+   */
+  status_reason?: string;
+  /** Whether the config push sends this provider to the gateway. False for a stored credential the push cannot use. */
+  pushed?: boolean;
 }
 
 export interface GatewayProvidersResultApi {
@@ -2816,6 +2993,8 @@ export interface GatewayProvidersResponseApi {
   status: boolean;
   result: GatewayProvidersResultApi;
 }
+
+export type GatewayMutationResultApiWarningsItem = { [key: string]: string };
 
 export interface GatewayMutationResultApi {
   status?: boolean;
@@ -2828,6 +3007,7 @@ export interface GatewayMutationResultApi {
   budget?: string;
   server?: string;
   enabled?: boolean;
+  warnings?: GatewayMutationResultApiWarningsItem[];
 }
 
 export interface GatewayMutationResponseApi {
@@ -2873,6 +3053,16 @@ export interface GatewayBatchSubmitRequestApi {
 export interface GatewayBatchSubmitResultApi {
   /** @minLength 1 */
   batch_id: string;
+  /**
+   * The organization the batch runs as: every item is a request authenticated by a key minted for it.
+   * @minLength 1
+   */
+  org_id: string;
+  /**
+   * The gateway id of the key the batch's items run as.
+   * @minLength 1
+   */
+  key_id?: string;
   /** @minLength 1 */
   status: string;
   total: number;
@@ -2943,6 +3133,17 @@ export interface GatewayPlaygroundTestRequestApi {
   system_prompt?: string;
 }
 
+/**
+ * x-agentcc-guardrail-action on a warned answer, when sent.
+ */
+export type GatewayPlaygroundTestResultApiGuardrailAction =
+  (typeof GatewayPlaygroundTestResultApiGuardrailAction)[keyof typeof GatewayPlaygroundTestResultApiGuardrailAction];
+
+export const GatewayPlaygroundTestResultApiGuardrailAction = {
+  warn: "warn",
+  log: "log",
+} as const;
+
 export type GatewayPlaygroundTestResultApiBody = { [key: string]: unknown };
 
 export type GatewayPlaygroundTestResultApiGuardrailHeaders = {
@@ -2955,8 +3156,14 @@ export interface GatewayPlaygroundTestResultApi {
   guardrail_headers: GatewayPlaygroundTestResultApiGuardrailHeaders;
   /** @minLength 1 */
   model: string;
+  /** HTTP 403 with error.type guardrail_error: a check blocked. */
   blocked: boolean;
+  /** A 2xx with x-agentcc-guardrail-triggered: true: a check warned or logged and the request went through. */
   warned: boolean;
+  /** x-agentcc-guardrail-action on a warned answer, when sent. */
+  guardrail_action?: GatewayPlaygroundTestResultApiGuardrailAction;
+  /** The check names in x-agentcc-guardrails-triggered on a warned answer; empty when the gateway does not send the header. */
+  triggered_checks?: string[];
 }
 
 export interface GatewayPlaygroundTestResponseApi {
@@ -3030,6 +3237,18 @@ export type GatewayConfigPatchRequestApiModelMap = {
   [key: string]: { [key: string]: unknown };
 };
 
+export type GatewayConfigPatchRequestApiManagedModels = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type GatewayConfigPatchRequestApiTools = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type GatewayConfigPatchRequestApiIdentity = {
+  [key: string]: { [key: string]: unknown };
+};
+
 export interface GatewayConfigPatchRequestApi {
   guardrails?: GatewayConfigPatchRequestApiGuardrails;
   routing?: GatewayConfigPatchRequestApiRouting;
@@ -3046,6 +3265,9 @@ export interface GatewayConfigPatchRequestApi {
   audit?: GatewayConfigPatchRequestApiAudit;
   model_database?: GatewayConfigPatchRequestApiModelDatabase;
   model_map?: GatewayConfigPatchRequestApiModelMap;
+  managed_models?: GatewayConfigPatchRequestApiManagedModels;
+  tools?: GatewayConfigPatchRequestApiTools;
+  identity?: GatewayConfigPatchRequestApiIdentity;
 }
 
 export type GatewayNamedConfigRequestApiConfig = {
@@ -3205,6 +3427,63 @@ export interface AgentccGuardrailPolicyApi {
   readonly updated_at?: string;
 }
 
+export interface ManagedModelsStatusResultApi {
+  /** The gateway offers managed models (it has managed providers). */
+  available: boolean;
+  /** This org has opted in (org config managed_models.enabled). */
+  enabled: boolean;
+  balance_usd: number;
+  markup_percent: number;
+}
+
+export interface ManagedModelsStatusResponseApi {
+  status: boolean;
+  result: ManagedModelsStatusResultApi;
+}
+
+export interface ManagedCatalogProviderApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  source: string;
+  /** @minLength 1 */
+  fetched_at: string;
+  models: number;
+}
+
+export interface ManagedCatalogModelApi {
+  /** @minLength 1 */
+  id: string;
+  name?: string;
+  description?: string;
+  created?: number;
+  /** @minLength 1 */
+  provider: string;
+  vendor: string;
+  context_length?: number;
+  max_output_tokens?: number;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supported_parameters?: string[];
+  input_per_mtok?: number;
+  output_per_mtok?: number;
+  cache_read_per_mtok?: number;
+  billed_input_per_mtok?: number;
+  billed_output_per_mtok?: number;
+  dynamic_price?: boolean;
+}
+
+export interface ManagedCatalogResultApi {
+  markup_percent: number;
+  providers: ManagedCatalogProviderApi[];
+  models: ManagedCatalogModelApi[];
+}
+
+export interface ManagedCatalogResponseApi {
+  status: boolean;
+  result: ManagedCatalogResultApi;
+}
+
 export type AgentccOrgConfigApiGuardrails = { [key: string]: unknown };
 
 export type AgentccOrgConfigApiRouting = { [key: string]: unknown };
@@ -3235,6 +3514,12 @@ export type AgentccOrgConfigApiModelDatabase = { [key: string]: unknown };
 
 export type AgentccOrgConfigApiModelMap = { [key: string]: unknown };
 
+export type AgentccOrgConfigApiManagedModels = { [key: string]: unknown };
+
+export type AgentccOrgConfigApiTools = { [key: string]: unknown };
+
+export type AgentccOrgConfigApiIdentity = { [key: string]: unknown };
+
 export interface AgentccOrgConfigApi {
   readonly id?: string;
   readonly organization?: string;
@@ -3254,11 +3539,16 @@ export interface AgentccOrgConfigApi {
   audit?: AgentccOrgConfigApiAudit;
   model_database?: AgentccOrgConfigApiModelDatabase;
   model_map?: AgentccOrgConfigApiModelMap;
+  managed_models?: AgentccOrgConfigApiManagedModels;
+  tools?: AgentccOrgConfigApiTools;
+  identity?: AgentccOrgConfigApiIdentity;
   readonly is_active?: boolean;
   readonly created_by?: string;
   change_description?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value. */
+  readonly secrets_set?: readonly string[];
 }
 
 export type OrgConfigBulkItemApiProviders = {
@@ -3295,6 +3585,12 @@ export type OrgConfigBulkItemApiModelDatabase = { [key: string]: unknown };
 
 export type OrgConfigBulkItemApiModelMap = { [key: string]: unknown };
 
+export type OrgConfigBulkItemApiManagedModels = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiTools = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiIdentity = { [key: string]: unknown };
+
 export interface OrgConfigBulkItemApi {
   providers: OrgConfigBulkItemApiProviders;
   guardrails: OrgConfigBulkItemApiGuardrails;
@@ -3312,6 +3608,9 @@ export interface OrgConfigBulkItemApi {
   audit: OrgConfigBulkItemApiAudit;
   model_database: OrgConfigBulkItemApiModelDatabase;
   model_map: OrgConfigBulkItemApiModelMap;
+  managed_models?: OrgConfigBulkItemApiManagedModels;
+  tools?: OrgConfigBulkItemApiTools;
+  identity?: OrgConfigBulkItemApiIdentity;
 }
 
 export type OrgConfigBulkResponseApiResult = {
@@ -3403,6 +3702,152 @@ export type AgentccRequestLogDetailApiGuardrailResults = {
   [key: string]: unknown;
 };
 
+export type AgentccRequestLogDetailApiTags = { [key: string]: unknown };
+
+export type AgentccRequestAttemptApiKind =
+  (typeof AgentccRequestAttemptApiKind)[keyof typeof AgentccRequestAttemptApiKind];
+
+export const AgentccRequestAttemptApiKind = {
+  primary: "primary",
+  retry: "retry",
+  failover: "failover",
+  model_fallback: "model_fallback",
+  auto_fallback: "auto_fallback",
+  request_fallback: "request_fallback",
+  hedge: "hedge",
+  selector: "selector",
+} as const;
+
+export type AgentccRequestAttemptApiOutcome =
+  (typeof AgentccRequestAttemptApiOutcome)[keyof typeof AgentccRequestAttemptApiOutcome];
+
+export const AgentccRequestAttemptApiOutcome = {
+  success: "success",
+  error: "error",
+  timeout: "timeout",
+  cancelled: "cancelled",
+  discarded: "discarded",
+  skipped: "skipped",
+  circuit_open: "circuit_open",
+  hollow: "hollow",
+} as const;
+
+export interface AgentccRequestAttemptApi {
+  /** @minLength 1 */
+  readonly attempt_id?: string;
+  readonly index?: number;
+  readonly kind?: AgentccRequestAttemptApiKind;
+  /** @minLength 1 */
+  readonly reason?: string;
+  /** @minLength 1 */
+  readonly provider?: string;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly endpoint_id?: string;
+  /** @minLength 1 */
+  readonly upstream_provider?: string;
+  /** @minLength 1 */
+  readonly served_upstream_provider?: string;
+  /** @minLength 1 */
+  readonly upstream_key_id?: string;
+  /** @minLength 1 */
+  readonly credential_type?: string;
+  readonly status_code?: number;
+  readonly outcome?: AgentccRequestAttemptApiOutcome;
+  /** @minLength 1 */
+  readonly error_class?: string;
+  /** @minLength 1 */
+  readonly error_origin?: string;
+  /** @minLength 1 */
+  readonly error_message?: string;
+  readonly started_at?: string;
+  readonly latency_ms?: number;
+  readonly ttfb_ms?: number;
+  readonly prompt_tokens?: number;
+  readonly completion_tokens?: number;
+  readonly cached_tokens?: number;
+  readonly cache_write_tokens?: number;
+  readonly reasoning_tokens?: number;
+  readonly upstream_cost_micros?: number;
+  readonly billed_cost_micros?: number;
+  readonly landed_cost_micros?: number;
+  readonly upstream_fee_bps?: number;
+  readonly processing_fee_bps?: number;
+  /** @minLength 1 */
+  readonly cost_source?: string;
+  readonly usage_estimated?: boolean;
+  readonly billable?: boolean;
+}
+
+export interface AgentccRequestBillingApi {
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  credential_type: string;
+  cost_upstream: string;
+  cost_markup: string;
+  billed: string;
+  /** @minLength 1 */
+  cost_source: string;
+  usage_estimated: boolean;
+  /** Staff only. */
+  cost_landed: string;
+}
+
+export interface AgentccRequestAgentApi {
+  /** @minLength 1 */
+  framework: string;
+  /** @minLength 1 */
+  agent_id: string;
+  /** @minLength 1 */
+  agent_version: string;
+  /** @minLength 1 */
+  run_id: string;
+  /** @minLength 1 */
+  parent_run_id: string;
+  /** @minLength 1 */
+  root_run_id: string;
+  /** @minLength 1 */
+  task_id: string;
+  /** @minLength 1 */
+  workflow: string;
+  /** @minLength 1 */
+  step: string;
+  /** @minLength 1 */
+  step_source: string;
+  turn: number;
+  /** @minLength 1 */
+  env: string;
+  /** @minLength 1 */
+  budget_scope: string;
+  /** @minLength 1 */
+  identity_source: string;
+}
+
+export interface AgentccRequestRoutingApi {
+  /** @minLength 1 */
+  policy_version: string;
+  /** @minLength 1 */
+  policy_variant: string;
+  /** @minLength 1 */
+  catalog_snapshot_id: string;
+  auto_routed: boolean;
+}
+
+export interface AgentccToolCallsVerdictApi {
+  checked: number;
+  blocked: string[];
+  stripped: string[];
+}
+
+/**
+ * The tool-call guardrail verdict, as the gateway reported it; null when it reported none.
+ */
+export interface AgentccRequestGuardrailApi {
+  tool_calls: AgentccToolCallsVerdictApi;
+}
+
 export interface AgentccRequestLogDetailApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -3444,6 +3889,28 @@ export interface AgentccRequestLogDetailApi {
   readonly organization?: string;
   readonly workspace?: string;
   readonly created_at?: string;
+  /** @minLength 1 */
+  readonly generation_id?: string;
+  readonly attempt_count?: number;
+  readonly cached_tokens?: number;
+  readonly cache_write_tokens?: number;
+  readonly reasoning_tokens?: number;
+  /** @minLength 1 */
+  readonly served_upstream_provider?: string;
+  /** @minLength 1 */
+  readonly content_mode?: string;
+  /** @minLength 1 */
+  readonly app_title?: string;
+  /** @minLength 1 */
+  readonly app_referer?: string;
+  /** @minLength 1 */
+  readonly end_user?: string;
+  readonly tags?: AgentccRequestLogDetailApiTags;
+  readonly attempts?: readonly AgentccRequestAttemptApi[];
+  billing?: AgentccRequestBillingApi;
+  agent?: AgentccRequestAgentApi;
+  routing?: AgentccRequestRoutingApi;
+  guardrail?: AgentccRequestGuardrailApi;
 }
 
 export type AgentccRoutingPolicyApiConfig = { [key: string]: unknown };
@@ -33641,7 +34108,13 @@ export type AgentccRequestLogsListParams = {
   fallback_used?: boolean;
   guardrail_triggered?: boolean;
   is_stream?: boolean;
+  /**
+   * Requests that started at or after the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
   started_after?: string;
+  /**
+   * Requests that started at or before the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
   started_before?: string;
   min_latency?: number;
   max_latency?: number;
@@ -33655,6 +34128,61 @@ export type AgentccRequestLogsListParams = {
    * @minLength 1
    */
   ordering?: string;
+  /**
+   * Comma-separated billing modes (managed, byok).
+   * @minLength 1
+   */
+  billing_mode?: string;
+  /**
+   * Comma-separated credential types (managed, byok).
+   * @minLength 1
+   */
+  credential_type?: string;
+  /**
+   * Comma-separated agent ids.
+   * @minLength 1
+   */
+  agent_id?: string;
+  /**
+   * Comma-separated agent run ids.
+   * @minLength 1
+   */
+  run_id?: string;
+  /**
+   * Comma-separated agent steps.
+   * @minLength 1
+   */
+  step?: string;
+  /**
+   * Comma-separated routing policy variants (stable, candidate).
+   * @minLength 1
+   */
+  policy_variant?: string;
+  /**
+   * Comma-separated agent environments.
+   * @minLength 1
+   */
+  env?: string;
+  /**
+   * Comma-separated attempt error classes: requests with at least one attempt in one of them.
+   * @minLength 1
+   */
+  error_class?: string;
+  /**
+   * Comma-separated values of the request's application tag.
+   * @minLength 1
+   */
+  application?: string;
+  /**
+   * Comma-separated values of the request's service tag.
+   * @minLength 1
+   */
+  service?: string;
+  /**
+   * Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.
+   * @minLength 1
+   */
+  tags?: string;
 };
 
 export type AgentccRequestLogsList200 = {
@@ -33666,13 +34194,129 @@ export type AgentccRequestLogsList200 = {
 
 export type AgentccRequestLogsExportParams = {
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
+  user_id?: string;
+  session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
+  api_key_id?: string;
+  request_id?: string;
+  /**
+   * Comma-separated model names.
+   * @minLength 1
+   */
+  model?: string;
+  /**
+   * Comma-separated provider names.
+   * @minLength 1
+   */
+  provider?: string;
+  /**
+   * Comma-separated HTTP status codes.
+   * @minLength 1
+   */
+  status_code?: string;
+  min_status_code?: number;
+  max_status_code?: number;
+  is_error?: boolean;
+  cache_hit?: boolean;
+  fallback_used?: boolean;
+  guardrail_triggered?: boolean;
+  is_stream?: boolean;
+  /**
+   * Requests that started at or after the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_after?: string;
+  /**
+   * Requests that started at or before the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.
+   */
+  started_before?: string;
+  min_latency?: number;
+  max_latency?: number;
+  min_cost?: number;
+  max_cost?: number;
+  min_tokens?: number;
+  max_tokens?: number;
+  q?: string;
+  search?: string;
+  /**
+   * @minLength 1
+   */
+  ordering?: string;
+  /**
+   * Comma-separated billing modes (managed, byok).
+   * @minLength 1
+   */
+  billing_mode?: string;
+  /**
+   * Comma-separated credential types (managed, byok).
+   * @minLength 1
+   */
+  credential_type?: string;
+  /**
+   * Comma-separated agent ids.
+   * @minLength 1
+   */
+  agent_id?: string;
+  /**
+   * Comma-separated agent run ids.
+   * @minLength 1
+   */
+  run_id?: string;
+  /**
+   * Comma-separated agent steps.
+   * @minLength 1
+   */
+  step?: string;
+  /**
+   * Comma-separated routing policy variants (stable, candidate).
+   * @minLength 1
+   */
+  policy_variant?: string;
+  /**
+   * Comma-separated agent environments.
+   * @minLength 1
+   */
+  env?: string;
+  /**
+   * Comma-separated attempt error classes: requests with at least one attempt in one of them.
+   * @minLength 1
+   */
+  error_class?: string;
+  /**
+   * Comma-separated values of the request's application tag.
+   * @minLength 1
+   */
+  application?: string;
+  /**
+   * Comma-separated values of the request's service tag.
+   * @minLength 1
+   */
+  service?: string;
+  /**
+   * Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.
+   * @minLength 1
+   */
+  tags?: string;
+  /**
+   * csv (the default) or json (one JSON object per line). An export holds at most 10,000 rows: 0 matching rows answers 400 export_empty and more than 10,000 answers 400 export_too_large with the count, unless max_rows is sent. The list endpoint's count, with the same filters, is the count export uses.
+   * @minLength 1
+   */
+  export_format?: string;
+  /**
+   * Export at most this many rows, the first in `ordering` (newest started_at first when no ordering is sent), instead of refusing a filter that matches more than 10,000. Times in the file are UTC.
+   * @minimum 1
+   * @maximum 10000
+   */
+  max_rows?: number;
 };
 
 export type AgentccRequestLogsExport200 = {

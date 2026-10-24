@@ -1,0 +1,60 @@
+{
+  "schedule": {
+    "spec": {
+      "interval": [
+        {
+          "interval": "60s",
+          "phase": "0s"
+        }
+      ],
+      "jitter": "0s"
+    },
+    "action": {
+      "startWorkflow": {
+        "workflowId": "scheduled-gw-check-a",
+        "workflowType": {
+          "name": "TaskRunnerWorkflow"
+        },
+        "taskQueue": {
+          "name": "default",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhY3Rpdml0eV9uYW1lIjoicHVyZ2VfZXhwaXJlZF9hZ2VudGNjX3JlcXVlc3RfbG9nc19hY3Rpdml0eSIsImFyZ3MiOltdLCJrd2FyZ3MiOnt9LCJxdWV1ZSI6ImRlZmF1bHQiLCJ0aW1lX2xpbWl0Ijo3MjAwLCJtYXhfcmV0cmllcyI6bnVsbCwicmV0cnlfZGVsYXkiOm51bGwsInNjaGVkdWxlX3RvX3N0YXJ0X3RpbWVvdXQiOm51bGx9"
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "header": {}
+      }
+    },
+    "policies": {
+      "overlapPolicy": "SCHEDULE_OVERLAP_POLICY_SKIP",
+      "catchupWindow": "31536000s"
+    },
+    "state": {}
+  },
+  "info": {
+    "futureActionTimes": [
+      "2026-10-22T11:21:00Z",
+      "2026-10-22T11:22:00Z",
+      "2026-10-22T11:23:00Z",
+      "2026-10-22T11:24:00Z",
+      "2026-10-22T11:25:00Z",
+      "2026-10-22T11:26:00Z",
+      "2026-10-22T11:27:00Z",
+      "2026-10-22T11:28:00Z",
+      "2026-10-22T11:29:00Z",
+      "2026-10-22T11:30:00Z"
+    ],
+    "createTime": "2026-10-22T11:20:44.008734592Z"
+  },
+  "conflictToken": "AAAAAAAAAAE="
+}

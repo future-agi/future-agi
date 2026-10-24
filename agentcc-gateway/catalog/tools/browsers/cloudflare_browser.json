@@ -1,0 +1,26 @@
+{
+  "vendor": "cloudflare_browser",
+  "capability": "browsers",
+  "skus": [
+    {
+      "sku": "cloudflare_browser.minute",
+      "unit": "minute",
+      "usd_per_unit": 0.0015,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://www.cloudflare.com/terms/",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

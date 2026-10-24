@@ -1,0 +1,60 @@
+# The capability scenario gateway config (07_capability_core.sh), rendered by scn_up
+# from lib.sh's placeholders. The capability mock's address is not one of
+# them: the gateway expands ${SCN_CAP}, which lib_cap.sh's scn_cap_up exports
+# before scn_up starts the gateway.
+#
+# echo-a and echo-b are the capability mock's echo fakes. Their operator
+# entries are FutureAGI's managed credentials for the test capability echo
+# (managed: true), and their base URLs are where the core sends a call, BYOK
+# or managed. Their prices come from the fixture cards in tools/echo, which
+# tools.catalog_dir names and the gateway loads.
+#
+# Every key and token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  echo-a:
+    base_url: "${SCN_CAP}/echo-a"
+    api_key: "scn-test-managed-echo-a"
+    api_format: "openai"
+    managed: true
+    auto_discover: false
+  echo-b:
+    base_url: "${SCN_CAP}/echo-b"
+    api_key: "scn-test-managed-echo-b"
+    api_format: "openai"
+    managed: true
+    auto_discover: false
+tools:
+  enabled: true
+  catalog_dir: "@@SCN_ROOT@@/fixtures/capability-echo/tools"
+capabilities:
+  echo:
+    timeout_ms: 5000
+managed:
+  markup_percent: 5
+  require_credits: true
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock upstream stands in for Django: request logs reach its /__logs.
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

@@ -1,0 +1,24 @@
+# 63_stdio.sh's gateway config, rendered by lib.sh's _scn_render_config
+# (same placeholders as config/base.yaml). The script appends the `mcp:`
+# block, because the stdio server's command and marker path are known only
+# at run time. No provider is configured: the scenario makes no model call.
+#
+# Every key and token below is a fake value. The admin token here is NOT the
+# one the scenario calls with: AGENTCC_ADMIN_TOKEN in the gateway's
+# environment overrides it, which proves that variable reached the gateway.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+logging:
+  level: "info"

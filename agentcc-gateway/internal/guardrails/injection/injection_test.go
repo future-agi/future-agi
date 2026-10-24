@@ -151,9 +151,12 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
-// --- Only User Messages ---
+// --- System Messages ---
 
-func TestOnlyChecksUserMessages(t *testing.T) {
+// A system message is read for text someone else wrote (see
+// injection_roles_test.go), not for the instruction wording a system prompt
+// uses for its own rules, which a phrase like this one is.
+func TestSystemPromptInstructionWordingIsNotCounted(t *testing.T) {
 	sysRaw, _ := json.Marshal("You are a helpful assistant. Ignore all previous instructions is just a test phrase.")
 	userRaw, _ := json.Marshal("What is the weather?")
 	g := New(nil)
@@ -169,7 +172,7 @@ func TestOnlyChecksUserMessages(t *testing.T) {
 	}
 	r := g.Check(context.Background(), input)
 	if !r.Pass {
-		t.Fatal("system messages should not be checked for injection")
+		t.Fatal("instruction wording in a system message was counted as an injection")
 	}
 }
 

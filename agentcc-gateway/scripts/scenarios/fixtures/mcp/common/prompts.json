@@ -1,0 +1,10 @@
+[
+  {
+    "name": "greet",
+    "description": "Greets someone.",
+    "arguments": [{ "name": "who", "required": true }],
+    "messages": [
+      { "role": "user", "content": { "type": "text", "text": "Say hello." } }
+    ]
+  }
+]

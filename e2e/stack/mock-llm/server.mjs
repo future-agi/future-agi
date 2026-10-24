@@ -16,10 +16,53 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
+// Scoped routes (e2e/lib/upstream.ts): /s/<scenario>/<directives>/<route>
+// answers <route> exactly as the unscoped mock does, after recording the request
+// under <scenario> ({ at, method, path, headers, body }; GET /__requests/<scenario>
+// lists them, oldest first). <directives> is `-` or a comma list of lat=<ms>
+// (answer after that delay, at most 120000) and status=<code> (answer that
+// status, 400-599, with an OpenAI error body instead of the route). Recorded in
+// memory for the life of the container; scenarios are minted per test.
+const SCOPED = /^\/s\/([A-Za-z0-9_.-]{1,80})\/([^/]+)(\/.*)$/;
+const LISTED = /^\/__requests\/([A-Za-z0-9_.-]{1,80})$/;
+const recorded = new Map();
+
+export function parseScoped(path) {
+  const match = SCOPED.exec(path);
+  if (!match) return null;
+  const [, scenario, directives, inner] = match;
+  const scoped = { scenario, inner, latencyMs: 0, status: 0 };
+  if (directives === "-") return scoped;
+  const seen = new Set();
+  for (const directive of directives.split(",")) {
+    const [key, value, ...extra] = directive.split("=");
+    const n = /^\d{1,6}$/.test(value ?? "") ? Number(value) : NaN;
+    const ok =
+      !extra.length &&
+      !seen.has(key) &&
+      ((key === "lat" && n <= 120000) ||
+        (key === "status" && n >= 400 && n <= 599));
+    if (!ok) return { ...scoped, invalid: directive };
+    seen.add(key);
+    if (key === "lat") scoped.latencyMs = n;
+    else scoped.status = n;
+  }
+  return scoped;
+}
+
+const parseRecorded = (raw) => {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return raw;
+  }
+};
+
 // Import-safe for socket-free unit tests. The Compose command below still starts
 // the same listener; the new serving contract is text-only transport coverage.
 export function handleRequest(req, res) {
-  const path = req.url.split("?")[0];
+  const scoped = parseScoped(req.url.split("?")[0]);
+  const path = scoped ? scoped.inner : req.url.split("?")[0];
   const serving = path.startsWith("/model/v1/");
   let raw = "";
   let bytes = 0;
@@ -30,7 +73,9 @@ export function handleRequest(req, res) {
     if (serving && bytes > 262144) {
       tooLarge = true;
       raw = "";
-      return json(res, 413, { error: { message: "serving body exceeds 256 KiB" } });
+      return json(res, 413, {
+        error: { message: "serving body exceeds 256 KiB" },
+      });
     }
     raw += c;
   });
@@ -40,99 +85,162 @@ export function handleRequest(req, res) {
   });
   req.on("end", () => {
     if (tooLarge) return;
-    if ((path === "/model/v1/models" && req.method !== "GET") ||
-        (path === "/model/v1/embed" && req.method !== "POST")) {
-      return json(res, 405, { error: { message: "method not allowed" } });
-    }
-    let body;
-    try {
-      body = raw ? JSON.parse(raw) : {};
-    } catch {
-      body = null;
-    }
-    // Rejects bad syntax and valid-but-non-object JSON (`null`, `42`, `"x"`)
-    // alike: the route handlers read properties off `body` unguarded.
-    if (typeof body !== "object" || body === null || (serving && Array.isArray(body))) {
-      return json(res, 400, {
-        error: { message: "invalid JSON body", type: "invalid_request_error" },
-      });
-    }
-    if (path === "/model/v1/models") {
-      return json(res, 200, { models: ["text_embedding"] });
-    }
-    if (path === "/model/v1/embed") {
-      const inputs = Array.isArray(body.text) ? body.text : [body.text];
-      // tracer/queries/eval_clustering.py _EMBED_BATCH_SIZE=64; the real
-      // ModelServingClient expects one vector per input; this mock uses eight dimensions.
-      if (Object.keys(body).sort().join(",") !== "input_type,text" ||
-          body.input_type !== "text" || inputs.length < 1 || inputs.length > 64 ||
-          !inputs.every(text => typeof text === "string" && text.trim().length > 0)) {
-        return json(res, 400, { error: { message: "expected input_type=text and 1..64 nonempty texts" } });
-      }
-      return json(res, 200, { embeddings: inputs.map(() => Array(8).fill(0.125)) });
-    }
-    if (path === "/v1/models") {
-      return json(res, 200, {
-        object: "list",
-        data: MODELS.map((id) => ({ id, object: "model", owned_by: "e2e" })),
-      });
-    }
-    if (path === "/v1/chat/completions") {
-      const content = reply(body.messages);
-      const model = body.model ?? "gpt-4o-mini";
-      if (body.stream) {
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
+    if (!scoped) {
+      const listed = LISTED.exec(path);
+      if (listed && req.method === "GET") {
+        return json(res, 200, {
+          scenario: listed[1],
+          requests: recorded.get(listed[1]) ?? [],
         });
-        const chunk = (delta, finish = null) =>
-          res.write(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-e2e",
-              object: "chat.completion.chunk",
-              model,
-              choices: [{ index: 0, delta, finish_reason: finish }],
-            })}\n\n`,
-          );
-        chunk({ role: "assistant" });
-        // Zero-width split after whitespace: the deltas concatenate back to
-        // `content` byte-for-byte, so streamed and non-streamed output match.
-        for (const part of content.split(/(?<=\s)/)) chunk({ content: part });
-        chunk({}, "stop");
-        res.write("data: [DONE]\n\n");
-        return res.end();
       }
-      return json(res, 200, {
-        id: "chatcmpl-e2e",
-        object: "chat.completion",
-        model,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 7, completion_tokens: 7, total_tokens: 14 },
+      return answer(req, res, path, serving, raw);
+    }
+    if (scoped.invalid) {
+      return json(res, 400, {
+        error: {
+          message: `invalid mock-llm directive ${scoped.invalid}`,
+          type: "invalid_request_error",
+        },
       });
     }
-    if (path === "/v1/embeddings") {
-      const inputs = Array.isArray(body.input) ? body.input : [body.input];
-      return json(res, 200, {
-        object: "list",
-        model: body.model ?? "text-embedding-3-small",
-        data: inputs.map((_, index) => ({
-          object: "embedding",
-          index,
-          embedding: Array(8).fill(0.125),
-        })),
-        usage: { prompt_tokens: 1, total_tokens: 1 },
+    if (!recorded.has(scoped.scenario)) recorded.set(scoped.scenario, []);
+    recorded
+      .get(scoped.scenario)
+      .push({
+        at: new Date().toISOString(),
+        method: req.method,
+        path: req.url,
+        headers: req.headers,
+        body: parseRecorded(raw),
       });
-    }
-    json(res, 404, { error: { message: `no route ${req.url}` } });
+    const respond = () =>
+      scoped.status
+        ? json(res, scoped.status, {
+            error: {
+              message: `mock-llm scenario ${scoped.scenario} answers ${scoped.status}`,
+              type: "server_error",
+            },
+          })
+        : answer(req, res, path, serving, raw);
+    if (scoped.latencyMs) setTimeout(respond, scoped.latencyMs);
+    else respond();
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  createServer(handleRequest).listen(PORT, () => console.log(`mock-llm on :${PORT}`));
+function answer(req, res, path, serving, raw) {
+  if (
+    (path === "/model/v1/models" && req.method !== "GET") ||
+    (path === "/model/v1/embed" && req.method !== "POST")
+  ) {
+    return json(res, 405, { error: { message: "method not allowed" } });
+  }
+  let body;
+  try {
+    body = raw ? JSON.parse(raw) : {};
+  } catch {
+    body = null;
+  }
+  // Rejects bad syntax and valid-but-non-object JSON (`null`, `42`, `"x"`)
+  // alike: the route handlers read properties off `body` unguarded.
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    (serving && Array.isArray(body))
+  ) {
+    return json(res, 400, {
+      error: { message: "invalid JSON body", type: "invalid_request_error" },
+    });
+  }
+  if (path === "/model/v1/models") {
+    return json(res, 200, { models: ["text_embedding"] });
+  }
+  if (path === "/model/v1/embed") {
+    const inputs = Array.isArray(body.text) ? body.text : [body.text];
+    // tracer/queries/eval_clustering.py _EMBED_BATCH_SIZE=64; the real
+    // ModelServingClient expects one vector per input; this mock uses eight dimensions.
+    if (
+      Object.keys(body).sort().join(",") !== "input_type,text" ||
+      body.input_type !== "text" ||
+      inputs.length < 1 ||
+      inputs.length > 64 ||
+      !inputs.every(
+        (text) => typeof text === "string" && text.trim().length > 0,
+      )
+    ) {
+      return json(res, 400, {
+        error: { message: "expected input_type=text and 1..64 nonempty texts" },
+      });
+    }
+    return json(res, 200, {
+      embeddings: inputs.map(() => Array(8).fill(0.125)),
+    });
+  }
+  if (path === "/v1/models") {
+    return json(res, 200, {
+      object: "list",
+      data: MODELS.map((id) => ({ id, object: "model", owned_by: "e2e" })),
+    });
+  }
+  if (path === "/v1/chat/completions") {
+    const content = reply(body.messages);
+    const model = body.model ?? "gpt-4o-mini";
+    if (body.stream) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+      });
+      const chunk = (delta, finish = null) =>
+        res.write(
+          `data: ${JSON.stringify({
+            id: "chatcmpl-e2e",
+            object: "chat.completion.chunk",
+            model,
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`,
+        );
+      chunk({ role: "assistant" });
+      // Zero-width split after whitespace: the deltas concatenate back to
+      // `content` byte-for-byte, so streamed and non-streamed output match.
+      for (const part of content.split(/(?<=\s)/)) chunk({ content: part });
+      chunk({}, "stop");
+      res.write("data: [DONE]\n\n");
+      return res.end();
+    }
+    return json(res, 200, {
+      id: "chatcmpl-e2e",
+      object: "chat.completion",
+      model,
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 7, completion_tokens: 7, total_tokens: 14 },
+    });
+  }
+  if (path === "/v1/embeddings") {
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    return json(res, 200, {
+      object: "list",
+      model: body.model ?? "text-embedding-3-small",
+      data: inputs.map((_, index) => ({
+        object: "embedding",
+        index,
+        embedding: Array(8).fill(0.125),
+      })),
+      usage: { prompt_tokens: 1, total_tokens: 1 },
+    });
+  }
+  json(res, 404, { error: { message: `no route ${req.url}` } });
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  createServer(handleRequest).listen(PORT, () =>
+    console.log(`mock-llm on :${PORT}`),
+  );
 }

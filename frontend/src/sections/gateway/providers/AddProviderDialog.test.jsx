@@ -727,12 +727,67 @@ describe("AddProviderDialog model discovery", () => {
     });
   });
 
+  it("presets OpenRouter's endpoint and lists its models with the typed key", async () => {
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["anthropic/claude-sonnet-5.5"] }),
+      ),
+    );
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "OpenRouter" }));
+
+    expect(screen.getByLabelText(/^Base URL/)).toHaveValue(
+      "https://openrouter.ai/api",
+    );
+    expect(screen.getByLabelText("API Path Prefix")).toHaveValue("/v1");
+    expect(screen.getByLabelText(/^API Key/)).toHaveAttribute(
+      "placeholder",
+      "sk-or-...",
+    );
+    expect(
+      screen.getByText(/billed by OpenRouter, with no gateway markup/),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: "sk-or-test" },
+    });
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    expect(fetchMutate.mock.calls.at(-1)[0]).toMatchObject({
+      baseUrl: "https://openrouter.ai/api",
+      apiKey: "sk-or-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/v1",
+    });
+
+    const models = await screen.findByPlaceholderText(/Select models/i);
+    // Escape closes the list first: with it open, the blur from clicking Add
+    // Provider auto-selects the highlighted option, which un-picks it.
+    await userEvent.type(models, "anthropic/claude-sonnet-5.5{enter}{escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("openrouter");
+    expect(payload.config).toMatchObject({
+      base_url: "https://openrouter.ai/api",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      api_key: "sk-or-test",
+      models: ["anthropic/claude-sonnet-5.5"],
+    });
+  });
+
   it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
     // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
     // typed by hand for chat completions — but it does list aggregator IDs
     // like `openai/gpt-4o`, which must still get tagged.
     fetchMutate.mockImplementation(
-      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["openai/gpt-4o"] }),
+      ),
     );
     renderEditDialogFor("perplexity", {
       base_url: "https://api.perplexity.ai",
@@ -746,7 +801,9 @@ describe("AddProviderDialog model discovery", () => {
       expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
     );
 
-    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    const sonarChip = screen
+      .getByText("sonar")
+      .closest("li, [class*='MuiChip']");
     expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
 
     const catalogueChip = screen

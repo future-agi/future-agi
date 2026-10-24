@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-admin-status-v1.schema.json",
+  "title": "mcp-admin-status-v1",
+  "description": "An org's MCP status. Servers are named by server_id, never id or name. The shape is the MCPAdminStatus definition of the admin contract.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/MCPAdminStatus"
+}

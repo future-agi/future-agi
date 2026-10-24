@@ -1,0 +1,163 @@
+{
+  "$comment": "Server-tool fees: what a model provider charges per use of a tool it runs itself, on top of tokens, at list price. Read by servertools.ParseFees. A row prices one tool of one provider (the model's vendor) for the models its globs name (matched on the model id after its last '/', lower case; no globs: every model), the first matching row winning; unit says which count it prices: request (one search, fetch or file search call), query (a Gemini search query), grounded_prompt (a Gemini prompt answered with grounding), container_hour (Anthropic code execution, per container, at least min_minutes), container_session (an OpenAI container of memory_gb, priced per session_minutes and billed by the minute, at least min_minutes) or gb_day (storage, recorded for estimates and never billed: billed false). input_tokens_per_unit adds that many input tokens per unit at the model's input price. free_with lists request tool versions that make the fee 0 (<tool>>=<version>). No free allowance is ever assumed: the providers' free tiers belong to the upstream account, not to one customer.",
+  "version": 1,
+  "checked_at": "2026-10-15",
+  "fees": [
+    {
+      "provider": "anthropic",
+      "tool": "web_search",
+      "unit": "request",
+      "usd_per_unit": 0.01,
+      "note": "$10 per 1,000 searches; a search that errors is not billed (the upstream does not count it).",
+      "source": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool"
+    },
+    {
+      "provider": "anthropic",
+      "tool": "web_fetch",
+      "unit": "request",
+      "usd_per_unit": 0,
+      "note": "No charge beyond the tokens the fetched content adds.",
+      "source": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool"
+    },
+    {
+      "provider": "anthropic",
+      "tool": "code_execution",
+      "unit": "container_hour",
+      "usd_per_unit": 0.05,
+      "min_minutes": 5,
+      "free_with": ["web_search>=20260209", "web_fetch>=20260209"],
+      "note": "$0.05 per container-hour, 5-minute minimum; free when the request also carries web_search_20260209 or web_fetch_20260209 or later. The 1,550 free hours a month belong to the upstream organization and are never assumed. The response reports no duration, so each container a request names bills the 5-minute minimum, an estimate (usage_estimated), once per request even when the container is reused.",
+      "source": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool"
+    },
+    {
+      "provider": "openai",
+      "tool": "web_search",
+      "unit": "request",
+      "usd_per_unit": 0.01,
+      "models": ["gpt-4o-mini*", "gpt-4.1-mini*"],
+      "input_tokens_per_unit": 8000,
+      "note": "$10 per 1,000 calls; on these mini models search content is billed as a fixed block of 8,000 input tokens per call.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "web_search",
+      "unit": "request",
+      "usd_per_unit": 0.01,
+      "note": "$10 per 1,000 calls, plus search content tokens at the model's rates.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "web_search_preview",
+      "unit": "request",
+      "usd_per_unit": 0.01,
+      "models": ["o[0-9]*", "gpt-5*", "codex-*"],
+      "note": "Web search preview on reasoning models: $10 per 1,000 calls.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "web_search_preview",
+      "unit": "request",
+      "usd_per_unit": 0.025,
+      "note": "Web search preview on non-reasoning models: $25 per 1,000 calls; search content tokens are free.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "file_search",
+      "unit": "request",
+      "usd_per_unit": 0.0025,
+      "note": "$2.50 per 1,000 file search calls (Responses API).",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "file_search_storage",
+      "unit": "gb_day",
+      "usd_per_unit": 0.1,
+      "billed": false,
+      "note": "Vector-store storage, $0.10 per GB a day after the first GB. It accrues daily on the account that owns the store (BYOK only), never per request: recorded for run budgets and estimates, never billed.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "container",
+      "unit": "container_session",
+      "memory_gb": 1,
+      "usd_per_unit": 0.03,
+      "session_minutes": 20,
+      "min_minutes": 5,
+      "note": "Hosted shell and code interpreter containers: $0.03 per 20-minute session (1 GB), billed by the minute with a 5-minute minimum. The response reports no duration, so each request bills every container it names at the minimum, an estimate (usage_estimated): a container reused across requests within one session is estimated once per request, above the upstream's one session.",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "container",
+      "unit": "container_session",
+      "memory_gb": 4,
+      "usd_per_unit": 0.12,
+      "session_minutes": 20,
+      "min_minutes": 5,
+      "note": "$0.12 per 20-minute session (4 GB).",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "container",
+      "unit": "container_session",
+      "memory_gb": 16,
+      "usd_per_unit": 0.48,
+      "session_minutes": 20,
+      "min_minutes": 5,
+      "note": "$0.48 per 20-minute session (16 GB).",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "openai",
+      "tool": "container",
+      "unit": "container_session",
+      "memory_gb": 64,
+      "usd_per_unit": 1.92,
+      "session_minutes": 20,
+      "min_minutes": 5,
+      "note": "$1.92 per 20-minute session (64 GB).",
+      "source": "https://developers.openai.com/api/docs/pricing"
+    },
+    {
+      "provider": "google",
+      "tool": "google_search",
+      "unit": "query",
+      "usd_per_unit": 0.014,
+      "models": ["gemini-[3-9]*"],
+      "note": "Gemini 3 and later: $14 per 1,000 search queries (one prompt may run several).",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    },
+    {
+      "provider": "google",
+      "tool": "google_search",
+      "unit": "grounded_prompt",
+      "usd_per_unit": 0.035,
+      "note": "Gemini 2.5 and earlier: $35 per 1,000 grounded prompts; with dynamic retrieval only a response that carries a grounding source is charged.",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    },
+    {
+      "provider": "google",
+      "tool": "google_maps",
+      "unit": "grounded_prompt",
+      "usd_per_unit": 0.014,
+      "models": ["gemini-[3-9]*"],
+      "note": "Grounding with Google Maps on Gemini 3 and later: $14 per 1,000.",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    },
+    {
+      "provider": "google",
+      "tool": "google_maps",
+      "unit": "grounded_prompt",
+      "usd_per_unit": 0.025,
+      "note": "Grounding with Google Maps on Gemini 2.5: $25 per 1,000.",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    }
+  ]
+}

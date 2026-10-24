@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/org-config-mcp-v2.schema.json",
+  "title": "org-config-mcp-v2",
+  "description": "An org config carrying the mcp v2 section, as pushed to the gateway. The shape is the OrgConfig definition of the admin contract; this file only points at it, so the two can never drift. Resolve the reference by registering ../agentcc-admin.schema.json under its $id. mcp.servers.<id>.credential.secret and mcp.managed_tools.credentials.<id>.secret exist only in pushed payloads, never in a saved config.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/OrgConfig"
+}

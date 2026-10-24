@@ -51,6 +51,15 @@ def secondary_org_client(user, secondary_org_context):
     client.stop_workspace_injection()
 
 
+PUSH = "agentcc.views.org_config.AgentccOrgConfigViewSet._push_config_to_gateway"
+
+
+def _active(organization):
+    return AgentccOrgConfig.no_workspace_objects.get(
+        organization=organization, is_active=True, deleted=False
+    )
+
+
 def _make_config(organization, version=1, is_active=True, **overrides):
     defaults = {
         "organization": organization,
@@ -168,6 +177,120 @@ class TestOrgConfigCreate:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestOrgConfigCreateKeepsAbsentSections:
+    """POST replaces only the sections it names: a save from the Fallbacks,
+    Guardrails or settings screens keeps managed models as they are."""
+
+    @patch(PUSH, return_value=True)
+    def test_post_without_managed_models_keeps_opt_in(
+        self, mock_push, auth_client, user
+    ):
+        _make_config(
+            user.organization,
+            managed_models={"enabled": True},
+            budgets={"enabled": True, "org_limit": 25},
+        )
+
+        response = auth_client.post(
+            "/agentcc/org-configs/",
+            {"routing": {"strategy": "round_robin"}},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.json()
+        active = _active(user.organization)
+        assert active.version == 2
+        assert active.managed_models == {"enabled": True}
+        assert active.budgets == {"enabled": True, "org_limit": 25}
+        assert active.routing == {"strategy": "round_robin"}
+        assert response.json()["result"]["warnings"] == []
+        mock_push.assert_called_once()
+
+    @patch(PUSH, return_value=True)
+    def test_post_with_empty_managed_models_clears(self, _push, auth_client, user):
+        _make_config(
+            user.organization,
+            managed_models={"enabled": True},
+            routing={"strategy": "round_robin"},
+        )
+
+        response = auth_client.post(
+            "/agentcc/org-configs/", {"managed_models": {}}, format="json"
+        )
+
+        assert response.status_code == 200, response.json()
+        active = _active(user.organization)
+        assert active.managed_models == {}
+        assert active.routing == {"strategy": "round_robin"}
+        assert response.json()["result"]["warnings"] == [
+            {"code": "managed_models_change", "from": True, "to": False}
+        ]
+
+    @patch(PUSH, return_value=True)
+    def test_post_with_null_managed_models_clears(self, _push, auth_client, user):
+        _make_config(
+            user.organization,
+            managed_models={"enabled": True},
+            routing={"strategy": "round_robin"},
+        )
+
+        response = auth_client.post(
+            "/agentcc/org-configs/", {"managed_models": None}, format="json"
+        )
+
+        assert response.status_code == 200, response.json()
+        active = _active(user.organization)
+        assert active.managed_models == {}
+        assert active.routing == {"strategy": "round_robin"}
+
+    @patch(PUSH, return_value=True)
+    def test_post_replaces_a_named_section_whole(self, _push, auth_client, user):
+        _make_config(
+            user.organization,
+            routing={"strategy": "round_robin", "auto": {"preference": "cost"}},
+        )
+
+        response = auth_client.post(
+            "/agentcc/org-configs/",
+            {"routing": {"strategy": "least_latency"}},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.json()
+        assert _active(user.organization).routing == {"strategy": "least_latency"}
+
+    @patch(PUSH, return_value=True)
+    def test_post_validates_a_named_section(self, mock_push, auth_client, user):
+        _make_config(user.organization, managed_models={"enabled": True})
+
+        response = auth_client.post(
+            "/agentcc/org-configs/",
+            {"managed_models": {"enabled": "yes"}},
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert _active(user.organization).version == 1
+        mock_push.assert_not_called()
+
+    @patch(PUSH, return_value=False)
+    def test_post_reports_a_failed_gateway_sync(self, _push, auth_client, user):
+        _make_config(user.organization)
+
+        response = auth_client.post(
+            "/agentcc/org-configs/", {"cache": {"enabled": True}}, format="json"
+        )
+
+        assert response.status_code == 200, response.json()
+        result = response.json()["result"]
+        assert result["gateway_synced"] is False
+        assert result["gateway_warning"]
+        assert [w["code"] for w in result["warnings"]] == ["gateway_sync_failed"]
+        assert _active(user.organization).version == 2
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestOrgConfigImmutable:
     def test_put_returns_400_because_immutable(self, auth_client, user):
         config = _make_config(user.organization, version=1)
@@ -200,9 +323,7 @@ class TestOrgConfigActivate:
         old_active = _make_config(user.organization, version=1, is_active=True)
         new_version = _make_config(user.organization, version=2, is_active=False)
 
-        response = auth_client.post(
-            f"/agentcc/org-configs/{new_version.id}/activate/"
-        )
+        response = auth_client.post(f"/agentcc/org-configs/{new_version.id}/activate/")
 
         assert response.status_code == 200, response.json()
         old_active.refresh_from_db()
@@ -210,16 +331,54 @@ class TestOrgConfigActivate:
         assert old_active.is_active is False
         assert new_version.is_active is True
         assert response.json()["result"]["gateway_synced"] is True
+        assert response.json()["result"]["warnings"] == []
         mock_push.assert_called_once()
 
-    def test_activate_on_already_active_is_idempotent(self, auth_client, user):
+    @patch(PUSH, return_value=True)
+    def test_activate_warns_managed_change(self, _push, auth_client, user):
+        _make_config(user.organization, version=1, managed_models={"enabled": False})
+        opted_in = _make_config(
+            user.organization,
+            version=2,
+            is_active=False,
+            managed_models={"enabled": True},
+        )
+
+        response = auth_client.post(f"/agentcc/org-configs/{opted_in.id}/activate/")
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["warnings"] == [
+            {"code": "managed_models_change", "from": False, "to": True}
+        ]
+        assert _active(user.organization).pk == opted_in.pk
+
+    @patch(PUSH, return_value=True)
+    def test_activate_warns_when_rollback_turns_managed_off(
+        self, _push, auth_client, user
+    ):
+        older = _make_config(user.organization, version=1, is_active=False)
+        _make_config(user.organization, version=2, managed_models={"enabled": True})
+
+        response = auth_client.post(f"/agentcc/org-configs/{older.id}/activate/")
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["warnings"] == [
+            {"code": "managed_models_change", "from": True, "to": False}
+        ]
+
+    @patch(PUSH, return_value=True)
+    def test_activate_on_already_active_is_idempotent(
+        self, mock_push, auth_client, user
+    ):
         active = _make_config(user.organization, version=1, is_active=True)
 
         response = auth_client.post(f"/agentcc/org-configs/{active.id}/activate/")
         assert response.status_code == 200
+        assert response.json()["result"]["warnings"] == []
         # Idempotent path returns the current config without touching the DB.
         active.refresh_from_db()
         assert active.is_active is True
+        mock_push.assert_not_called()
 
     def test_activate_cross_tenant_returns_404(
         self, user, secondary_org_context, secondary_org_client

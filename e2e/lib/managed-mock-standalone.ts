@@ -4,22 +4,29 @@
 //
 // The one inspector checks what both stacks share: localhost endpoints and an
 // explicit local Docker context; every service running in the managed project
-// on its one bridge network; the harness ports; the mock's read-only sources;
+// on its default bridge network (and the public members on e2e-public); the
+// harness ports; the mock's read-only sources;
 // and gateway.e2e.yaml routing every model to mock-llm only. In Standalone the
 // gateway, API, workers and UI all run in the single `app` container, so this
 // adds what differs:
-//   - the gateway reads e2e/stack/gateway.e2e.yaml from a read-only bind;
+//   - the gateway reads its profile's config (lib/profile.ts: gateway.e2e.yaml,
+//     or gateway.alt.yaml under E2E_GATEWAY_PROFILE=alt) from a read-only bind;
 //   - `app`'s only extra hosts are the in-app sandbox and the gateway alias;
 //   - the Google credential file is the read-only /dev/null suppression;
 //   - `app` carries no real provider key, licence, notification credential or
 //     proxy, its gateway wiring stays on loopback, and telemetry is off.
+// The public-classified e2e-public network (lib/public-network.ts) holds `app`,
+// mock-llm and webhook-sink; the shared inspector checks it. smtp-sink is on the
+// default network only, carries no model traffic and is not inspected.
 // Not re-expressed: the Python constructor attestation of the background eval
 // client (managed-mock-background.py pins Distributed hostnames such as
 // temporal:7233 and agentcc-gateway:8080). evalBackground therefore adds only
 // the environment pins Distributed's backend and worker carry (requiredMockValues).
 import { E2E } from './env';
-import { containerEnvironment, gatewayFile, mockFile, requiredMockValues, requireSafe, validateEnvironmentEntries,
-  type MockStack, type MockTopology } from './managed-mock';
+import { containerEnvironment, mockFile, profileFile, profileMountReason, requiredMockValues, requireSafe, sinkFile,
+  validateEnvironmentEntries, type MockStack, type MockTopology } from './managed-mock';
+import type { GatewayProfile } from './profile';
+import { PUBLIC_NETWORK } from './public-network';
 
 // docker-compose.yml app: the gateway, the API it syncs from and Temporal share the container.
 const STANDALONE: MockTopology = { gateway: 'http://127.0.0.1:8080', controlPlane: 'http://127.0.0.1:8000',
@@ -33,20 +40,24 @@ export function validateStandaloneAppEnvironment(env: Record<string, string>, ev
   }
 }
 
-export function standaloneMockStack(evalBackground: boolean): MockStack {
+export function standaloneMockStack(evalBackground: boolean, profile: GatewayProfile = 'stock'): MockStack {
   return {
+    profile,
     project: 'futureagi-e2e-standalone',
-    services: ['app', 'mock-llm', 'postgres', 'clickhouse'],
+    services: ['app', 'mock-llm', 'webhook-sink', 'postgres', 'clickhouse'],
+    publicMembers: PUBLIC_NETWORK.members.standalone,
     // docker-compose.yml maps code-executor to the in-app sandbox; the overlay adds
     // the agentcc-gateway alias for flows that register the Distributed gateway URL.
     extraHosts: { app: ['agentcc-gateway:127.0.0.1', 'code-executor:127.0.0.1'] },
     endpoints: [
       ['app', '3000/tcp', E2E.appUrl], ['app', '8000/tcp', E2E.apiUrl], ['app', '8080/tcp', E2E.gatewayUrl],
       ['postgres', '5432/tcp', E2E.pgUrl], ['clickhouse', '8123/tcp', E2E.chUrl],
+      ['mock-llm', '8080/tcp', E2E.mockLlmUrl], ['webhook-sink', '8080/tcp', E2E.webhookSinkUrl],
     ],
     sources: [
-      ['app', '/etc/futureagi/secrets/agentcc.yaml', gatewayFile],
+      ['app', '/etc/futureagi/secrets/agentcc.yaml', profileFile(profile), undefined, profileMountReason(profile)],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
+      ['webhook-sink', '/srv/server.mjs', sinkFile, ['node', '/srv/server.mjs']],
     ],
     check: ({ selected }) => {
       const vertex = selected.app.Mounts.filter(m => m.Destination === '/etc/futureagi/secrets/vertex.json');

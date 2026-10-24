@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -23,6 +24,10 @@ type StreamGuardrailChecker struct {
 	failureAction string // "stop" or "disclaimer"
 	accumulated   strings.Builder
 	lastCheckLen  int
+	// arguments is what the checks read in the request's tool calls'
+	// arguments, shared by every check of the stream: the request is the
+	// same at each one.
+	arguments *argumentsCache
 }
 
 // NewStreamChecker creates a new streaming guardrail checker.
@@ -47,9 +52,10 @@ func NewStreamChecker(
 		keyPolicy:     keyPolicy,
 		requestPolicy: requestPolicy,
 		request:       request,
-		metadata:      metadata,
+		metadata:      credentials.WithoutCredentials(metadata), // as the plugin's checks get it
 		checkInterval: interval,
 		failureAction: action,
+		arguments:     newArgumentsCacheFor(request),
 	}
 }
 
@@ -127,7 +133,7 @@ func (sc *StreamGuardrailChecker) runCheck(ctx context.Context) *StreamCheckResu
 		Metadata: sc.metadata,
 	}
 
-	result := sc.engine.RunPost(ctx, input, sc.keyPolicy, sc.requestPolicy)
+	result := sc.engine.RunPost(withCache(ctx, sc.arguments), input, sc.keyPolicy, sc.requestPolicy)
 	if !result.Blocked {
 		return &StreamCheckResult{}
 	}

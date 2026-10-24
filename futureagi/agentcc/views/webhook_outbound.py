@@ -4,6 +4,7 @@ import json
 
 import requests as http_requests
 import structlog
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -23,6 +24,27 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+DELIVER_EVENT_ACTIVITY = "deliver_agentcc_webhook_event_activity"
+# The request waits at most this long for Temporal to accept the start.
+START_TIMEOUT_SECONDS = 2
+
+
+def _start_event_delivery(event_id):
+    """Start one event's delivery on Temporal; on failure the schedule delivers it."""
+    try:
+        from tfc.temporal.drop_in import runner
+
+        runner.start_activity(
+            DELIVER_EVENT_ACTIVITY,
+            args=(event_id,),
+            queue="default",
+            dispatch_timeout_seconds=START_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "webhook_event_retry_start_failed", event_id=event_id, error=str(exc)
+        )
 
 
 class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -186,7 +208,9 @@ class AgentccWebhookViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(str(e))
 
 
-class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccWebhookEventViewSet(
+    BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet
+):
     """Read-only view of webhook event delivery records."""
 
     permission_classes = [IsAuthenticated]
@@ -219,14 +243,20 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retrieve_error", error=str(e))
             return self._gm.not_found("Webhook event not found")
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
-        """Manually retry a failed webhook event delivery."""
+        """Retry a webhook event now: reset it to pending and start its delivery.
+
+        The delivery runs on Temporal, off the request thread; when the start
+        fails, the agentcc-webhook-delivery schedule delivers it within 30 s.
+        """
         try:
             instance = self.get_object()
             if instance.status == AgentccWebhookEvent.DELIVERED:
@@ -245,8 +275,12 @@ class AgentccWebhookEventViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
                     "updated_at",
                 ]
             )
+            event_id = str(instance.id)
+            transaction.on_commit(lambda: _start_event_delivery(event_id))
 
-            return self._gm.success_response(AgentccWebhookEventSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccWebhookEventSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("webhook_event_retry_error", error=str(e))
             return self._gm.bad_request(str(e))

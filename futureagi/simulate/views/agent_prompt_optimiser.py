@@ -155,6 +155,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = AgentPromptOptimiserRunSerializer
+    # A run's organization is its test execution's run test's.
+    organization_lookup = "test_execution__run_test__organization"
 
     def get_queryset(self):
         queryset = (

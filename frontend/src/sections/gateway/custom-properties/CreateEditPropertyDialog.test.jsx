@@ -1,62 +1,50 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCustomPropertyPayload,
-  getDefaultValueError,
+  hasStoredDefault,
 } from "./customPropertyForm";
 
 describe("CreateEditPropertyDialog helpers", () => {
-  it("rejects defaults that do not match the selected property type", () => {
+  // A Default is not applied anywhere: the payload never carries one, so the
+  // API keeps a stored default as it is unless the user removes it.
+  it("sends no default unless the user removes a stored one", () => {
+    const form = {
+      name: "priority",
+      description: "",
+      property_type: "number",
+      required: false,
+      allowed_values: ["ignored"],
+    };
+    const payload = buildCustomPropertyPayload(form);
+    expect(payload).toEqual({
+      name: "priority",
+      description: "",
+      property_type: "number",
+      required: false,
+      allowed_values: [],
+    });
     expect(
-      getDefaultValueError({
-        property_type: "number",
-        allowed_values: [],
-        default_value: "abc",
-      }),
-    ).toBe("Default must be a number");
-
-    expect(
-      getDefaultValueError({
-        property_type: "boolean",
-        allowed_values: [],
-        default_value: "yes",
-      }),
-    ).toBe("Default must be true or false");
-
-    expect(
-      getDefaultValueError({
-        property_type: "enum",
-        allowed_values: ["alpha", "beta"],
-        default_value: "gamma",
-      }),
-    ).toBe("Default must match an allowed value");
+      buildCustomPropertyPayload({ ...form, clearStoredDefault: true }),
+    ).toMatchObject({ default_value: null });
   });
 
-  it("coerces valid defaults before submitting to the API", () => {
+  it("keeps Required and the allowed values of an enum", () => {
     expect(
       buildCustomPropertyPayload({
-        name: "priority",
+        name: "tier",
         description: "",
-        property_type: "number",
-        required: false,
-        allowed_values: ["ignored"],
-        default_value: "42",
+        property_type: "enum",
+        required: true,
+        allowed_values: ["gold", "silver"],
       }),
-    ).toMatchObject({
-      allowed_values: [],
-      default_value: 42,
-    });
+    ).toMatchObject({ required: true, allowed_values: ["gold", "silver"] });
+  });
 
-    expect(
-      buildCustomPropertyPayload({
-        name: "flag",
-        description: "",
-        property_type: "boolean",
-        required: false,
-        allowed_values: [],
-        default_value: " false ",
-      }),
-    ).toMatchObject({
-      default_value: false,
-    });
+  it("knows a stored default, including false and 0", () => {
+    expect(hasStoredDefault({ default_value: "us" })).toBe(true);
+    expect(hasStoredDefault({ default_value: false })).toBe(true);
+    expect(hasStoredDefault({ default_value: 0 })).toBe(true);
+    expect(hasStoredDefault({ default_value: null })).toBe(false);
+    expect(hasStoredDefault({})).toBe(false);
   });
 });

@@ -1,0 +1,338 @@
+{
+  "provider": "anthropic-direct",
+  "upstream_slug": "anthropic",
+  "upstream_fee_bps": 0,
+  "as_of": "2026-09-07",
+  "source_url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+  "notes": "Prices: the gateway's bundled LiteLLM price list (internal/modeldb/litellm.json, refreshed 2026-09-07), which lists Anthropic's published API list prices; they equal OpenRouter's listed prices for every model here. Model details (context_length, max_output, supported_parameters, modalities): OpenRouter's public model list, as bundled (internal/catalog/openrouter_snapshot.json), written by scripts/update-provider-catalogs.sh price-card. claude-sonnet-4-5-20250929 is capped at a 200000-token context: above 200k prompt tokens Anthropic charges a higher tier this card cannot express (the update script never raises a card's context_length). Before enabling a provider that uses this card, confirm every price against https://www.anthropic.com/pricing, record the resale agreement in resale_terms_ref, and set data_collection and zdr from the account's terms. Until then data_collection is unknown, so a managed request under the default data_collection=deny never selects it.",
+  "models": [
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "canonical": "anthropic/claude-haiku-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000001",
+        "completion": "0.000005",
+        "cache_read": "0.0000001",
+        "cache_write": "0.00000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5-20250929",
+      "canonical": "anthropic/claude-sonnet-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "cache_read": "0.0000003",
+        "cache_write": "0.00000375"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-opus-4-5-20251101",
+      "canonical": "anthropic/claude-opus-4.5",
+      "context_length": 200000,
+      "max_output": 64000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["file", "image", "text"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "canonical": "anthropic/claude-sonnet-4.6",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "cache_read": "0.0000003",
+        "cache_write": "0.00000375"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-opus-4-6-20260205",
+      "canonical": "anthropic/claude-opus-4.6",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-opus-4-7-20260416",
+      "canonical": "anthropic/claude-opus-4.7",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-opus-4-8",
+      "canonical": "anthropic/claude-opus-4.8",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-sonnet-5",
+      "canonical": "anthropic/claude-sonnet-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "cache_read": "0.0000002",
+        "cache_write": "0.0000025"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-opus-5",
+      "canonical": "anthropic/claude-opus-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "cache_read": "0.0000005",
+        "cache_write": "0.00000625"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-fable-5",
+      "canonical": "anthropic/claude-fable-5",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.00001",
+        "completion": "0.00005",
+        "cache_read": "0.000001",
+        "cache_write": "0.0000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    },
+    {
+      "id": "claude-fable-5-1",
+      "canonical": "anthropic/claude-fable-5.1",
+      "context_length": 1000000,
+      "max_output": 128000,
+      "prices": {
+        "prompt": "0.00001",
+        "completion": "0.00005",
+        "cache_read": "0.00000025",
+        "cache_write": "0.0000125"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "modalities": {
+        "input": ["text", "image", "file"],
+        "output": ["text"]
+      }
+    }
+  ]
+}

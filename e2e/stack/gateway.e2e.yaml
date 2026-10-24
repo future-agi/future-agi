@@ -28,6 +28,23 @@ providers:
       - o1-mini
       - turing_flash
 
+  # The managed-models surface (Models page, opt-in, credits) on the same
+  # deterministic mock: `managed: true` makes this a provider FutureAGI holds
+  # the credentials for, and `type: openrouter` seeds its catalog from the
+  # OpenRouter snapshot bundled with the gateway (catalog.Seed reads the
+  # type, not catalog_source). The explicit base_url wins over the preset's,
+  # so calls still reach mock-llm (the preset only adds the /v1 path prefix).
+  fagi-managed:
+    base_url: "http://mock-llm:8080"
+    api_key: "e2e-mock"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+
   # anthropic:
   #   base_url: "https://api.anthropic.com"
   #   api_key: "${ANTHROPIC_API_KEY}"
@@ -356,6 +373,21 @@ providers:
 #       input_per_mtok: 1.00
 #       output_per_mtok: 5.00
 
+# Managed billing for fagi-managed. catalog_refresh 0s keeps the bundled
+# snapshot (no live catalog fetch). require_redis false holds credits in the
+# gateway's memory, a test-only ledger: the E2E gateway config has no Redis.
+# The flows push no credits to the gateway. When an org opts in, Django creates
+# its managed-credit account at granted 0 and pushes it with PUT
+# /-/orgs/{org}/credits/granted (agentcc/services/config_push.py
+# _ensure_managed_account -> ee/usage/services/managed_credits.py
+# ensure_account_pushed), so its first managed call gets 402, not 503
+# (GW-E2E-007).
+managed:
+  markup_percent: 5
+  require_credits: true
+  require_redis: false
+  catalog_refresh: 0s
+
 logging:
   level: info
   # request_logging:
@@ -400,10 +432,11 @@ logging:
 #   max_age: 86400
 #   allow_credentials: false
 
-# Restrict inbound traffic by IP / CIDR.
+# Restrict inbound traffic by IP / CIDR. The client IP comes from the TCP peer
+# unless server.trusted_proxies (or server.trusted_hops) is set; see server.
+# ip_acl.trusted_proxies is not read.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 

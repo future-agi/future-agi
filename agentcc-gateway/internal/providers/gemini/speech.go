@@ -73,7 +73,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, "", models.ErrInternal(fmt.Sprintf("gemini: creating speech request: %v", err))
+		return nil, "", models.ErrInternal("gemini: creating speech request: " + withoutURL(err))
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -87,7 +87,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		if ctx.Err() != nil {
 			return nil, "", models.ErrGatewayTimeout("gemini: speech request timed out")
 		}
-		return nil, "", models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: speech request failed: %v", err))
+		return nil, "", models.ErrUpstreamProvider(0, "gemini: speech request failed: "+withoutURL(err))
 	}
 	defer resp.Body.Close()
 

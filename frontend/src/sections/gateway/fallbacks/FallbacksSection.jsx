@@ -27,16 +27,26 @@ import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useFallbackConfig } from "./hooks/useFallbackConfig";
+import {
+  fallbackChainsOn,
+  failoverOnTimeout,
+  providerFailoverOn,
+  retryOnTimeout,
+} from "./fallbackSwitches";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const DEFAULT_FAILOVER_CODES = [429, 500, 502, 503, 504];
-const DEFAULT_RETRY_CODES = [429, 500, 502, 503];
-const DEFAULT_CB_CODES = [500, 502, 503, 504];
+// The gateway's own defaults when a list is unset (routing.DefaultFailover-,
+// DefaultRetry- and DefaultCBStatusCodes), so an unset list shows what runs.
+const DEFAULT_RETRY_CODES = [429, 500, 502, 503, 504];
+const DEFAULT_CB_CODES = [429, 500, 502, 503, 504];
 
 // ---------------------------------------------------------------------------
 // Collapsible ConfigSection
@@ -88,6 +98,7 @@ const ConfigSection = ({
                     checked={Boolean(enabled)}
                     onClick={(e) => e.stopPropagation()}
                     onChange={(e) => onToggle(e.target.checked)}
+                    inputProps={{ "aria-label": title }}
                   />
                 }
                 label=""
@@ -395,6 +406,8 @@ const ModelTimeoutsEditor = ({ timeouts, onChange, models }) => {
 // ---------------------------------------------------------------------------
 
 const FallbacksSection = () => {
+  // Saving fallbacks writes the org's gateway config: Owner or Admin only.
+  const { canEdit } = useGatewayAdmin();
   const navigate = useNavigate();
   const { routing, isLoading, error, refetch, saveRouting, isSaving } =
     useFallbackConfig();
@@ -617,15 +630,20 @@ const FallbacksSection = () => {
             <Typography variant="body2">
               You have unsaved changes. Save to apply them to the gateway.
             </Typography>
-            <LoadingButton
-              loading={isSaving}
-              variant="contained"
-              size="small"
-              onClick={handleSave}
-              startIcon={<Iconify icon="mdi:content-save-outline" width={18} />}
-            >
-              Save & Apply
-            </LoadingButton>
+            <GatewayAdminOnly allowed={canEdit}>
+              <LoadingButton
+                loading={isSaving}
+                variant="contained"
+                size="small"
+                onClick={handleSave}
+                disabled={!canEdit}
+                startIcon={
+                  <Iconify icon="mdi:content-save-outline" width={18} />
+                }
+              >
+                Save & Apply
+              </LoadingButton>
+            </GatewayAdminOnly>
           </Stack>
         </Alert>
       )}
@@ -637,34 +655,15 @@ const FallbacksSection = () => {
           subtitle="When all providers for a model fail, try the next model in the chain"
           icon="mdi:link-variant"
           defaultOpen
-          enabled={draft.fallback_enabled ?? draft.fallbackEnabled ?? true}
+          enabled={fallbackChainsOn(draft)}
           onToggle={(v) => updateDraft("fallback_enabled", v)}
         >
           <Stack spacing={2}>
-            {/* Default model */}
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Typography variant="body2" sx={{ minWidth: 120 }}>
-                Default Model
-              </Typography>
-              <TextField
-                select
-                size="small"
-                value={draft.default_model || draft.defaultModel || ""}
-                onChange={(e) => updateDraft("default_model", e.target.value)}
-                sx={{ minWidth: 200 }}
-              >
-                <MenuItem value="">
-                  <em>None</em>
-                </MenuItem>
-                {availableModels.map((m) => (
-                  <MenuItem key={m} value={m}>
-                    {m}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Stack>
-
-            <Divider />
+            <Typography variant="caption" color="text.secondary">
+              Until you turn this switch on or off, chains run whenever one
+              exists. A request moves down its chain on the Provider Failover
+              status codes (429, 500, 502, 503 and 504 when none are set).
+            </Typography>
 
             {/* Chains */}
             {fallbackChains.length === 0 ? (
@@ -709,9 +708,9 @@ const FallbacksSection = () => {
         {/* ---- Provider Failover ---- */}
         <ConfigSection
           title="Provider Failover"
-          subtitle="Automatically try a different provider when one fails"
+          subtitle="When one of your providers fails, try another of your providers that serves the model"
           icon="mdi:swap-horizontal-bold"
-          enabled={failover.enabled ?? true}
+          enabled={providerFailoverOn(draft)}
           onToggle={(v) => updateNested("failover", "enabled", v)}
         >
           <Stack spacing={2}>
@@ -758,9 +757,7 @@ const FallbacksSection = () => {
                   control={
                     <Switch
                       size="small"
-                      checked={
-                        failover.on_timeout ?? failover.onTimeout ?? true
-                      }
+                      checked={failoverOnTimeout(draft)}
                       onChange={(e) =>
                         updateNested("failover", "on_timeout", e.target.checked)
                       }
@@ -858,7 +855,7 @@ const FallbacksSection = () => {
               control={
                 <Switch
                   size="small"
-                  checked={retry.on_timeout ?? retry.onTimeout ?? true}
+                  checked={retryOnTimeout(draft)}
                   onChange={(e) =>
                     updateNested("retry", "on_timeout", e.target.checked)
                   }
@@ -889,7 +886,7 @@ const FallbacksSection = () => {
         {/* ---- Circuit Breaker ---- */}
         <ConfigSection
           title="Circuit Breaker"
-          subtitle="Temporarily remove unhealthy providers from the routing pool"
+          subtitle="Stop calling a provider for a model after repeated failures, until the cooldown passes"
           icon="mdi:electric-switch"
           enabled={circuitBreaker.enabled ?? false}
           onToggle={(v) => updateNested("circuit_breaker", "enabled", v)}
@@ -1020,17 +1017,20 @@ const FallbacksSection = () => {
               >
                 Discard
               </Button>
-              <LoadingButton
-                loading={isSaving}
-                variant="contained"
-                size="small"
-                onClick={handleSave}
-                startIcon={
-                  <Iconify icon="mdi:content-save-outline" width={18} />
-                }
-              >
-                Save & Apply
-              </LoadingButton>
+              <GatewayAdminOnly allowed={canEdit}>
+                <LoadingButton
+                  loading={isSaving}
+                  variant="contained"
+                  size="small"
+                  onClick={handleSave}
+                  disabled={!canEdit}
+                  startIcon={
+                    <Iconify icon="mdi:content-save-outline" width={18} />
+                  }
+                >
+                  Save & Apply
+                </LoadingButton>
+              </GatewayAdminOnly>
             </Stack>
           </Stack>
         </Box>

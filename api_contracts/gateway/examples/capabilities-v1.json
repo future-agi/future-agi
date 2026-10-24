@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-10-15T09:00:00Z",
+  "endpoints": [
+    {
+      "endpoint": "chat.completions",
+      "launch_tier": "launch",
+      "providers": {
+        "openrouter": {
+          "status": "supported",
+          "credential_type": "managed",
+          "features": {
+            "stream": true,
+            "tools": true,
+            "json_schema": true,
+            "vision": true,
+            "audio_input": false,
+            "reasoning": true,
+            "prompt_caching": true
+          },
+          "managed_allowed": true,
+          "managed_resale_terms": "unconfirmed",
+          "source": "catalog",
+          "qualified": false,
+          "qualified_at": null
+        }
+      }
+    },
+    {
+      "endpoint": "embeddings",
+      "launch_tier": "launch",
+      "providers": {
+        "openai": {
+          "status": "supported",
+          "credential_type": "byok",
+          "features": {
+            "stream": false,
+            "tools": false,
+            "json_schema": false,
+            "vision": false,
+            "audio_input": false,
+            "reasoning": false,
+            "prompt_caching": false
+          },
+          "managed_allowed": false,
+          "managed_resale_terms": "unconfirmed",
+          "source": "qualified",
+          "qualified": true,
+          "qualified_at": "2026-10-12T18:20:00Z"
+        }
+      }
+    }
+  ]
+}

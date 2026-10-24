@@ -83,14 +83,16 @@ func TestEmbeddingKeepsInputAndElidesVectors(t *testing.T) {
 	}
 }
 
-// OCR's result is the extracted markdown; the page images are the input
-// rendered back and can be large.
+// OCR's result is the extracted markdown, kept when the org opted in under
+// the full content mode (ocr_test.go covers the metadata default);
+// the page images are the input rendered back and can be large.
 func TestOCRKeepsMarkdownAndElidesPageImages(t *testing.T) {
 	big := strings.Repeat("B", 300000)
 	rc := &models.RequestContext{
 		EndpointType: "ocr",
 		Metadata:     map[string]string{},
-		OCRRequest:   &models.OCRRequest{Model: "ocr-1", Document: models.OCRDocument{Type: "document_url", DocumentURL: "https://x/y.pdf"}},
+		Privacy:      models.Privacy{ContentMode: models.ContentModeFull},
+		OCRRequest:   &models.OCRRequest{Model: "ocr-1", Document: models.OCRDocument{Type: "document_url", DocumentURL: "https://x/y.pdf"}, KeepText: true},
 		OCRResponse: &models.OCRResponse{Pages: []models.OCRPage{
 			{Index: 0, Markdown: "# Invoice\ntotal 42", Images: []models.OCRImage{{ImageBase64: big}}},
 		}},

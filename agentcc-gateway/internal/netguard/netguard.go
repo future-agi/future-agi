@@ -36,7 +36,7 @@ var (
 	forbiddenNets = mustParseCIDRs(
 		"0.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255/32",
 		"::/128", "fe80::/10", "ff00::/8",
-		"100.100.100.200/32", "fd00:ec2::254/128", "168.63.129.16/32",
+		"100.100.100.200/32", "fd00:ec2::254/128", "fd20:ce::254/128", "168.63.129.16/32",
 	)
 	loopbackNets = mustParseCIDRs("127.0.0.0/8", "::1/128")
 	privateNets  = mustParseCIDRs("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
@@ -64,8 +64,22 @@ func inNets(ip net.IP, nets []*net.IPNet) bool {
 }
 
 // Classify says which class ip is in. IPv4-mapped IPv6 addresses count as
-// their IPv4 address (net.IPNet.Contains unmaps them).
+// their IPv4 address (net.IPNet.Contains unmaps them), and so do the IPv6
+// forms that carry an IPv4 address a translator or tunnel connects to
+// (embeddedIPv4): NAT64's well-known prefix, 6to4, IPv4-compatible and
+// Teredo. Such an address is in the stricter of its own class and its
+// embedded address's, so ::1 stays Loopback and :: Forbidden.
 func Classify(ip net.IP) Class {
+	class := classifyAddress(ip)
+	for _, v4 := range embeddedIPv4(ip) {
+		if c := classifyAddress(v4); c > class {
+			class = c
+		}
+	}
+	return class
+}
+
+func classifyAddress(ip net.IP) Class {
 	switch {
 	case inNets(ip, forbiddenNets):
 		return Forbidden
@@ -75,6 +89,41 @@ func Classify(ip net.IP) Class {
 		return Private
 	}
 	return Public
+}
+
+var (
+	nat64Net        = mustParseCIDRs("64:ff9b::/96")[0] // RFC 6052 well-known prefix
+	sixToFourNet    = mustParseCIDRs("2002::/16")[0]    // RFC 3056
+	teredoNet       = mustParseCIDRs("2001::/32")[0]    // RFC 4380
+	ipv4CompatNet   = mustParseCIDRs("::/96")[0]        // RFC 4291 2.5.5.1, deprecated
+	ipv6SpecialNets = mustParseCIDRs("::/127")          // :: and ::1, their own class
+)
+
+// embeddedIPv4 returns the IPv4 addresses an IPv6 address carries for a
+// translator or tunnel to connect to, or nil. Teredo carries two, the server
+// and the client (stored inverted); a connection may go to either.
+func embeddedIPv4(ip net.IP) []net.IP {
+	if ip.To4() != nil {
+		return nil // IPv4, or IPv4-mapped: classified as IPv4 already
+	}
+	ip = ip.To16()
+	if ip == nil {
+		return nil
+	}
+	switch {
+	case nat64Net.Contains(ip):
+		return []net.IP{net.IPv4(ip[12], ip[13], ip[14], ip[15])}
+	case sixToFourNet.Contains(ip):
+		return []net.IP{net.IPv4(ip[2], ip[3], ip[4], ip[5])}
+	case teredoNet.Contains(ip):
+		return []net.IP{
+			net.IPv4(ip[4], ip[5], ip[6], ip[7]),
+			net.IPv4(^ip[12], ^ip[13], ^ip[14], ^ip[15]),
+		}
+	case ipv4CompatNet.Contains(ip) && !inNets(ip, ipv6SpecialNets):
+		return []net.IP{net.IPv4(ip[12], ip[13], ip[14], ip[15])}
+	}
+	return nil
 }
 
 // Allowed reports whether a connection to an address in class c may go ahead.

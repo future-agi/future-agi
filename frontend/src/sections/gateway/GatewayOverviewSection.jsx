@@ -12,6 +12,7 @@ import {
   Grid,
   CardActionArea,
   Tooltip,
+  Alert,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation } from "@tanstack/react-query";
@@ -38,6 +39,17 @@ const STATUS_COLORS = {
   degraded: "warning",
   unreachable: "error",
 };
+
+// What a failed Check Health says. views/gateway.py health_check answers 400
+// with result {status: "unreachable", error} when the gateway does not
+// answer; src/utils/axios rejects with that body.
+function healthCheckFailure(err) {
+  const reason = err?.result?.error || err?.error || err?.message;
+  if (err?.result?.status === "unreachable") {
+    return reason ? `Gateway unreachable: ${reason}` : "Gateway unreachable";
+  }
+  return reason ? `Health check failed: ${reason}` : "Health check failed";
+}
 
 const QUICK_LINKS = [
   {
@@ -104,7 +116,9 @@ const GatewayOverviewSection = () => {
 
   const completionState = useMemo(
     () => ({
-      gatewayConnected: Boolean(gateway),
+      // Ticked only when the platform's last health check of the gateway
+      // succeeded (views/gateway.py list: "healthy" or "unreachable").
+      gatewayConnected: gateway?.status === "healthy",
       hasProviders: (gateway?.providerCount ?? 0) > 0,
       hasKeys: Array.isArray(apiKeys) && apiKeys.length > 0,
       hasRequests: Number(val(overview?.total_requests) ?? 0) > 0,
@@ -120,12 +134,17 @@ const GatewayOverviewSection = () => {
       );
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       refreshGateways();
-      enqueueSnackbar("Health check complete", { variant: "success" });
+      const status = data?.result?.status;
+      enqueueSnackbar(
+        status === "healthy" ? "Gateway healthy" : "Health check complete",
+        { variant: status === "healthy" ? "success" : "info" },
+      );
     },
-    onError: () => {
-      enqueueSnackbar("Health check failed", { variant: "error" });
+    onError: (err) => {
+      refreshGateways();
+      enqueueSnackbar(healthCheckFailure(err), { variant: "error" });
     },
   });
 
@@ -266,6 +285,26 @@ const GatewayOverviewSection = () => {
         </CardContent>
       </Card>
 
+      {gateway.status !== "healthy" && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 3 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => healthCheckMutation.mutate(gatewayId)}
+              disabled={healthCheckMutation.isPending}
+            >
+              {healthCheckMutation.isPending ? "Checking..." : "Check Health"}
+            </Button>
+          }
+        >
+          The gateway is not reachable from the platform: its last health check
+          reported {gateway.status || "no status"}.
+        </Alert>
+      )}
+
       {/* Getting Started Checklist */}
       <GettingStartedCard completionState={completionState} />
 
@@ -397,7 +436,7 @@ const GatewayOverviewSection = () => {
                     size="small"
                     variant="outlined"
                   />
-                  <Tooltip title="Check connectivity to all configured providers">
+                  <Tooltip title="Check that the platform can reach the gateway (providers are listed as configured, not called)">
                     <Button
                       size="small"
                       variant="outlined"

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/managed-settlement-v1.schema.json",
+  "title": "managed-settlement-v1",
+  "description": "One entry of the per-org settlement outbox stream mc:{<org>}:outbox, exactly as XADD writes it: every value is a string. Integers are decimal strings, usage_estimated is \"0\" or \"1\", and attempts is compact JSON matching $defs/AttemptSummary. A void entry carries zero amounts. Optional ids are empty strings when unknown.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "kind",
+    "request_id",
+    "generation_id",
+    "org_id",
+    "api_key_id",
+    "billed_micros",
+    "upstream_micros",
+    "markup_micros",
+    "markup_bps",
+    "hold_micros",
+    "landed_micros",
+    "upstream_fee_bps",
+    "processing_fee_bps",
+    "served_upstream_provider",
+    "upstream_key_id",
+    "model",
+    "provider",
+    "endpoint_id",
+    "cost_source",
+    "usage_estimated",
+    "attempts",
+    "catalog_snapshot_id",
+    "policy_version",
+    "agent_run_id",
+    "agent_id",
+    "ts_ms"
+  ],
+  "properties": {
+    "v": { "const": "1" },
+    "kind": { "type": "string", "enum": ["spend", "void"] },
+    "request_id": { "type": "string", "minLength": 1 },
+    "generation_id": { "type": "string", "minLength": 1 },
+    "org_id": { "type": "string", "minLength": 1 },
+    "api_key_id": { "type": "string" },
+    "billed_micros": { "$ref": "#/$defs/Micros" },
+    "upstream_micros": { "$ref": "#/$defs/Micros" },
+    "markup_micros": { "$ref": "#/$defs/Micros" },
+    "markup_bps": { "$ref": "#/$defs/Micros" },
+    "hold_micros": { "$ref": "#/$defs/Micros" },
+    "landed_micros": { "$ref": "#/$defs/Micros" },
+    "upstream_fee_bps": { "$ref": "#/$defs/Micros" },
+    "processing_fee_bps": { "$ref": "#/$defs/Micros" },
+    "served_upstream_provider": { "type": "string" },
+    "upstream_key_id": {
+      "type": "string",
+      "description": "key_hash of the per-org upstream key, or empty. Never the key."
+    },
+    "model": { "type": "string" },
+    "provider": { "type": "string" },
+    "endpoint_id": { "type": "string" },
+    "cost_source": {
+      "type": "string",
+      "enum": [
+        "provider_reported",
+        "catalog",
+        "catalog_max",
+        "price_card",
+        "modeldb",
+        "org_custom",
+        "unpriced"
+      ]
+    },
+    "usage_estimated": { "type": "string", "enum": ["0", "1"] },
+    "attempts": {
+      "type": "string",
+      "contentMediaType": "application/json",
+      "contentSchema": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/AttemptSummary" }
+      }
+    },
+    "catalog_snapshot_id": { "type": "string" },
+    "policy_version": { "type": "string" },
+    "agent_run_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "ts_ms": { "type": "string", "pattern": "^[0-9]+$" }
+  },
+  "$defs": {
+    "Micros": { "type": "string", "pattern": "^[0-9]+$" },
+    "AttemptSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "kind",
+        "provider",
+        "model",
+        "credential_type",
+        "upstream_micros",
+        "billed_micros",
+        "outcome"
+      ],
+      "properties": {
+        "attempt_id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector"
+          ]
+        },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "credential_type": { "type": "string", "enum": ["managed", "byok"] },
+        "upstream_micros": { "type": "integer", "minimum": 0 },
+        "billed_micros": { "type": "integer", "minimum": 0 },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
+            "skipped",
+            "circuit_open"
+          ]
+        }
+      }
+    }
+  }
+}

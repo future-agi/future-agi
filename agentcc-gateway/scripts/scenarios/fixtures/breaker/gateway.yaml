@@ -1,0 +1,79 @@
+# Breaker scenario gateway config (scripts/scenarios/18_breaker.sh), rendered by
+# scn_up like config/base.yaml (same placeholders; scn_up appends redis:).
+#
+# Circuits per model: the managed OpenRouter provider and a backup both serve
+# mock/fail-500 (the mock fails it with 500) and mock/ok-1. Only an internal
+# key fails over across config.yaml providers, so the script sends with
+# scn-test-key-breaker-internal. Cost-optimized ranks the unpriced mock models by
+# priority, so openrouter is always tried first. The global breaker opens a
+# circuit after 5 failures.
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "breaker-internal"
+      key: "scn-test-key-breaker-internal"
+      owner: "acme"
+      key_type: "internal"
+providers:
+  # FutureAGI-credentialed and managed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  backup:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-breaker-backup-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/fail-500", "mock/ok-1"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  default_strategy: "cost-optimized"
+  targets:
+    "mock/fail-500":
+      - provider: "openrouter"
+        priority: 0
+      - provider: "backup"
+        priority: 1
+    "mock/ok-1":
+      - provider: "openrouter"
+        priority: 0
+      - provider: "backup"
+        priority: 1
+  failover:
+    enabled: true
+    max_attempts: 2
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    cooldown: 5m
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs.
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

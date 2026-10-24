@@ -16,12 +16,12 @@ func NewMemorySemanticBackend(s *SemanticStore) *MemorySemanticBackend {
 	return &MemorySemanticBackend{store: s}
 }
 
-func (m *MemorySemanticBackend) Search(vector []float32, model string) *SearchResult {
-	return m.store.Search(vector, model)
+func (m *MemorySemanticBackend) Search(scope string, vector []float32, model string) *SearchResult {
+	return m.store.Search(scope, vector, model)
 }
 
-func (m *MemorySemanticBackend) Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
-	m.store.Set(key, vector, model, resp, ttl)
+func (m *MemorySemanticBackend) Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+	m.store.Set(scope, key, vector, model, resp, ttl)
 }
 
 func (m *MemorySemanticBackend) Len() int {

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/models-list-v2.schema.json",
+  "title": "models-list-v2",
+  "description": "GET /v1/models. Every entry carries an id. An alias entry's price (omega-default, auto, omega/auto), when present, is an upper-bound billed price: routing.agents.price_ceiling (pricing_basis ceiling) or the pool maximum (pool_max:<snapshot_id>); Omega reads it as priceTable[\"gateway\"].",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["object", "data"],
+  "properties": {
+    "object": { "const": "list" },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": { "id": { "type": "string", "minLength": 1 } },
+        "if": {
+          "properties": {
+            "id": { "enum": ["omega-default", "auto", "omega/auto"] }
+          }
+        },
+        "then": { "$ref": "#/$defs/AliasEntry" }
+      }
+    }
+  },
+  "$defs": {
+    "Price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "AliasEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "owned_by",
+        "pricing",
+        "pricing_guarantee",
+        "pricing_basis"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": ["omega-default", "auto", "omega/auto"]
+        },
+        "object": { "const": "model" },
+        "created": { "type": "integer", "minimum": 0 },
+        "owned_by": { "const": "agentcc" },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "prompt",
+            "completion",
+            "input_cache_read",
+            "input_cache_write",
+            "request"
+          ],
+          "properties": {
+            "prompt": { "$ref": "#/$defs/Price" },
+            "completion": { "$ref": "#/$defs/Price" },
+            "input_cache_read": { "$ref": "#/$defs/Price" },
+            "input_cache_write": { "$ref": "#/$defs/Price" },
+            "request": { "$ref": "#/$defs/Price" }
+          }
+        },
+        "pricing_guarantee": { "const": "upper_bound" },
+        "pricing_basis": {
+          "type": "string",
+          "pattern": "^(ceiling|pool_max:[0-9a-f]+)$"
+        }
+      }
+    }
+  }
+}

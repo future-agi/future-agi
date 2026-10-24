@@ -94,6 +94,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// UpstreamModelName is the deployment every call names for model
+// (providers.UpstreamModelNamer).
+func (p *Provider) UpstreamModelName(model string) string { return resolveDeployment(model) }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
@@ -597,11 +601,14 @@ func (p *Provider) Close() error {
 func parseProviderError(status int, body []byte) *models.APIError {
 	var errResp models.ErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		// Status is what the client gets (an upstream 5xx is a 502);
+		// UpstreamStatus keeps the provider's own for the status lists.
 		return &models.APIError{
-			Status:  mapProviderStatus(status),
-			Type:    errResp.Error.Type,
-			Code:    errResp.Error.Code,
-			Message: errResp.Error.Message,
+			Status:         mapProviderStatus(status),
+			Type:           errResp.Error.Type,
+			Code:           errResp.Error.Code,
+			Message:        errResp.Error.Message,
+			UpstreamStatus: status,
 		}
 	}
 

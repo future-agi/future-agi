@@ -14,6 +14,17 @@ from agentcc.models.request_log import AgentccRequestLog
 API_KEY_ID_MAX_LENGTH = AgentccRequestLog._meta.get_field("api_key_id").max_length
 
 
+# How the request-log date filters read a time. The console sends an ISO 8601
+# value with an offset (what Date.toISOString() gives, e.g.
+# 2026-10-19T17:30:00.000Z); a value with no offset is read as UTC (it is never
+# refused for having none).
+_STARTED_AT_HELP = (
+    "Requests that started {bound} the given time, as ISO 8601. A value with "
+    "an offset (Z or +05:30; send + as %2B in a query string) is read in that "
+    "offset; a value with no offset is read as UTC."
+)
+
+
 def _api_key_id_field():
     # Blank means "no key filter" to both consumers, exactly as for the
     # user_id/session_id filters alongside it.
@@ -57,8 +68,12 @@ class GatewayRequestLogQuerySerializer(serializers.Serializer):
     fallback_used = serializers.BooleanField(required=False)
     guardrail_triggered = serializers.BooleanField(required=False)
     is_stream = serializers.BooleanField(required=False)
-    started_after = serializers.DateTimeField(required=False)
-    started_before = serializers.DateTimeField(required=False)
+    started_after = serializers.DateTimeField(
+        required=False, help_text=_STARTED_AT_HELP.format(bound="at or after")
+    )
+    started_before = serializers.DateTimeField(
+        required=False, help_text=_STARTED_AT_HELP.format(bound="at or before")
+    )
     min_latency = serializers.IntegerField(required=False)
     max_latency = serializers.IntegerField(required=False)
     min_cost = serializers.FloatField(required=False)

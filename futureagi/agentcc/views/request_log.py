@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import UTC
 
 import structlog
 from django.contrib.postgres.aggregates import ArrayAgg
@@ -6,32 +7,40 @@ from django.db.models import (
     Avg,
     Count,
     DecimalField,
+    Exists,
     FloatField,
     Max,
     Min,
+    OuterRef,
     Q,
     Sum,
     Value,
 )
 from django.db.models.functions import Coalesce
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from accounts.utils import get_request_organization
-from agentcc.models import AgentccCustomPropertySchema, AgentccRequestLog
+from agentcc.models import (
+    AgentccCustomPropertySchema,
+    AgentccRequestAttempt,
+    AgentccRequestLog,
+)
 from agentcc.models.request_log import RequestLogTag
 from agentcc.serializers.contracts import AgentccErrorResponseSerializer
 from agentcc.serializers.request_log import (
     AgentccRequestLogDetailSerializer,
+    AgentccRequestLogExportQuerySerializer,
     AgentccRequestLogMetadataValuesResponseSerializer,
     AgentccRequestLogMetadataValuesSerializer,
+    AgentccRequestLogQuerySerializer,
     AgentccRequestLogSerializer,
     AgentccSessionSerializer,
 )
-from agentcc.serializers.request_queries import GatewayRequestLogQuerySerializer
 from agentcc.services.export import MAX_EXPORT_ROWS, export_csv, export_json
 from agentcc.services.request_log_metadata import TAG_SEPARATOR, get_metadata_values
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
@@ -39,6 +48,18 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+# Log entry v2 filters: query param -> column. Each takes a comma-separated
+# list and matches any of its values.
+V2_COLUMN_FILTERS = {
+    "billing_mode": "billing_mode",
+    "credential_type": "credential_type",
+    "agent_id": "agent_id",
+    "run_id": "agent_run_id",
+    "step": "agent_step",
+    "policy_variant": "policy_variant",
+    "env": "agent_env",
+}
 
 
 def _parse_bool(value):
@@ -56,6 +77,20 @@ def _parse_int(value, default=None):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _parse_started_at(value):
+    """A started_after/started_before value as an aware datetime.
+
+    ISO 8601 with an offset is read in that offset (the console sends one).
+    A value with no offset is UTC for API callers:
+    made aware here on purpose rather than through Django's naive-datetime
+    fallback. None when the value is not a date.
+    """
+    dt = parse_datetime(value)
+    if dt is not None and timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, UTC)
+    return dt
 
 
 def _parse_csv(value):
@@ -80,6 +115,20 @@ def _metadata_matches_any(key, values):
     for value in values:
         match |= Q(metadata__contains={key: value})
     return match
+
+
+def _has_attempt_in(error_classes):
+    """Requests with at least one attempt whose error class is listed.
+
+    Attempts are matched on (organization, request_id), as ingestion links them.
+    """
+    return Exists(
+        AgentccRequestAttempt.objects.filter(
+            organization_id=OuterRef("organization_id"),
+            request_id=OuterRef("request_id"),
+            error_class__in=error_classes,
+        )
+    )
 
 
 def _apply_search(queryset, raw_query):
@@ -143,6 +192,15 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         if providers:
             queryset = queryset.filter(provider__in=providers)
 
+        for param, column in V2_COLUMN_FILTERS.items():
+            values = _parse_csv(params.get(param))
+            if values:
+                queryset = queryset.filter(**{f"{column}__in": values})
+
+        error_classes = _parse_csv(params.get("error_class"))
+        if error_classes:
+            queryset = queryset.filter(_has_attempt_in(error_classes))
+
         for tag in RequestLogTag:
             values = _parse_csv(params.get(tag.value))
             if values:
@@ -199,13 +257,13 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         # Date range filters
         started_after = params.get("started_after")
         if started_after:
-            dt = parse_datetime(started_after)
+            dt = _parse_started_at(started_after)
             if dt:
                 queryset = queryset.filter(started_at__gte=dt)
 
         started_before = params.get("started_before")
         if started_before:
-            dt = parse_datetime(started_before)
+            dt = _parse_started_at(started_before)
             if dt:
                 queryset = queryset.filter(started_at__lte=dt)
 
@@ -264,7 +322,7 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         return queryset
 
     @validated_request(
-        query_serializer=GatewayRequestLogQuerySerializer,
+        query_serializer=AgentccRequestLogQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
     )
     def list(self, request, *args, **kwargs):
@@ -284,7 +342,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         try:
             instance = self.get_object()
             return self._gm.success_response(
-                AgentccRequestLogDetailSerializer(instance).data
+                AgentccRequestLogDetailSerializer(
+                    instance, context=self.get_serializer_context()
+                ).data
             )
         except Exception as e:
             logger.exception("request_log_retrieve_error", error=str(e))
@@ -417,20 +477,46 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             logger.exception("request_log_session_detail_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        query_serializer=AgentccRequestLogExportQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     @action(detail=False, methods=["get"])
     def export(self, request):
-        """Export filtered request logs as CSV or JSON."""
+        """Export filtered request logs as CSV or JSON (at most 10,000 rows).
+
+        The filters are the list's, validated the same way. 0 matching rows
+        answers 400 export_empty; more than the cap answers 400
+        export_too_large with the count and the cap, unless max_rows asks for
+        the first rows in the list's order. The console reads the list's
+        count first and shows the count and the cap before it downloads.
+        """
         try:
             queryset = self.get_queryset()
             count = queryset.count()
 
             if count == 0:
-                return self._gm.bad_request("No data to export")
+                return self._gm.custom_error_response(
+                    400,
+                    "No requests match these filters, so there is nothing to export.",
+                    code="export_empty",
+                )
 
-            if count > MAX_EXPORT_ROWS:
-                return self._gm.bad_request(
+            max_rows = request.validated_query_data.get("max_rows")
+            if max_rows:
+                # The first rows in the table's order (the list's ordering,
+                # newest first by default), streamed; the console showed the
+                # count and the cap before asking.
+                if not queryset.query.order_by:
+                    queryset = queryset.order_by("-started_at")
+                queryset = queryset[: min(max_rows, MAX_EXPORT_ROWS)]
+            elif count > MAX_EXPORT_ROWS:
+                return self._gm.custom_error_response(
+                    400,
                     f"Export limited to {MAX_EXPORT_ROWS:,} rows. "
-                    f"Current filter returns {count:,} rows. Please narrow your filters."
+                    f"These filters match {count:,} rows. Narrow the filters "
+                    "(a date range, for example) to export them.",
+                    code="export_too_large",
                 )
 
             fmt = request.query_params.get("export_format", "csv").lower()
