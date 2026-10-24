@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -268,6 +270,10 @@ func (r *Registry) ListAllModels() []models.ModelObject {
 		})
 	}
 
+	// Keep the recommended MiniMax model first without reordering other choices.
+	sort.SliceStable(all, func(i, j int) bool {
+		return all[i].ID == "MiniMax-M3.1-Flash" && all[j].ID != "MiniMax-M3.1-Flash"
+	})
 	return all
 }
 
@@ -389,6 +395,12 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 
 	modelIDs := make([]string, 0, len(body.Data))
 	for _, m := range body.Data {
+		legacyText := strings.HasPrefix(m.ID, "abab") ||
+			(strings.HasPrefix(m.ID, "MiniMax-M") && !strings.HasPrefix(m.ID, "MiniMax-Music") &&
+				m.ID != "MiniMax-M3.1-Flash" && m.ID != "MiniMax-M3")
+		if cfg.Type == "minimax" && (legacyText || slices.Contains(cfg.Models, m.ID)) {
+			continue
+		}
 		if m.ID != "" {
 			modelIDs = append(modelIDs, m.ID)
 		}

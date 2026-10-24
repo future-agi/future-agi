@@ -25,10 +25,12 @@ type anthropicRequest struct {
 	Tools         []json.RawMessage      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+	Thinking      json.RawMessage        `json:"thinking,omitempty"`
 }
 
 type anthropicOutputConfig struct {
 	Format *anthropicOutputFormat `json:"format,omitempty"`
+	Effort string                 `json:"effort,omitempty"`
 }
 
 type anthropicOutputFormat struct {

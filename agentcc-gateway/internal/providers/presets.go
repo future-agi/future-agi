@@ -31,6 +31,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
+	"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai", PathPrefix: "/v1"},
 	"azure":       {APIFormat: "azure"},
 }
 
@@ -49,6 +50,9 @@ func applyProviderPreset(cfg *config.ProviderConfig) {
 	}
 	if cfg.APIFormat == "" && preset.APIFormat != "" {
 		cfg.APIFormat = preset.APIFormat
+	}
+	if cfg.Type == "minimax" && len(cfg.Models) == 0 {
+		cfg.Models = []string{"MiniMax-M3.1-Flash", "MiniMax-M3"}
 	}
 	if cfg.APIPathPrefix == nil && preset.APIFormat == "openai" {
 		prefix := preset.PathPrefix
