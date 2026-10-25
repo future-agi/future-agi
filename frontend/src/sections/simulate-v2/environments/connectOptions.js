@@ -9,6 +9,7 @@ import retellLogo from "./platform-logos/retell.svg?raw";
 import blandLogo from "./platform-logos/bland.svg?raw";
 import elevenlabsLogo from "./platform-logos/elevenlabs.svg?raw";
 import livekitLogo from "./platform-logos/livekit.svg?raw";
+import "./colorLogos"; // registers fagi:* brand marks
 
 /* Official brand marks for the hosted voice platforms, inlined so they inherit
    `currentColor` (theme-aware). Each vendor's own published logo, used to
@@ -41,9 +42,9 @@ export const AGENT_TYPES = [
   `chatChannels` — the chat channels one agent on that platform can be
   tested through; the one picked is recorded on the agent.
 */
-const TELNYX = { id: "telnyx", name: "Telnyx", icon: "solar:phone-calling-linear", brand: "#00C08B", idLabel: "Assistant ID", idPlaceholder: "assistant-7c1e9a42…", keyLabel: "Telnyx API key" };
+const TELNYX = { id: "telnyx", name: "Telnyx", icon: "fagi:telnyx", brand: "#00C08B", idLabel: "Assistant ID", idPlaceholder: "assistant-7c1e9a42…", keyLabel: "Telnyx API key" };
 const GOOGLE_CX = { id: "google_cx", name: "Google CX Agent Studio", icon: "simple-icons:dialogflow", brand: "#FF9800", idLabel: "Agent resource name", idPlaceholder: "projects/acme/locations/global/agents/…", keyLabel: "Service account key", idNote: "Dialogflow CX agents. The resource name is on the agent's settings page." };
-const VOICEFLOW = { id: "voiceflow", name: "Voiceflow", icon: "solar:routing-2-linear", brand: "#1E1E1E", idLabel: "Project ID", idPlaceholder: "66f2c1d9e7…", keyLabel: "Voiceflow API key" };
+const VOICEFLOW = { id: "voiceflow", name: "Voiceflow", icon: "fagi:voiceflow", brand: "#1E1E1E", idLabel: "Project ID", idPlaceholder: "66f2c1d9e7…", keyLabel: "Voiceflow API key" };
 const AGENTFORCE = { id: "agentforce", name: "Salesforce Agentforce", icon: "simple-icons:salesforce", brand: "#00A1E0", idLabel: "Agent API name", idPlaceholder: "Service_Agent", keyLabel: "Connected app credentials" };
 const COPILOT_STUDIO = { id: "copilot_studio", name: "Microsoft Copilot Studio", icon: "simple-icons:microsoft", brand: "#5E5E5E", idLabel: "Agent schema name", idPlaceholder: "cr4f2_supportAgent", keyLabel: "Entra app credentials" };
 

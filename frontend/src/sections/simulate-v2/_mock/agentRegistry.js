@@ -14,6 +14,7 @@
  * endpoint nothing but what it does.
  */
 import { getAgentType } from "./agentTypes";
+import "../environments/colorLogos"; // registers fagi:* brand marks
 import { agentVersions, currentAgentVersion, isAgentPinned, majorOf, versionNumber } from "./versions";
 import { agentToolsFor } from "./toolFit";
 import { agentPromptOf } from "./agentPrompt";
@@ -102,11 +103,11 @@ export const FRAMEWORK_META = {
   "vercel-ai": { label: "Vercel AI SDK", icon: "simple-icons:vercel", structure: "Agent & tools", tuning: "Mastra and Vercel AI SDK", lang: "typescript" },
   strands: { label: "AWS Strands", icon: "simple-icons:amazonwebservices", structure: "Agents as tools", tuning: "AWS Strands and Pydantic AI" },
   "pydantic-ai": { label: "Pydantic AI", icon: "simple-icons:pydantic", structure: "Agents & delegation", tuning: "AWS Strands and Pydantic AI" },
-  agno: { label: "Agno", icon: "solar:atom-linear", structure: "Team", tuning: "Agno" },
+  agno: { label: "Agno", icon: "fagi:agno", structure: "Team", tuning: "Agno" },
   haystack: { label: "Haystack", icon: "simple-icons:haystack", structure: "Pipeline", tuning: "Haystack" },
   llamaindex: { label: "LlamaIndex", icon: "thesvg:llamaindex", structure: "Workflow", tuning: "LlamaIndex" },
   smolagents: { label: "smolagents", icon: "simple-icons:huggingface", structure: "Agents & managed agents", tuning: "smolagents" },
-  dspy: { label: "DSPy", icon: "solar:programming-linear", structure: "Program", tuning: "DSPy" },
+  dspy: { label: "DSPy", icon: "fagi:dspy", structure: "Program", tuning: "DSPy" },
   "microsoft-agent-framework": { label: "Microsoft Agent Framework", icon: "simple-icons:microsoft", structure: "Agents & workflow", tuning: "Microsoft Agent Framework", traced: false },
 };
 
