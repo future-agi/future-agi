@@ -1,0 +1,133 @@
+# Three distinct proof lanes; none substitutes for another.
+# 1. PR contract tests: contents:read only, fakes/fixtures, no OIDC or secrets.
+# 2. Manual NON-PRODUCTION keyless smoke: reviewed, protected dev in the
+#    canonical repository only. Real GitHub OIDC/Fulcio/Rekor, same cosign
+#    sign-blob/verify-blob path, distinct exact identity, CI-SMOKE-ONLY subject.
+#    Signing writes PUBLIC TRANSPARENCY evidence; it is not network-write-free.
+#    No registry, release, package, attestation, git or artifact publication.
+# 3. Production release proof: only an authorized new immutable release tag,
+#    complete image/chart evidence and the production signer can prove it.
+# No pull_request_target, production credentials or production workflow calls.
+name: release-signing-smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-signing-smoke.yml
+      - .github/workflows/release-update-manifest.yml
+      - deploy/update/**
+      - deploy/tests/test_update*release*.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Offline contracts only
+        env:
+          FUTURE_AGI_UPDATE_E2E: "0"
+        run: |
+          umask 022
+          python3 -m unittest discover -s deploy/tests -p 'test_update*release*.py' -v
+
+  keyless:
+    needs: contracts
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'future-agi/future-agi' &&
+      github.ref == 'refs/heads/dev' && github.ref_protected
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CERT_IDENTITY: https://github.com/future-agi/future-agi/.github/workflows/release-signing-smoke.yml@refs/heads/dev
+      CERT_REPOSITORY: future-agi/future-agi
+      CERT_REF: refs/heads/dev
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Reviewed ref only
+        env:
+          REF_PROTECTED: ${{ github.ref_protected }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]
+          [ "$GITHUB_REPOSITORY" = "$CERT_REPOSITORY" ]
+          [ "$GITHUB_REF" = "$CERT_REF" ]
+          [ "$REF_PROTECTED" = true ]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: future-agi/future-agi
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Same pinned cosign as production
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Non-production subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, secrets
+          from pathlib import Path
+          subject = {"purpose": "CI-SMOKE-ONLY-NOT-A-RELEASE", "nonce": secrets.token_hex(32),
+                     "source_sha": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"],
+                     "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"]}
+          Path(os.environ["RUNNER_TEMP"], "CI-SMOKE-ONLY.json").write_text(json.dumps(subject, sort_keys=True))
+          PY
+      - name: Keyless sign and exact-claim controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          cosign sign-blob --yes --bundle CI-SMOKE-ONLY.sigstore.json CI-SMOKE-ONLY.json
+          verify() {
+            cosign verify-blob --bundle CI-SMOKE-ONLY.sigstore.json \
+              --certificate-identity "$1" --certificate-oidc-issuer "$2" \
+              --certificate-github-workflow-repository "$3" --certificate-github-workflow-ref "$4" "$5" >/dev/null 2>&1
+          }
+          verify "$CERT_IDENTITY" "$OIDC_ISSUER" "$CERT_REPOSITORY" "$CERT_REF" CI-SMOKE-ONLY.json
+          reject() { if verify "$@"; then echo '::error::negative verification control accepted'; exit 1; fi; }
+          printf '%s\n' 'CI-SMOKE-ONLY-TAMPERED' > tampered.json
+          reject "$CERT_IDENTITY" "$OIDC_ISSUER" "$CERT_REPOSITORY" "$CERT_REF" tampered.json
+          reject "$CERT_IDENTITY" https://invalid.example "$CERT_REPOSITORY" "$CERT_REF" CI-SMOKE-ONLY.json
+          reject "$CERT_IDENTITY" "$OIDC_ISSUER" other/repository "$CERT_REF" CI-SMOKE-ONLY.json
+          reject "$CERT_IDENTITY" "$OIDC_ISSUER" "$CERT_REPOSITORY" refs/heads/main CI-SMOKE-ONLY.json
+          reject "https://github.com/$CERT_REPOSITORY/.github/workflows/other.yml@$CERT_REF" "$OIDC_ISSUER" "$CERT_REPOSITORY" "$CERT_REF" CI-SMOKE-ONLY.json
+      - name: Default production host trust rejects smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from deploy.update.settings import DEFAULTS, Settings
+          from deploy.update.trust import FetchedManifest, Verifier
+          root = Path(os.environ["RUNNER_TEMP"])
+          subject = root / "CI-SMOKE-ONLY.json"
+          # Adapter only: no fixture manifest is published or certified. Run
+          # the REAL host verifier on the signed bytes with untouched defaults.
+          fetched = FetchedManifest(str(subject), root, subject, subject.read_bytes(),
+                                    {"version": "v0.0.0", "signature": {}},
+                                    bundle_path=root / "CI-SMOKE-ONLY.sigstore.json")
+          verifier = Verifier(Settings(dict(DEFAULTS), {}), host_only=True)
+          verifier.require_host()  # missing tool must not masquerade as rejection
+          result = verifier.verify(fetched)
+          assert result.method == "keyless" and result.tool and not result.verified
+          print("NON-PRODUCTION: default production signer policy rejected smoke")
+          PY

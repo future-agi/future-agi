@@ -777,15 +777,15 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
     def test_guard_exits_when_the_ref_is_not_the_version_tag(self):
         run = self.generate["steps"][0]["run"]
         self.assertRegex(run, r'if \[ "\$GITHUB_REF" != "refs/tags/\$VERSION" \]; then\n(?:.*\n)*?\s*exit 1\n\s*fi')
-        self.assertRegex(run, r'if \[\[ ! "\$VERSION" =~ \^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$ \]\]; then\n'
-                              r'(?:.*\n)*?\s*exit 1\n\s*fi')
+        self.assertRegex(run, r'if \[\[ ! "\$VERSION" =~ .* \]\]; then\n(?:.*\n)*?\s*exit 1\n\s*fi')
 
-    def test_guard_version_pattern_accepts_only_stable_tags(self):
+    def test_guard_version_pattern_accepts_exact_supported_release_tags(self):
         pattern = re.search(r'=~ (\S+) \]\]', self.generate["steps"][0]["run"]).group(1)
         regex = re.compile(pattern.replace("$", r"\Z"))
-        for value in ("v1.2.3", "v0.0.0", "v10.20.30"):
+        for value in ("v1.2.3", "v0.0.0", "v10.20.30", "v1.2.3-rc.1", "v1.2.3-beta.0"):
             self.assertIsNotNone(regex.search(value), value)
-        for value in ("1.2.3", "v1.2", "v1.2.3-rc.1", "v1.2.3-beta.0", "v1.2.3 ", " v1.2.3", "v1.2.3\nx",
+            self.assertTrue(is_version(value))
+        for value in ("1.2.3", "v1.2", "v1.2.3-rc.01", "v1.2.3-beta", "v1.2.3 ", " v1.2.3", "v1.2.3\nx",
                       "vv1.2.3", "v1.2.3.4", "refs/tags/v1.2.3"):
             self.assertIsNone(regex.search(value), value)
 
@@ -879,7 +879,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         run = one_step(self.publish, runs_containing("gh release upload"))["run"]
         self.assertEqual(run.count('gh release upload "$VERSION" "new/$BUNDLE" --repo'), 1)
         self.assertEqual(run.count('gh release upload "$VERSION" "new/$MANIFEST" --repo'), 2)
-        self.assertEqual(run.count("gh release upload"), 3)
+        self.assertEqual(run.count("gh release upload"), 4)  # optional proof, then bundle/manifest
         self.assertNotIn('gh release upload "$VERSION" "new/$MANIFEST" "new/$BUNDLE"', run)
         self.assertEqual(run.count("cosign sign-blob"), 1)
         sign = run.index("cosign sign-blob")
@@ -943,11 +943,11 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         generate_run = one_step(self.generate, runs_containing("scripts/generate_update_manifest.py"))["run"]
         output = re.search(r'--output "([^"]+)"', generate_run).group(1)
         self.assertEqual(output.rsplit("/", 1)[-1], MANIFEST_ASSET)
-        upload = one_step(self.generate, lambda s: str(s.get("uses", "")).startswith("actions/upload-artifact@"))
+        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-manifest")
         self.assertEqual(upload["with"]["path"].rsplit("/", 1)[-1], MANIFEST_ASSET)
         self.assertEqual(upload["with"]["if-no-files-found"], "error")
         self.assertEqual(output.replace("$RUNNER_TEMP", "${{ runner.temp }}"), upload["with"]["path"])
-        download = one_step(self.publish, lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@"))
+        download = one_step(self.publish, lambda s: s.get("with", {}).get("name") == "update-manifest")
         self.assertEqual(download["with"]["name"], upload["with"]["name"])
         self.assertEqual(download["with"]["path"], "${{ runner.temp }}/new")
         sign = one_step(self.publish, runs_containing("gh release upload"))["run"]
@@ -1088,7 +1088,8 @@ class VersionGuardStepTests(_StepHarness):
     def run_guard(self, version: str, ref: str) -> subprocess.CompletedProcess:
         job = self.doc["jobs"]["generate"]
         step = job["steps"][0]
-        env = self.base_env(**step_env(self.doc, job, step, {"inputs.version": version}), GITHUB_REF=ref)
+        env = self.base_env(**step_env(self.doc, job, step, {"inputs.version": version}), GITHUB_REF=ref,
+                            GITHUB_REPOSITORY=CANONICAL_REPOSITORY)
         return run_step(step, env, self.tmp, self.scratch)
 
     def test_the_version_tag_passes(self):
@@ -1106,12 +1107,12 @@ class VersionGuardStepTests(_StepHarness):
             with self.subTest(ref=ref):
                 self.assertEqual(self.run_guard("v1.2.3", ref).returncode, 1)
 
-    def test_a_non_stable_version_is_refused_even_from_its_own_tag(self):
-        for version in ("v1.2.3-rc.1", "1.2.3", "v1.2", "v1.2.3\n", "v1.2.3 ", "latest", "", "v1.2.3;id"):
+    def test_an_unsupported_version_is_refused_even_from_its_own_tag(self):
+        for version in ("v1.2.3-alpha.1", "1.2.3", "v1.2", "v1.2.3\n", "v1.2.3 ", "latest", "", "v1.2.3;id"):
             with self.subTest(version=version):
                 result = self.run_guard(version, f"refs/tags/{version}")
                 self.assertEqual(result.returncode, 1)
-                self.assertIn("is not a stable platform tag", result.stdout)
+                self.assertIn("is not a platform tag", result.stdout)
 
 
 class ResolveDigestsStepTests(_StepHarness):
@@ -1535,6 +1536,48 @@ class PublishStepTests(_StepHarness):
 
 # ===================================================== release-images.yml --
 
+class ReleaseProofWiringTests(unittest.TestCase):
+    def setUp(self):
+        self.doc = load(UPDATE_WORKFLOW)
+        self.generate = self.doc["jobs"]["generate"]
+        self.publish = self.doc["jobs"]["publish"]
+
+    def test_generation_and_signing_repeat_identical_tag_and_metadata_guards(self):
+        self.assertEqual(self.generate["steps"][0]["run"], self.publish["steps"][0]["run"])
+        self.assertEqual(self.generate["steps"][1]["run"], self.publish["steps"][1]["run"])
+        self.assertIn('[ "$GITHUB_REPOSITORY" = future-agi/future-agi ]', self.publish["steps"][0]["run"])
+        self.assertIn(".isDraft == false", self.publish["steps"][1]["run"])
+        self.assertIn(".isPrerelease == $prerelease", self.publish["steps"][1]["run"])
+
+    def test_proof_is_built_after_digests_and_before_manifest_artifact(self):
+        steps = self.generate["steps"]
+        resolve = one_step(self.generate, runs_containing("declare -A images"))
+        build = one_step(self.generate, runs_containing("scripts/build_update_compatibility_proof.py"))
+        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-manifest")
+        self.assertLess(steps.index(resolve), steps.index(build))
+        self.assertLess(steps.index(build), steps.index(upload))
+        self.assertIn("--policy deploy/update/release-policy.json", build["run"])
+        self.assertIn('--run-id "$GITHUB_RUN_ID"', build["run"])
+        self.assertNotIn("continue-on-error", build)
+
+    def test_signing_validates_proof_against_manifest_before_any_signature(self):
+        verify = one_step(self.publish, lambda s: s.get("name") == "Validate proof before signing")
+        sign = one_step(self.publish, runs_containing("cosign sign-blob"))
+        self.assertLess(self.publish["steps"].index(verify), self.publish["steps"].index(sign))
+        self.assertIn("validate_release_proof(read_bytes(proof), target", verify["run"])
+        self.assertIn('validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])', verify["run"])
+        self.assertIn("assert not proof.exists()", verify["run"])
+        self.assertNotIn("continue-on-error", verify)
+
+    def test_proof_downloads_cannot_select_other_runs_or_unreviewed_inputs(self):
+        for job in (self.generate, self.publish):
+            for step in job["steps"]:
+                if str(step.get("uses", "")).startswith("actions/download-artifact@"):
+                    self.assertLessEqual(set(step["with"]), {"name", "pattern", "path", "merge-multiple"})
+        for trigger in ("workflow_call", "workflow_dispatch"):
+            self.assertEqual(set(self.doc["on"][trigger]["inputs"]), {"version"})
+
+
 class ReleaseImagesWiringTests(unittest.TestCase):
     def setUp(self):
         self.text = RELEASE_IMAGES.read_text(encoding="utf-8")
@@ -1617,7 +1660,7 @@ class ReleaseImagesWiringTests(unittest.TestCase):
     def test_no_other_workflow_uploads_an_artifact_named_like_the_manifests(self):
         # A called workflow shares the caller's run, and with it the artifact names.
         name = one_step(load(UPDATE_WORKFLOW)["jobs"]["generate"],
-                        lambda s: str(s.get("uses", "")).startswith("actions/upload-artifact@"))["with"]["name"]
+                        lambda s: s.get("with", {}).get("name") == "update-manifest")["with"]["name"]
         for path in sorted(WORKFLOWS.glob("*.y*ml")):
             if path == UPDATE_WORKFLOW:
                 continue
@@ -1651,7 +1694,7 @@ class ReleaseImagesGuardStepTests(_StepHarness):
         job = self.doc["jobs"]["guard"]
         step = job["steps"][0]
         env = self.base_env(
-            **step_env(self.doc, job, step, {"inputs.version": version, "inputs.components": components}),
+            **step_env(self.doc, job, step, {"inputs.version": version, "inputs.components": components, "github.token": "fake-token"}),
             GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_REF_NAME=ref.rsplit("/", 1)[-1],
             GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=CANONICAL_REPOSITORY,
             GITHUB_OUTPUT=str(self.output), FAKE_TAGS=tags, FAKE_EXIT_CURL="97",
@@ -2782,10 +2825,10 @@ class TrustRound4PublishOrderTests(_StepHarness):
     def test_every_upload_carries_exactly_one_asset(self):
         run = one_step(self.doc["jobs"]["publish"], runs_containing("gh release upload"))["run"]
         uploads = [line.strip() for line in run.splitlines() if "gh release upload" in line]
-        self.assertEqual(len(uploads), 3)
+        self.assertEqual(len(uploads), 4)
         for line in uploads:
             with self.subTest(line=line):
-                self.assertEqual(len(re.findall(r'"new/\$(?:MANIFEST|BUNDLE)"', line)), 1)
+                self.assertEqual(len(re.findall(r'"new/\$(?:MANIFEST|BUNDLE|proof)"', line)), 1)
         self.assertLess(run.rindex('gh release upload "$VERSION" "new/$BUNDLE"'),
                         run.rindex('gh release upload "$VERSION" "new/$MANIFEST"'))
 
@@ -2834,7 +2877,7 @@ class TrustRound4ReleaseImagesGuardTests(_StepHarness):
         job = self.doc["jobs"]["approve"]
         step = job["steps"][0]
         env = self.base_env(
-            **step_env(self.doc, job, step, {"inputs.version": "v1.52.0", "inputs.components": "update-manifest"}),
+            **step_env(self.doc, job, step, {"inputs.version": "v1.52.0", "inputs.components": "update-manifest", "github.token": "fake-token"}),
             GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/tags/v1.52.0", GITHUB_REF_NAME="v1.52.0",
             GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=CANONICAL_REPOSITORY,
             GITHUB_OUTPUT=str(self.output), FAKE_TAGS="v1.52.0 v1.53.0", FAKE_EXIT_CURL="97",
@@ -2996,7 +3039,7 @@ class TrustRound5BuildDigestsJobTests(_StepHarness):
         self.assertIn('out="$RUNNER_TEMP/release-build-digests/build-digests.txt"', self.step["run"])
         self.assertEqual(upload["with"]["if-no-files-found"], "error")
         generate = load(UPDATE_WORKFLOW)["jobs"]["generate"]
-        download = one_step(generate, lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@"))
+        download = one_step(generate, lambda s: s.get("with", {}).get("pattern") == "release-build-digests")
         self.assertEqual(download["with"], {"pattern": "release-build-digests", "path": "${{ runner.temp }}/build",
                                             "merge-multiple": "true"})
         self.assertRegex(download["uses"], PINNED_ACTION_RE)
@@ -3493,7 +3536,7 @@ class TrustRound6RevisionCheckTests(TrustRound6RevisionCase):
         check = trust_round6_revision_step(self.doc)
         resolve = one_step(job, runs_containing("declare -A images"))
         generate = one_step(job, runs_containing("scripts/generate_update_manifest.py"))
-        upload = one_step(job, lambda s: str(s.get("uses", "")).startswith("actions/upload-artifact@"))
+        upload = one_step(job, lambda s: s.get("with", {}).get("name") == "update-manifest")
         self.assertLess(steps.index(resolve), steps.index(check))
         self.assertLess(steps.index(check), steps.index(generate))
         self.assertLess(steps.index(generate), steps.index(upload))

@@ -1,8 +1,8 @@
-# Tag-triggered release: builds every platform image at the pushed vX.Y.Z
-# tag, then fans out (ee overlay dispatch, deployment values-bump PR, docs
-# changelog dispatch, the Helm chart: helm-release.yml). Pre-release tags
-# (-suffix) never reach this workflow (release-please only cuts bare vX.Y.Z;
-# the guard job double-checks).
+# Tag-triggered release: stable vX.Y.Z and explicitly created vX.Y.Z-beta.N
+# or vX.Y.Z-rc.N. Prereleases stay in the beta channel: complete OSS images
+# and versioned Helm chart only, no shared image aliases, EE/docs dispatch,
+# deployment bump or Artifact Hub metadata update. Never promote a beta tag.
+# All publication still requires the ordinary production approval.
 #
 # Every image builds through build-image-multiarch.yml: linux/amd64 and
 # linux/arm64 on native runners (the CUDA serving variant and the simulation
@@ -50,11 +50,11 @@ name: release-images
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
   workflow_dispatch:
     inputs:
       version:
-        description: Stable platform tag (vX.Y.Z). To build a component, run the workflow from that same tag.
+        description: Platform tag (vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-rc.N). Builds require that same immutable ref.
         required: true
         type: string
       components:
@@ -80,27 +80,40 @@ jobs:
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
       REQUESTED_COMPONENTS: ${{ inputs.components }}
+      GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
       # JSON list of the components this run builds: all of them on a tag push.
       components: ${{ steps.v.outputs.components }}
     steps:
       - id: v
         shell: bash
-        run: &guard |
-          set -eu
+        run: |
+          set -euo pipefail
           # Whole-string bash regex (not line-oriented grep): rejects any value
           # carrying an embedded newline, closing the multiline-GITHUB_OUTPUT
           # injection pattern even though a git tag cannot contain one today.
           v="${REQUESTED_VERSION:-${GITHUB_REF_NAME}}"
-          if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::'$v' is not a stable platform version tag"
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$v" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$v' is not a platform version tag"
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
           all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner ee docs helm-chart update-manifest bump"
+          channel=stable
+          case "$v" in *-beta.* | *-rc.*) channel=beta ;; esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          if [ "$channel" = beta ]; then
+            [ "$GITHUB_REF" = "refs/tags/$v" ] || { echo '::error::beta requires its exact tag ref'; exit 1; }
+            gh release view "$v" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+              jq -e --arg version "$v" '.tagName == $version and .isDraft == false and .isPrerelease == true' >/dev/null
+            all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner helm-chart update-manifest"
+          fi
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            [ "$GITHUB_REF" = "refs/tags/$v" ] || exit 1
             selected="$all"
           else
             requested="${REQUESTED_COMPONENTS:-bump}"
@@ -136,6 +149,8 @@ jobs:
               # The signed manifest moves no tag: any release's can be attached
               # again, from that release's tag (the identity it is signed with).
               case "$c" in update-manifest) continue ;; esac
+              # Beta has no aliases; check immutable tags below on push AND dispatch.
+              [ "$channel" = beta ] && continue
               # A build moves `latest` and the vX.Y alias to its version, so only
               # the newest release is ever built again.
               if [ -z "$newest" ]; then
@@ -173,6 +188,23 @@ jobs:
               esac
             done
           fi
+          if [ "$channel" = beta ]; then
+            for c in $selected; do
+              case "$c" in
+                frontend | agentcc-gateway | serving | fi-collector | code-executor | standalone) repo="futureagi/$c" tag="$v" ;;
+                serving-gpu) repo="futureagi/serving" tag="$v-gpu" ;;
+                backend) repo="futureagi/future-agi" tag="$v" ;;
+                backend-slim) repo="futureagi/future-agi" tag="$v-slim" ;;
+                simulation-runner) repo="futureagi/future-agi-simulation-runner" tag="$v" ;;
+                helm-chart | update-manifest) continue ;;
+                *) echo '::error::stable-only component in beta release'; exit 1 ;;
+              esac
+              code=$(curl -sS --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 -o /dev/null -w '%{http_code}' "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}") || code=000
+              [ "$code" = 404 ] || { echo '::error::beta image exists or availability is unknown; use a new beta/rc number'; exit 1; }
+            done
+          fi
+          # Intentional splitting of validated component names; no globs survive.
+          # shellcheck disable=SC2086
           components=$(printf '%s\n' $selected | jq -R . | jq -sc .)
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "components: $components"
@@ -187,11 +219,131 @@ jobs:
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
       REQUESTED_COMPONENTS: ${{ inputs.components }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       # The guard again: a review can wait for days, and a newer release or
       # another run may have published in the meantime.
       - shell: bash
-        run: *guard
+        # Kept byte-identical by executable tests. actionlint 1.7.7 predates YAML aliases.
+        run: |
+          set -euo pipefail
+          # Whole-string bash regex (not line-oriented grep): rejects any value
+          # carrying an embedded newline, closing the multiline-GITHUB_OUTPUT
+          # injection pattern even though a git tag cannot contain one today.
+          v="${REQUESTED_VERSION:-${GITHUB_REF_NAME}}"
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$v" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$v' is not a platform version tag"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+          all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner ee docs helm-chart update-manifest bump"
+          channel=stable
+          case "$v" in *-beta.* | *-rc.*) channel=beta ;; esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          if [ "$channel" = beta ]; then
+            [ "$GITHUB_REF" = "refs/tags/$v" ] || { echo '::error::beta requires its exact tag ref'; exit 1; }
+            gh release view "$v" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+              jq -e --arg version "$v" '.tagName == $version and .isDraft == false and .isPrerelease == true' >/dev/null
+            all="frontend agentcc-gateway serving fi-collector serving-gpu code-executor backend backend-slim standalone simulation-runner helm-chart update-manifest"
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            [ "$GITHUB_REF" = "refs/tags/$v" ] || exit 1
+            selected="$all"
+          else
+            requested="${REQUESTED_COMPONENTS:-bump}"
+            names='^[a-z, -]+$'
+            if [[ ! "$requested" =~ $names ]]; then
+              echo "::error::components must be a comma-separated list of names"
+              exit 1
+            fi
+            selected=""
+            for c in ${requested//,/ }; do
+              case " $all " in
+                *" $c "*) case " $selected " in *" $c "*) ;; *) selected="$selected $c" ;; esac ;;
+                *) echo "::error::unknown component '$c' (known: $all)"; exit 1 ;;
+              esac
+            done
+            selected="${selected# }"
+            [ -n "$selected" ] || { echo "::error::no component selected"; exit 1; }
+            case " $selected " in
+              *" bump "*)
+                if [ "$selected" != "bump" ]; then
+                  echo "::error::run 'bump' on its own, once the components it pins are published: in the same run it would not wait for them"
+                  exit 1
+                fi
+                ;;
+            esac
+            newest=""
+            for c in $selected; do
+              case "$c" in bump | docs) continue ;; esac
+              if [ "$c" != ee ] && [ "$GITHUB_REF" != "refs/tags/$v" ]; then
+                echo "::error::run this workflow from the tag $v to build '$c' (it ran from $GITHUB_REF)"
+                exit 1
+              fi
+              # The signed manifest moves no tag: any release's can be attached
+              # again, from that release's tag (the identity it is signed with).
+              case "$c" in update-manifest) continue ;; esac
+              # Beta has no aliases; check immutable tags below on push AND dispatch.
+              [ "$channel" = beta ] && continue
+              # A build moves `latest` and the vX.Y alias to its version, so only
+              # the newest release is ever built again.
+              if [ -z "$newest" ]; then
+                newest=$(git ls-remote --tags --refs "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" 'v[0-9]*' \
+                  | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1) || newest=""
+                if [ -z "$newest" ]; then
+                  echo "::error::could not read the release tags of ${GITHUB_REPOSITORY}"
+                  exit 1
+                fi
+              fi
+              if [ "$newest" != "$v" ]; then
+                echo "::error::'$c' can only be built for the newest release ($newest): building $v would move latest and its minor alias back"
+                exit 1
+              fi
+              # A published tag is never rebuilt by a dispatch; resolve-sdk applies
+              # the same rule to the simulation runner, helm-release.yml to the chart.
+              case "$c" in
+                frontend | agentcc-gateway | serving | fi-collector | code-executor | standalone) repo="futureagi/$c" tag="$v" ;;
+                serving-gpu) repo="futureagi/serving" tag="$v-gpu" ;;
+                backend) repo="futureagi/future-agi" tag="$v" ;;
+                backend-slim) repo="futureagi/future-agi" tag="$v-slim" ;;
+                *) continue ;;
+              esac
+              code=$(curl -sS --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 -o /dev/null -w '%{http_code}' "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}") || code=000
+              case "$code" in
+                404) ;;
+                200)
+                  echo "::error::${repo}:${tag} already exists; delete the tag deliberately to rebuild '$c'"
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::could not check ${repo}:${tag} on Docker Hub (HTTP $code)"
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
+          if [ "$channel" = beta ]; then
+            for c in $selected; do
+              case "$c" in
+                frontend | agentcc-gateway | serving | fi-collector | code-executor | standalone) repo="futureagi/$c" tag="$v" ;;
+                serving-gpu) repo="futureagi/serving" tag="$v-gpu" ;;
+                backend) repo="futureagi/future-agi" tag="$v" ;;
+                backend-slim) repo="futureagi/future-agi" tag="$v-slim" ;;
+                simulation-runner) repo="futureagi/future-agi-simulation-runner" tag="$v" ;;
+                helm-chart | update-manifest) continue ;;
+                *) echo '::error::stable-only component in beta release'; exit 1 ;;
+              esac
+              code=$(curl -sS --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 -o /dev/null -w '%{http_code}' "https://hub.docker.com/v2/repositories/${repo}/tags/${tag}") || code=000
+              [ "$code" = 404 ] || { echo '::error::beta image exists or availability is unknown; use a new beta/rc number'; exit 1; }
+            done
+          fi
+          # Intentional splitting of validated component names; no globs survive.
+          # shellcheck disable=SC2086
+          components=$(printf '%s\n' $selected | jq -R . | jq -sc .)
+          echo "components=$components" >> "$GITHUB_OUTPUT"
+          echo "components: $components"
 
   build:
     needs: [guard, approve]
@@ -249,12 +401,12 @@ jobs:
       dockerfile: ${{ matrix.dockerfile }}
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
       free-disk: ${{ matrix.free-disk }}
       cache-scope: ${{ matrix.name }}
       cache-from-extra: ${{ matrix.cache-from-extra }}
       environment: production-auto
-      enabled: ${{ contains(needs.guard.outputs.components, format('"{0}"', matrix.name)) }}
+      enabled: ${{ contains(needs.guard.outputs.components, format('"{0}"', matrix.name)) && (needs.guard.outputs.channel == 'stable' || github.run_attempt == 1) }}
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -276,7 +428,9 @@ jobs:
       dockerfile: ./futureagi/model_serving/Dockerfile.oss
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       arches: '["amd64"]'
       tag-suffix: -gpu
       free-disk: true
@@ -339,7 +493,9 @@ jobs:
       dockerfile: ./futureagi/code-executor/Dockerfile
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       cache-scope: code-executor
       environment: production-auto
     secrets:
@@ -367,7 +523,9 @@ jobs:
       dockerfile: ./futureagi/Dockerfile.oss
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       cache-scope: backend
       environment: production-auto
       cache-from-extra: ghcr.io/future-agi/future-agi/e2e-cache:backend
@@ -395,7 +553,9 @@ jobs:
       dockerfile: ./futureagi/Dockerfile.oss
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       tag-suffix: -slim
       cache-scope: backend
       environment: production-auto
@@ -471,7 +631,9 @@ jobs:
       dockerfile: ./deploy/standalone/Dockerfile
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       cache-scope: standalone
       environment: production-auto
       # Every release changes the base image, so a layer cache never hits.
@@ -545,7 +707,9 @@ jobs:
       dockerfile: ./Dockerfile.simulation-runner
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      push-latest: true
+      push-latest: ${{ needs.guard.outputs.channel == 'stable' }}
+      # A beta job rerun must not repoint an immutable tag. Dispatch only missing components instead.
+      enabled: ${{ needs.guard.outputs.channel == 'stable' || github.run_attempt == 1 }}
       arches: '["amd64"]'
       cache-scope: simulation-runner
       environment: production-auto

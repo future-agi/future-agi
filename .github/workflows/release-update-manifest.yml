@@ -60,13 +60,13 @@ on:
   workflow_call:
     inputs:
       version:
-        description: Stable platform tag, vX.Y.Z, whose images and chart are published
+        description: Stable or beta/rc platform tag whose images and versioned chart are published
         required: true
         type: string
   workflow_dispatch:
     inputs:
       version:
-        description: Stable platform tag, vX.Y.Z (run the workflow from that same tag)
+        description: Stable or beta/rc platform tag (run the workflow from that same tag)
         required: true
         type: string
 
@@ -95,8 +95,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::'$VERSION' is not a stable platform tag (vX.Y.Z)"
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$VERSION' is not a platform tag (vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-rc.N)"
             exit 1
           fi
           # The signature's identity is this workflow at the release tag.
@@ -104,6 +105,19 @@ jobs:
             echo "::error::run this workflow from the tag $VERSION (Use workflow from: $VERSION), not $GITHUB_REF"
             exit 1
           fi
+
+      - name: Release metadata
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=false
+          case "$VERSION" in *-beta.* | *-rc.*) prerelease=true ;; esac
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+            jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
+              '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -257,18 +271,36 @@ jobs:
             echo "${line%%=*}: $reference was built from $commit"
           done 3< "$RUNNER_TEMP/components.txt"
 
+      # Optional same-run, real rehearsal evidence only. No arbitrary run ID,
+      # external URL or fixture artifact is accepted. The default policy has no
+      # eligible rows; merely publishing a release never certifies compatibility.
+      - name: Same-run compatibility evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: update-compatibility-evidence
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+
       - name: Generate the manifest
+        id: manifest
         env:
           VERSION: ${{ inputs.version }}
           CHART_DIGEST: ${{ steps.digests.outputs.chart }}
         shell: bash
         run: |
           set -euo pipefail
+          channel=stable
+          case "$VERSION" in *-beta.* | *-rc.*) channel=beta ;; esac
           components=()
           while IFS= read -r line; do components+=(--component "$line"); done < "$RUNNER_TEMP/components.txt"
           mkdir -p "$RUNNER_TEMP/out"
+          # An affirmative reviewed policy cannot be generated without proof.
+          # Resolve a legacy-shaped candidate first; the producer applies that
+          # policy, validates all real evidence and emits the final v2 manifest.
+          schema=$(python3 -c 'import json; p=json.load(open("deploy/update/release-policy.json")); print(1 if p["compatibility"]["automatic_apply"] else 2)')
           python3 scripts/generate_update_manifest.py \
-            --version "$VERSION" \
+            --schema-version "$schema" \
+            --version "$VERSION" --channel "$channel" \
             --source-sha "$(git rev-parse HEAD)" \
             --published-at "$(TZ=UTC git show -s --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ HEAD)" \
             "${components[@]}" \
@@ -277,7 +309,27 @@ jobs:
             --signature-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-update-manifest.yml@refs/tags/${VERSION}" \
             --signature-issuer "$OIDC_ISSUER" \
             --output "$RUNNER_TEMP/out/future-agi-update-manifest.json"
+          if [ "$schema" = 1 ]; then
+            python3 scripts/build_update_compatibility_proof.py \
+              --target "$RUNNER_TEMP/out/future-agi-update-manifest.json" \
+              --policy deploy/update/release-policy.json \
+              --evidence "$RUNNER_TEMP/evidence" --run-id "$GITHUB_RUN_ID" \
+              --repository "$GITHUB_REPOSITORY" \
+              --output "$RUNNER_TEMP/out/future-agi-update-compatibility.json" \
+              --manifest-output "$RUNNER_TEMP/certified.json"
+            mv "$RUNNER_TEMP/certified.json" "$RUNNER_TEMP/out/future-agi-update-manifest.json"
+            echo 'certified=true' >> "$GITHUB_OUTPUT"
+          fi
           cat "$RUNNER_TEMP/out/future-agi-update-manifest.json"
+
+      - name: Retain compatibility proof
+        if: steps.manifest.outputs.certified == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: update-compatibility-proof
+          path: ${{ runner.temp }}/out/future-agi-update-compatibility.json
+          if-no-files-found: error
+          retention-days: 30
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -306,12 +358,40 @@ jobs:
       MANIFEST: future-agi-update-manifest.json
       BUNDLE: future-agi-update-manifest.sigstore.json
     steps:
+      - name: Release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = future-agi/future-agi ] || exit 1
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})(-(beta|rc)\.(0|[1-9][0-9]{0,17}))?$ ]]; then
+            echo "::error::'$VERSION' is not a platform tag (vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-rc.N)"
+            exit 1
+          fi
+          # The signature's identity is this workflow at the release tag.
+          if [ "$GITHUB_REF" != "refs/tags/$VERSION" ]; then
+            echo "::error::run this workflow from the tag $VERSION (Use workflow from: $VERSION), not $GITHUB_REF"
+            exit 1
+          fi
+      - name: Release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=false
+          case "$VERSION" in *-beta.* | *-rc.*) prerelease=true ;; esac
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+            jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
+              '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: future-agi/future-agi
           ref: refs/tags/${{ inputs.version }}
           persist-credentials: false
-          sparse-checkout: .github/actions
+          sparse-checkout: |
+            .github/actions
+            deploy/update
+            scripts
 
       - name: Install cosign
         uses: ./.github/actions/setup-helm-tools
@@ -322,6 +402,34 @@ jobs:
         with:
           name: update-manifest
           path: ${{ runner.temp }}/new
+
+      - name: Compatibility proof from generation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: update-compatibility-proof
+          path: ${{ runner.temp }}/new
+          merge-multiple: true
+
+      - name: Validate proof before signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from deploy.update.compatibility import PROOF_ASSET, decode_document, validate_release_proof
+          from deploy.update.manifest import validate_manifest
+          from scripts.build_update_compatibility_proof import read_bytes
+          root = Path(os.environ["RUNNER_TEMP"]) / "new"
+          target = validate_manifest(decode_document(read_bytes(root / os.environ["MANIFEST"])))
+          proof = root / PROOF_ASSET
+          validation = target.get("compatibility", {}).get("validation")
+          if validation is not None:
+              assert validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])
+              validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
+          else:
+              assert not proof.exists(), "unexpected proof on uncertified release"
+          PY
 
       - name: Sign, verify and attach (never replace)
         env:
@@ -335,6 +443,19 @@ jobs:
           verify() { cosign verify-blob --bundle "$2" --certificate-identity "$CERT_IDENTITY" \
             --certificate-oidc-issuer "$OIDC_ISSUER" --certificate-github-workflow-repository "$CERT_REPOSITORY" \
             --certificate-github-workflow-ref "$CERT_REF" "$1" >/dev/null; }
+          attach_proof() {
+            local proof=future-agi-update-compatibility.json
+            [ -f "new/$proof" ] || return 0
+            if has "$proof"; then
+              mkdir -p old
+              gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --dir old --pattern "$proof"
+              cmp -s "old/$proof" "new/$proof" || { echo '::error::published proof differs; never replace'; exit 1; }
+            elif has "$MANIFEST"; then
+              echo '::error::published manifest is missing its pinned proof'; exit 1
+            else
+              gh release upload "$VERSION" "new/$proof" --repo "$GITHUB_REPOSITORY"
+            fi
+          }
           summary() {
             {
               echo "### bin/update manifest $VERSION"
@@ -353,6 +474,7 @@ jobs:
               exit 1
             fi
             verify "old/$MANIFEST" "old/$BUNDLE"
+            attach_proof
             echo "::notice::$MANIFEST for $VERSION is already published and verifies against $CERT_IDENTITY"
             exit 0
           fi
@@ -365,6 +487,7 @@ jobs:
               echo "::error::the $VERSION release has only one of $MANIFEST and $BUNDLE: it has $BUNDLE, which does not verify the regenerated $MANIFEST against $CERT_IDENTITY. Delete it (gh release delete-asset $VERSION $BUNDLE --repo $GITHUB_REPOSITORY --yes) and rerun"
               exit 1
             fi
+            attach_proof
             gh release upload "$VERSION" "new/$MANIFEST" --repo "$GITHUB_REPOSITORY"
             echo "::notice::$BUNDLE for $VERSION was already published and verifies the regenerated $MANIFEST: attached $MANIFEST"
             summary
@@ -372,7 +495,8 @@ jobs:
           fi
           cosign sign-blob --yes --bundle "new/$BUNDLE" "new/$MANIFEST"
           verify "new/$MANIFEST" "new/$BUNDLE"
-          # The bundle first, the manifest last, one upload each.
+          # Proof before bundle, manifest last, one upload each. Never replace.
+          attach_proof
           gh release upload "$VERSION" "new/$BUNDLE" --repo "$GITHUB_REPOSITORY"
           gh release upload "$VERSION" "new/$MANIFEST" --repo "$GITHUB_REPOSITORY"
           summary
