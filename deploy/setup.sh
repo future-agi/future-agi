@@ -4,11 +4,17 @@
 # Boot checks previously initialized schema/mirrors; it never initializes them.
 #
 # Usage: ./deploy/setup.sh [--skip-up] [--non-interactive] [--confirm-initialized]
+# Optional status: --host-status-help or --prepare-host-status (alone; never boots).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)"
+# Deliberately separate from production setup/initialization and before all
+# configuration writes or Docker calls. Existing installs remain untouched.
+if [[ "${1:-}" == --host-status-help || "${1:-}" == --prepare-host-status ]]; then
+  exec bash "${REPO_ROOT}/bin/install" "$@"
+fi
 ENV_FILE="${SCRIPT_DIR}/.env.production"
 SECRET_NAMES=(SECRET_KEY AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN PG_PASSWORD
   MINIO_ROOT_PASSWORD PROPERTY_CATALOG_API_PASSWORD

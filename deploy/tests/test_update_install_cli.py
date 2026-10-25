@@ -1761,7 +1761,9 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
     def test_every_listed_deployment_file_exists(self):
         listed = read_deployment_file_list(ROOT)
-        for name in COMPOSE_FILES + (".env.example", "deploy/.env.production.example"):
+        for name in COMPOSE_FILES + (".env.example", "deploy/.env.production.example",
+                                     "deploy/docker-compose.host-status.standalone.yml",
+                                     "deploy/docker-compose.host-status.distributed.yml"):
             self.assertIn(name, listed)
         self.assertEqual(len(listed), len(set(listed)))
         for entry in listed:

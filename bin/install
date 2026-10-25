@@ -26,6 +26,8 @@
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
 #                                      # from env if you want a user created.
+#   ./bin/install --host-status-help  # optional read-only status overlay instructions
+#   ./bin/install --prepare-host-status # prepare a NEW public slot only; no install
 #   ./bin/install --no-telemetry       # turn deployment telemetry off
 #                                      # (FUTURE_AGI_TELEMETRY_DISABLED=true
 #                                      # in .env;
@@ -42,6 +44,130 @@
 # ============================================================================
 
 set -eEuo pipefail
+
+# These standalone host-only actions precede logging, Docker probes and .env
+# handling. They never install/recreate a stack or modify an existing directory.
+if [[ "${1:-}" == --host-status-help || "${1:-}" == --prepare-host-status ]]; then
+  if [[ $# -ne 1 ]]; then
+    printf '%s\n' 'Host status actions must be used alone; no install will run.' >&2
+    exit 2
+  fi
+  if [[ "$1" == --prepare-host-status ]]; then
+    command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'Host status preparation requires Python 3.9+.' >&2; exit 1; }
+    python3 - "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" <<'PY'
+import os
+import re
+import stat
+import sys
+
+
+def refuse(message):
+    print("Host status preparation refused: " + message, file=sys.stderr)
+    sys.exit(1)
+
+
+if sys.version_info < (3, 9) or os.name != "posix":
+    refuse("Python 3.9+ on a POSIX host is required.")
+if os.environ.get("SUDO_UID"):
+    refuse("run as the original host operator, not through sudo.")
+source = os.environ.get("FI_HOST_UPDATE_STATUS_DIR", "")
+slot = os.environ.get("FI_HOST_UPDATE_STATUS_SLOT", "")
+if not re.fullmatch(r"[0-9a-f]{32}", slot):
+    refuse("set FI_HOST_UPDATE_STATUS_SLOT to the host reporting registration's slot.")
+parts = source.split("/")
+if (not source.startswith("/") or any(p in ("", ".", "..") for p in parts[1:])
+        or parts[-1] != slot or ".futureagi-updates" in parts):
+    refuse("use an absolute dedicated public directory ending in the slot, outside private updater state.")
+checkout = os.path.realpath(sys.argv[1])
+if os.path.commonpath((checkout, source)) == checkout:
+    refuse("keep public runtime data outside the checkout and its build contexts.")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = None
+try:
+    fd = os.open("/", flags)
+    for part in parts[1:-1]:
+        child = os.open(part, flags, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        info = os.fstat(fd)
+        if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
+            refuse("an ancestor is not trusted; select a non-writable, non-symlink public parent.")
+    if os.fstat(fd).st_uid != os.getuid():
+        refuse("the public parent must be owned by this host operator; it was left unchanged.")
+    # mkdir is exclusive. Set this child's umask, never chmod/chown a pathname
+    # that another process might replace between creation and validation.
+    previous_umask = os.umask(0o022)
+    try:
+        os.mkdir(slot, 0o755, dir_fd=fd)
+    except FileExistsError:
+        refuse("the source already exists (possibly Docker/root-owned); it was left unchanged. Have the host reporting owner validate it.")
+    finally:
+        os.umask(previous_umask)
+    child = os.open(slot, flags, dir_fd=fd)
+    try:
+        info = os.fstat(child)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o755):
+            refuse("source ownership/mode changed; inspect it before enabling reporting.")
+    finally:
+        os.close(child)
+except OSError:
+    refuse("cannot safely create the source; create a trusted operator-owned public parent first. Nothing was repaired.")
+finally:
+    if fd is not None:
+        os.close(fd)
+print("Created an empty operator-owned status directory (0755). No registration, status, env changes or container recreation performed.")
+PY
+    exit $?
+  fi
+  cat <<'HELP'
+Optional read-only host update status (POSIX Compose hosts only)
+
+Default installs have no status mount. Missing integration is unavailable, not
+healthy. This does not enable unattended updates or change the manual default.
+
+Use the source and random 32-hex slot from the host reporting registration.
+The host reporting owner must initialize/validate that registration first; if
+that command is unavailable, STOP. Directory preparation alone is NOT enrollment
+and does not fabricate a status report or authorize host actions.
+
+For a NEW source only, create an operator-owned public parent OUTSIDE the
+checkout/build contexts and .futureagi-updates. Export FI_HOST_UPDATE_STATUS_DIR
+as its absolute slot directory and FI_HOST_UPDATE_STATUS_SLOT as that slot.
+Run ./bin/install --prepare-host-status as the original operator (not sudo).
+It creates only the final directory with mode 0755; the parent must exist, have
+trusted non-writable ancestry and belong to the operator. Existing sources are
+refused unchanged, including Docker/root-owned sources. Never chmod777, chown to
+the container UID, or mount a parent containing other slots. The host publisher
+must atomically replace status.json (0644); never write secrets or private state
+here. Empty directories intentionally remain reporting-unavailable.
+
+After host registration agrees with the source/slot, explicitly choose an overlay.
+The following commands only validate configuration; they do NOT recreate anything.
+Use the same ordered -f arguments for any separately approved recreation:
+
+Standalone:
+  docker compose -f docker-compose.yml -f deploy/docker-compose.host-status.standalone.yml config --quiet
+Distributed:
+  docker compose -f docker-compose.distributed.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
+Production (explicit files, never ambient COMPOSE_FILE):
+  docker compose --env-file deploy/.env.production -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
+
+Preserve all previously selected overlays and the installation's explicit Docker
+context/project. Set the source/slot in the selected environment deliberately;
+exported shell values override env files. Verify them against host registration.
+For production retain stage, separately approved initialization, then apply.
+Status preparation never initializes production. deploy/setup.sh does not select
+this overlay or recreate existing containers for you. Do not rerun an installer
+to retrofit reporting. Nothing changes until an operator explicitly recreates
+with the overlay. Keep the same ordered files in future host registration/actions.
+Never mount updater state, env files, journals or a Docker socket, even read-only.
+Remote daemons, SELinux and rootless configurations require separate qualification.
+Other root processes in Standalone can read this intentionally sanitized file;
+this is not a process-isolation boundary and must not be served by nginx.
+HELP
+  exit 0
+fi
 
 # ---------------- output helpers ----------------
 if [[ -t 1 ]]; then
