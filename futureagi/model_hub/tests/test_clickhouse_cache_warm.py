@@ -1,4 +1,6 @@
+import re
 import sys
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -558,6 +560,25 @@ def test_harness_backfill_without_the_closed_check_form_needs_operator_mode(
     assert guarded_management_command(argv) == "harness_versions_backfill"
     with pytest.raises(RuntimeError, match="^harness_versions_backfill is disabled"):
         ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("env_type", ["local", "production"])
+def test_the_documented_harness_backfill_run_is_allowed(monkeypatch, env_type):
+    install = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+    [line] = [
+        one
+        for one in install.read_text(encoding="utf-8").splitlines()
+        if one.startswith("docker compose exec")
+        and one.endswith("manage.py harness_versions_backfill")
+    ]
+    monkeypatch.setenv("ENV_TYPE", env_type)
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    for key, value in re.findall(r"-e (\w+)=(\S+)", line):
+        monkeypatch.setenv(key, value)
+
+    assert explicit_management_mutation_authorized(
+        ["manage.py", "harness_versions_backfill"]
+    )
 
 
 def test_harness_backfill_run_is_allowed_for_the_operator(monkeypatch):

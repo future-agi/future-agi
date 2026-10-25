@@ -1043,12 +1043,19 @@ their first versions (in Standalone, use `app` in place of `backend`):
 
 ```bash
 docker compose exec backend python manage.py harness_versions_backfill --check
-docker compose exec backend python manage.py harness_versions_backfill
+docker compose exec -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false backend python manage.py harness_versions_backfill
 ```
 
 `--check` changes nothing and lists what the backfill would do; fix every
-error it reports first. Then set `HARNESS_VERSIONING_ENABLED=true` in `.env`
-and run `docker compose up -d`. The backfill is safe to run again later, for
+error it reports first. The backfill writes to the database, so it runs as a
+one-off operator process: the three variables apply to that process only, and
+the running services keep `NO_STARTUP_DB_MUTATIONS=true`.
+
+On Helm: `kubectl -n futureagi exec deploy/futureagi-backend -c backend -- python manage.py harness_versions_backfill --check`, then `kubectl -n futureagi exec deploy/futureagi-backend -c backend -- env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false python manage.py harness_versions_backfill`.
+
+Then set `HARNESS_VERSIONING_ENABLED=true` in `.env` and run
+`docker compose up -d` (on Helm, set it in `config.extraEnv` and run
+`helm upgrade`). The backfill is safe to run again later, for
 example for environments that were busy the first time. See the
 [configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference)
 for the two flags that follow it.

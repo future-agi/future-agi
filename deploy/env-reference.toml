@@ -700,7 +700,7 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     keys = ["HARNESS_VERSIONING_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]
-    text = "`true` records agent, environment and scenario versions for new and edited environments and pins each run to them. `false` is a kill switch: new environments are created unversioned, and environments that already have versions keep them. Turn it on only after `python manage.py harness_versions_backfill` has run (see INSTALLATION.md, Upgrading)."
+    text = "`true` records agent, environment and scenario versions for new and edited environments and pins each run to them. `false` is a kill switch: new environments are created unversioned, and environments that already have versions keep them. Turn it on only after `harness_versions_backfill` has run (see INSTALLATION.md, Upgrading, for how to run it)."
 
     [[part.section.row]]
     keys = ["HARNESS_VERSIONING_NUDGES_ENABLED"]
