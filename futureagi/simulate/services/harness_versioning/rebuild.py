@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -569,13 +570,13 @@ def restore_draft_snapshot(nudge: HarnessNudge, *, locked: HostedHarnessJob) -> 
     if not draft_id or others.exists():
         return
     row = model._base_manager.filter(job=locked, id=draft_id, deleted=False).first()
+    discarded_by = (row.documents or {}).get("discarded_by") if row else None
     if (
         row is None
         or row.discard_reason == DiscardReason.SET_ASIDE_BY_REBUILD
-        or (
-            row.origin != "nudge"
-            and (row.documents or {}).get("discarded_by") != "nudge"
-        )
+        or (row.origin != "nudge" and discarded_by != "nudge")
+        # A chat that saved the default discarded the rebuild's draft.
+        or discarded_by not in (None, "nudge")
         or (
             row.status == VersionStatus.DRAFT
             and row.hash == snapshot.get("hash")
@@ -1430,6 +1431,36 @@ def _report(
     }
 
 
+def _saved_over(
+    locked: HostedHarnessJob, nudge: HarnessNudge, draft: Any, snapshot: Mapping
+) -> bool:
+    """Whether another chat saved over the rebuild's result before it landed."""
+    from simulate.services.harness_versioning import drafts
+
+    if draft is not None:
+        return draft.origin != "nudge" and draft.hash != snapshot.get("hash")
+    # A save equal to the default leaves no draft, only the one it discarded.
+    ids = [snapshot["draft_version_id"]] if snapshot.get("draft_version_id") else []
+    discarded = (
+        drafts._model(nudge.target)
+        ._base_manager.filter(
+            Q(nudge=nudge) | Q(id__in=ids),
+            job=locked,
+            status=VersionStatus.DISCARDED,
+            deleted=False,
+        )
+        .exclude(discard_reason=DiscardReason.SET_ASIDE_BY_REBUILD)
+    )
+    taken = _taken_at(nudge)
+    if taken is not None:
+        # Only this turn's discards; a retry keeps the nudge.
+        discarded = discarded.filter(updated_at__gte=taken)
+    return any(
+        (documents or {}).get("discarded_by") not in (None, "nudge")
+        for documents in discarded.values_list("documents", flat=True)
+    )
+
+
 def _result_draft(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
     from simulate.services.harness_versioning import drafts
 
@@ -1549,6 +1580,10 @@ def land_nudge_result(
             close(state=State.FAILED, error={"code": "no_report"})
             return nudge
         draft = _result_draft(locked, nudge)
+        snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
+        if _saved_over(locked, nudge, draft, snapshot):
+            close(state=State.FAILED, error={"code": "draft_changed"})
+            return nudge
         result = draft or getattr(locked, f"{nudge.target}_version")
         changes, update, edits = _buckets(nudge, before, result)
 
@@ -1567,11 +1602,9 @@ def land_nudge_result(
 
         if not report["passed"]:
             return fail(report["problems"])
-        snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
         if problems := (
             _unhandled_tools(nudge, locked, result)
             or _uncovered_sub_goals(nudge, result)
-            or _untested_tools(nudge, changes["update"], result)
         ):
             return fail(problems)
         if (

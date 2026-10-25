@@ -1514,6 +1514,311 @@ class TestLanding:
             write(REFUND, expected=stale, origin="chat", user=user)
         assert refused.value.code == "draft_changed"
 
+    def _started(self, user, workspace, storage, key, auth_client, capture):
+        environment, nudge, _a1, _a2 = _queued(
+            user, workspace, storage, key, auth_client, capture
+        )
+        assert rebuild.dispatch_nudge(environment.id, start_runtime=False)
+        nudge.refresh_from_db()
+        message = nudge.command_message
+        rebuild.start_nudge_turn(nudge.id, message_id=message.id, started_at=None)
+        return environment, nudge, message
+
+    def _rebuild_checkpoint(self, environment, nudge, message, storage, contract):
+        from simulate.services.hosted_harness_gateway import (
+            with_authoring_basis,
+            with_draft_basis,
+        )
+
+        token = drafts.compose_workspace(
+            environment, message.conversation, only_draft=nudge.target
+        ).token
+        files = {".futureagi-nudge-result.json": _result(nudge)}
+        if contract is not None:
+            files["sub_goals.json"] = CHECKED
+        files["environment-bundle/manifest.json"] = _rebuilt(
+            nudge, contract=contract, **files
+        )
+        body = with_draft_basis(
+            with_authoring_basis(
+                _authoring(contract=contract, **files),
+                message.payload["_environment_revision"],
+            ),
+            token,
+        )
+        return _put_conversation_checkpoint(message.conversation, storage, body)
+
+    def _run_chat_saves(self, environment, user):
+        """A run's chat saves over the rebuild's result, with content that passes
+        every landing check: only a handler differs."""
+        from simulate.services.hosted_harness_gateway import with_authoring_basis
+
+        return drafts.record_draft(
+            environment,
+            with_authoring_basis(
+                _authoring(
+                    contract=REFUND,
+                    **{
+                        "sub_goals.json": CHECKED,
+                        "handlers/lookup.py": "def handle(db):\n    return {'chat': 1}\n",
+                    },
+                ),
+                "",
+            ),
+            origin="chat",
+            user=user,
+            expected=drafts.draft_refs(environment),
+        ).environment
+
+    def _not_landed(self, environment, nudge, before, chat):
+        nudge.refresh_from_db()
+        environment.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "draft_changed"})
+        assert environment.environment_version_id == before
+        assert not HarnessEnvironmentVersion.no_workspace_objects.filter(
+            nudge=nudge, status="active"
+        ).exists()
+        draft = drafts.open_draft(environment, "environment")
+        assert (draft.id, draft.origin, draft.hash) == (chat.id, "chat", chat.hash)
+
+    # None: the rebuild's save equals the default, so it leaves no draft.
+    @pytest.mark.parametrize("rebuilt", [REFUND, None], ids=["edit", "unchanged"])
+    def test_a_run_chat_save_before_the_landing_is_not_landed(
+        self,
+        rebuilt,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        # Certified, so whichever draft is there could go live.
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, nudge, message = self._started(
+            user,
+            workspace,
+            storage,
+            f"r-land-chat-{bool(rebuilt)}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        before = environment.environment_version_id
+        key, digest = self._rebuild_checkpoint(
+            environment, nudge, message, storage, rebuilt
+        )
+        promote_conversation_checkpoint(
+            message.conversation,
+            object_key=key,
+            digest=digest,
+            sequence=10,
+            expected_revision=message.payload["_environment_revision"],
+            command=message,
+        )
+        # Without an edit, the rebuild's save leaves no draft of its own.
+        rebuild_draft = drafts.open_draft(environment, "environment")
+        assert (rebuild_draft is None) == (rebuilt is None)
+        chat = self._run_chat_saves(environment, user)
+
+        nudge.refresh_from_db()
+        rebuild.land_nudge_result(nudge, checkpoint_key=key, turn_event=None)
+
+        self._not_landed(environment, nudge, before, chat)
+
+    # With a draft: the rebuild started on the user's draft and wrote over it.
+    @pytest.mark.parametrize("with_draft", [False, True], ids=["default", "draft"])
+    def test_a_run_chat_save_of_the_default_before_the_landing_is_not_landed(
+        self,
+        with_draft,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.hosted_harness_gateway import with_authoring_basis
+
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            f"r-land-chat-default-{with_draft}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        if with_draft:
+            mine = {"agent": "support", "tools": [{"name": "lookup_order"}]}
+            drafts.record_draft(
+                environment,
+                with_authoring_basis(_authoring(contract=mine), ""),
+                origin="chat",
+                user=user,
+            )
+        assert rebuild.dispatch_nudge(environment.id, start_runtime=False)
+        nudge.refresh_from_db()
+        message = nudge.command_message
+        rebuild.start_nudge_turn(nudge.id, message_id=message.id, started_at=None)
+        nudge.refresh_from_db()
+        assert bool(nudge.draft_snapshot["piece"]["draft_version_id"]) is with_draft
+        before = environment.environment_version_id
+        key, digest = self._rebuild_checkpoint(
+            environment, nudge, message, storage, REFUND
+        )
+        promote_conversation_checkpoint(
+            message.conversation,
+            object_key=key,
+            digest=digest,
+            sequence=10,
+            expected_revision=message.payload["_environment_revision"],
+            command=message,
+        )
+        assert drafts.open_draft(environment, "environment") is not None
+        # The run's chat puts the default back, which discards the rebuild's draft.
+        default = environment.payload["metadata"]["authoring_object_key"]
+        drafts.record_draft(
+            environment,
+            with_authoring_basis(archives.get_archive(default), ""),
+            origin="chat",
+            user=user,
+            expected=drafts.draft_refs(environment),
+            pieces={"environment"},
+        )
+        assert drafts.open_draft(environment, "environment") is None
+
+        nudge.refresh_from_db()
+        rebuild.land_nudge_result(nudge, checkpoint_key=key, turn_event=None)
+
+        nudge.refresh_from_db()
+        environment.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "draft_changed"})
+        assert environment.environment_version_id == before
+        assert drafts.open_draft(environment, "environment") is None
+
+    def test_a_run_chat_save_before_a_landing_retry_is_not_landed(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.models import HostedHarnessConversationEvent
+        from simulate.services.hosted_harness_conversation import (
+            promote_turn_checkpoint,
+        )
+
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, nudge, message = self._started(
+            user,
+            workspace,
+            storage,
+            "r-land-chat-retry",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        before = environment.environment_version_id
+        conversation = message.conversation
+        _key, digest = self._rebuild_checkpoint(
+            environment, nudge, message, storage, REFUND
+        )
+        now = timezone.now()
+        for sequence, kind, payload in (
+            (10, "checkpoint_committed", {"digest": digest}),
+            (
+                11,
+                "turn_completed",
+                {"command_message_id": str(message.id), "outcome": "success"},
+            ),
+        ):
+            HostedHarnessConversationEvent.no_workspace_objects.create(
+                event_id=f"r-land-chat-retry-{sequence}",
+                conversation=conversation,
+                sequence=sequence,
+                kind=kind,
+                payload=payload,
+                digest="x",
+                emitted_at=now,
+            )
+        # The first landing: the rebuild's save commits, then reading its result fails.
+        with (
+            patch.object(rebuild, "_result_files", side_effect=OSError("down")),
+            pytest.raises(OSError),
+        ):
+            promote_turn_checkpoint(str(conversation.id), 11)
+        saved = drafts.open_draft(environment, "environment")
+        assert saved is not None and saved.origin == "nudge"
+        chat = self._run_chat_saves(environment, user)
+
+        # The tick retries the landing later.
+        nudge.refresh_from_db()
+        HarnessNudge.no_workspace_objects.filter(id=nudge.id).update(
+            draft_snapshot={**nudge.draft_snapshot, "turn_sequence": 11}
+        )
+        HostedHarnessConversationEvent.no_workspace_objects.filter(
+            event_id="r-land-chat-retry-11"
+        ).update(
+            created_at=now - rebuild.NUDGE_LANDING_RETRY_AFTER - timedelta(minutes=1)
+        )
+        rebuild.check_nudges(environment.id)
+
+        self._not_landed(environment, nudge, before, chat)
+
+    def test_unsaved_edits_the_rebuild_leaves_as_they_are_still_land(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.hosted_harness_gateway import with_authoring_basis
+
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-land-untouched",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        before = environment.environment_version_id
+        mine = {"agent": "support", "tools": [{"name": "lookup_order"}]}
+        edits = drafts.record_draft(
+            environment,
+            with_authoring_basis(
+                _authoring(contract=mine, **{"sub_goals.json": CHECKED}), ""
+            ),
+            origin="chat",
+            user=user,
+        ).environment
+
+        nudge = _turn(
+            environment,
+            nudge,
+            storage,
+            contract=mine,
+            result=_result(nudge, changed=False),
+        )
+
+        assert (nudge.state, nudge.error) == ("no_change", None)
+        assert environment.environment_version_id == before
+        draft = drafts.open_draft(environment, "environment")
+        assert (draft.id, draft.origin, draft.hash) == (edits.id, "chat", edits.hash)
+
 
 def _send(client, conversation, headers, acknowledged, *events):
     signed = []
