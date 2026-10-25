@@ -39,6 +39,7 @@ on:
     branches: [dev, main]
     paths:
       - "deploy/helm/**"
+      - "deploy/tests/test_helm_*.py"
       - "deploy/standalone/clickhouse/**"
       - "futureagi/.ci/clickhouse-storage-policy.xml"
       - "frontend/security-headers.conf"
@@ -56,6 +57,7 @@ on:
     branches: [dev, main]
     paths:
       - "deploy/helm/**"
+      - "deploy/tests/test_helm_*.py"
       - "deploy/standalone/clickhouse/**"
       - "futureagi/.ci/clickhouse-storage-policy.xml"
       - "frontend/security-headers.conf"
@@ -104,6 +106,12 @@ jobs:
 
       - name: Install PyYAML
         run: python -m pip install PyYAML==6.0.3
+
+      - name: deploy/tests/test_helm_*.py
+        # package.sh's stable and beta/rc version grammar against the Helm
+        # installed above, and the kind-smoke.sh stream assertions. No cluster,
+        # registry or Docker daemon.
+        run: python -m unittest discover -s deploy/tests -p 'test_helm_*.py' -v
 
       - name: Chart checks (chart directory)
         env:
