@@ -338,6 +338,7 @@ const LatencyPipeline = ({ latencies }) => {
           const showInline = pct >= 12;
           return (
             <Tooltip
+              classes={{ tooltip: "ds-hovercard" }}
               key={s.key}
               arrow
               placement="top"

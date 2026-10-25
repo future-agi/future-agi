@@ -63,11 +63,12 @@ const TranscriptPreviewCell = (params) => {
 
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       title={<TranscriptTooltip transcript={transcript} />}
       arrow
       placement="bottom-start"
       slotProps={{
-        tooltip: { sx: { maxWidth: 400, bgcolor: "grey.900", p: 1 } },
+        tooltip: { sx: { maxWidth: 400 } },
       }}
     >
       <Box

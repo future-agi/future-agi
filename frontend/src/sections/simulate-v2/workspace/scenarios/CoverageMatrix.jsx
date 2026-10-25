@@ -252,13 +252,9 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
                 tooltip: {
                   sx: {
                     maxWidth: 420,
-                    p: 1.5,
-                    bgcolor: "grey.900",
-                    color: "common.white",
                   },
                   onClick: (e) => e.stopPropagation(),
                 },
-                arrow: { sx: { color: "grey.900" } },
               }}
             >
               <Box

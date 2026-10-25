@@ -34,6 +34,7 @@ const CustomModelTools = ({
   return (
     <Box sx={{ height: "24px" }}>
       <CustomTooltip
+        card
         show={true}
         title={<ToolsHoverState tools={tools} disableHover={disableHover} />}
         placement={!disableHover ? hoverPlacement : "bottom"}

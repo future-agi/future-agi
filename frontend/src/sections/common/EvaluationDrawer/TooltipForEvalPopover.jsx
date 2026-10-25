@@ -334,11 +334,7 @@ const TooltipForEvals = ({
       componentsProps={{
         tooltip: {
           sx: {
-            bgcolor: "background.paper",
-            color: "text.primary",
             // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: 3,
-            borderRadius: "8px",
           },
         },
       }}

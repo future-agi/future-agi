@@ -320,6 +320,7 @@ export default function DerivedPanels({
                     label={
                       gapItems?.length > 0 ? (
                         <Tooltip
+                          classes={{ tooltip: "ds-hovercard" }}
                           arrow
                           title={
                             <Box>

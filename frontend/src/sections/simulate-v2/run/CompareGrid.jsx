@@ -443,12 +443,13 @@ function TwinWritesStat({ writes, delta, breakdown }) {
   const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "";
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       placement="top"
       title={
         <Stack spacing={0.5} sx={{ py: 0.5, minWidth: 160 }}>
           <Typography
-            sx={{ typography: "s3", fontWeight: 600, color: "common.white" }}
+            sx={{ typography: "s3", fontWeight: 600, color: "text.primary" }}
           >
             Sandbox writes by service
           </Typography>
@@ -467,7 +468,7 @@ function TwinWritesStat({ writes, delta, breakdown }) {
                   sx={{ color: t?.color || "primary.main" }}
                 />
                 <Typography
-                  sx={{ typography: "s3", color: "common.white", flex: 1 }}
+                  sx={{ typography: "s3", color: "text.primary", flex: 1 }}
                 >
                   {t?.name || sId}
                 </Typography>
@@ -475,7 +476,7 @@ function TwinWritesStat({ writes, delta, breakdown }) {
                   sx={{
                     typography: "s3",
                     fontWeight: 600,
-                    color: "common.white",
+                    color: "text.primary",
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >

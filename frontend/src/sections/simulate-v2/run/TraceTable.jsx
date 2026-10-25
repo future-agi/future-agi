@@ -823,6 +823,7 @@ export default function TraceTable({
                       const blocking = t.status === "failed";
                       return (
                         <Tooltip
+                          classes={{ tooltip: "ds-hovercard" }}
                           arrow
                           title={
                             <Stack
@@ -909,16 +910,12 @@ export default function TraceTable({
               full card (traits included) on hover. Four boxed lines per row
               made every row tall and the table hard to compare down. */}
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             placement="right"
             componentsProps={{
               tooltip: {
                 sx: {
-                  bgcolor: "background.paper",
-                  color: "text.primary",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  p: 1,
                   maxWidth: 320,
                 },
               },
@@ -2433,6 +2430,7 @@ function Score({ result }) {
   const marked = failed;
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       title={
         <Box>

@@ -170,6 +170,7 @@ export default function ChartLegend({
         {visible.map((name, i) => renderItem(name, i, false))}
         {overflow.length > 0 && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             placement="bottom"
             title={
@@ -215,7 +216,7 @@ export default function ChartLegend({
                       />
                       <Typography
                         variant="caption"
-                        sx={{ fontSize: "12px", color: "common.white" }}
+                        sx={{ fontSize: "12px", color: "text.primary" }}
                       >
                         {name}
                       </Typography>

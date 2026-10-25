@@ -438,6 +438,7 @@ export default function AnnotationHistory({ queueId, itemId }) {
                       </Box>
                       {isEdited(ann) && (
                         <Tooltip
+                          classes={{ tooltip: "ds-hovercard" }}
                           placement="top"
                           title={
                             <Box>

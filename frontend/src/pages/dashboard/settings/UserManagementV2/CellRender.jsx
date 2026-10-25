@@ -197,16 +197,8 @@ export const WorkspaceChipsCell = ({ value }) => {
         tooltip: {
           sx: {
             maxWidth: 300,
-            bgcolor: "background.paper",
-            color: "text.primary",
-            border: "1px solid",
-            borderColor: "divider",
             "& .MuiTooltip-arrow": {
-              color: "background.paper",
-              "&::before": {
-                border: "1px solid",
-                borderColor: "divider",
-              },
+              "&::before": {},
             },
           },
         },

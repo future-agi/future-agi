@@ -5185,26 +5185,18 @@ export default function WidgetEditorView() {
                 {/* Metric section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: "background.paper",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          border: "1px solid",
-                          borderColor: "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: "background.paper",
-                          "&::before": {
-                            border: "1px solid",
-                            borderColor: "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -5771,26 +5763,18 @@ export default function WidgetEditorView() {
                 {/* Filter section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: "background.paper",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          border: "1px solid",
-                          borderColor: "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: "background.paper",
-                          "&::before": {
-                            border: "1px solid",
-                            borderColor: "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -6235,26 +6219,18 @@ export default function WidgetEditorView() {
                 {/* Breakdown section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: "background.paper",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          border: "1px solid",
-                          borderColor: "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: "background.paper",
-                          "&::before": {
-                            border: "1px solid",
-                            borderColor: "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}

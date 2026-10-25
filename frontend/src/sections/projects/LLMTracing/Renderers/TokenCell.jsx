@@ -163,6 +163,7 @@ const TokenCell = ({ value, data }) => {
       )}
       {hasBreakdown && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <BreakdownTooltip
               promptTokens={promptTokens}
@@ -173,7 +174,7 @@ const TokenCell = ({ value, data }) => {
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box

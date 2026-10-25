@@ -75,6 +75,7 @@ export default function LibraryPersonaPicker({ env, envState, onAdd }) {
       >
         {/* The sentence names the first couple of tasks; hover for all of them. */}
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           placement="top-start"
           title={
             summary?.tasks?.length > 2

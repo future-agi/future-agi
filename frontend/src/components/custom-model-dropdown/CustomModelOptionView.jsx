@@ -8,6 +8,7 @@ import { Box } from "@mui/material";
 const CustomModelOptionView = ({ toolConfig }) => {
   return (
     <CustomTooltip
+      card
       show={true}
       placement="bottom-end"
       title={<ToolHoverState config={toolConfig} />}

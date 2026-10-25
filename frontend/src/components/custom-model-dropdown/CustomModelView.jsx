@@ -10,6 +10,7 @@ const CustomModelView = ({ modelName, logoUrl }) => {
 
   return (
     <CustomTooltip
+      card
       show={Boolean(modelName)}
       placement="bottom-end"
       title={<ModelHoverState modelName={modelName} />}

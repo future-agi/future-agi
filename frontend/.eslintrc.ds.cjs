@@ -76,6 +76,10 @@ module.exports = {
         "Purple selected state. Selected tabs, items and rows use text.primary; purple is for the main action only.",
       ),
       DS(
+        "JSXOpeningElement[name.name=/Tooltip$/] JSXAttribute[name.name=/^(slotProps|componentsProps|PopperProps)$/] Property[key.name=/^(bgcolor|backgroundColor|background|color|border|borderColor|boxShadow|borderRadius|fontSize|fontWeight|padding|p|px|py)$/]",
+        "Tooltip restyle. Tooltips are the DS tooltip from the theme; only placement, width (maxWidth) and offset may change.",
+      ),
+      DS(
         "JSXOpeningElement[name.name=/^(Checkbox|Radio)$/] JSXAttribute[name.name=/^(icon|checkedIcon|indeterminateIcon)$/]",
         "Checkbox/Radio icon override. Use the theme's Checkbox or Radio as is.",
       ),

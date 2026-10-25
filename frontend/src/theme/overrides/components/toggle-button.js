@@ -14,15 +14,17 @@ export function toggleButton(theme) {
   return {
     MuiToggleButtonGroup: {
       styleOverrides: {
-        root: {
+        root: ({ ownerState }) => ({
           gap: 2,
           padding: 2,
           borderRadius: 6,
           border: 0,
           backgroundColor: theme.palette.background.muted,
-          width: "fit-content",
-        },
-        grouped: {
+          width: ownerState.fullWidth ? "100%" : "fit-content",
+        }),
+        grouped: ({ ownerState }) => ({
+          // A full-width group splits the track evenly.
+          ...(ownerState.fullWidth && { flex: "1 1 0", minWidth: 0 }),
           margin: 0,
           border: 0,
           borderRadius: 4,
@@ -32,7 +34,7 @@ export function toggleButton(theme) {
             borderRadius: 4,
           },
           [`&.${toggleButtonGroupClasses.firstButton}`]: { borderRadius: 4 },
-        },
+        }),
       },
     },
     MuiToggleButton: {
@@ -40,6 +42,8 @@ export function toggleButton(theme) {
         root: {
           height: 24,
           padding: "0 10px",
+          // Options never wrap.
+          whiteSpace: "nowrap",
           border: 0,
           borderRadius: 4,
           textTransform: "none",

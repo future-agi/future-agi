@@ -960,6 +960,7 @@ const ModelSelector = ({
         })}
       {showPlus && selectedKBs.length > 0 && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           arrow
           title={
             <Box sx={{ py: 0.25 }}>
@@ -997,6 +998,7 @@ const ModelSelector = ({
         activeContextOptions.filter((o) => o !== "variables_only").length >
           0 && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             title={
               <Box sx={{ py: 0.25 }}>

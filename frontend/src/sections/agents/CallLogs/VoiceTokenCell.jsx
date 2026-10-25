@@ -174,6 +174,7 @@ const VoiceTokenCell = (params) => {
       )}
       {hasBreakdown && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <BreakdownTooltip
               promptTokens={promptTokens}
@@ -184,7 +185,7 @@ const VoiceTokenCell = (params) => {
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box

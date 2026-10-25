@@ -212,7 +212,6 @@ const TestRunDetailHeader = () => {
                           name: "preventOverflow",
                           options: {
                             boundary: "viewport",
-                            padding: 12,
                           },
                         },
                       ],

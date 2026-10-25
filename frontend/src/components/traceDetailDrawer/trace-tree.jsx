@@ -190,7 +190,6 @@ const TreeNode = ({
                         name: "preventOverflow",
                         options: {
                           boundary: "viewport",
-                          padding: 12,
                         },
                       },
                     ],

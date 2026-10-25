@@ -110,13 +110,14 @@ const VoiceCostCell = (params) => {
         {fmt(totalDollars)}
       </Typography>
       <Tooltip
+        classes={{ tooltip: "ds-hovercard" }}
         title={
           <BreakdownTooltip breakdown={breakdown} totalCents={costCents} />
         }
         arrow
         placement="bottom"
         slotProps={{
-          tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+          tooltip: { sx: { maxWidth: 280 } },
         }}
       >
         <Box

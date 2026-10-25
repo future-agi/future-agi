@@ -50,6 +50,7 @@ export default function MeteredText({ metering }) {
   if (!metering?.line) return null;
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       placement="bottom-start"
       title={<MeterTooltip metering={metering} />}

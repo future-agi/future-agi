@@ -3296,7 +3296,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           name: "preventOverflow",
                           options: {
                             boundary: "viewport",
-                            padding: 12,
                           },
                         },
                       ],
@@ -4444,7 +4443,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],
@@ -4497,7 +4495,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],

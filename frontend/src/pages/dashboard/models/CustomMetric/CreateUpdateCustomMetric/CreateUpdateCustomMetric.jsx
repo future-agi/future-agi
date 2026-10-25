@@ -239,12 +239,12 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
             />
             {/* <EvaluationSelector control={control} /> */}
             <Tooltip
+              classes={{ tooltip: "ds-hovercard" }}
               open={Boolean(suggestedPrompt)}
               placement="left-start"
               slotProps={{
                 tooltip: {
                   style: {
-                    backgroundColor: "var(--bg-paper)",
                     maxWidth: "500px",
                   },
                 },

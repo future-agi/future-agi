@@ -510,6 +510,7 @@ const TimelineRow = ({
                       const ownFail = ownEvals.length - ownPass;
                       return (
                         <CustomTooltip
+                          card
                           show
                           type="black"
                           size="small"
@@ -560,7 +561,7 @@ const TimelineRow = ({
                                     <Typography
                                       sx={{
                                         fontSize: 12,
-                                        color: "common.white",
+                                        color: "text.primary",
                                         flex: 1,
                                       }}
                                     >

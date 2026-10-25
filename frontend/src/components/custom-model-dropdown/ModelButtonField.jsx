@@ -38,6 +38,7 @@ const ModelButtonField = ({
       }}
     >
       <CustomTooltip
+        card
         show={
           !disabledHover && !openDropdown && (value || modelDetail?.model_name)
         }

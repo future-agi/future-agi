@@ -99,20 +99,10 @@ export default function ModelSelectionRow({
             arrow
             componentsProps={{
               tooltip: {
-                sx: {
-                  bgcolor: "grey.800",
-                  color: "common.white",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  px: 1.5,
-                  py: 0.75,
-                  borderRadius: "4px",
-                },
+                sx: {},
               },
               arrow: {
-                sx: {
-                  color: "text.primary",
-                },
+                sx: {},
               },
             }}
           >

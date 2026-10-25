@@ -337,6 +337,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
                   />
                 )}
                 <CustomTooltip
+                  card
                   placement="bottom"
                   show
                   title={<CustomTooltipTitle value={issue?.evidenceSummary} />}

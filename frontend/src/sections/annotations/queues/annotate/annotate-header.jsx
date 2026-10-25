@@ -288,6 +288,7 @@ export default function AnnotateHeader({
         )}
         {onOpenComments && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             placement="bottom"
             componentsProps={{

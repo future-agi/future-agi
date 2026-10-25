@@ -100,6 +100,7 @@ const CustomModelOptions = ({
       }}
     >
       <CustomTooltip
+        card
         show={!openDropdown}
         placement={!disabledHover ? hoverPlacement : "bottom"}
         title={

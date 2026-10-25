@@ -75,27 +75,28 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
         }}
       >
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           arrow
           title={
             <Box>
               <Typography
-                sx={{ typography: "s3", color: "common.white", mb: 0.5 }}
+                sx={{ typography: "s3", color: "text.primary", mb: 0.5 }}
               >
                 An agent change moves only the agent. The environment version
                 moves when the world, scenarios, sub-goals, evaluations or
                 simulated caller change.
               </Typography>
-              <Typography sx={{ typography: "s3", color: "common.white" }}>
+              <Typography sx={{ typography: "s3", color: "text.primary" }}>
                 <b>{agentV ? `Agent ${agentName}` : "No agent"}</b>
                 {" — the test subject"}
               </Typography>
               {draft ? (
-                <Typography sx={{ typography: "s3", color: "common.white" }}>
+                <Typography sx={{ typography: "s3", color: "text.primary" }}>
                   <b>{`Environment ${shownLabel}`}</b> — not run yet. Edits land
                   in place until its first run fixes it.
                 </Typography>
               ) : (
-                <Typography sx={{ typography: "s3", color: "common.white" }}>
+                <Typography sx={{ typography: "s3", color: "text.primary" }}>
                   <b>{`Environment ${shownLabel}`}</b>
                   {snap?.summary ? ` — ${snap.summary}` : ""}
                 </Typography>
@@ -104,7 +105,7 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
                 <Typography
                   sx={{
                     typography: "s3",
-                    color: "common.white",
+                    color: "text.primary",
                     opacity: 0.8,
                     mt: 0.25,
                   }}

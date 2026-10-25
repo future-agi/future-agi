@@ -1463,6 +1463,7 @@ const PathStepNode = React.memo(({ data }) => {
 
   return (
     <CustomTooltip
+      card
       show
       arrow
       placement="top"

@@ -2998,6 +2998,7 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
               : "";
             return (
               <Tooltip
+                classes={{ tooltip: "ds-hovercard" }}
                 key={t.id || i}
                 arrow
                 title={
@@ -3006,7 +3007,7 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
                       sx={{
                         fontSize: 12,
                         fontWeight: 600,
-                        color: "common.white",
+                        color: "text.primary",
                       }}
                     >
                       T{i + 1} · {statusText}

@@ -11,7 +11,15 @@ import { useState } from "react";
 import { ORIGIN_KINDS } from "../_mock/provenance";
 import { textTone } from "./textTone";
 import { alpha, useTheme } from "@mui/material/styles";
-import { Box, Chip, Stack, Typography, Tooltip, IconButton, keyframes } from "@mui/material";
+import {
+  Box,
+  Chip,
+  Stack,
+  Typography,
+  Tooltip,
+  IconButton,
+  keyframes,
+} from "@mui/material";
 import EmptyContent from "src/components/empty-content";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -600,6 +608,7 @@ export function OriginChip({ origin, file, line, showPath = true }) {
 
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       placement="top"
       title={

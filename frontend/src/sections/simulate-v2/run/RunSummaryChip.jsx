@@ -54,6 +54,7 @@ export default function RunSummaryChip({ summary }) {
   const causes = causeCountsLine(summary);
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       title={
         <Stack spacing={0.5} sx={{ py: 0.25 }}>
@@ -175,6 +176,7 @@ export function ProofKindChip({ proof }) {
   if (!proof?.label) return null;
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       arrow
       title={
         <Stack spacing={0.5} sx={{ py: 0.25 }}>

@@ -279,7 +279,6 @@ const FormSelectMenus = ({
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],

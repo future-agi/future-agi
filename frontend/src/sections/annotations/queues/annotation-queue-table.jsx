@@ -307,6 +307,7 @@ function MembersCellRenderer({ data }) {
       sx={{ display: "flex", alignItems: "center", height: "100%" }}
     >
       <Tooltip
+        classes={{ tooltip: "ds-hovercard" }}
         title={
           <Stack
             spacing={1.25}

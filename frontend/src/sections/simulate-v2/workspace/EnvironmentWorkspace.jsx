@@ -1345,6 +1345,7 @@ export default function EnvironmentWorkspace() {
             */}
             {envState?.twinBacking?.services?.length > 0 && (
               <Tooltip
+                classes={{ tooltip: "ds-hovercard" }}
                 arrow
                 title={
                   <Box>
@@ -1352,14 +1353,14 @@ export default function EnvironmentWorkspace() {
                       sx={{
                         typography: "s3",
                         fontWeight: 600,
-                        color: "common.white",
+                        color: "text.primary",
                         mb: 0.5,
                       }}
                     >
                       Sandboxed apps
                     </Typography>
                     <Typography
-                      sx={{ typography: "s3", color: "common.white" }}
+                      sx={{ typography: "s3", color: "text.primary" }}
                     >
                       Sandboxed copies of{" "}
                       {envState.twinBacking.services.join(", ")} — reset between
@@ -2078,6 +2079,7 @@ export default function EnvironmentWorkspace() {
                   (value, selected, onChange…) to the Tab inside it. */}
                 {visibleTabs.map((t) => (
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     key={t.id}
                     value={t.id}
                     arrow

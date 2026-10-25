@@ -246,6 +246,7 @@ function AssignedCellRenderer({ data, context }) {
         </Tooltip>
       ) : assignedUsers.length > 0 ? (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <Stack spacing={0.25} sx={{ py: 0.25 }}>
               {assignedUsers.map((u) => (
@@ -268,8 +269,6 @@ function AssignedCellRenderer({ data, context }) {
                 height: 28,
                 fontSize: 12,
                 fontWeight: 600,
-
-
               },
             }}
           >

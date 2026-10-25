@@ -1138,6 +1138,7 @@ export default function RunResults({
             {/* What it metered, who placed the calls, which rule graded it and
                 the replay header — one hover, not five clauses. */}
             <Tooltip
+              classes={{ tooltip: "ds-hovercard" }}
               arrow
               placement="bottom-start"
               slotProps={{ tooltip: { sx: { maxWidth: 420 } } }}

@@ -121,11 +121,12 @@ const VoiceLatencyCell = (params) => {
       </Typography>
       {hasStages && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={<BreakdownTooltip data={data} totalMs={totalMs} />}
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box

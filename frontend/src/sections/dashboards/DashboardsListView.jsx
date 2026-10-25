@@ -78,26 +78,18 @@ function ViewerAvatars({ db }) {
 
   return (
     <Tooltip
+      classes={{ tooltip: "ds-hovercard" }}
       placement="bottom-start"
       arrow
       componentsProps={{
         tooltip: {
           sx: {
-            bgcolor: "background.paper",
-            borderRadius: 2,
-            p: 2,
             minWidth: 240,
-            border: "1px solid",
-            borderColor: "divider",
           },
         },
         arrow: {
           sx: {
-            color: "background.paper",
-            "&::before": {
-              border: "1px solid",
-              borderColor: "divider",
-            },
+            "&::before": {},
           },
         },
       }}
