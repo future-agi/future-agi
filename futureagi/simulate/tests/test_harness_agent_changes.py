@@ -486,6 +486,88 @@ class TestPush:
         assert _preflight(a5_row.agent_version).status == "passed"
         assert _defaults(environment) == [a5_row.agent_version_id]
 
+    @pytest.mark.parametrize("rotation_lands", ["first", "second"])
+    def test_a_push_while_a_credential_change_is_checked_keeps_its_values(
+        self, user, workspace, storage, gh, scheduled, rotation_lands
+    ):
+        environment = _environment(
+            user, workspace, f"push-rotation-{rotation_lands}", storage
+        )
+        rotated = change_credentials(
+            environment, secret_values={"OPENAI_API_KEY": "v2"}
+        )
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        assert _observe(environment) == {str(environment.id): "created"}
+
+        [row] = _push_rows(environment)
+        assert row.parent.agent_version_id == rotated.id
+        pushed = row.agent_version
+        order = (rotated, pushed) if rotation_lands == "first" else (pushed, rotated)
+        for version in order:
+            assert _preflight(version).status == "passed"
+        assert _defaults(environment) == [pushed.id]
+        assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v2"
+        assert _observe(environment) == {str(environment.id): "unchanged"}
+
+    def test_a_push_on_a_failed_credential_change_is_asked_again_once_fixed(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-rotation-failed", storage)
+        a1 = _a1(environment)
+        rotated = change_credentials(
+            environment, secret_values={"OPENAI_API_KEY": "bad"}
+        )
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+        assert _observe(environment) == {str(environment.id): "created"}
+        [row] = _push_rows(environment)
+        # Built on the bad values, it fails with them.
+        assert row.parent.agent_version_id == rotated.id
+        failing = _passing(return_value=[{"aliases": ["OPENAI_API_KEY"], "ok": False}])
+        assert _preflight(rotated, failing).status == "failed"
+        assert _preflight(row.agent_version, failing).status == "failed"
+        assert _defaults(environment) == [a1.id]
+        assert _observe(environment) == {str(environment.id): "unchanged"}
+
+        fixed = change_credentials(environment, secret_values={"OPENAI_API_KEY": "v3"})
+        assert _side(fixed).parent.agent_version_id == a1.id
+        assert _preflight(fixed).status == "passed"
+
+        assert _observe(environment) == {str(environment.id): "created"}
+        again = _push_rows(environment)[-1]
+        assert again.parent.agent_version_id == fixed.id
+        assert again.source["commit_sha"] == HEAD_Y
+        assert _preflight(again.agent_version).status == "passed"
+        assert _defaults(environment) == [again.agent_version_id]
+        assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v3"
+
+    def test_a_push_after_a_credential_change_passed_while_busy_keeps_its_values(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-rotation-busy", storage)
+        rotated = change_credentials(
+            environment, secret_values={"OPENAI_API_KEY": "v2"}
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state="running"
+        )
+        assert _preflight(rotated).status == "passed"
+        assert _outcomes(rotated) == {str(environment.id): "environment_busy"}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state="completed"
+        )
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        # The push comes before the deferred move of the change.
+        assert _observe(environment) == {str(environment.id): "created"}
+
+        [row] = _push_rows(environment)
+        assert row.parent.agent_version_id == rotated.id
+        assert _preflight(row.agent_version).status == "passed"
+        assert _defaults(environment) == [row.agent_version_id]
+        environment.refresh_from_db()
+        assert pinned_credential_values(environment)["OPENAI_API_KEY"] == "v2"
+
     def test_a_pass_while_busy_moves_the_environment_once_it_is_built(
         self, user, workspace, storage, gh, scheduled
     ):

@@ -35,6 +35,7 @@ from simulate.services.harness_agent_versions import (
     _busy,
     _default_lineage,
     _moved_by_hand_since,
+    _outstanding_request,
     _requested_at,
     _side_row,
     agent_definition_owner,
@@ -515,7 +516,11 @@ def _observe_one(
             environment.id,
         )
         return "skipped_not_runnable", None
-    parent = environment.agent_version
+    # Built on a change still on its way to the default: neither undoes the other.
+    parent = (
+        _outstanding_request(environment, environment.agent_version)
+        or environment.agent_version
+    )
     first_new = next_version_number(parent.agent_definition_id)
     # No transaction or lock around it: its activation takes the environment's lock
     # after releasing the definition's.

@@ -1118,7 +1118,7 @@ def _outstanding_request(
     if latest.preflight_status == Status.PENDING or (
         latest.preflight_status == Status.PASSED
         and _activation_outcome(latest.preflight_report, environment_id)
-        in (None, "failed")
+        in (None, "environment_busy", "failed")
     ):
         return latest.agent_version
     return None
