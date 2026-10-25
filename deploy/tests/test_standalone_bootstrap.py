@@ -89,18 +89,19 @@ def _operator_commands() -> frozenset[str]:
     raise AssertionError("OPERATOR_STARTUP_MUTATION_COMMANDS not found")
 
 
-def _split_statements():
-    """The backend's own splitter; it imports nothing but re."""
+def _schema_rewriter():
+    """The actual pure rewriter; no backend dependencies or running services."""
     spec = importlib.util.spec_from_file_location(
         "schema_rewriter",
         BACKEND / "tracer/services/clickhouse/v2/apply_schema_rewriter.py",
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.split_statements
+    return module
 
 
-split_statements = _split_statements()
+schema_rewriter = _schema_rewriter()
+split_statements = schema_rewriter.split_statements
 OPERATOR_COMMANDS = _operator_commands()
 
 
@@ -129,6 +130,7 @@ class FakeStack:
         self.clickhouse: list[tuple] = []
         self.search_attribute_calls: list[tuple] = []
         self.cdc_calls: list[tuple] = []
+        self.cluster_catalog_calls: list[dict] = []
         self.setup_env: dict[str, str] = {}
         # Where Django connects: docker-compose.yml points PGBOUNCER_HOST at
         # PG_HOST.
@@ -149,6 +151,7 @@ class FakeStack:
         self.command_errors: dict[str, BaseException] = {}
         self.setup_error: BaseException | None = None
         self.native_exit: object = 0
+        self.cluster_catalog_error: BaseException | None = None
         self.validation_rows = [(1,)]
         self.cdc_outcomes: list = [{"mode": "outbox", "ready": True}]
         self.model_hub_config = SimpleNamespace(label="model_hub")
@@ -256,6 +259,12 @@ class FakeStack:
 
         return Client()
 
+    def cluster_catalog(self, client, **kwargs):
+        self.log.append("property catalog cluster")
+        self.cluster_catalog_calls.append(kwargs)
+        if self.cluster_catalog_error is not None:
+            raise self.cluster_catalog_error
+
     def native_main(self, argv):
         self.log.append("clickhouse native schema")
         if isinstance(self.native_exit, BaseException):
@@ -362,10 +371,16 @@ class FakeStack:
             ),
             "tracer.services.clickhouse.oss_cdc_install": native,
             OUTBOX: outbox,
-            "tracer.services.clickhouse.v2": package("tracer.services.clickhouse.v2"),
-            "tracer.services.clickhouse.v2.apply_schema_rewriter": package(
-                "tracer.services.clickhouse.v2.apply_schema_rewriter",
-                split_statements=split_statements,
+            # cluster_schema/schema_topology are pure production helpers. Load
+            # their real code, not a fake flag that could hide a default change.
+            "tracer.services.clickhouse.v2": package(
+                "tracer.services.clickhouse.v2",
+                __path__=[str(BACKEND / "tracer/services/clickhouse/v2")],
+            ),
+            "tracer.services.clickhouse.v2.apply_schema_rewriter": schema_rewriter,
+            "tracer.services.clickhouse.v2.cluster_cdc": package(
+                "tracer.services.clickhouse.v2.cluster_cdc",
+                apply_observed_catalog=self.cluster_catalog,
             ),
             "clickhouse_connect": package(
                 "clickhouse_connect", get_client=self.get_client
@@ -540,6 +555,50 @@ class MainTest(StackTest):
         self.assertEqual(
             self.stack.search_attribute_calls, [("temporal-client", "fi-ns")]
         )
+
+    def test_explicit_false_preserves_the_single_node_boot_sequence(self):
+        with mock.patch.dict(os.environ, {"CH_CLUSTER_ENABLED": "false"}):
+            bootstrap.main()
+        self.assertEqual(self.stack.log, FIRST_BOOT)
+        self.assertEqual(self.stack.cluster_catalog_calls, [])
+        self.assertNotIn("command ch25_cluster_schema", self.stack.log)
+
+    def test_cluster_opt_in_uses_explicit_schema_and_catalog_paths(self):
+        with mock.patch.dict(os.environ, {"CH_CLUSTER_ENABLED": "true"}):
+            bootstrap.main()
+        self.assertIn(("ch25_cluster_schema", {"apply": True}), self.stack.commands)
+        self.assertNotIn("clickhouse native schema", self.stack.log)
+        self.assertEqual(len(self.stack.cluster_catalog_calls), 1)
+        self.assertEqual(
+            self.stack.cluster_catalog_calls[0]["database"], "property_catalog"
+        )
+        self.assertFalse(any(event[0] == "command" for event in self.stack.clickhouse))
+        self.assertTrue(bootstrap.READY.exists())
+
+    def test_failed_cluster_schema_never_falls_back_to_single_node(self):
+        self.stack.command_errors["ch25_cluster_schema"] = CommandError(
+            "cluster apply failed"
+        )
+        with (
+            mock.patch.dict(os.environ, {"CH_CLUSTER_ENABLED": "true"}),
+            self.assertRaisesRegex(CommandError, "cluster apply failed"),
+        ):
+            bootstrap.main()
+        self.assertNotIn("clickhouse native schema", self.stack.log)
+        self.assertEqual(self.stack.cluster_catalog_calls, [])
+        self.assertFalse(bootstrap.READY.exists())
+        self.assertFalse(bootstrap.FINGERPRINT.exists())
+
+    def test_failed_cluster_catalog_closes_client_and_keeps_boot_unready(self):
+        self.stack.cluster_catalog_error = RuntimeError("catalog failed")
+        with (
+            mock.patch.dict(os.environ, {"CH_CLUSTER_ENABLED": "true"}),
+            self.assertRaisesRegex(RuntimeError, "catalog failed"),
+        ):
+            bootstrap.main()
+        self.assertEqual(self.stack.clickhouse[-1], ("close", None))
+        self.assertFalse(bootstrap.READY.exists())
+        self.assertFalse(bootstrap.FINGERPRINT.exists())
 
     def test_an_unchanged_image_skips_migrate_and_seeds_but_nothing_else(self):
         bootstrap.main()

@@ -331,6 +331,33 @@ postgres:
 clickhouse:
   # -- `external` or `bundled`. ClickHouse 25.3 or newer.
   mode: external
+  cluster:
+    # -- Opt-in sharded topology. Existing installs must migrate to a new database/release; never flip in place.
+    enabled: false
+    # -- remote_servers cluster name (must already exist on every external node).
+    name: futureagi_cluster
+    # -- Immutable at install. Changing shard count requires resharding into a new database.
+    shards: 3
+    # -- Replicas per shard. Two copies is the small reference profile.
+    replicas: 2
+    # -- Keeper namespace, unique per installation. The database/shard/table are appended.
+    keeperPathPrefix: /futureagi/clickhouse
+    # -- Successful writes require this many copies. 2 blocks writes with one of two replicas unavailable; 1 prioritizes availability, not two-copy durability.
+    insertQuorum: 2
+    # -- Explicit acknowledgement that HTTP/native traffic needs a private network or an encrypting service mesh. Public endpoints are unsupported.
+    privateNetwork: false
+    keeper:
+      # -- Bundled Keeper voting members; production requires an odd majority (3 or 5).
+      replicas: 3
+      persistence:
+        # -- Persistent volume per Keeper member; retained across pod restarts.
+        size: 10Gi
+        # -- Keeper StorageClass. Empty uses global.storageClass or the cluster default.
+        storageClass: ""
+      # -- Resources per Keeper member.
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {cpu: "1", memory: 1Gi}
   # -- [CH_DATABASE, CH25_DATABASE] database of traces and analytics.
   database: default
   # -- [CH_USERNAME] needs CREATE on the database; the bootstrap also creates the observed-attribute index (CREATE DATABASE, CREATE USER, GRANT) unless `bootstrap.propertyCatalog` is false. Bundled: `default`, the bundled server's only user.

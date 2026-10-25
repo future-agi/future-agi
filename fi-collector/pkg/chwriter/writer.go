@@ -61,6 +61,10 @@ type Config struct {
 	// because our own batching is the primary backpressure mechanism — see
 	// PLAN_V2_NO_CDC.md §3.4. Operators can flip on for emergency relief.
 	AsyncInsert bool `yaml:"async_insert"`
+	// Distributed tables must acknowledge remote shard delivery, not a local
+	// queue file. Quorum is the number of replicas that confirm each shard.
+	Distributed  bool `yaml:"distributed"`
+	InsertQuorum int  `yaml:"insert_quorum"`
 }
 
 // Stats tracks lifetime numbers a sidecar metrics exporter can scrape. We
@@ -108,6 +112,9 @@ func New(cfg Config) (*Writer, error) {
 	if _, err := url.Parse(cfg.URL); err != nil {
 		return nil, fmt.Errorf("chwriter: URL cannot be parsed (not shown: it may hold a password)")
 	}
+	if cfg.Distributed && (cfg.AsyncInsert || cfg.InsertQuorum < 1) {
+		return nil, fmt.Errorf("chwriter: distributed inserts require synchronous mode and a positive insert_quorum")
+	}
 	if cfg.Database == "" {
 		cfg.Database = "default"
 	}
@@ -142,6 +149,9 @@ func New(cfg Config) (*Writer, error) {
 		q += "&async_insert=1&wait_for_async_insert=0"
 	} else {
 		q += "&async_insert=0"
+	}
+	if cfg.Distributed {
+		q += fmt.Sprintf("&distributed_foreground_insert=1&insert_quorum=%d&insert_quorum_timeout=10000&wait_end_of_query=1", cfg.InsertQuorum)
 	}
 
 	return &Writer{
@@ -273,6 +283,9 @@ func (w *Writer) insertURL(table string) string {
 		q += "&async_insert=1&wait_for_async_insert=0"
 	} else {
 		q += "&async_insert=0"
+	}
+	if w.cfg.Distributed {
+		q += fmt.Sprintf("&distributed_foreground_insert=1&insert_quorum=%d&insert_quorum_timeout=10000&wait_end_of_query=1", w.cfg.InsertQuorum)
 	}
 	return w.cfg.URL + q
 }

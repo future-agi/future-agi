@@ -62,6 +62,15 @@ def application_read_settings(settings: dict | None = None) -> dict:
         )
 
     result = dict(settings or {})
+    from tracer.services.clickhouse.v2.cluster_schema import (
+        QUERY_SETTINGS,
+        cluster_enabled,
+    )
+
+    if cluster_enabled():
+        # Scope and membership must not change when a session/user spans shards.
+        result.update(QUERY_SETTINGS)
+
     ceiling = int(
         configured("CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES", 36 * 1024**3)
     )

@@ -38,6 +38,7 @@ HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
         "ch25_apply_schema",
+        "ch25_cluster_schema",
         "ch25_remove_pg",
         "backfill_harness_agent_prompts",
         "backfill_legacy_scans",

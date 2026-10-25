@@ -1,0 +1,144 @@
+name: ClickHouse 3x2 acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - ".github/workflows/clickhouse-cluster-ci.yml"
+      - "deploy/clickhouse/cluster-acceptance/**"
+      - "deploy/helm/futureagi/**"
+      - "futureagi/tracer/services/clickhouse/**"
+      - "futureagi/tracer/management/commands/ch25_cluster_schema.py"
+      - "futureagi/tfc/management/commands/bootstrap_install.py"
+      - "futureagi/model_hub/apps.py"
+      - "fi-collector/pkg/chwriter/**"
+      - "fi-collector/pkg/observedcatalog/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clickhouse-3x2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cluster-3x2:
+    # Dedicated hosted VM: never shares a service stack with other jobs. Tiny
+    # correctness fixture only (90 spans), not a capacity or 24-hour soak test.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PYTHONUNBUFFERED: "1"
+      UV_PYTHON: "3.11"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+    steps:
+      # runner context is unavailable in job-level env; export the shell's
+      # allocated runner path before any step can need fixture cleanup.
+      - name: Set isolated fixture directory
+        run: printf 'FIXTURE_DIR=%s/clickhouse-3x2\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install actual OSS application dependencies before starting services
+        working-directory: futureagi
+        timeout-minutes: 12
+        run: uv sync --frozen --no-dev
+      - name: Verify paths and resolved settings before any service starts
+        run: |
+          python3 deploy/clickhouse/cluster-acceptance/test_runtime_paths.py
+          test -f futureagi/accounts/demo_dataset/table_data.json
+          test -f futureagi/accounts/demo_dataset/run_prompt_config.json
+          test -f futureagi/accounts/demo_dataset/experiment.json
+          test -f futureagi/accounts/demo_dataset/img_dataset_data.json
+          futureagi/.venv/bin/python deploy/clickhouse/cluster-acceptance/test_fixture_connections.py
+      - name: Generate this job's isolated 3x2 and application dependencies
+        run: |
+          python3 deploy/clickhouse/cluster-acceptance/test_generate.py
+          python3 deploy/clickhouse/cluster-acceptance/generate.py \
+            --output "$FIXTURE_DIR" --port 28123 --application-deps
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          fixture = json.loads((Path(os.environ['FIXTURE_DIR']) / 'fixture.json').read_text())
+          print('::add-mask::' + fixture['password'])
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CLUSTER_PROJECT=' + fixture['project'] + '\n')
+          PY
+          docker compose -p "$CLUSTER_PROJECT" -f "$FIXTURE_DIR/compose.json" config --quiet
+        # GITHUB_ENV is available to subsequent steps, not this step's shell.
+        env:
+          CLUSTER_PROJECT: cluster-config-validation
+      - name: Start only the generated bounded dependencies
+        timeout-minutes: 5
+        run: |
+          test -n "$CLUSTER_PROJECT"
+          docker compose -p "$CLUSTER_PROJECT" -f "$FIXTURE_DIR/compose.json" up -d
+      - name: Actual schema, full CDC bootstrap, additive upgrade and failover
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          futureagi/.venv/bin/python deploy/clickhouse/cluster-acceptance/acceptance.py \
+            --directory "$FIXTURE_DIR" --application --allow-faults \
+            2>&1 | tee "$RUNNER_TEMP/cluster-acceptance.log"
+      - name: Require executed proofs rather than skipped live tests
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          evidence = json.loads((Path(os.environ['FIXTURE_DIR']) / 'evidence.json').read_text())
+          required = ('schema_replay', 'capture_update_delete', 'observed_catalog_bootstrap', 'post_bootstrap_additive_upgrade',
+                      'local_mv_fanout', 'eval_insert', 'rmt_update', 'curated_dimension_updates', 'global_membership',
+                      'replica_loss', 'strict_quorum_refused_unsafe_ack', 'explicit_availability_mode')
+          assert all(evidence.get(key) is True for key in required), evidence
+          assert evidence['acknowledged_rows_survived'] == 90 and evidence['shard_count'] == 3, evidence
+          assert evidence['postgres_connections'] == ['default', 'default_direct', 'replica'], evidence
+          assert len(evidence['cdc_tables']) >= 19 and len(evidence['cdc_dependents']) == 11, evidence
+          print('All bounded 3x2 schema/CDC/fault proofs executed')
+          PY
+      - name: Collect only sanitized evidence and this project's logs
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          directory = Path(os.environ['FIXTURE_DIR'])
+          if not (directory / 'fixture.json').exists():
+              raise SystemExit(0)
+          fixture = json.loads((directory / 'fixture.json').read_text())
+          assert re.fullmatch(r'fagi-cluster-[0-9a-f]{10}', fixture['project'])
+          result = subprocess.run(['docker', 'compose', '-p', fixture['project'], '-f', str(directory / 'compose.json'), 'logs', '--no-color', '--tail', '80'], capture_output=True, text=True, timeout=60)
+          text = (result.stdout + result.stderr).replace(fixture['password'], '[REDACTED]')
+          (Path(os.environ['RUNNER_TEMP']) / 'cluster-services.log').write_text(text)
+          acceptance_log = Path(os.environ['RUNNER_TEMP']) / 'cluster-acceptance.log'
+          if acceptance_log.exists():
+              acceptance_log.write_text(acceptance_log.read_text().replace(fixture['password'], '[REDACTED]'))
+          PY
+      - name: Remove only this generated project and its disposable volumes
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          directory = Path(os.environ['FIXTURE_DIR'])
+          if not (directory / 'fixture.json').exists():
+              raise SystemExit(0)
+          fixture = json.loads((directory / 'fixture.json').read_text())
+          assert re.fullmatch(r'fagi-cluster-[0-9a-f]{10}', fixture['project'])
+          subprocess.run(['docker', 'compose', '-p', fixture['project'], '-f', str(directory / 'compose.json'), 'down', '--volumes', '--remove-orphans', '--timeout', '10'], check=True, timeout=90)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clickhouse-3x2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cluster-acceptance.log
+            ${{ runner.temp }}/cluster-services.log
+            ${{ runner.temp }}/clickhouse-3x2/evidence.json
+          if-no-files-found: warn
+          retention-days: 7

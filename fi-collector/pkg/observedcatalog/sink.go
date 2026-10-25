@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ import (
 type ClickHouseConfig struct {
 	URL, Database, Username, Password string
 	Timeout                           time.Duration
+	// Cluster is explicit: do not silently accept arbitrary Distributed targets.
+	Cluster      string `yaml:"cluster"`
+	InsertQuorum int    `yaml:"insert_quorum"`
 }
 
 const maxClickHouseRequestTimeout = 30 * time.Second
@@ -39,6 +43,12 @@ func NewClickHouseSink(cfg ClickHouseConfig) (*ClickHouseSink, error) {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || i > 0 && c >= '0' && c <= '9') {
 			return nil, errors.New("observedcatalog: invalid database identifier")
 		}
+	}
+	if cfg.Cluster != "" && (!regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(cfg.Cluster) || cfg.InsertQuorum < 1) {
+		return nil, errors.New("observedcatalog: cluster requires a safe name and positive quorum")
+	}
+	if cfg.Cluster == "" && cfg.InsertQuorum != 0 {
+		return nil, errors.New("observedcatalog: explicit quorum requires cluster")
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 10 * time.Second
@@ -114,6 +124,9 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 	q.Set("async_insert", "0")
 	q.Set("wait_end_of_query", "1")
 	q.Set("insert_quorum", quorum)
+	if s.cfg.Cluster != "" {
+		q.Set("distributed_foreground_insert", "1")
+	}
 	// Leave response/transport headroom inside both the HTTP timeout and the
 	// caller's remaining batch deadline. Quorum timeout is milliseconds.
 	budget := s.cfg.Timeout
@@ -156,13 +169,36 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 // never cache a single-replica downgrade across topology changes.
 func (s *ClickHouseSink) insertQuorum(ctx context.Context, table string) (string, error) {
 	var topology struct {
-		Engine   string  `json:"engine"`
-		Replicas *uint64 `json:"replicas"`
+		Engine     string  `json:"engine"`
+		EngineFull string  `json:"engine_full"`
+		Replicas   *uint64 `json:"replicas"`
 	}
-	engineQuery := `SELECT engine FROM system.tables
+	engineQuery := `SELECT engine, engine_full FROM system.tables
  WHERE database = {catalog:String} AND name = {table:String} LIMIT 2 FORMAT JSONEachRow`
 	if err := s.catalogMetadata(ctx, table, engineQuery, &topology); err != nil {
 		return "", err
+	}
+	if s.cfg.Cluster != "" {
+		prefix := fmt.Sprintf("Distributed('%s','%s','%s_local',", s.cfg.Cluster, s.cfg.Database, table)
+		if topology.Engine != "Distributed" || !strings.HasPrefix(strings.ReplaceAll(topology.EngineFull, " ", ""), prefix) {
+			return "", errors.New("observedcatalog: catalog alias does not match configured cluster/local target")
+		}
+		if err := s.catalogMetadata(ctx, table+"_local", engineQuery, &topology); err != nil {
+			return "", err
+		}
+		if topology.Engine != "ReplicatedAggregatingMergeTree" {
+			return "", errors.New("observedcatalog: distributed catalog requires replicated local storage")
+		}
+		topology.Replicas = nil
+		replicaQuery := `SELECT total_replicas AS replicas FROM system.replicas
+ WHERE database = {catalog:String} AND table = {table:String} LIMIT 2 FORMAT JSONEachRow`
+		if err := s.catalogMetadata(ctx, table+"_local", replicaQuery, &topology); err != nil {
+			return "", err
+		}
+		if topology.Replicas == nil || *topology.Replicas < uint64(s.cfg.InsertQuorum) {
+			return "", errors.New("observedcatalog: configured quorum exceeds verified replicas")
+		}
+		return strconv.Itoa(s.cfg.InsertQuorum), nil
 	}
 	if topology.Engine == "AggregatingMergeTree" {
 		return "auto", nil
