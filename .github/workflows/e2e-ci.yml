@@ -274,6 +274,13 @@ jobs:
             printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
       - name: Prefetch vendor images
         # fi-collector, agentcc-gateway and the app images are deliberately
         # absent: their tag is the locally built IMAGE_TAG and a pull would
