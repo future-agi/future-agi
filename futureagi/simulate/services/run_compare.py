@@ -18,6 +18,7 @@ from simulate.models import (
     HarnessSuiteVersion,
 )
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.run_reliability_v3 import wilson
 from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
 
 # Two-sided 95%.
@@ -43,14 +44,8 @@ _UNRUN_OUTCOMES = ("queued", "in_progress", "error")
 
 def wilson_interval(passed: int, trials: int) -> tuple[float, float]:
     """The Wilson score interval of one proportion, without continuity correction."""
-    p = passed / trials
-    z2 = Z * Z
-    denominator = 1 + z2 / trials
-    centre = (p + z2 / (2 * trials)) / denominator
-    half = (
-        Z * math.sqrt(p * (1 - p) / trials + z2 / (4 * trials * trials)) / denominator
-    )
-    return max(0.0, centre - half), min(1.0, centre + half)
+    low, high = wilson(passed, trials, Z) or (0.0, 100.0)
+    return low / 100, high / 100
 
 
 def newcombe_interval(

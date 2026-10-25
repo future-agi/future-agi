@@ -13,13 +13,14 @@ from simulate.services.run_results_v3 import OUTCOME_LABELS
 _Z = 1.96
 
 
-def _wilson(passed: float, n: float) -> tuple[float, float] | None:
+def wilson(passed: float, n: float, z: float = _Z) -> tuple[float, float] | None:
+    """The Wilson score interval of one proportion, in percent."""
     if n <= 0:
         return None
     p = passed / n
-    denominator = 1 + _Z * _Z / n
-    centre = (p + _Z * _Z / (2 * n)) / denominator
-    half = _Z * math.sqrt(p * (1 - p) / n + _Z * _Z / (4 * n * n)) / denominator
+    denominator = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denominator
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator
     return max(0.0, centre - half) * 100, min(1.0, centre + half) * 100
 
 
@@ -50,7 +51,7 @@ def scenario_clustered_interval(
         )
         if variance > 0:
             effective_n = min(float(evaluated), max(1.0, p * (1 - p) / variance))
-    low, high = _wilson(p * effective_n, effective_n)
+    low, high = wilson(p * effective_n, effective_n)
     return {
         "low": round(low, 2),
         "high": round(high, 2),
