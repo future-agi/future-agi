@@ -1,4 +1,5 @@
 /* eslint-disable react/prop-types */
+import { QUICKSTART_DATASET } from "src/components/empty-state/quickstarts";
 import { Box, Button, Divider, Tooltip, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useMemo, useState } from "react";
@@ -272,29 +273,25 @@ const DevelopView = () => {
     return (
       <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
         <EmptyLayout
-          title="Add your first dataset"
-          description="Manage datasets across your development lifecycle—create, update, and use them to evaluate prompts and workflows."
+          title="No datasets yet"
+          description="Rows of inputs and expected outputs to run prompts, experiments and evals against. Upload a file, import from Hugging Face, generate synthetic data or add rows from code."
           link="https://docs.futureagi.com/docs/dataset"
-          linkText="Check docs"
+          linkText="Read the docs"
+          quickstart={QUICKSTART_DATASET}
           onLinkClick={() => handleOnDocsClicked("datasets_main_page")}
           action={
             <Button
               variant="contained"
               color="primary"
               disabled={!RolePermission.DATASETS[PERMISSIONS.CREATE][role]}
-              startIcon={
-                <Iconify
-                  width={20}
-                  icon="solar:add-linear"
-                  color="primary.contrastText"
-                />
-              }
+              size="small"
+              startIcon={<Iconify width={16} icon="solar:add-linear" />}
               onClick={() => {
                 trackEvent(Events.addDatasetCLicked);
                 setAddDatasetDrawerOpen(true);
               }}
             >
-              Add Dataset
+              Add dataset
             </Button>
           }
           icon="/assets/icons/navbar/hugeicons.svg"

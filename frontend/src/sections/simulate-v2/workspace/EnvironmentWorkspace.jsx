@@ -53,6 +53,9 @@ import {
 import { subscribeGapsInbox, openGapsInbox } from "../_mock/gapsInboxBus";
 import { scenarioStepOf, versionCardOf } from "../_mock/versionCard";
 import SideDrawer from "../components/SideDrawer";
+import { atOnceOf } from "../run/atOnce";
+import RunFromCodeDrawer from "./RunFromCodeDrawer";
+import { managedOf, managedRepoOf } from "../_mock/envManaged";
 import SetupGapsPanel from "./SetupGapsPanel";
 import { runPlan } from "../_mock/proofs";
 import { runScopeOf } from "../_mock/runScope";
@@ -348,6 +351,7 @@ export default function EnvironmentWorkspace() {
   /* Three samples by default — the fewest where a scenario can be flaky
      ("passed twice, failed once") rather than a coin flip read as a verdict. */
   /* …or the environment's own default, set in Settings → Simulation defaults. */
+  const [codeOpen, setCodeOpen] = useState(false);
   const [headerTrials, setHeaderTrials] = useState(
     () => runDefaultsOf(envState).repeats || 3,
   );
@@ -1229,6 +1233,14 @@ export default function EnvironmentWorkspace() {
                             : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
                 });
               }
+              if (managedOf(env, envState) === "code")
+                chips.push({
+                  key: "managed",
+                  icon: "solar:code-square-linear",
+                  label: "Managed in code",
+                  tip: "Versions come from fai env push. Changes made here become a draft you merge into the repo.",
+                  onClick: () => setCodeOpen(true),
+                });
               if (isComingSoon(env))
                 chips.push({
                   key: "soon",
@@ -1242,11 +1254,12 @@ export default function EnvironmentWorkspace() {
                     direction="row"
                     alignItems="center"
                     spacing={0.5}
+                    onClick={c.onClick}
                     sx={{
                       px: 0.75,
                       height: 22,
                       borderRadius: "4px",
-                      cursor: "default",
+                      cursor: c.onClick ? "pointer" : "default",
                       border: "1px solid",
                       borderColor: "divider",
                       color: "text.secondary",
@@ -1460,6 +1473,15 @@ export default function EnvironmentWorkspace() {
              selection is its own run. */
           const groupable = runGroup.candidates.length > 0;
           const showRunMenu = !selectedCount && groupable;
+          /* Over 200 conversations a run takes the full "Conversations at
+             once" — the same run; the tooltip says so. */
+          const runSize = runSizeOf({
+            scenarios: selectedCount || meteredScenarios,
+            repeats: headerTrials,
+            surface: env.surface,
+            parallel: parallelOf(envState),
+          });
+          const batchAtOnce = atOnceOf(envState);
           const runLabel =
             selectedCount > 0
               ? `Run simulation (${selectedCount})`
@@ -1490,16 +1512,11 @@ export default function EnvironmentWorkspace() {
                 {estimateLine}
               </Typography>
               {(() => {
-                const sz = runSizeOf({
-                  scenarios: meteredScenarios,
-                  repeats: headerTrials,
-                  surface: env.surface,
-                  parallel: parallelOf(envState),
-                });
+                const sz = runSize;
                 return (
                   <Typography sx={{ typography: "s3", color: "inherit" }}>
                     {sz.over
-                      ? `${sz.reason}.`
+                      ? `${selectedCount || meteredScenarios} scenarios × ${sz.repeats} repeats = ${sz.conversations} conversations — over ${sz.cap}, so it runs ${batchAtOnce} at once (Settings → Conversations at once). You can leave the page while it runs.`
                       : `${sz.conversations} of ${sz.cap} conversations a run allows · up to ${sz.parallel} at once${sz.voice ? ` · voice runs in real time: ${sz.voice.line}` : ""}`}
                   </Typography>
                 );
@@ -1546,6 +1563,19 @@ export default function EnvironmentWorkspace() {
               spacing={1}
               sx={{ flexShrink: 0 }}
             >
+              {/* Run from code — the same run from the CLI, Python, CI or
+                  the developer's own agent (MCP). */}
+              <Tooltip arrow title="Run from code: CLI, Python, CI or MCP">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setCodeOpen(true)}
+                  startIcon={<Iconify icon="solar:code-linear" width={16} />}
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  Code
+                </Button>
+              </Tooltip>
               {/* Needs input — the count of what's open; red only when
                   something blocks the run. */}
               <Tooltip
@@ -1882,6 +1912,26 @@ export default function EnvironmentWorkspace() {
           env={confirmDelete}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={deleteEnvironment}
+        />
+        <RunFromCodeDrawer
+          open={codeOpen}
+          onClose={() => setCodeOpen(false)}
+          env={env}
+          agentName={currentAgentVersion(envState)?.label}
+          repeats={Number(headerTrials) || 3}
+          parallel={parallelOf(envState)}
+          batchAt={
+            runSizeOf({
+              scenarios: meteredScenarios,
+              repeats: headerTrials,
+              surface: env.surface,
+            }).over
+              ? atOnceOf(envState)
+              : null
+          }
+          managedIn={managedOf(env, envState)}
+          repo={managedRepoOf(env, envState)}
+          onPulled={() => patch?.({ managedIn: "code" })}
         />
         <SideDrawer
           open={inbox.open}

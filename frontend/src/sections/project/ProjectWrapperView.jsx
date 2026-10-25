@@ -42,6 +42,7 @@ export const SearchFieldBox = styled(Box)(({ theme }) => ({
 
 const ProjectWrapperView = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [observeFirstRun, setObserveFirstRun] = useState(false);
   const [selectedAll, setSelectedAll] = useState(false);
   const [selectedRowsData, setSelectedRowsData] = useState([]);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
@@ -220,7 +221,8 @@ const ProjectWrapperView = () => {
 
           <Box
             sx={{
-              display: "flex",
+              display:
+                currentTab === "observe" && observeFirstRun ? "none" : "flex",
               justifyContent: "space-between",
               alignItems: "center",
             }}
@@ -286,6 +288,7 @@ const ProjectWrapperView = () => {
                 setSelectedAll={setSelectedAll}
                 setSelectedRowsData={setSelectedRowsData}
                 filters={observeFilters}
+                onFirstRunChange={setObserveFirstRun}
               />
               <TraceFilterPanel
                 anchorEl={filterAnchorEl}

@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Typography } from "@mui/material";
+import { Button } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 
 AnnotationLabelEmpty.propTypes = {
@@ -8,44 +9,22 @@ AnnotationLabelEmpty.propTypes = {
 
 export default function AnnotationLabelEmpty({ onCreateClick }) {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        py: 10,
-        px: 3,
-      }}
-    >
-      <Iconify
-        icon="solar:tag-bold-duotone"
-        width={64}
-        sx={{ color: "text.disabled", mb: 2 }}
-      />
-
-      <Typography variant="h6" gutterBottom>
-        No labels created yet
-      </Typography>
-
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ maxWidth: 360, textAlign: "center", mb: 3 }}
-      >
-        Labels define what annotators will evaluate. Create your first label to
-        get started with annotation queues.
-      </Typography>
-
-      <Button
-        variant="contained"
-        color="primary"
-        startIcon={<Iconify icon="solar:add-linear" />}
-        onClick={onCreateClick}
-      >
-        Create Label
-      </Button>
-    </Box>
+    <EmptyState
+      icon="solar:tag-linear"
+      title="No labels yet"
+      description="A label is what annotators score: thumbs up or down, a star rating, a number, a category or free text. Queues use them."
+      action={
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="solar:add-linear" width={16} />}
+          onClick={onCreateClick}
+        >
+          Create label
+        </Button>
+      }
+      docsHref="https://docs.futureagi.com/docs/annotations/concepts/labels"
+    />
   );
 }

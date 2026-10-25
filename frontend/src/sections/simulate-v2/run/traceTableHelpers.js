@@ -78,6 +78,13 @@ export const GROUPINGS = [
     id: "allSubGoals", label: "Sub-goal", icon: "solar:checklist-minimalistic-linear",
     overlaps: true, hint: "A scenario with several sub-goals appears under each of them.",
   },
+  /* Member — for an agent made of several agents (a squad, a flow, an app
+     with handoffs): the member a conversation ended with. Offered only when
+     the run's agent has more than one member. */
+  {
+    id: "member", label: "Member", icon: "solar:users-group-rounded-linear",
+    multiAgent: true, hint: "Each conversation counts for the member it ended with.",
+  },
   { id: "persona", label: "Persona",           icon: "solar:user-rounded-linear" },
   { id: "rule",    label: "Rule broken",       icon: "solar:shield-cross-linear" },
   { id: "subGoal", label: "Failure sub-goal", icon: "solar:map-linear" },

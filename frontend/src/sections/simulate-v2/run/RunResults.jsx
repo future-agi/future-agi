@@ -72,10 +72,13 @@ import { runTracingOf, runIssueImprovement } from "../errorFeed/runIssueFix";
 import { startImproverSession, useIntegrations } from "../_mock/integrations";
 import { useSimStore } from "../store";
 import { envAgentKey } from "../_mock/agentRegistry";
-import { rereadFor } from "../_mock/improvementPolicy";
+import { membersOf, rereadFor } from "../_mock/improvementPolicy";
 import { recordOutsideChange } from "../_mock/nudgeEffects";
 import { runReportOf } from "../_mock/runReport";
 import RunSummaryChip, { HealthChip } from "./RunSummaryChip";
+import { runViaOf, ciOf } from "../_mock/runVia";
+import { memberResultsOf } from "../_mock/memberAttribution";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { causeOf, outcomeOfCause } from "../_mock/decoupled";
 import { regradeOf, regradeRecordOf } from "../_mock/regrade";
 import { agentVersions } from "../_mock/versions";
@@ -261,7 +264,12 @@ export default function RunResults({
        (`optimize`/`omega`), the "Verify" tab, and the now-retired "Trials"
        tab (self-improvement trials are peer runs on the Runs list) — all
        land on Test runs. */
-    return t === "optimize" || t === "omega" || t === "verify" || t === "trials"
+    /* The retired "By member" tab is now Group by Member on Scenarios. */
+    return t === "optimize" ||
+      t === "omega" ||
+      t === "verify" ||
+      t === "trials" ||
+      t === "members"
       ? "tasks"
       : t;
   });
@@ -284,7 +292,9 @@ export default function RunResults({
     Grouping mode for the traces table. Lifted here so the picker can
     live in the SectionCard header where the title used to sit.
   */
-  const [groupBy, setGroupBy] = useState("useCase");
+  const [groupBy, setGroupBy] = useState(() =>
+    params.get("tab") === "members" ? "member" : "useCase",
+  );
   /* Expand all lives in the toolbar: the table reports whether every group
      is open (so the switch is right after opening groups one by one), and
      the switch asks the table to open or close them all. */
@@ -345,7 +355,9 @@ export default function RunResults({
   /* The voice call drawer hides while one opened from it (an eval, a fix) is
      open. Other runs use SideDrawer, which registers itself — registering
      here too put this entry on top and hid that drawer behind itself. */
-  const callCovered = useDrawerCovered(!!openTask && effectiveModality(env, envState) === "voice");
+  const callCovered = useDrawerCovered(
+    !!openTask && effectiveModality(env, envState) === "voice",
+  );
   /* Same edit drawer the Evaluations tab uses — the variable mapping and any
      configurable fields live there. Opens when a column is edited from its
      kebab menu. Delegated to the environment's applied evals so a saved edit
@@ -607,6 +619,19 @@ export default function RunResults({
     const v = verdicts?.get(t.id);
     return v ? v.label : null;
   };
+  /* Squads, conversation flows and handoff apps: Group by Member, and the
+     one routing fact grouping can't show — how often the entry member
+     handed the conversation on. */
+  const memberResult = memberResultsOf({
+    agent: envState?.agent,
+    tasks,
+    causeOf: causeOfTask,
+  });
+  const memberList = useMemo(
+    () => membersOf(envState?.agent),
+    [envState?.agent],
+  );
+  const entryMember = memberResult?.rows.find((r) => r.entry);
   const CAUSE_LABELS = [
     ...new Set(tasks.map(causeOfTask).filter(Boolean)),
   ].sort();
@@ -1054,6 +1079,37 @@ export default function RunResults({
               report.summary.health.label !== "Healthy" && (
                 <HealthChip health={report.summary.health} />
               )}
+            {/* A CI run's check result sits with the run's own status; where
+                it came from is on the line below. */}
+            {sourceRun &&
+              ciOf(sourceRun) &&
+              (() => {
+                const ci = ciOf(sourceRun);
+                /* The same pass rate the summary chip shows — conversations
+                   passed of those scored — so the two never disagree. */
+                const pct = report.summary?.pass1Pct;
+                const rate =
+                  pct != null
+                    ? pct / 100
+                    : stats.total
+                      ? stats.passed / stats.total
+                      : 0;
+                const cleared = rate >= ci.failUnder;
+                return (
+                  <Tooltip
+                    arrow
+                    title={`The check needed ${Math.round(ci.failUnder * 100)}% of scenarios to pass (--fail-under ${ci.failUnder}); this run passed ${Math.round(rate * 100)}%.`}
+                  >
+                    <Box sx={{ display: "flex", flexShrink: 0 }}>
+                      <StatusBadge
+                        status={cleared ? "passed" : "failed"}
+                        role={cleared ? "success" : "danger"}
+                        label={cleared ? "Check passed" : "Check failed"}
+                      />
+                    </Box>
+                  </Tooltip>
+                );
+              })()}
             {sourceRun?.snapshotOf && (
               <Tooltip
                 arrow
@@ -1118,6 +1174,34 @@ export default function RunResults({
             {` · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
             {identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}
             {finishedLabel ? ` · ${finishedLabel}` : ""}
+            {/* Where it was started from, when that wasn't the console — the
+                command on hover, so it can be re-run the same way. */}
+            {sourceRun &&
+              runViaOf(sourceRun).label !== "Console" &&
+              (() => {
+                const ci = ciOf(sourceRun);
+                const cmd = `fai sim run ${env?.id} --repeats ${sourceRun.repeats || 3}${ci ? ` --fail-under ${ci.failUnder}` : ""}`;
+                return (
+                  <>
+                    {" · "}
+                    <Tooltip
+                      arrow
+                      placement="bottom-start"
+                      title={
+                        <Box component="span" sx={{ fontFamily: "monospace" }}>
+                          {cmd}
+                        </Box>
+                      }
+                    >
+                      <Box component="span" sx={{ cursor: "default" }}>
+                        {ci
+                          ? `From CI · PR #${ci.pr} · ${ci.branch} @ ${ci.sha}`
+                          : `From ${runViaOf(sourceRun).label}`}
+                      </Box>
+                    </Tooltip>
+                  </>
+                );
+              })()}
             {/* Sealed · Live · Prompt only — a word here; its meaning on hover. */}
             {report.summary?.proofKind?.label && (
               <>
@@ -1512,6 +1596,7 @@ export default function RunResults({
                       <TraceGroupByPicker
                         value={groupBy}
                         onChange={setGroupByReconciled}
+                        multiAgent={!!memberResult}
                       />
                       {groupBy !== "none" && (
                         <Stack
@@ -1722,6 +1807,18 @@ export default function RunResults({
                   show a real empty state instead of a blank table. */}
                 {/* Test invalid twice: pulled from this run, flagged for review,
                   and left out of every count — a small group of its own. */}
+                {groupBy === "member" && entryMember && (
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      color: "text.tertiary",
+                      mb: 1.5,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations. Each one counts for the member it ended with.`}
+                  </Typography>
+                )}
                 {pulledTasks.length > 0 && !bucketFilter && (
                   <PulledGroup tasks={pulledTasks} envId={envId} />
                 )}
@@ -1752,6 +1849,7 @@ export default function RunResults({
                     evals={shownEvals}
                     selected={selected}
                     groupBy={groupBy}
+                    members={memberList}
                     columns={visibleColumns}
                     env={env}
                     onToggle={toggle}

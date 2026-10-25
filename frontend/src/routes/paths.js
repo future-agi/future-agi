@@ -45,6 +45,7 @@ export const paths = {
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
+      developer: `${ROOTS.DASHBOARD}/settings/developer`,
       falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
@@ -96,7 +97,8 @@ export const paths = {
       environmentsBrowse: `${ROOTS.DASHBOARD}/simulate/environments/browse`,
       environmentTemplates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
       environmentBuild: `${ROOTS.DASHBOARD}/simulate/environments/new/build`,
-      environmentScratchBuild: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/new/scratch-build/${envId}`,
+      environmentScratchBuild: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/new/scratch-build/${envId}`,
       // Twins gets its own top-level nav slot — it's a discovery /
       // marketing surface for the service-twin catalog + entry point,
       // not a parallel storage layer. Twin-backed envs still live in
@@ -112,23 +114,31 @@ export const paths = {
       // machinery (scenarios, personas, evals, RL contract, versioning)
       // for free.
       environmentNewTwin: `${ROOTS.DASHBOARD}/simulate/environments/new/twin`,
-      environmentUseTemplate: (templateId) => `${ROOTS.DASHBOARD}/simulate/environments/use/${templateId}`,
-      environmentDetail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+      environmentUseTemplate: (templateId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/use/${templateId}`,
+      environmentDetail: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
       /* Connect-your-agent step for a freshly composed twin env —
          same shape as UseTemplate's step 0. Fit-check runs on submit,
          then hands off to twin-review. */
-      environmentTwinConnect: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-connect`,
+      environmentTwinConnect: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-connect`,
       /* Review layout — chat left + workspace tabs right — for a
          freshly composed twin env. Same shape the single-service
          template flow uses at step 2. */
-      environmentTwinReview: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-review`,
-      environmentStep: (envId, step) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/${step}`,
-      simulationRun: (envId, runId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}`,
+      environmentTwinReview: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-review`,
+      environmentStep: (envId, step) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/${step}`,
+      simulationRun: (envId, runId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}`,
       // A run-analytics widget opened full page (the dashboards widget editor, on sim data).
-      runWidget: (envId, runId, widgetId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}/widgets/${widgetId}`,
+      runWidget: (envId, runId, widgetId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}/widgets/${widgetId}`,
       // Two or more runs of the same scenarios, read as one screen. The runs
       // travel in the query string so a comparison is a link someone can send.
-      simulationCompare: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
+      simulationCompare: (envId) =>
+        `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
       simulationRuns: `${ROOTS.DASHBOARD}/simulate/runs`,
       /* Improvements — three levels.
          L1 (improvements): every improvement — one trigger, one search.

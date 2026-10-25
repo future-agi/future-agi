@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { AT_ONCE_OPTIONS, atOnceOf } from "../run/atOnce";
 import { useState } from "react";
 import {
   Box,
@@ -1531,19 +1532,18 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
     if (!locked && patch)
       patch({ runDefaults: { ...(envState?.runDefaults || {}), ...next } });
   };
-  /* Parallel runs live on envState.parallelRuns (default on) — what a run reads. */
-  const setParallel = (on) => {
+  /* One "Conversations at once" for every run. A run on this page takes up
+     to PARALLEL_MAX of them (envState.parallelRuns + conversationsAtOnce,
+     what a live run reads); a batch takes the full number (batchParallel). */
+  const atOnce = atOnceOf(envState);
+  const setAtOnce = (v) => {
     if (locked || !patch) return;
     patch({
-      parallelRuns: on,
+      parallelRuns: v > 1,
       runDefaults: {
         ...(envState?.runDefaults || {}),
-        conversationsAtOnce: on
-          ? Math.max(
-              2,
-              d.conversationsAtOnce > 1 ? d.conversationsAtOnce : PARALLEL_MAX,
-            )
-          : 1,
+        conversationsAtOnce: v > 1 ? Math.min(PARALLEL_MAX, v) : 1,
+        batchParallel: v,
       },
     });
   };
@@ -1600,59 +1600,136 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
             onChange={(v) => save({ repeats: v })}
           />
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Stack
-              direction="row"
-              alignItems="baseline"
-              justifyContent="space-between"
-            >
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                Conversations at once
-              </Typography>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  fontWeight: 600,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {d.conversationsAtOnce}
-              </Typography>
-            </Stack>
-            <Slider
+            <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+              Conversations at once
+            </Typography>
+            <Select
               size="small"
-              value={d.conversationsAtOnce}
-              min={1}
-              max={PARALLEL_MAX}
-              step={1}
-              disabled={locked || !d.parallel}
-              onChange={(_, v) => save({ conversationsAtOnce: Math.max(2, v) })}
-              sx={{ py: 1, "& .MuiSlider-thumb": { width: 12, height: 12 } }}
-            />
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {d.parallel
-                ? `Up to ${PARALLEL_MAX} at once while parallel runs are on.`
-                : `One at a time. Turn on parallel runs to run up to ${PARALLEL_MAX} at once.`}
+              value={atOnce}
+              disabled={locked}
+              onChange={(e) => setAtOnce(Number(e.target.value))}
+              sx={{ minWidth: 200, typography: "s2" }}
+            >
+              {[...new Set([...AT_ONCE_OPTIONS, atOnce])]
+                .sort((x, y) => x - y)
+                .map((n) => (
+                  <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                    {n === 1 ? "1 · one at a time" : `${n} at once`}
+                  </MenuItem>
+                ))}
+            </Select>
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
+            >
+              {atOnce > PARALLEL_MAX
+                ? `A run up to 200 conversations takes ${PARALLEL_MAX} at once; a bigger run takes all ${atOnce}, and you can leave the page while it runs.`
+                : atOnce === 1
+                  ? "Every run takes one conversation at a time."
+                  : `Every run takes up to ${atOnce} at once.`}
+              {voice
+                ? " Your provider's concurrency limit still applies, and a live agent takes the calls at the same time."
+                : " Results are the same; a run finishes sooner."}
             </Typography>
           </Box>
         </Stack>
-        <ToggleSetting
-          label={`Run conversations in parallel — up to ${PARALLEL_MAX} at once`}
-          help={
-            voice
-              ? "Place several calls at once. Your provider's concurrency limit still applies, and a live agent takes them all at the same time. Off, one at a time."
-              : "Run several conversations at once. Results are the same; a run finishes sooner. Off, one at a time."
-          }
-          checked={d.parallel}
-          onChange={setParallel}
-        />
-        <NumberSetting
-          label="Turn limit"
-          help={`A conversation stops after this many agent turns and fails with “Hit the turn limit”. A scenario's own limit wins${voice ? " — a voice scenario's Max turns" : ""}. ${TURN_LIMIT_RANGE.min} to ${TURN_LIMIT_RANGE.max}.`}
-          value={turnLimit}
-          min={TURN_LIMIT_RANGE.min}
-          max={TURN_LIMIT_RANGE.max}
-          onChange={(v) => save({ turnLimit: v })}
-        />
+        {/* Limits — when a conversation stops, whichever comes first: turns,
+            time (long-running agents), or no activity (a stuck agent). */}
+        {(() => {
+          const timeLimit = Number(envState?.runDefaults?.timeLimitMin) || 30;
+          const stuckAfter = Number(envState?.runDefaults?.quietLimitMin) || 5;
+          const dur = (m) =>
+            m < 60
+              ? `${m} min`
+              : m % 60
+                ? `${Math.floor(m / 60)} h ${m % 60} min`
+                : `${m / 60} h`;
+          const withCurrent = (opts, v) =>
+            (opts.includes(v) ? opts : [...opts, v]).sort((x, y) => x - y);
+          const turnOpts = withCurrent(
+            [4, 6, 8, 10, 12, 15, 20, 25, 30, 40].filter(
+              (n) => n >= TURN_LIMIT_RANGE.min && n <= TURN_LIMIT_RANGE.max,
+            ),
+            turnLimit,
+          );
+          const timeOpts = withCurrent(
+            [5, 15, 30, 60, 120, 240, 480, 1440],
+            timeLimit,
+          );
+          const stuckOpts = withCurrent([1, 2, 5, 10, 30], stuckAfter);
+          const pick = (label, value, opts, fmt, key) => (
+            <Box sx={{ minWidth: 0 }}>
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  lineHeight: "16px",
+                  color: "text.secondary",
+                  mb: 0.5,
+                }}
+              >
+                {label}
+              </Typography>
+              <Select
+                size="small"
+                fullWidth
+                value={value}
+                disabled={locked}
+                onChange={(e) => save({ [key]: Number(e.target.value) })}
+                sx={{ typography: "s2" }}
+              >
+                {opts.map((o) => (
+                  <MenuItem key={o} value={o} sx={{ typography: "s2" }}>
+                    {fmt(o)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </Box>
+          );
+          return (
+            <Box>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Limits
+              </Typography>
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", mb: 1.25 }}
+              >
+                {`A conversation stops at whichever comes first${voice ? " — a voice scenario's Max turns wins over Turns" : " — a scenario's own turn limit wins"}. Raise Time for agents that work for hours; Stuck after ends one that has stopped replying, so it doesn't hold the run.`}
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: {
+                    xs: "1fr",
+                    sm: "repeat(3, minmax(0, 1fr))",
+                  },
+                  gap: 1.5,
+                  maxWidth: 560,
+                }}
+              >
+                {pick(
+                  "Turns",
+                  turnLimit,
+                  turnOpts,
+                  (n) => `${n} turns`,
+                  "turnLimit",
+                )}
+                {pick(
+                  "Time per conversation",
+                  timeLimit,
+                  timeOpts,
+                  dur,
+                  "timeLimitMin",
+                )}
+                {pick(
+                  "Stuck after",
+                  stuckAfter,
+                  stuckOpts,
+                  dur,
+                  "quietLimitMin",
+                )}
+              </Box>
+            </Box>
+          );
+        })()}
         <Stack
           direction="row"
           alignItems="center"

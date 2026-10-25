@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Suspense, lazy, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Button, Stack, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import {
   WORLD_TYPES,
@@ -104,6 +105,54 @@ export default function EnvironmentsLanding({
 
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
+      {/* From code first — the CLI, Python or the developer's coding agent.
+          Opens the From code setup; every builder flow below stays. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{
+          px: 2,
+          py: 1.5,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          flexWrap: "wrap",
+          rowGap: 1,
+        }}
+      >
+        <Iconify
+          icon="solar:code-linear"
+          width={16}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+        <Box sx={{ flex: 1, minWidth: 220 }}>
+          <Typography
+            sx={{ fontSize: 13, lineHeight: "20px", fontWeight: 500 }}
+          >
+            Build from code
+          </Typography>
+          <Typography
+            sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}
+          >
+            Use the CLI, Python or your coding agent. Environments you build
+            this way show up here, managed in code.
+          </Typography>
+        </Box>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() =>
+            onPick("local", null, "landing", "local", {
+              name: "From code",
+              icon: "solar:code-linear",
+            })
+          }
+        >
+          Open setup
+        </Button>
+      </Stack>
+
       <PrebuiltSection sectionRef={worldsRef} onBrowse={onBrowseWorlds} />
 
       <ConnectSection

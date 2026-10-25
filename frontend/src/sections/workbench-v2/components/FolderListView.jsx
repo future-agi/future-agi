@@ -1,4 +1,5 @@
 import { Box, Button, Stack } from "@mui/material";
+import { QUICKSTART_PROMPT } from "src/components/empty-state/quickstarts";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import React, { useEffect, useMemo, useState } from "react";
 import PromptItem from "./PromptItem";
@@ -150,16 +151,15 @@ export default function FolderListView({ sortConfig }) {
         {...(folder === "my-templates"
           ? EMPTY_MESSAGE.template
           : EMPTY_MESSAGE.prompt)}
-        linkText={"Check docs"}
+        linkText="Read the docs"
         link="https://docs.futureagi.com/docs/prompt"
-        sx={{
-          height: "80%",
-        }}
+        quickstart={folder === "my-templates" ? undefined : QUICKSTART_PROMPT}
         action={
           <Button
             onClick={() => setNewPromptModal(true)}
             variant="contained"
             color="primary"
+            size="small"
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
             Create prompt

@@ -530,10 +530,10 @@ export default function DashboardsListView() {
             </Stack>
           ) : (
             <EmptyLayout
-              title="Create your first dashboard"
-              description="Build custom dashboards to visualize traces, evaluations, and simulation metrics in one place."
+              title="No dashboards yet"
+              description="Chart traces, evals and simulation metrics side by side, with your own filters and time ranges."
               link="https://docs.futureagi.com"
-              linkText="Learn more"
+              linkText="Read the docs"
               icon="/assets/icons/navbar/ic_dashboard.svg"
             />
           )

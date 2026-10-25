@@ -1,4 +1,5 @@
 import { staleSince } from "../_mock/optimizationRuns";
+import { runViaOf } from "../_mock/runVia";
 import PropTypes from "prop-types";
 import { requiredEvalIds } from "../_mock/evals";
 import { useMemo, useState } from "react";
@@ -399,7 +400,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
        Started by, then the per-task numbers. Only the older ones carry a
        baseline delta, so only they widen with one. */
     /* Every number carries its change beside it, so each column is sized for both. */
-    const added = [172, 128, 96, 104, 64, 76, 104];
+    const added = [172, 128, 96, 104, 64, 76, 156];
     const nums = [...added, 128, 124, 124, 148, 120];
     /* Grader names may wrap onto two lines, so their columns can be narrow. */
     const score = evals.length >= 4 ? 124 : 136;
@@ -2145,6 +2146,10 @@ function addedCells(r, against) {
         }}
       >
         {r.startedBy || "—"}
+        <Box component="span" sx={{ color: "text.tertiary" }}>
+          {" · "}
+          {runViaOf(r).label}
+        </Box>
       </Typography>
     </Box>,
   ];

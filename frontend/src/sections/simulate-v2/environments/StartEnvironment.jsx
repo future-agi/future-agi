@@ -1,9 +1,13 @@
 import PropTypes from "prop-types";
+import CodeBlock from "src/components/code-block";
+import { PYTHON_DEFINE, AGENT_PROMPT, MCP_ADD_CMD } from "./fromCode";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
+  ToggleButton,
+  ToggleButtonGroup,
   Checkbox,
   Box,
   Stack,
@@ -3044,7 +3048,13 @@ function PanelScratch() {
   world's On your machine (TemplateBuildPanel): install, init for an agent,
   up. It shows up in My environments once the CLI connects.
 */
+/* From code, three ways: the CLI (build it on this machine — unchanged),
+   Python (define it with Environment(...) and run it), or the developer's
+   coding agent over MCP. All three make the same kind of environment; it
+   shows up in My environments, managed in code. */
+
 function PanelBuildLocally() {
+  const [mode, setMode] = useState("cli");
   const [os, setOs] = useState("mac");
   const install =
     os === "windows" ? "py -m pip install futureagi" : "pip install futureagi";
@@ -3074,8 +3084,72 @@ function PanelBuildLocally() {
   ];
   return (
     <Box>
+      <Box sx={{ px: 2.5, pt: 2.5 }}>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={mode}
+          onChange={(_, v) => v && setMode(v)}
+          aria-label="From code"
+        >
+          <ToggleButton value="cli">CLI</ToggleButton>
+          <ToggleButton value="python">Python</ToggleButton>
+          <ToggleButton value="agent">Your coding agent</ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
       <Box sx={{ p: 2.5 }}>
-        <LocalSteps steps={steps} />
+        {mode === "cli" && <LocalSteps steps={steps} />}
+        {mode === "python" && (
+          <Stack spacing={1.5}>
+            <Typography
+              sx={{ fontSize: 13, lineHeight: "20px", color: "text.secondary" }}
+            >
+              Define the environment next to your agent and run it from Python.
+              Install with pip install futureagi.
+            </Typography>
+            <CodeBlock code={PYTHON_DEFINE} />
+            <Typography
+              sx={{ fontSize: 12, lineHeight: "16px", color: "text.tertiary" }}
+            >
+              Every setting in the builder has a code form. Without push() it
+              still runs; push() gives it versions and a place in My
+              environments.
+            </Typography>
+          </Stack>
+        )}
+        {mode === "agent" && (
+          <Stack spacing={2}>
+            <LocalSteps
+              steps={[
+                {
+                  title: "Add Future AGI to your coding agent",
+                  body: "Claude Code shown; Cursor, VS Code and Windsurf are in Settings → MCP Server. Once per machine.",
+                  cmd: MCP_ADD_CMD,
+                },
+              ]}
+            />
+            <Box>
+              <Typography
+                sx={{
+                  fontSize: 13,
+                  lineHeight: "20px",
+                  fontWeight: 500,
+                  mb: 0.75,
+                }}
+              >
+                Then ask it, in your agent&apos;s repo
+              </Typography>
+              <CodeBlock code={AGENT_PROMPT} wrap />
+            </Box>
+            <Typography
+              sx={{ fontSize: 12, lineHeight: "16px", color: "text.tertiary" }}
+            >
+              It reads your agent, writes the environment and scenarios next to
+              your code, runs it and proposes fixes. What it builds shows up
+              here.
+            </Typography>
+          </Stack>
+        )}
       </Box>
       <Stack
         direction="row"
@@ -3094,7 +3168,9 @@ function PanelBuildLocally() {
           sx={{ color: "text.subtitle", flexShrink: 0 }}
         />
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-          Once fai env up connects, the environment shows up in My environments.
+          {mode === "cli"
+            ? "Once fai env up connects, the environment shows up in My environments."
+            : "It shows up in My environments, marked Managed in code."}
         </Typography>
       </Stack>
     </Box>
@@ -3837,13 +3913,13 @@ const OPTIONS = [
   {
     id: "local",
     group: "bring",
-    title: "Build locally",
-    icon: "solar:laptop-2-linear",
+    title: "From code",
+    icon: "solar:code-linear",
     blurb:
-      "Run the environment on your own machine over a secure tunnel. Nothing leaves your laptop — great for regulated code, air-gapped setups, or offline dev.",
-    preview: ["macOS", "Linux", "Windows"],
+      "Build and run environments from your terminal, Python or your coding agent. The CLI can also build the world on your own machine over a secure tunnel, so nothing leaves your laptop.",
+    preview: ["CLI", "Python", "Coding agent"],
     setupSubtitle:
-      "The CLI runs on your machine and streams simulations back over a secure tunnel.",
+      "From the CLI, Python or your coding agent. Environments made this way are managed in code.",
   },
   /* An agent reached only by its endpoint — on the Agents page and
      when building an environment alike. */

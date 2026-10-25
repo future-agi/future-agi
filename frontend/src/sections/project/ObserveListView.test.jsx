@@ -234,13 +234,13 @@ describe("ObserveListView", () => {
   });
 
   describe("failed request", () => {
-    it("still says there are no projects when the request succeeds and is empty", async () => {
+    it("shows the first-trace quickstart when the request succeeds and is empty", async () => {
       respondWith([]);
 
       renderList();
 
       await waitFor(() =>
-        expect(screen.getByText("No projects found")).toBeInTheDocument(),
+        expect(screen.getByText("No traces yet")).toBeInTheDocument(),
       );
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });

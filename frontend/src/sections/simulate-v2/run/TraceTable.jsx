@@ -50,6 +50,8 @@ import {
 } from "./traceTableHelpers";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
+import { packOf } from "../workspace/scenarios/redTeamPacks";
+import { memberPathOf } from "../_mock/memberAttribution";
 
 /**
  * The traces, as a table with optional grouping.
@@ -286,9 +288,10 @@ function subGoalStatuses(task, env) {
   the layout wants it. The `value`/`onChange` shape lets the picker be
   fully controlled.
 */
-export function TraceGroupByPicker({ value, onChange }) {
+export function TraceGroupByPicker({ value, onChange, multiAgent = false }) {
   const [anchor, setAnchor] = useState(null);
-  const current = GROUPINGS.find((g) => g.id === value) || GROUPINGS[0];
+  const options = GROUPINGS.filter((g) => multiAgent || !g.multiAgent);
+  const current = options.find((g) => g.id === value) || options[0];
   return (
     <>
       <Button
@@ -327,7 +330,7 @@ export function TraceGroupByPicker({ value, onChange }) {
         </Box>
       </Button>
       <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
-        {GROUPINGS.map((g) => (
+        {options.map((g) => (
           <MenuItem
             key={g.id}
             selected={g.id === value}
@@ -362,6 +365,8 @@ export function TraceGroupByPicker({ value, onChange }) {
 TraceGroupByPicker.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
+  /* Offer the multi-agent groupings (Member). */
+  multiAgent: PropTypes.bool,
 };
 
 /*
@@ -370,7 +375,14 @@ TraceGroupByPicker.propTypes = {
   view of *failures* — passed and unmeasured tasks don't have a
   failure pattern, so they drop out of the grouped list entirely.
 */
-const groupOfTask = (t, mode, env) => {
+const NO_MEMBERS = [];
+const groupOfTask = (t, mode, env, members = NO_MEMBERS) => {
+  if (mode === "member") {
+    /* The member the conversation ended with — who held it when it passed
+       or failed. */
+    const path = memberPathOf(t, members);
+    return path[path.length - 1]?.name || "Unknown member";
+  }
   if (mode === "useCase") {
     return deriveUseCaseLabel(t);
   }
@@ -457,7 +469,10 @@ const groupOfTask = (t, mode, env) => {
     /* Attack — how the scenario was trying to break the agent. Derived
        from the scenario id (rule / trap / adversarial / edge), with core
        scenarios falling into "No attack" so the reader can see how many
-       of the run's rows were happy-path baselines. */
+       of the run's rows were happy-path baselines. A red-team pack's
+       scenarios group under the pack, so each pack gets its pass rate. */
+    const pack = packOf(t);
+    if (pack) return pack.label;
     const id = t.id || "";
     if (id.includes("-rule-")) return "Rule probe";
     if (id.includes("-adversarial-")) return "Adversarial";
@@ -531,6 +546,8 @@ export default function TraceTable({
      check end state and tool calls, live runs judge from the conversation.
      Optional — without it the sub-goal lines read as before. */
   gradingBasis = null,
+  /* The agent's members, entry first (membersOf) — for Group by Member. */
+  members = NO_MEMBERS,
 }) {
   /* Groups start collapsed. Lazy-primed with the group list once it resolves. */
   const [collapsed, setCollapsed] = useState(null);
@@ -551,7 +568,7 @@ export default function TraceTable({
   const groups = useMemo(() => {
     const byKey = new Map();
     tasks.forEach((t) => {
-      const label = groupOfTask(t, groupBy, env);
+      const label = groupOfTask(t, groupBy, env, members);
       /* null = this task has no bucket in the current mode (e.g. a
          passed task under "Failure pattern"). Drop it entirely so the
          view stays a clean partition of what the mode is about. */
@@ -599,8 +616,23 @@ export default function TraceTable({
       const blockers = rows.filter(
         (r) => r.critical && r.status === "failed",
       ).length;
+      /* Most common failed sub-goal — said on member groups, where "who
+         fails, and at what" is the question. */
+      let topFailure = null;
+      if (groupBy === "member") {
+        const counts = new Map();
+        rows
+          .filter((r) => r.status === "failed" || r.status === "flaky")
+          .forEach((r) => {
+            const why = failSubGoalOf(r, env);
+            if (why) counts.set(why, (counts.get(why) || 0) + 1);
+          });
+        const top = [...counts.entries()].sort((x, y) => y[1] - x[1])[0];
+        if (top) topFailure = { label: top[0], count: top[1] };
+      }
       return {
         label,
+        topFailure,
         rows,
         outcomes,
         blockers,
@@ -645,7 +677,7 @@ export default function TraceTable({
       );
     }
     return arr;
-  }, [tasks, groupBy, env]);
+  }, [tasks, groupBy, env, members]);
 
   /* Sticky at the top of the scroll area, without MUI's `stickyHeader`
      prop — that prop switches `borderCollapse` to `separate`, which makes
@@ -1365,6 +1397,7 @@ TraceTable.propTypes = {
   /* Open the task focused on one eval's result (and its error localization). */
   onOpenEval: PropTypes.func,
   groupBy: PropTypes.string,
+  members: PropTypes.array,
   columns: PropTypes.instanceOf(Set),
   env: PropTypes.object,
   onRerunEval: PropTypes.func,
@@ -1407,6 +1440,44 @@ function GroupHeaderRow({
         />
       </Box>
     </Tooltip>
+  );
+
+  /* The group's pass rate, read the way the run summary reads it: passed
+     out of the scenarios that were scored. */
+  const passText =
+    group.measured > 0
+      ? ` · ${group.pct}% passed ${group.passed}/${group.measured}`
+      : "";
+  const passMark = group.measured > 0 && (
+    <Typography
+      sx={{
+        typography: "s3",
+        color: "text.tertiary",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {"· "}
+      <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+        {`${group.pct}%`}
+      </Box>
+      {` passed ${group.passed}/${group.measured}`}
+    </Typography>
+  );
+  /* Member groups also say what that member fails at most. */
+  const failureLine = group.topFailure && (
+    <Typography
+      noWrap
+      title={group.topFailure.label}
+      sx={{ typography: "s3", color: "text.tertiary", pl: 3.25, mt: 0.25 }}
+    >
+      {"Most often failed: "}
+      <Box component="span" sx={{ color: "text.secondary" }}>
+        {group.topFailure.label}
+      </Box>
+      {` · ${group.topFailure.count}`}
+    </Typography>
   );
 
   /* No band tint. A stack of collapsed groups previously read as a
@@ -1626,9 +1697,13 @@ function GroupHeaderRow({
             >
               · {group.count} scenario{group.count === 1 ? "" : "s"}
             </Typography>
+            {passMark}
             {overlapMark}
           </Stack>
-          <GroupLabelSizer text={`${group.label} · ${group.count} scenarios`} />
+          {failureLine}
+          <GroupLabelSizer
+            text={`${group.label} · ${group.count} scenarios${passText}`}
+          />
         </TableCell>
       ) : (
         descColumns.map((c, i) => (
@@ -1679,10 +1754,12 @@ function GroupHeaderRow({
                   >
                     · {group.count} scenario{group.count === 1 ? "" : "s"}
                   </Typography>
+                  {passMark}
                   {overlapMark}
                 </Stack>
+                {failureLine}
                 <GroupLabelSizer
-                  text={`${group.label} · ${group.count} scenarios`}
+                  text={`${group.label} · ${group.count} scenarios${passText}`}
                 />
               </>
             ) : (

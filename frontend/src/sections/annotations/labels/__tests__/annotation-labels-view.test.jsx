@@ -211,7 +211,7 @@ describe("AnnotationLabelsView", () => {
 
     render(<AnnotationLabelsView />);
 
-    expect(screen.getByText("No labels created yet")).toBeInTheDocument();
+    expect(screen.getByText("No labels yet")).toBeInTheDocument();
   });
 
   it("loads archived labels and restores from the archived view", async () => {

@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { atOnceOf } from "./atOnce";
 import { comparisonOf } from "../_mock/pairs";
 import { snapshotLabelOf } from "../_mock/envSnapshot";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -315,7 +316,17 @@ function LiveRun() {
   );
   const staleIds = pinSource ? pinSource.staleScenarios || null : liveStale;
   /* Up to 4 conversations at once where parallel runs are on. */
-  const parallel = parallelOf(envState);
+  const liveParallel = parallelOf(envState);
+  /* Over 200 conversations, the run takes the environment's full
+     "Conversations at once" (Settings) instead of the live cap — the same
+     run, the same page, just more at a time. */
+  const overCap = runSizeOf({
+    scenarios: scenarios.length,
+    repeats,
+    surface: env?.surface,
+    parallel: liveParallel,
+  }).over;
+  const parallel = overCap ? atOnceOf(envState) : liveParallel;
   /* 1–20 repeats, at most 200 conversations, and — for voice — how long it takes. */
   const size = runSizeOf({
     scenarios: scenarios.length,
@@ -323,6 +334,18 @@ function LiveRun() {
     surface: env?.surface,
     parallel,
   });
+  /* The voice estimate is quoted for at most 200 calls; over that, say the
+     whole run at the number it really takes at once. */
+  const voiceLine =
+    size.voice && overCap
+      ? (() => {
+          const mins = (m) =>
+            m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+          const serial = Math.round(size.conversations * 2.4);
+          const atOnce = Math.ceil(serial / parallel / 5) * 5;
+          return `≈ ${mins(serial)} at 1 call at a time · ≈ ${mins(atOnce)} at ${parallel}`;
+        })()
+      : size.voice?.line;
 
   const player = useRunPlayer({
     seed: replaySeed || runId,
@@ -582,6 +605,7 @@ function LiveRun() {
       startedAt: new Date().toISOString(),
       /* Who started it — the runs table's By column. */
       startedBy: currentUser().name,
+      via: "console",
       total: totalTasks,
       passed: 0,
       failed: 0,
@@ -667,6 +691,8 @@ function LiveRun() {
       /* Left out because they aren't proved on this world. */
       skippedIds: skipped.map((sc) => sc.id),
       repeats,
+      /* Over 200 conversations: how many it ran at once. */
+      ...(overCap && { atOnce: parallel }),
       partial: !!only,
       ordinal:
         pendingMember?.ordinal ??
@@ -1024,57 +1050,6 @@ function LiveRun() {
     );
   }
 
-  /*
-    At most 200 conversations per run. Over it, the run doesn't start: it says
-    why and offers the two ways to fit — fewer scenarios, or fewer repeats.
-  */
-  if (!readOnly && phase === "booting" && size.over) {
-    const fitTo = (patchParams) => {
-      const q = new URLSearchParams(params);
-      Object.entries(patchParams).forEach(([k, v]) => q.set(k, v));
-      navigate(`?${q.toString()}`, { replace: true });
-    };
-    return (
-      <Box sx={{ p: 2 }}>
-        <EmptyState
-          icon="solar:layers-minimalistic-linear"
-          title="Over the 200-conversation limit"
-          body={`${size.reason}. Each run holds at most ${size.cap} conversations.`}
-          action={
-            <Stack direction="row" spacing={1} justifyContent="center">
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                onClick={() =>
-                  fitTo({
-                    only: scenarios
-                      .slice(0, size.fit.scenarios)
-                      .map((sc) => sc.id)
-                      .join(","),
-                    trials: String(size.repeats),
-                  })
-                }
-              >
-                {`Run ${size.fit.scenarios} scenarios`}
-              </Button>
-              {size.fit.repeats && (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => fitTo({ trials: String(size.fit.repeats) })}
-                  sx={{ color: "text.primary", borderColor: "divider" }}
-                >
-                  {`Run ${size.fit.repeats} ${size.fit.repeats === 1 ? "repeat" : "repeats"}`}
-                </Button>
-              )}
-            </Stack>
-          }
-        />
-      </Box>
-    );
-  }
-
   /* ── a finished run, read back ── */
   if (readOnly) {
     return (
@@ -1117,7 +1092,7 @@ function LiveRun() {
             /* What this run is actually about to do — a re-run of four
                scenarios is not "17 tasks", and the boot panel is the first
                place that claim appears. */
-            subtitle={`${scenarios.length}${partial ? ` of ${poolSize}` : ""} scenario${scenarios.length === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"} = ${size.conversations} conversations · up to ${parallel} at once · agent ${runAgent}${candidate ? ` ${candidate.label}` : ""} on a fresh sandbox copy of environment ${runEnvShown} for each${skipped.length ? ` · ${skipped.length} skipped` : ""}${size.voice ? ` · voice runs in real time: ${size.voice.line}` : ""}`}
+            subtitle={`${scenarios.length}${partial ? ` of ${poolSize}` : ""} scenario${scenarios.length === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"} = ${size.conversations} conversations · up to ${parallel} at once · agent ${runAgent}${candidate ? ` ${candidate.label}` : ""} on a fresh sandbox copy of environment ${runEnvShown} for each${skipped.length ? ` · ${skipped.length} skipped` : ""}${size.voice ? ` · voice runs in real time: ${voiceLine}` : ""}`}
             steps={BOOT_STEPS[surface.stage] || BOOT_STEPS.voice}
             onDone={() =>
               failedSecrets.length && !secretsOk ? setSecretAsk(true) : start()
@@ -1322,7 +1297,10 @@ function LiveRun() {
               {repeats > 1 ? ` · ${repeats} repeats each` : ""} ·{" "}
               {formatMs(elapsed)} elapsed
               {/* Voice runs in real time — the expected length, said up front. */}
-              {size.voice ? ` · expected ${size.voice.line}` : ""}
+              {size.voice ? ` · expected ${voiceLine}` : ""}
+              {overCap
+                ? ` · ${parallel} at once · you can leave this page; the run is saved in Runs`
+                : ""}
             </Typography>
             {/*
               Slow and stalled look identical on a progress bar, and telling

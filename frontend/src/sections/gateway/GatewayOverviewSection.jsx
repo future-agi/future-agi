@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from "react";
+import CodeBlock from "src/components/code-block";
+import { QUICKSTART_GATEWAY } from "src/components/empty-state/quickstarts";
 import {
   Box,
   Typography,
@@ -252,6 +254,33 @@ const GatewayOverviewSection = () => {
           </Tooltip>
         </Stack>
       </Section>
+
+      {/* Until the first request lands: the call to make, against this
+          gateway's own URL. */}
+      {requestCount === 0 && (
+        <Section
+          title="Send your first request"
+          description="Any OpenAI-compatible client works. The overview fills in as requests arrive."
+          sx={{ mb: 3 }}
+        >
+          <CodeBlock
+            code={QUICKSTART_GATEWAY.snippets[0].code.replace(
+              "https://gateway.futureagi.com/v1",
+              gateway.baseUrl || "https://gateway.futureagi.com/v1",
+            )}
+          />
+          <Typography
+            sx={{
+              fontSize: 12,
+              lineHeight: "16px",
+              color: "text.secondary",
+              mt: 1,
+            }}
+          >
+            {QUICKSTART_GATEWAY.waiting}
+          </Typography>
+        </Section>
+      )}
 
       <GettingStartedCard completionState={completionState} />
 

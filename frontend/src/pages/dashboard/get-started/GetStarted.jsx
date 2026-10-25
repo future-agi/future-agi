@@ -1,6 +1,6 @@
 import React from "react";
 import { Helmet } from "react-helmet-async";
-import GetStartedView from "src/sections/get-started/GetStartedView";
+import GetStartedLaunchView from "src/sections/get-started/GetStartedLaunchView";
 
 const GetStarted = () => {
   return (
@@ -8,7 +8,7 @@ const GetStarted = () => {
       <Helmet>
         <title>Get started with FutureAGI</title>
       </Helmet>
-      <GetStartedView />
+      <GetStartedLaunchView />
     </>
   );
 };

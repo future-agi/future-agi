@@ -458,6 +458,11 @@ export function useNavSettingsData() {
             path: "/dashboard/settings/profile-settings",
             icon: SettingsIcons.Profile,
           },
+          {
+            title: "Developer",
+            path: "/dashboard/settings/developer",
+            icon: <Iconify icon="solar:code-linear" width={20} />,
+          },
         ],
       });
     }

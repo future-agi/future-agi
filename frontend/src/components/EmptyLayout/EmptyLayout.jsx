@@ -1,11 +1,10 @@
 import React from "react";
-import { Link } from "@mui/material";
 import PropTypes from "prop-types";
-import EmptyContent from "../empty-content";
+import EmptyState from "../empty-state";
 import SvgColor from "../svg-color";
 
-// Onboarding / full-area empty state with an optional docs link. Renders the
-// Design System empty state (EmptyContent); kept for its link + icon-src API.
+// First-run empty state with an optional docs link. Renders the Design System
+// EmptyState; kept for its icon-src + link/linkText API.
 const EmptyLayout = ({
   title,
   description,
@@ -16,39 +15,26 @@ const EmptyLayout = ({
   onLinkClick,
   sx = {},
   hideIcon = false,
-}) => {
-  return (
-    <EmptyContent
-      title={title}
-      icon={
-        icon && !hideIcon ? (
-          <SvgColor src={icon} sx={{ width: 20, height: 20 }} />
-        ) : undefined
-      }
-      description={
-        description || linkText ? (
-          <>
-            {description}{" "}
-            {linkText && (
-              <Link
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                underline="always"
-                color="primary.main"
-                onClick={onLinkClick ? onLinkClick : () => {}}
-              >
-                {linkText}
-              </Link>
-            )}
-          </>
-        ) : undefined
-      }
-      action={action}
-      sx={sx}
-    />
-  );
-};
+  quickstart,
+  steps,
+}) => (
+  <EmptyState
+    title={title}
+    description={description}
+    icon={
+      icon && !hideIcon ? (
+        <SvgColor src={icon} sx={{ width: 20, height: 20 }} />
+      ) : undefined
+    }
+    action={action}
+    docsHref={linkText ? link : undefined}
+    docsLabel={linkText}
+    onDocsClick={onLinkClick}
+    quickstart={quickstart}
+    steps={steps}
+    sx={sx}
+  />
+);
 
 EmptyLayout.propTypes = {
   title: PropTypes.string,
@@ -60,6 +46,8 @@ EmptyLayout.propTypes = {
   onLinkClick: PropTypes.func,
   sx: PropTypes.object,
   hideIcon: PropTypes.bool,
+  quickstart: PropTypes.object,
+  steps: PropTypes.array,
 };
 
 export default EmptyLayout;

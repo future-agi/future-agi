@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
+import EmptyState from "src/components/empty-state";
 import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
@@ -357,6 +358,8 @@ const TaskListView = ({
   }, [observeId]);
 
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  // Nothing exists yet (not a search that matched nothing).
+  const isFirstRun = !isLoading && !isError && total === 0 && !debouncedSearch;
   useEffect(() => {
     if (page > lastPage) setPage(lastPage);
   }, [lastPage, page]);
@@ -604,16 +607,22 @@ const TaskListView = ({
         minHeight: 0,
       }}
     >
-      {/* Top Controls */}
+      {/* Top Controls — hidden on first run; the empty state has the action */}
       <Box
         sx={{
-          display: "flex",
+          display: isFirstRun ? "none" : "flex",
           justifyContent: "space-between",
           alignItems: "center",
           gap: 1.5,
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            display: isFirstRun ? "none" : "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
           <FormSearchField
             size="small"
             placeholder="Search tasks..."
@@ -629,7 +638,7 @@ const TaskListView = ({
           />
         </Box>
 
-        <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+        <Box sx={{ display: "flex", gap: 1, alignItems: "center", ml: "auto" }}>
           {selectedItems.length > 0 && (
             <>
               <Typography variant="caption" color="text.secondary">
@@ -664,16 +673,15 @@ const TaskListView = ({
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="solar:add-linear" width={20} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={onCreateTask}
               disabled={
                 !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
                   role
                 ]
               }
-              sx={{ typography: "body2", }}
             >
-              Create Task
+              Create task
             </Button>
           )}
         </Box>
@@ -699,32 +707,63 @@ const TaskListView = ({
           </Button>
         </Box>
       )}
-      <DataTable
-        columns={columns}
-        data={items}
-        isLoading={isLoading}
-        rowCount={total}
-        sorting={sorting}
-        onSortingChange={handleSortingChange}
-        rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
-        onRowClick={(row) => onRowClick?.(row)}
-        getRowId={(row) => row.id}
-        enableSelection
-        emptyMessage={isError ? QUERY_FAILED_RETRY_MESSAGE : "No tasks found"}
-      />
+      {isFirstRun ? (
+        <EmptyState
+          icon="solar:checklist-minimalistic-linear"
+          title="No tasks yet"
+          description="A task runs evals on your traces automatically, on new data or on a sample of what's already there."
+          action={
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
+              onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
+            >
+              Create task
+            </Button>
+          }
+          docsHref="https://docs.futureagi.com/docs/observe/features/evals"
+        />
+      ) : (
+        <>
+          <DataTable
+            columns={columns}
+            data={items}
+            isLoading={isLoading}
+            rowCount={total}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
+            rowSelection={rowSelection}
+            onRowSelectionChange={setRowSelection}
+            onRowClick={(row) => onRowClick?.(row)}
+            getRowId={(row) => row.id}
+            enableSelection
+            emptyMessage={
+              isError
+                ? QUERY_FAILED_RETRY_MESSAGE
+                : `No tasks match “${debouncedSearch}”`
+            }
+          />
 
-      {/* Pagination */}
-      <DataTablePagination
-        page={queryPage}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => {
-          setPageSize(size);
-          setPage(0);
-        }}
-      />
+          {/* Pagination */}
+          <DataTablePagination
+            page={queryPage}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(0);
+            }}
+          />
+        </>
+      )}
 
       {/* Delete confirmation */}
       {deleteTarget && (

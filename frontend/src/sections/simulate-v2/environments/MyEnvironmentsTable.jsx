@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { managedOf } from "../_mock/envManaged";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -224,6 +225,7 @@ export default function MyEnvironmentsTable({
           ).length,
           runsTotal: runs.length,
           updatedAt: env.adoptedAt,
+          managed: managedOf(env, envState),
           /* The environment's version, beside its name — two rows of the same
            name read apart by it. */
           version: (() => {
@@ -320,6 +322,18 @@ export default function MyEnvironmentsTable({
                   >
                     {row.original.version}
                   </Typography>
+                </Tooltip>
+              )}
+              {row.original.managed === "code" && (
+                <Tooltip
+                  arrow
+                  title="Managed in code — versions come from fai env push"
+                >
+                  <Iconify
+                    icon="solar:code-square-linear"
+                    width={14}
+                    sx={{ color: "text.tertiary", flexShrink: 0 }}
+                  />
                 </Tooltip>
               )}
             </Stack>
@@ -428,7 +442,9 @@ export default function MyEnvironmentsTable({
                   arrow
                   title={
                     why.length ? (
-                      <Box sx={{ whiteSpace: "pre-line" }}>{why.join("\n")}</Box>
+                      <Box sx={{ whiteSpace: "pre-line" }}>
+                        {why.join("\n")}
+                      </Box>
                     ) : (
                       ""
                     )

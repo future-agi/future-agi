@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Typography, Button } from "@mui/material";
+import { Button } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 import Iconify from "src/components/iconify";
 
 const VARIANTS = {
@@ -22,11 +23,12 @@ const VARIANTS = {
     icon: "solar:filter-linear",
     title: "No results found",
     description: "Try adjusting your filters or search query.",
-    ctaLabel: "Clear Filters",
+    ctaLabel: "Clear filters",
     ctaIcon: "solar:filter-linear",
   },
 };
 
+// Renders the Design System EmptyState; the variants keep their copy.
 const GatewayEmptyState = ({
   variant = "no-data",
   onAction,
@@ -36,47 +38,31 @@ const GatewayEmptyState = ({
 }) => {
   const preset = VARIANTS[variant] || VARIANTS["no-data"];
   const buttonLabel = actionLabel || preset.ctaLabel;
-
+  const isFilter = variant === "no-results";
   return (
-    <Box
-      display="flex"
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-      py={8}
-      px={3}
-    >
-      <Iconify
-        icon={preset.icon}
-        width={56}
-        sx={{ color: "text.disabled", mb: 2 }}
-      />
-      <Typography variant="h6" color="text.secondary" mb={1} textAlign="center">
-        {title || preset.title}
-      </Typography>
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        mb={3}
-        textAlign="center"
-        sx={{ maxWidth: 400 }}
-      >
-        {description || preset.description}
-      </Typography>
-      {onAction && buttonLabel && (
-        <Button
-          variant="outlined"
-          onClick={onAction}
-          startIcon={
-            preset.ctaIcon ? (
-              <Iconify icon={preset.ctaIcon} width={20} />
-            ) : undefined
-          }
-        >
-          {buttonLabel}
-        </Button>
-      )}
-    </Box>
+    <EmptyState
+      variant={isFilter ? "no-results" : "first-run"}
+      icon={preset.icon}
+      title={title || preset.title}
+      description={description || preset.description}
+      onClearFilters={isFilter ? onAction : undefined}
+      action={
+        !isFilter && onAction && buttonLabel ? (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              preset.ctaIcon ? (
+                <Iconify icon={preset.ctaIcon} width={16} />
+              ) : null
+            }
+            onClick={onAction}
+          >
+            {buttonLabel}
+          </Button>
+        ) : null
+      }
+    />
   );
 };
 

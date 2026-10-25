@@ -63,6 +63,9 @@ const AIProviders = lazyWithRetry(
 const IntegrationsPage = lazyWithRetry(
   () => import("src/pages/dashboard/settings/Integrations"),
 );
+const DeveloperSettingsPage = lazyWithRetry(
+  () => import("src/pages/dashboard/settings/Developer"),
+);
 const MCPServerPage = lazyWithRetry(
   () => import("src/pages/dashboard/settings/MCPServer"),
 );
@@ -76,7 +79,8 @@ const SlackIntegrationPage = lazyWithRetry(
   () => import("src/sections/simulate-v2/integrations/SlackIntegrationPage"),
 );
 const CodingAgentsIntegrationPage = lazyWithRetry(
-  () => import("src/sections/simulate-v2/integrations/CodingAgentsIntegrationPage"),
+  () =>
+    import("src/sections/simulate-v2/integrations/CodingAgentsIntegrationPage"),
 );
 const IntegrationDetailPage = lazyWithRetry(
   () => import("src/sections/settings/integrations/IntegrationDetail"),
@@ -458,7 +462,16 @@ function LegacyFeedDetailRedirect() {
 /* Retired prototype pages: their environment, or the Environments landing. */
 function SimEnvironmentRedirect() {
   const { envId } = useParams();
-  return <Navigate to={envId ? `/dashboard/simulate/environments/${envId}` : "/dashboard/simulate/environments"} replace />;
+  return (
+    <Navigate
+      to={
+        envId
+          ? `/dashboard/simulate/environments/${envId}`
+          : "/dashboard/simulate/environments"
+      }
+      replace
+    />
+  );
 }
 function ModelDetailDefaultRedirect() {
   const { id } = useParams();
@@ -516,7 +529,6 @@ const Overview = lazyWithRetry(
 const Executions = lazyWithRetry(
   () => import("src/sections/agent-playground/Executions/Executions"),
 );
-
 
 const DashboardRoutes = () => {
   const location = useLocation();
@@ -734,6 +746,10 @@ export const dashboardRoutes = (
           <IntegrationDetailPage />
         </RoleProtection>
       ),
+    },
+    {
+      path: "developer",
+      element: <DeveloperSettingsPage />,
     },
     {
       path: "mcp-server",
@@ -1178,9 +1194,7 @@ export const dashboardRoutes = (
         },
         {
           path: "voice",
-          element: (
-            <EmptyContent title="Voice observability coming soon" />
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",
@@ -1442,13 +1456,17 @@ export const dashboardRoutes = (
               /* The per-environment level is gone — an improvement is level 1's
                  row now. Old links land on the list. */
               path: "improvements/env/:envId",
-              element: <Navigate to="/dashboard/simulate/improvements" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/improvements" replace />
+              ),
             },
             {
               /* Datasets are a scenario source, not something to improve on
                  (RSI PRD) — old links land on the list. */
               path: "improvements/dataset/:datasetId",
-              element: <Navigate to="/dashboard/simulate/improvements" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/improvements" replace />
+              ),
             },
             {
               /* Improvements — one improvement run, by environment and id.
@@ -1466,18 +1484,24 @@ export const dashboardRoutes = (
                  any more, but stale URLs and browser back stacks still
                  do, so we redirect instead of 404-ing. */
               path: "environments/browse",
-              element: <Navigate to="/dashboard/simulate/environments" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
             },
             {
               /* Templates live on the Environments landing now. */
               path: "environments/templates",
-              element: <Navigate to="/dashboard/simulate/environments" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
             },
             {
               /* Twins browse consolidated into the Environments Templates
                  tab — the standalone /twins page now just redirects. */
               path: "twins",
-              element: <Navigate to="/dashboard/simulate/environments" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
             },
             {
               /* A twin is an environment — it opens as one. */
@@ -1487,7 +1511,9 @@ export const dashboardRoutes = (
             {
               /* The old new-environment page — building starts on the landing. */
               path: "environments/new",
-              element: <Navigate to="/dashboard/simulate/environments" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
             },
             {
               /* Chat + derivation view — reached from any "Build
@@ -1510,7 +1536,9 @@ export const dashboardRoutes = (
             },
             {
               path: "environments/use/:templateId",
-              element: <Navigate to="/dashboard/simulate/environments" replace />,
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
             },
             {
               /* Must appear before the :envId/:step catch-all so the
@@ -1550,7 +1578,12 @@ export const dashboardRoutes = (
            (updated RSI PRD). Old links land there, with a note. */
         {
           path: "agent-definitions",
-          element: <Navigate to="/dashboard/agents?tab=connected&moved=agent-definitions" replace />,
+          element: (
+            <Navigate
+              to="/dashboard/agents?tab=connected&moved=agent-definitions"
+              replace
+            />
+          ),
         },
         {
           path: "agent-definitions/create-new-agent-definition",
