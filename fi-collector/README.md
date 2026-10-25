@@ -258,8 +258,8 @@ Standalone uses GOMEMLIMIT=512MiB: a 232 MiB ingest budget and about 154.7 MiB
 work pool. 8,192 spans with 50 short string attributes each can exceed it;
 start Collector pipelines at send_batch_size/send_batch_max_size 4096 and
 reduce further when needed. GOMEMLIMIT is soft, not a hard RSS bound. The
-512MiB setting and whole-container load at minimum Standalone resources
-still need release sign-off; collector-only measurements are insufficient.
+512MiB setting was measured on the collector alone; whole-container load at
+minimum Standalone resources has not been measured, so leave headroom.
 
 | Setting | Default | What |
 |---|---|---|
