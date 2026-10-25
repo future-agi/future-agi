@@ -215,6 +215,23 @@ class StageAndOverlayTests(UpdaterCase):
             updater._check_stage_binding(record, dict(binding, manifest_sha256='b'*64), True)
         self.assertEqual(caught.exception.reason_code, ReasonCode.IMMUTABLE_RELEASE_CHANGED)
 
+    def test_empty_release_binding_writes_no_stage_metadata_for_an_ordinary_apply(self):
+        updater = self.updater()
+        path = updater.apply(lambda _: self.plan(), {'version': 'v1.1.0'}, backup_command=BACKUP, release_binding={})
+        record = self.state.load_receipt(path)
+        self.assertNotIn('stage_binding', record)
+        self.assertIsNone(self.state.read_private('stage', record['run_id']))
+
+    def test_non_empty_release_binding_still_records_private_stage_metadata(self):
+        binding = {key: 'a'*64 for key in ('manifest_hash', 'manifest_sha256', 'bundle_sha256',
+                   'installation_fingerprint', 'config_fingerprint', 'profile_fingerprint', 'trust_fingerprint')}
+        updater = self.updater()
+        path = updater.apply(lambda _: self.plan(), {'version': 'v1.1.0'}, stage=True,
+                             backup_command=BACKUP, release_binding=binding)
+        saved = self.state.read_private('stage', self.state.load_receipt(path)['run_id'])
+        self.assertEqual(saved['backup_proof_state'], 'legacy_absent')
+        self.assertEqual(saved['manifest_sha256'], binding['manifest_sha256'])
+
 
 class ScheduledGuardTests(UpdaterCase):
     """Real guard/store/proof/engine with synthetic certification and fake Docker."""
@@ -549,7 +566,7 @@ class ScheduledGuardTests(UpdaterCase):
         self.assertEqual(caught.exception.reason_code, ReasonCode.UNCERTIFIED_RELEASE)
         self.assertEqual(self.hook.calls, [])
 
-    def prepare_failed_rollout(self):
+    def prepare_failed_rollout(self, before_authorize=None):
         from dataclasses import replace
         import subprocess
         from deploy.update.compatibility import RuntimeImage
@@ -569,6 +586,8 @@ class ScheduledGuardTests(UpdaterCase):
         target = self.prepared.manifest['components']['standalone']
         target_id = self.inst.running['app']['image_id']
         self.obs = replace(self.obs, product_images={'app': (RuntimeImage(target['image'], target['digest'], target_id),)})
+        if before_authorize is not None:
+            before_authorize()
         self.guard.authorize_fallback(self.engine, Path(receipt['_path']),
                                       prior_images=self.guard.prior_images, child_state_known=True)
         return receipt
@@ -590,6 +609,58 @@ class ScheduledGuardTests(UpdaterCase):
         self.assertEqual(observation.last_run['fallback_outcome'], 'succeeded')
         with self.assertRaises(GuardRefused):
             self.guard.rollback_once(self.engine)
+
+    def baseline_only_facts(self):
+        """Like the enrolled adapter: facts exist only for the unchanged pre-update graph."""
+        from deploy.update.orchestrator import GuardRefused, fingerprints
+        seen = []
+
+        def facts(installation, boundary):
+            config, profile, deployment = fingerprints(installation)
+            seen.append(boundary)
+            if (config, profile, deployment) != (self.prepared.config_fingerprint, self.prepared.profile_fingerprint,
+                                                 self.prepared.deployment_fingerprint):
+                raise GuardRefused(ReasonCode.CONFIGURATION_CHANGED)
+            return self.obs, self.controls
+
+        self.guard.facts = facts
+        return seen
+
+    def test_fallback_predecessor_facts_are_read_against_the_unchanged_graph(self):
+        seen = self.baseline_only_facts()
+        self.prepare_failed_rollout()
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')  # the forward pins are still live
+        self.assertEqual(seen.count('before_fallback'), 1)
+        path = self.guard.rollback_once(self.engine)
+        self.assertEqual(self.state.load_receipt(path)['status'], 'rolled_back')
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
+
+    def test_operator_pin_edit_before_fallback_authorization_is_refused_not_normalized(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.baseline_only_facts()
+
+        def edit():
+            with self.env_path.open('a') as handle:
+                handle.write('\nFUTURE_AGI_VERSION=v1.53.0\n')
+
+        with self.assertRaises(GuardRefused) as caught:
+            self.prepare_failed_rollout(before_authorize=edit)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertIsNone(self.guard.fallback)
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.53.0')
+
+    def test_non_pin_env_edit_before_fallback_authorization_is_refused(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.baseline_only_facts()
+
+        def edit():
+            with self.env_path.open('a') as handle:
+                handle.write('\nSOME_OPERATOR_SETTING=1\n')
+
+        with self.assertRaises(GuardRefused) as caught:
+            self.prepare_failed_rollout(before_authorize=edit)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertIsNone(self.guard.fallback)
 
     def test_prior_image_lost_signed_digest_cannot_authorize_fallback(self):
         from deploy.update.orchestrator import GuardRefused

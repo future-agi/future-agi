@@ -414,8 +414,20 @@ class ScheduledGuard:
         from .install import COMPONENT_VARIABLES
         from .manifest import parse_image_ref
         from .compatibility import decode_document
-        previous = decode_document(self.facts(engine.installation.fresh(), 'before_fallback')[0].predecessor_raw,
-                                   1024 * 1024)
+        require(engine.active_record is not None and engine.active_record.get('run_id') == receipt['run_id']
+                and engine.active_record.get('status') == 'failed_during_rollout', ReasonCode.ROLLBACK_INELIGIBLE)
+        # The enrolled baseline describes the unchanged pre-update graph, and this engine has just changed its pins.
+        # Read the predecessor evidence from the same normalization validate() applies at this boundary: the env
+        # must still be exactly what the failed forward transaction left (by hash), and only its recorded
+        # found_values are put back for the comparison. Nothing else is excused.
+        fresh = engine.installation.fresh()
+        check_binding(fresh, self.prepared.binding)
+        require(hashlib.sha256(engine._env_path().read_bytes()).hexdigest()
+                == engine.active_record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
+        fresh.overlay_env(receipt['found_values'])
+        require(fingerprints(fresh) == (self.prepared.config_fingerprint, self.prepared.profile_fingerprint,
+                                        self.prepared.deployment_fingerprint), ReasonCode.CONFIGURATION_CHANGED)
+        previous = decode_document(self.facts(fresh, 'before_fallback')[0].predecessor_raw, 1024 * 1024)
         _, expected = engine._restore_values(receipt)
         layout = topology_profile(self.prepared.binding.topology, self.prepared.binding.profiles)
         require(all(expected.get(COMPONENT_VARIABLES[component]) == parse_image_ref(
@@ -427,8 +439,6 @@ class ScheduledGuard:
                 require(info is not None and info.get('id') == image.image_id
                         and (parse_image_ref(image.image).name, image.digest)
                         in _digest_set(info.get('repo_digests') or []), ReasonCode.ROLLBACK_INELIGIBLE)
-        require(engine.active_record is not None and engine.active_record.get('run_id') == receipt['run_id']
-                and engine.active_record.get('status') == 'failed_during_rollout', ReasonCode.ROLLBACK_INELIGIBLE)
         self.fallback_env_sha256 = engine.active_record['env_recovery']['after_sha256']
         self.fallback_receipt = Path(receipt_path)
         self.fallback = Attempt(self.prepared, self.attempt.attempt_id, self.attempt.reserved_at,

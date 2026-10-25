@@ -1644,7 +1644,9 @@ class Updater:
                 "previous_images": (resumed or {}).get("previous_images") or self._snapshot_images(services, containers),
                 "backup": backup,
             }
-            if release_binding is not None:
+            # An empty mapping is the host adapter's "nothing to bind" (an ordinary apply): it writes no metadata,
+            # while the staged-resume check above still ran for any non-None binding.
+            if release_binding:
                 saved_binding = (self.state.read_private('stage', resumed['run_id'])
                                  if resumed and resumed.get('run_id') else None)
                 record['stage_binding'] = (saved_binding if saved_binding is not None else
