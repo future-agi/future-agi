@@ -38,6 +38,7 @@ from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import nudges
 from simulate.services.harness_versioning import read as reads
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_diagnostics import _normalize_log_text
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,12 @@ BRIEFING_MAX = 64 * 1024
 NOTES_MAX = 4000
 PROBLEMS_MAX = 50
 PROBLEM_TEXT_MAX = 500
-RESULT_FILE_MAX = 256 * 1024
+# ALK writes up to PROBLEMS_MAX of each list, each text up to 4000 characters.
+RESULT_FILE_MAX = 4 * 1024 * 1024
+# Longer than any credential value: a text is cut to its cap plus this before masking
+# (after masking would strip control characters), so a value across the cap is still
+# whole and the patterns stay cheap.
+SECRET_VALUE_MAX = 16 * 1024
 PROOFS_FILE_MAX = 64 * 1024 * 1024
 DEFERRED_RETRIES = 20
 DEFERRED_RETRY_AFTER = timedelta(minutes=5)
@@ -1367,7 +1373,7 @@ def _redacted(
 def _report(
     environment: HostedHarnessJob, nudge: HarnessNudge, secret_result: Mapping
 ) -> dict:
-    """The result file's parts the nudge keeps, truncated and redacted. Locals that
+    """The result file's parts the nudge keeps, redacted, then truncated. Locals that
     hold its texts before masking are named for the error tracker's scrubber."""
     secret_checks = (
         secret_result.get("checks")
@@ -1408,7 +1414,12 @@ def _report(
         ),
     ]
     masked = _redacted(
-        environment, nudge, [text[:cap] for _part, _at, text, cap in secret_parts]
+        environment,
+        nudge,
+        [
+            _normalize_log_text(text)[: cap + SECRET_VALUE_MAX]
+            for _part, _at, text, cap in secret_parts
+        ],
     )
     report: dict[str, Any] = {
         "notes": "",
@@ -1417,7 +1428,8 @@ def _report(
         "not_checked": [],
         "left_out": [{} for _ in secret_left_out],
     }
-    for (part, at, _text, _cap), text in zip(secret_parts, masked, strict=True):
+    for (part, at, _text, cap), text in zip(secret_parts, masked, strict=True):
+        text = text[:cap]
         if part == "notes":
             report["notes"] = text
         elif at is None:
