@@ -3,9 +3,34 @@ from urllib.parse import urlsplit
 from django.core.validators import URLValidator
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.services.config_push import (
+    UnsupportedProviderCredentialFields,
+    _normalize_provider_credentials,
+)
 from agentcc.services.credential_manager import mask_key
+from integrations.services.credentials import CredentialManager
+
+
+def unsupported_credential_keys(provider_name, credentials):
+    """The keys of ``credentials`` the gateway's provider contract does not
+    take, sorted. It is the config push's own check: a provider
+    saved with such a key is left out of every push to the gateway."""
+    try:
+        _normalize_provider_credentials(provider_name, credentials)
+    except UnsupportedProviderCredentialFields as e:
+        return e.fields
+    return ()
+
+
+def unsupported_credential_keys_message(provider_name, keys):
+    one = len(keys) == 1
+    return (
+        f"Unsupported credential {'key' if one else 'keys'} for provider "
+        f"'{provider_name}': {', '.join(keys)}. The gateway's provider contract "
+        f"does not take {'it' if one else 'them'}, so the provider would not be "
+        "pushed to the gateway."
+    )
 
 
 class AgentccProviderCredentialSerializer(serializers.ModelSerializer):
@@ -111,6 +136,20 @@ class AgentccProviderCredentialCreateSerializer(serializers.Serializer):
                 "credentials must contain at least an 'api_key' field"
             )
         return value
+
+    def validate(self, attrs):
+        keys = unsupported_credential_keys(attrs["provider_name"], attrs["credentials"])
+        if keys:
+            raise serializers.ValidationError(
+                {
+                    "credentials": [
+                        unsupported_credential_keys_message(
+                            attrs["provider_name"], keys
+                        )
+                    ]
+                }
+            )
+        return attrs
 
 
 class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):

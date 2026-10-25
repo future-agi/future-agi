@@ -99,7 +99,7 @@ Apache 2.0 core. Every evaluator, every prompt, every trace is inspectable — *
 <td width="33%" valign="top">
 
 ###  Built for production
-Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**, **P99 ≤ 21 ms with guardrails on**. OpenTelemetry-native traces. 50+ framework instrumentors. Every claim reproducible via the committed benchmark harness.
+Go-based gateway, with its measured handler benchmarks and the command that reproduces them in [its README](./agentcc-gateway/README.md#-benchmarks). OpenTelemetry-native traces. 50+ framework instrumentors.
 
 </td>
 </tr>
@@ -302,7 +302,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 <td width="33%" valign="top">
 
 ### 🎛️ Agent Command Center
-OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
+OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A.
 
 <sub>[Docs →](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_command_center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 

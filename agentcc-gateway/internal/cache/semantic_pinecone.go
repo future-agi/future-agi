@@ -40,7 +40,7 @@ func NewPineconeBackend(baseURL, apiKey string, threshold float64, dims int, tim
 	}, nil
 }
 
-func (p *PineconeBackend) Search(vector []float32, model string) *SearchResult {
+func (p *PineconeBackend) Search(scope string, vector []float32, model string) *SearchResult {
 	nowUnix := time.Now().Unix()
 
 	body := map[string]interface{}{
@@ -48,6 +48,11 @@ func (p *PineconeBackend) Search(vector []float32, model string) *SearchResult {
 		"topK":            1,
 		"includeMetadata": true,
 		"filter": map[string]interface{}{
+			// Tenant partition: a vector stored under another scope, or with
+			// none, never matches.
+			scopePayloadKey: map[string]interface{}{
+				"$eq": scope,
+			},
 			"model": map[string]interface{}{
 				"$eq": model,
 			},
@@ -111,7 +116,7 @@ func (p *PineconeBackend) Search(vector []float32, model string) *SearchResult {
 	}
 }
 
-func (p *PineconeBackend) Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+func (p *PineconeBackend) Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
 	if ttl <= 0 || resp == nil {
 		return
 	}
@@ -129,10 +134,11 @@ func (p *PineconeBackend) Set(key string, vector []float32, model string, resp *
 				"id":     key,
 				"values": vector,
 				"metadata": map[string]interface{}{
-					"model":      model,
-					"cache_key":  key,
-					"response":   string(responseJSON),
-					"expires_at": expiresAt,
+					scopePayloadKey: scope,
+					"model":         model,
+					"cache_key":     key,
+					"response":      string(responseJSON),
+					"expires_at":    expiresAt,
 				},
 			},
 		},

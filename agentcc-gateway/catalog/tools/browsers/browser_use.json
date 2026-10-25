@@ -1,0 +1,26 @@
+{
+  "vendor": "browser_use",
+  "capability": "browsers",
+  "skus": [
+    {
+      "sku": "browser_use.minute",
+      "unit": "minute",
+      "usd_per_unit": 0.000333,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://browser-use.com/legal/terms-of-service",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -19,6 +19,13 @@ import {
 } from "@mui/material";
 import { Icon } from "@iconify/react";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import {
+  ORG_DIALOG_KEYS,
+  budgetRows,
+  budgetsEnabled,
+  isDialogEntry,
+} from "../budgets/budgetLevels";
+import { formatCost } from "../utils/formatters";
 
 const PERIODS = [
   { value: "daily", label: "Daily" },
@@ -305,6 +312,53 @@ const BudgetLevelSection = ({
 };
 
 // ---------------------------------------------------------------------------
+// The org budget saved from Budgets > Set Budget (read here, edited there)
+// ---------------------------------------------------------------------------
+const DialogOrgBudgets = ({ budgets }) => {
+  const rows = budgetRows(budgets).filter((r) =>
+    ORG_DIALOG_KEYS.includes(r.level),
+  );
+  return (
+    <Stack spacing={0.75}>
+      {rows.map((row) => {
+        const details = [row.period, row.action];
+        if (row.action === "throttle") {
+          details.push(
+            `${row.throttleRpm ?? 1} requests a minute per gateway replica past the limit`,
+          );
+        }
+        if (row.alertThreshold != null) {
+          details.push(`alert at ${row.alertThreshold}%`);
+        }
+        if (!row.inForce) details.push("not in force");
+        return (
+          <Stack
+            key={row.id}
+            direction="row"
+            spacing={1}
+            alignItems="baseline"
+            flexWrap="wrap"
+          >
+            <Typography variant="body2" fontWeight={500}>
+              {row.label}
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+              {row.limit > 0 ? formatCost(row.limit) : "No limit"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {details.join(" \u00b7 ")}
+            </Typography>
+          </Stack>
+        );
+      })}
+      <Typography variant="caption" color="text.secondary">
+        Set from Budgets &gt; Set Budget; edit or remove it there.
+      </Typography>
+    </Stack>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 const BudgetsConfigTab = ({
@@ -315,6 +369,11 @@ const BudgetsConfigTab = ({
 }) => {
   const availableModels = useAvailableModels();
   const budgetConfig = budgets || {};
+  // The same on/off the push sends: as chosen, else on when a level is set.
+  const enabled = budgetsEnabled(budgetConfig);
+  const dialogOrgBudget = ORG_DIALOG_KEYS.some((key) =>
+    isDialogEntry(budgetConfig[key]),
+  );
   const costConfig = costTracking || {};
   const customPricing =
     costConfig.custom_pricing || costConfig.customPricing || {};
@@ -367,7 +426,7 @@ const BudgetsConfigTab = ({
       <FormControlLabel
         control={
           <Switch
-            checked={budgetConfig.enabled || false}
+            checked={enabled}
             onChange={(e) => updateBudget("enabled", e.target.checked)}
           />
         }
@@ -375,26 +434,34 @@ const BudgetsConfigTab = ({
         sx={{ mb: 2 }}
       />
 
-      {budgetConfig.enabled && (
+      {enabled && (
         <Stack spacing={3}>
           {/* Organization Budget (existing) */}
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
               Organization Budget
             </Typography>
-            <Stack direction="row" spacing={2} flexWrap="wrap">
-              <TextField
-                label="Spend Limit (USD)"
-                type="number"
-                size="small"
-                value={budgetConfig.org_limit || budgetConfig.orgLimit || ""}
-                onChange={(e) =>
-                  updateBudget("org_limit", Number(e.target.value) || 0)
-                }
-                helperText="0 = unlimited"
-                sx={{ width: 160 }}
-                inputProps={{ step: 0.01, min: 0 }}
-              />
+            {dialogOrgBudget && <DialogOrgBudgets budgets={budgetConfig} />}
+            <Stack
+              direction="row"
+              spacing={2}
+              flexWrap="wrap"
+              sx={dialogOrgBudget ? { mt: 1.5 } : undefined}
+            >
+              {!dialogOrgBudget && (
+                <TextField
+                  label="Spend Limit (USD)"
+                  type="number"
+                  size="small"
+                  value={budgetConfig.org_limit || budgetConfig.orgLimit || ""}
+                  onChange={(e) =>
+                    updateBudget("org_limit", Number(e.target.value) || 0)
+                  }
+                  helperText="0 = unlimited"
+                  sx={{ width: 160 }}
+                  inputProps={{ step: 0.01, min: 0 }}
+                />
+              )}
               <TextField
                 select
                 label="Budget Period"
@@ -415,40 +482,46 @@ const BudgetsConfigTab = ({
                   </MenuItem>
                 ))}
               </TextField>
-              <TextField
-                label="Warning Threshold"
-                type="number"
-                size="small"
-                value={
-                  budgetConfig.warn_threshold ||
-                  budgetConfig.warnThreshold ||
-                  0.8
-                }
-                onChange={(e) =>
-                  updateBudget("warn_threshold", Number(e.target.value) || 0)
-                }
-                helperText="0-1 (e.g. 0.8 = 80%)"
-                sx={{ width: 160 }}
-                inputProps={{ step: 0.05, min: 0, max: 1 }}
-              />
-            </Stack>
-            <FormControlLabel
-              control={
-                <Switch
+              {!dialogOrgBudget && (
+                <TextField
+                  label="Warning Threshold"
+                  type="number"
                   size="small"
-                  checked={
-                    budgetConfig.hard_limit ?? budgetConfig.hardLimit ?? true
+                  value={
+                    budgetConfig.warn_threshold ||
+                    budgetConfig.warnThreshold ||
+                    0.8
                   }
-                  onChange={(e) => updateBudget("hard_limit", e.target.checked)}
+                  onChange={(e) =>
+                    updateBudget("warn_threshold", Number(e.target.value) || 0)
+                  }
+                  helperText="0-1 (e.g. 0.8 = 80%)"
+                  sx={{ width: 160 }}
+                  inputProps={{ step: 0.05, min: 0, max: 1 }}
                 />
-              }
-              label={
-                <Typography variant="body2">
-                  Hard limit (block requests when exceeded)
-                </Typography>
-              }
-              sx={{ mt: 1 }}
-            />
+              )}
+            </Stack>
+            {!dialogOrgBudget && (
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={
+                      budgetConfig.hard_limit ?? budgetConfig.hardLimit ?? true
+                    }
+                    onChange={(e) =>
+                      updateBudget("hard_limit", e.target.checked)
+                    }
+                  />
+                }
+                label={
+                  <Typography variant="body2">
+                    Hard limit (block requests when exceeded)
+                  </Typography>
+                }
+                sx={{ mt: 1 }}
+              />
+            )}
           </Paper>
 
           {/* Hierarchical Budget Levels */}

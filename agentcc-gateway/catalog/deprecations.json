@@ -1,0 +1,90 @@
+{
+  "$comment": "Model shutdown calendar, read by modeldb.ParseDeprecations. Each key is a model id as its vendor names it (the vendor's own API), or <host>/<model id> where a host such as Azure retires the model on another day; a host entry wins for a provider of that type (its api_format, or vertex for a Gemini-format provider on Vertex AI; modeldb.DeprecationHost), whatever the provider is named. shutdown_date is the first day the model does not serve, and a request for it from that day is refused with 410 model_expired, naming the replacement. Every date that the vendored modeldb/litellm.json also carries is checked against it by TestDeprecationsAgreeWithLiteLLM.",
+  "models": {
+    "dall-e-2": {
+      "shutdown_date": "2026-05-12",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "dall-e-3": {
+      "shutdown_date": "2026-05-12",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "gpt-image-1": {
+      "shutdown_date": "2026-10-23",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "gpt-image-1-mini": {
+      "shutdown_date": "2026-12-01",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "gpt-image-1.5": {
+      "shutdown_date": "2026-12-01",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "gpt-image-1.5-2025-12-16": {
+      "shutdown_date": "2026-12-01",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "chatgpt-image-latest": {
+      "shutdown_date": "2026-12-01",
+      "replacement": "gpt-image-2",
+      "source": "https://platform.openai.com/docs/deprecations"
+    },
+    "azure/gpt-image-1-mini": {
+      "shutdown_date": "2027-04-07",
+      "replacement": "gpt-image-2",
+      "source": "https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements"
+    },
+    "azure/gpt-image-1.5": {
+      "shutdown_date": "2027-06-16",
+      "replacement": "gpt-image-2",
+      "source": "https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements"
+    },
+    "azure/gpt-image-1.5-2025-12-16": {
+      "shutdown_date": "2027-06-16",
+      "replacement": "gpt-image-2",
+      "source": "https://learn.microsoft.com/azure/ai-foundry/openai/concepts/model-retirements"
+    },
+    "gemini-2.5-flash-image": {
+      "shutdown_date": "2026-10-02",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "imagen-3.0-generate-002": {
+      "shutdown_date": "2025-11-10",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "gemini/imagen-4.0-generate-001": {
+      "shutdown_date": "2026-08-17",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "gemini/imagen-4.0-fast-generate-001": {
+      "shutdown_date": "2026-08-17",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "gemini/imagen-4.0-ultra-generate-001": {
+      "shutdown_date": "2026-08-17",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "gemini/gemini-3-pro-image-preview": {
+      "shutdown_date": "2026-06-25",
+      "replacement": "gemini-3-pro-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    },
+    "gemini/gemini-3.1-flash-image-preview": {
+      "shutdown_date": "2026-06-25",
+      "replacement": "gemini-3.1-flash-image",
+      "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+    }
+  }
+}

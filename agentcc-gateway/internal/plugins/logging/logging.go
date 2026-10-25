@@ -54,54 +54,132 @@ func (p *Plugin) ProcessRequest(_ context.Context, _ *models.RequestContext) pip
 	return pipeline.ResultContinue()
 }
 
+// guardrailWarningsMetadata is the gateway-owned metadata key the guardrail
+// plugin joins its warn-action messages into ("<name>: <message>; ...",
+// guardrails/plugin.go applyMetadata). The messages can name tools, quote
+// matched content or carry a judge's reading of the prompt, so content mode
+// none drops the key with the results' messages.
+const guardrailWarningsMetadata = "guardrail_warnings"
+
 // ProcessResponse builds a trace record from the request context and emits it asynchronously.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.cfg.Enabled || p.emitter == nil {
 		return pipeline.ResultContinue()
 	}
 
-	// Skip logging for requests without a model (e.g., health checks that somehow enter the pipeline).
-	if rc.Model == "" && rc.Request == nil {
+	// A request without a model is logged only on an API whose requests may
+	// name none (loggedWithoutModel); any other (a health check that somehow
+	// enters the pipeline) is not.
+	if rc.Model == "" && rc.Request == nil && !loggedWithoutModel(rc.EndpointType) {
 		return pipeline.ResultContinue()
 	}
 
-	// Skip logging/webhook for internal service keys — billing is handled
-	// at the Django activity level, not via gateway webhook.
+	// Internal service keys stay out of the request log: Django bills their
+	// callers at the activity level, and ingesting them would also emit
+	// gateway usage events for the same calls.
 	if rc.Metadata["key_type"] == "internal" {
 		return pipeline.ResultContinue()
 	}
 
 	record := buildRecord(rc, p.cfg)
+	content := p.contentMode(rc)
 
-	// Determine effective privacy mode: per-org > per-key > global.
-	// Fix key mismatch: handler sets "org_privacy_mode", read both keys.
-	mode := rc.Metadata["privacy_mode"]
-	if orgMode := rc.Metadata["org_privacy_mode"]; orgMode != "" {
-		mode = orgMode
+	// An empty key_log_content only says the key sets no content mode. The
+	// early key peek copies it on every endpoint and only the chat step 5
+	// removes it, so it is dropped from the record's own metadata copy.
+	if v, ok := record.Metadata[privacy.KeyLogContentRequestMetadata]; ok && v == "" {
+		delete(record.Metadata, privacy.KeyLogContentRequestMetadata)
 	}
 
-	// Check per-org privacy config from tenant store for richer redaction (custom patterns).
-	orgRedactor := p.tenantStore.Redactor(rc.Metadata[tenant.MetadataKeyOrgID])
-
-	// Apply redaction: org redactor (with org patterns) takes priority over global.
-	// The flag goes on the record, not on rc: this runs inside the parallel
-	// post-plugin window where rc is read-only, and the record was already
-	// copied above — so marking rc could never have reached the emitted log.
-	if orgRedactor != nil && orgRedactor.ShouldRedact() && record.RequestBody != nil {
-		record = redactRecord(record, orgRedactor, mode)
-		markRedacted(&record)
-	} else if p.redactor != nil && p.redactor.ShouldRedact() && record.RequestBody != nil {
-		record = redactRecord(record, p.redactor, mode)
-		markRedacted(&record)
+	// Only full keeps bodies, so only full has anything to redact.
+	if content == models.ContentModeFull {
+		p.redact(&record, rc)
+	}
+	// none keeps no error text, in the trace line either (the webhook entry
+	// drops it in buildLogEntry), and no guardrail messages, which can name
+	// tools or quote matched content: neither in the results nor in the
+	// warnings joined into metadata. The record owns its results' copy and
+	// its metadata map, which nothing else reads until Emit below.
+	if content == models.ContentModeNone {
+		record.ErrorMessage = ""
+		for i := range record.GuardrailResults {
+			record.GuardrailResults[i].Message = ""
+		}
+		delete(record.Metadata, guardrailWarningsMetadata)
 	}
 
 	p.emitter.Emit(record)
 
 	if p.flusher != nil {
-		p.flusher.Enqueue(record)
+		p.flusher.EnqueueRequest(record, rc, LogEntryOptions{IncludeBodies: content == models.ContentModeFull, ContentMode: content})
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// loggedWithoutModel reports whether endpoint is an API whose requests are
+// logged though they may name no model: the Assistants, Vector Stores and
+// Files APIs, which the gateway passes through (a list, a retrieval, a
+// vector store or a file names none). Each request on them has a request
+// log entry, as on the model endpoints.
+func loggedWithoutModel(endpoint string) bool {
+	switch endpoint {
+	case "assistants", "vector_stores", "files":
+		return true
+	}
+	return false
+}
+
+// contentMode is the request's content mode: the one the
+// chat pipeline resolved at step 5, else, for an endpoint that has no step 5,
+// the one the same sources give now, with the key's log_content as the auth
+// plugin copied it. The fallback reads the org's stored config, not a rollout
+// candidate (step 4 does not run either); a candidate shares stable's privacy
+// (tenant.buildCandidate replaces only routing and managed_models), so the
+// mode is the same, and TestRolloutCandidateSharesContentMode pins it.
+func (p *Plugin) contentMode(rc *models.RequestContext) models.ContentMode {
+	if rc.Privacy.ContentMode != "" {
+		return rc.Privacy.ContentMode
+	}
+	src := privacy.ContentModeSources{
+		Key:     rc.Metadata[privacy.KeyLogContentRequestMetadata],
+		Request: privacy.RequestContentMode(rc.RequestHeaders),
+		Default: privacy.DefaultContentMode(),
+	}
+	if p.tenantStore != nil {
+		orgID := rc.Metadata["org_id"]
+		if orgID == "" {
+			orgID = rc.Metadata[tenant.MetadataKeyOrgID]
+		}
+		if orgID != "" {
+			src.Org = p.tenantStore.Get(orgID).ContentMode()
+		}
+	}
+	return privacy.ResolveContentMode(src).ContentMode
+}
+
+// redact applies privacy redaction to the record's bodies: the org's redactor
+// (with its own patterns) takes priority over the global one. The flag goes
+// on the record, not on rc: this runs inside the parallel post-plugin window
+// where rc is read-only, and the record is already a copy.
+func (p *Plugin) redact(record *TraceRecord, rc *models.RequestContext) {
+	if record.RequestBody == nil {
+		return
+	}
+	// Determine effective privacy mode: per-org > per-key > global.
+	// The handler sets "org_privacy_mode"; both keys are read.
+	mode := rc.Metadata["privacy_mode"]
+	if orgMode := rc.Metadata["org_privacy_mode"]; orgMode != "" {
+		mode = orgMode
+	}
+	r := p.tenantStore.Redactor(rc.Metadata[tenant.MetadataKeyOrgID])
+	if r == nil || !r.ShouldRedact() {
+		r = p.redactor
+	}
+	if r != nil && r.ShouldRedact() {
+		*record = redactRecord(*record, r, mode)
+		markRedacted(record)
+	}
 }
 
 // markRedacted records on the log record that its bodies were redacted.

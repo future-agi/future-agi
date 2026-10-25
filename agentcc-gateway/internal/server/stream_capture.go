@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -16,17 +17,35 @@ const maxStreamCaptureBytes = 2 << 20
 //
 // Nothing else in the gateway keeps this: finalizeStream builds rc.Response
 // from the usage totals alone, so without this a streamed request reaches the
-// request log and the trace exporter with no completion text at all. Only
-// switched on when a sink is configured to record bodies — otherwise the
-// assembly is pure cost.
+// request log and the trace exporter with no completion text at all, and an
+// output check reads a streamed answer from it. It is switched on when an output
+// check reads the answer (rc.Flags.AnswerReaders) or a sink is configured to
+// record bodies — otherwise the assembly is pure cost.
 //
 // Content deltas only. Tool-call deltas are not assembled; a partial arguments
 // string is worse than an absent one.
+//
+// Each choice (each candidate, on a Gemini stream) is assembled on its own, so
+// an output check reads each choice's text as the client gets it.
 type streamCapture struct {
+	choices   []*capturedChoice // in the order first seen
+	size      int               // bytes of text held, across choices
+	truncated bool
+	// limit is the bytes of text held at most: maxStreamCaptureBytes, or
+	// maxHeldStreamBytes for a held stream (holdAll), whose checks must read
+	// all of it. 0 means maxStreamCaptureBytes.
+	limit int
+}
+
+type capturedChoice struct {
+	index        int
 	content      strings.Builder
 	finishReason string
-	truncated    bool
 }
+
+// maxStreamCaptureChoices bounds how many choices a capture holds. A choice
+// past it is not assembled, and the capture counts as truncated.
+const maxStreamCaptureChoices = 128
 
 func newStreamCapture(enabled bool) *streamCapture {
 	if !enabled {
@@ -42,37 +61,97 @@ func (c *streamCapture) observe(chunk models.StreamChunk) {
 		return
 	}
 	for _, choice := range chunk.Choices {
-		if choice.Delta.Content != nil && !c.truncated {
-			if c.content.Len()+len(*choice.Delta.Content) > maxStreamCaptureBytes {
+		hasContent := choice.Delta.Content != nil && *choice.Delta.Content != ""
+		hasFinish := choice.FinishReason != nil && *choice.FinishReason != ""
+		if !hasContent && !hasFinish {
+			continue
+		}
+		cc := c.choice(choice.Index)
+		if cc == nil {
+			c.truncated = true
+			continue
+		}
+		if hasContent && !c.truncated {
+			if c.size+len(*choice.Delta.Content) > c.maxBytes() {
 				c.truncated = true
 			} else {
-				c.content.WriteString(*choice.Delta.Content)
+				cc.content.WriteString(*choice.Delta.Content)
+				c.size += len(*choice.Delta.Content)
 			}
 		}
-		if choice.FinishReason != nil && *choice.FinishReason != "" {
-			c.finishReason = *choice.FinishReason
+		if hasFinish {
+			cc.finishReason = *choice.FinishReason
 		}
 	}
 }
 
-// applyTo fills in the response choices from what was captured. Called from
-// finalizeStream, before post-plugins run, so writing to rc is still legal.
+// choice is the assembly of the choice at index, or nil when the capture
+// already holds maxStreamCaptureChoices others.
+func (c *streamCapture) choice(index int) *capturedChoice {
+	for _, cc := range c.choices {
+		if cc.index == index {
+			return cc
+		}
+	}
+	if len(c.choices) >= maxStreamCaptureChoices {
+		return nil
+	}
+	cc := &capturedChoice{index: index}
+	c.choices = append(c.choices, cc)
+	return cc
+}
+
+// maxBytes is the bytes of text the capture holds at most.
+func (c *streamCapture) maxBytes() int {
+	if c.limit > 0 {
+		return c.limit
+	}
+	return maxStreamCaptureBytes
+}
+
+// holdAll raises the capture's bound to what a held stream holds
+// (maxHeldStreamBytes): the checks on a held stream's answer read all of it,
+// or it is refused (heldStream.beforeChecks). Safe on nil.
+func (c *streamCapture) holdAll() {
+	if c != nil {
+		c.limit = maxHeldStreamBytes
+	}
+}
+
+// complete reports whether the capture holds every choice's whole text:
+// nothing was dropped past its bound or past maxStreamCaptureChoices. True
+// on nil, where nothing is assembled because nothing reads it.
+func (c *streamCapture) complete() bool {
+	return c == nil || !c.truncated
+}
+
+// hasText reports whether the stream sent any text.
+func (c *streamCapture) hasText() bool {
+	return c != nil && c.size > 0
+}
+
+// applyTo fills in the response choices from what was captured, one per
+// choice the stream sent, in index order. Called from finalizeStream, before
+// post-plugins run, so writing to rc is still legal.
 func (c *streamCapture) applyTo(resp *models.ChatCompletionResponse) {
-	if c == nil || resp == nil {
+	if c == nil || resp == nil || len(c.choices) == 0 {
 		return
 	}
-	if c.content.Len() == 0 && c.finishReason == "" {
-		return
+	sorted := slices.Clone(c.choices)
+	slices.SortFunc(sorted, func(a, b *capturedChoice) int { return a.index - b.index })
+	choices := make([]models.Choice, 0, len(sorted))
+	for _, cc := range sorted {
+		// Message.Content is raw JSON, so the assembled text is marshalled as
+		// a JSON string rather than assigned directly.
+		content, err := json.Marshal(cc.content.String())
+		if err != nil {
+			continue
+		}
+		choices = append(choices, models.Choice{
+			Index:        cc.index,
+			Message:      models.Message{Role: "assistant", Content: content},
+			FinishReason: cc.finishReason,
+		})
 	}
-	// Message.Content is raw JSON, so the assembled text is marshalled as a
-	// JSON string rather than assigned directly.
-	content, err := json.Marshal(c.content.String())
-	if err != nil {
-		return
-	}
-	resp.Choices = []models.Choice{{
-		Index:        0,
-		Message:      models.Message{Role: "assistant", Content: content},
-		FinishReason: c.finishReason,
-	}}
+	resp.Choices = choices
 }

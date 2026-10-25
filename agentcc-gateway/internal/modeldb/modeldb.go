@@ -307,3 +307,19 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		}
 	}
 }
+
+// WithExtra returns the bundled models plus extra, extra winning on a shared
+// ID. Neither input is modified.
+func WithExtra(bundled, extra map[string]*ModelInfo) map[string]*ModelInfo {
+	if len(extra) == 0 {
+		return bundled
+	}
+	out := make(map[string]*ModelInfo, len(bundled)+len(extra))
+	for id, m := range bundled {
+		out[id] = m
+	}
+	for id, m := range extra {
+		out[id] = m
+	}
+	return out
+}

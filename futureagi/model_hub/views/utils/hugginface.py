@@ -120,11 +120,11 @@ def get_huggingface_dataset_info(dataset_path, organization_id):
     auth_token = ApiKey.objects.filter(
         organization_id=organization_id, provider="huggingface"
     ).first()
+    # The org's own token when it has one: one this deployment cannot decrypt
+    # raises (KeyUnreadable) rather than being swapped for the platform token.
     auth_token = (
-        auth_token._actual_key
-        if auth_token and auth_token._actual_key
-        else HUGGINGFACE_API_TOKEN
-    )
+        auth_token.actual_key if auth_token and auth_token.key else None
+    ) or HUGGINGFACE_API_TOKEN
     headers = {"Authorization": f"Bearer {auth_token}"}
     API_URL = f"https://datasets-server.huggingface.co/info?dataset={dataset_path}"
     response = requests.get(

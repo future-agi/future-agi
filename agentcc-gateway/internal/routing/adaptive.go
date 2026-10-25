@@ -1,244 +1,196 @@
 package routing
 
 import (
-	"math"
-	"math/rand"
-	"sync"
+	"math/rand/v2"
 	"sync/atomic"
-	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 )
 
-// AdaptiveStrategy dynamically adjusts provider weights based on real-time metrics.
+// Adaptive defaults, used where AdaptiveConfig leaves a field zero.
+const (
+	defaultAdaptiveLearning      = 20   // samples across the targets before ranking
+	defaultAdaptiveExplore       = 0.05 // share of selections per other target
+	defaultAdaptiveLatencyWeight = 0.5
+	defaultAdaptiveErrorWeight   = 0.4
+	maxAdaptiveExplore           = 0.5
+	maxAdaptiveErrorOdds         = 99 // an error rate of 99% or more
+)
+
+// AdaptiveStrategy routes to the target that has recently served the model
+// best: lowest latency, with a penalty for errors. It reads the signals when
+// it selects, so it runs no background loop and keeps no state but a
+// counter:
+//
+//   - a target's latency is its model's p50 from per-model health when that
+//     has samples, else its provider's latency EWMA; its error rate comes
+//     from the same source (per-model health, else the provider's health);
+//   - its score is latency_weight × latency / the slowest target's latency,
+//     plus error_rate_weight × the odds of an error (error rate / success
+//     rate, capped at 99), from AdaptiveConfig.SignalWeights;
+//   - until the targets have learning_requests samples between them it
+//     round-robins, so each one is measured;
+//   - then the lowest score wins, except that min_weight of the selections
+//     per other target go to one of the others, so a target that recovers is
+//     noticed. A target with no samples yet scores as the best known one.
+//
+// AdaptiveConfig's update_interval and smoothing_factor are not read: the
+// scores are computed from the live EWMA at every selection.
 type AdaptiveStrategy struct {
-	mu              sync.RWMutex
-	weights         map[string]float64
-	requestCount    atomic.Int64
-	counter         atomic.Uint64 // for learning-phase round-robin
-	learningReqs    int
-	minWeight       float64
-	smoothingFactor float64
-	signalLatency   float64
-	signalError     float64
-	tracker         *LatencyTracker
-	healthMon       *HealthMonitor
-	updateInterval  time.Duration
-	stopCh          chan struct{}
-	phase           atomic.Int32 // 0=learning, 1=active
+	counter       atomic.Uint64
+	learning      int
+	explore       float64
+	latencyWeight float64
+	errorWeight   float64
+	deps          strategyDeps
 }
 
-// NewAdaptiveStrategy creates an adaptive routing strategy.
-func NewAdaptiveStrategy(cfg config.AdaptiveConfig, tracker *LatencyTracker, healthMon *HealthMonitor) *AdaptiveStrategy {
-	learningReqs := cfg.LearningRequests
-	if learningReqs <= 0 {
-		learningReqs = 100
-	}
-	updateInterval := cfg.UpdateInterval
-	if updateInterval <= 0 {
-		updateInterval = 30 * time.Second
-	}
-	smoothing := cfg.SmoothingFactor
-	if smoothing <= 0 || smoothing > 1 {
-		smoothing = 0.3
-	}
-	minWeight := cfg.MinWeight
-	if minWeight <= 0 {
-		minWeight = 0.05
-	}
-	sigLat := cfg.SignalWeights.Latency
-	if sigLat <= 0 {
-		sigLat = 0.5
-	}
-	sigErr := cfg.SignalWeights.ErrorRate
-	if sigErr <= 0 {
-		sigErr = 0.4
-	}
-
+// NewAdaptiveStrategy creates an adaptive strategy. With nil deps it
+// round-robins until BindStrategyDeps gives it some.
+func NewAdaptiveStrategy(cfg config.AdaptiveConfig, deps *StrategyDeps) *AdaptiveStrategy {
 	a := &AdaptiveStrategy{
-		weights:         make(map[string]float64),
-		learningReqs:    learningReqs,
-		minWeight:       minWeight,
-		smoothingFactor: smoothing,
-		signalLatency:   sigLat,
-		signalError:     sigErr,
-		tracker:         tracker,
-		healthMon:       healthMon,
-		updateInterval:  updateInterval,
-		stopCh:          make(chan struct{}),
+		learning:      cfg.LearningRequests,
+		explore:       cfg.MinWeight,
+		latencyWeight: cfg.SignalWeights.Latency,
+		errorWeight:   cfg.SignalWeights.ErrorRate,
 	}
-
-	go a.updateLoop()
+	if a.learning <= 0 {
+		a.learning = defaultAdaptiveLearning
+	}
+	if a.explore <= 0 || a.explore >= 1 {
+		a.explore = defaultAdaptiveExplore
+	}
+	if a.latencyWeight <= 0 {
+		a.latencyWeight = defaultAdaptiveLatencyWeight
+	}
+	if a.errorWeight <= 0 {
+		a.errorWeight = defaultAdaptiveErrorWeight
+	}
+	a.deps.fix(deps)
 	return a
 }
 
-func (a *AdaptiveStrategy) Name() string { return "adaptive" }
+// withDeps returns a new adaptive strategy with a's tuning that reads d.
+func (a *AdaptiveStrategy) withDeps(d StrategyDeps) *AdaptiveStrategy {
+	b := &AdaptiveStrategy{learning: a.learning, explore: a.explore, latencyWeight: a.latencyWeight, errorWeight: a.errorWeight}
+	b.deps.fix(&d)
+	return b
+}
 
-// Select picks a target using adaptive weights.
+func (a *AdaptiveStrategy) Name() string { return StrategyAdaptive }
+
+func (a *AdaptiveStrategy) strategyDepsCell() *strategyDeps { return &a.deps }
+
+// targetSignal is what adaptive knows about one target.
+type targetSignal struct {
+	samples   int64
+	latencyMs float64 // 0: unknown
+	errorRate float64
+}
+
+// Select ranks targets by their own model overrides (ModelStrategy).
 func (a *AdaptiveStrategy) Select(targets []RoutingTarget, tracker *LatencyTracker) (int, error) {
-	a.requestCount.Add(1)
+	return a.SelectModel("", targets, tracker)
+}
 
-	// Learning phase: even distribution via round-robin.
-	if a.phase.Load() == 0 {
-		n := a.counter.Add(1) - 1
-		return int(n % uint64(len(targets))), nil
+// SelectModel ranks targets by how each has served model (a target's own
+// override wins).
+func (a *AdaptiveStrategy) SelectModel(model string, targets []RoutingTarget, tracker *LatencyTracker) (int, error) {
+	n := len(targets)
+	if n == 0 {
+		return 0, errNoTargets
 	}
-
-	// Active phase: weighted random selection.
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	// Compute total weight for available targets.
-	type tw struct {
-		idx    int
-		weight float64
-	}
-	tws := make([]tw, 0, len(targets))
-	var total float64
-	for i, t := range targets {
-		w := a.weights[t.ProviderID]
-		if w < a.minWeight {
-			w = a.minWeight
-		}
-		tws = append(tws, tw{idx: i, weight: w})
-		total += w
-	}
-
-	if total <= 0 {
+	if n == 1 {
 		return 0, nil
 	}
-
-	// Weighted random selection.
-	r := rand.Float64() * total
-	var cumulative float64
-	for _, entry := range tws {
-		cumulative += entry.weight
-		if r <= cumulative {
-			return entry.idx, nil
-		}
+	d := a.deps.get()
+	if d.Latency == nil {
+		d.Latency = tracker
 	}
-	return tws[len(tws)-1].idx, nil
-}
 
-// IncrementRequestCount is called by the handler after each request.
-func (a *AdaptiveStrategy) IncrementRequestCount() {
-	// Already incremented in Select, but this is for explicit tracking.
-}
-
-// GetWeights returns a copy of current weights.
-func (a *AdaptiveStrategy) GetWeights() map[string]float64 {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	cpy := make(map[string]float64, len(a.weights))
-	for k, v := range a.weights {
-		cpy[k] = v
+	var buf [16]targetSignal
+	sig := buf[:0]
+	if n > len(buf) {
+		sig = make([]targetSignal, 0, n)
 	}
-	return cpy
-}
-
-// GetPhase returns "learning" or "active".
-func (a *AdaptiveStrategy) GetPhase() string {
-	if a.phase.Load() == 0 {
-		return "learning"
-	}
-	return "active"
-}
-
-// Stop shuts down the background update loop.
-func (a *AdaptiveStrategy) Stop() {
-	close(a.stopCh)
-}
-
-func (a *AdaptiveStrategy) updateLoop() {
-	ticker := time.NewTicker(a.updateInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if a.requestCount.Load() >= int64(a.learningReqs) {
-				a.phase.Store(1)
-				a.recalculateWeights()
+	var total int64
+	var slowest, fastest float64
+	for _, t := range targets {
+		s := signalFor(d, t.ProviderID, t.ModelFor(model))
+		total += s.samples
+		if s.latencyMs > 0 {
+			slowest = max(slowest, s.latencyMs)
+			if fastest == 0 || s.latencyMs < fastest {
+				fastest = s.latencyMs
 			}
-		case <-a.stopCh:
-			return
+		}
+		sig = append(sig, s)
+	}
+
+	pick := a.counter.Add(1) - 1
+	if total < int64(a.learning) {
+		return int(pick % uint64(n)), nil
+	}
+
+	var tieBuf [16]int
+	best := tieBuf[:0]
+	var bestScore float64
+	for i, s := range sig {
+		score := a.score(s, fastest, slowest)
+		switch {
+		case len(best) == 0 || score < bestScore:
+			best, bestScore = append(best[:0], i), score
+		case score == bestScore:
+			best = append(best, i)
 		}
 	}
+	chosen := best[pick%uint64(len(best))]
+
+	if explore := min(a.explore*float64(n-1), maxAdaptiveExplore); rand.Float64() < explore {
+		other := rand.IntN(n - 1)
+		if other >= chosen {
+			other++
+		}
+		return other, nil
+	}
+	return chosen, nil
 }
 
-func (a *AdaptiveStrategy) recalculateWeights() {
-	if a.healthMon == nil {
-		return
+// score is a target's weighted latency plus its weighted error odds; lower
+// is better. A target with no latency yet takes the fastest known one.
+func (a *AdaptiveStrategy) score(s targetSignal, fastest, slowest float64) float64 {
+	lat := s.latencyMs
+	if lat == 0 {
+		lat = fastest
 	}
-
-	allHealth := a.healthMon.GetAllHealth()
-	if len(allHealth) == 0 {
-		return
+	var latency float64
+	if slowest > 0 {
+		latency = lat / slowest
 	}
+	odds := float64(maxAdaptiveErrorOdds)
+	if s.errorRate < 0.99 {
+		odds = s.errorRate / (1 - s.errorRate)
+	}
+	return a.latencyWeight*latency + a.errorWeight*odds
+}
 
-	// Find max latency for normalization.
-	var maxLatency float64
-	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
-		if lat > maxLatency {
-			maxLatency = lat
+// signalFor reads one target's samples, latency and error rate: from
+// per-model health when it has samples, else from the provider's.
+func signalFor(d StrategyDeps, providerID, model string) targetSignal {
+	if d.ModelHealth != nil {
+		if snap := d.ModelHealth.Snapshot(providerID, model); snap.N > 0 {
+			return targetSignal{samples: int64(snap.N), latencyMs: snap.P50Ms, errorRate: snap.ErrorRate}
 		}
 	}
-	if maxLatency <= 0 {
-		maxLatency = 1
+	var s targetSignal
+	if d.Latency != nil {
+		s.latencyMs = d.Latency.Get(providerID)
 	}
-
-	// Compute raw scores.
-	rawScores := make(map[string]float64, len(allHealth))
-	var totalRaw float64
-	for _, h := range allHealth {
-		lat := float64(h.LatencyEWMAMs)
-		normalizedLatency := 1.0 - (lat / maxLatency)
-		// Clamp to [0, 1].
-		normalizedLatency = math.Max(0, math.Min(1, normalizedLatency))
-
-		successRate := h.SuccessRate
-		if h.RequestCount == 0 {
-			successRate = 1.0 // No data = assume good.
-		}
-
-		raw := a.signalLatency*normalizedLatency + a.signalError*successRate
-		rawScores[h.ProviderID] = raw
-		totalRaw += raw
-	}
-
-	if totalRaw <= 0 {
-		return
-	}
-
-	// Normalize and smooth.
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	newWeights := make(map[string]float64, len(rawScores))
-	for pid, raw := range rawScores {
-		calculated := raw / totalRaw
-		old := a.weights[pid]
-		if old <= 0 {
-			// First time: use calculated directly.
-			newWeights[pid] = calculated
-		} else {
-			newWeights[pid] = a.smoothingFactor*calculated + (1-a.smoothingFactor)*old
+	if d.Health != nil {
+		if h := d.Health.GetHealth(providerID); h.RequestCount > 0 {
+			s.samples = h.RequestCount
+			s.errorRate = 1 - h.SuccessRate
 		}
 	}
-
-	// Enforce minimum weight and re-normalize.
-	var total float64
-	for pid, w := range newWeights {
-		if w < a.minWeight {
-			newWeights[pid] = a.minWeight
-		}
-		total += newWeights[pid]
-	}
-	if total > 0 {
-		for pid := range newWeights {
-			newWeights[pid] /= total
-		}
-	}
-
-	a.weights = newWeights
+	return s
 }

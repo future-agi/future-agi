@@ -1,0 +1,32 @@
+{
+  "vendor": "openai_speech",
+  "capability": "speech",
+  "skus": [
+    {
+      "sku": "openai_speech.mini_transcribe",
+      "unit": "minute",
+      "usd_per_unit": 0.003,
+      "free_on_failure": false
+    },
+    {
+      "sku": "openai_speech.transcribe",
+      "unit": "minute",
+      "usd_per_unit": 0.006,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://cdn.openai.com/osa/openai-services-agreement.pdf",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -56,3 +56,20 @@ func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
 	status := MapStatusToGoogleStatus(apiErr.Status)
 	WriteError(w, apiErr.Status, status, apiErr.Message)
 }
+
+// StreamErrorEvent is apiErr as a GenAI stream (alt=sse) event: the error
+// body a request would get, as one data frame.
+func StreamErrorEvent(apiErr *models.APIError) []byte {
+	resp := struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
+	}{}
+	resp.Error.Code = apiErr.Status
+	resp.Error.Message = apiErr.Message
+	resp.Error.Status = MapStatusToGoogleStatus(apiErr.Status)
+	data, _ := json.Marshal(resp)
+	return []byte("data: " + string(data) + "\n\n")
+}

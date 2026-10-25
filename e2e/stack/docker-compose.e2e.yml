@@ -1,4 +1,11 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
+# The public-classified `e2e-public` network (e2e/lib/public-network.ts): internal,
+# 11.88.0.0/24, so the product's SSRF guards save and call a webhook or an org
+# provider there with their defaults on. The gateway, backend and worker join it;
+# mock-llm (llm.e2e-public.test, scoped routes, host port 28082 for reads) and
+# webhook-sink (hooks.e2e-public.test, host port 28083 for reads) sit on it at
+# fixed addresses, with those aliases defined there only. A service that names its
+# networks must list `default` too.
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -13,8 +20,15 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  agentcc-gateway:
+    networks:
+      - default
+      - e2e-public
   backend:
     restart: "no"
+    networks:
+      - default
+      - e2e-public
     # The managed-mock attestation requires application containers to have no
     # mounts. Telemetry is disabled for E2E, so remove the production outbox
     # volume inherited from docker-compose.distributed.yml.
@@ -38,6 +52,9 @@ services:
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
   worker:
     restart: "no"
+    networks:
+      - default
+      - e2e-public
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
     environment:
@@ -63,6 +80,39 @@ services:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.11
+        aliases: [llm.e2e-public.test]
+    ports:
+      - "127.0.0.1:28082:8080"
+    restart: "no"
+  webhook-sink:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/webhook-sink/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.10
+        aliases: [hooks.e2e-public.test]
+    ports:
+      - "127.0.0.1:28083:8080"
+    restart: "no"
+  smtp-sink:
+    # e2e/lib/sinks.ts MailSink: the console saves SMTP alerts with use_tls
+    # true, so the product uses STARTTLS; mailpit generates a self-signed
+    # certificate for smtp-sink at start. SMTP smtp-sink:1025 on the default
+    # network only (it carries no model traffic and is not inspected); HTTP API
+    # on host 127.0.0.1:28025 for reads.
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: sans:smtp-sink
+      MP_SMTP_TLS_KEY: sans:smtp-sink
+    ports:
+      - "127.0.0.1:28025:8025"
     restart: "no"
   mock-slack:
     image: node:22-alpine
@@ -72,3 +122,9 @@ services:
     ports:
       - "127.0.0.1:28081:8080"
     restart: "no"
+networks:
+  e2e-public:
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.88.0.0/24

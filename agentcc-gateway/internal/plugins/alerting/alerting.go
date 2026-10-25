@@ -8,6 +8,7 @@ import (
 	"time"
 
 	alertpkg "github.com/futureagi/agentcc-gateway/internal/alerting"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -18,15 +19,36 @@ type Plugin struct {
 	manager     *alertpkg.Manager
 	enabled     bool
 	tenantStore *tenant.Store
+	// dialer guards the egress of an organization's own alert channels: an
+	// org-set webhook or slack URL is dialled through it, so a loopback,
+	// private or metadata address is refused unless the operator listed it
+	// (mcp.egress.private_allow). nil is the guard with no
+	// exceptions.
+	dialer      *egress.Dialer
 	orgManagers sync.Map // orgID -> *alertpkg.Manager (lazily built per-org managers)
+	// orgCooldowns keeps each org rule's last firing across manager
+	// rebuilds: every org config push (whichever section changed) drops the
+	// org's manager, and a rule rebuilt with a fresh state would fire again
+	// inside its cooldown.
+	orgCooldowns sync.Map // orgID -> *orgCooldowns
 }
 
-// New creates a new alerting plugin.
-func New(manager *alertpkg.Manager, enabled bool, tenantStore *tenant.Store) *Plugin {
+// orgCooldowns is one org's rule cooldown states, keyed by rule name (and
+// its occurrence, for two rules of one name).
+type orgCooldowns struct {
+	mu     sync.Mutex
+	byRule map[string]*alertpkg.CooldownState
+}
+
+// New creates a new alerting plugin. dialer guards an organization's own
+// alert channels; the operator's global channels (manager) are built from
+// config.yaml and keep a plain client.
+func New(manager *alertpkg.Manager, enabled bool, tenantStore *tenant.Store, dialer *egress.Dialer) *Plugin {
 	return &Plugin{
 		manager:     manager,
 		enabled:     enabled,
 		tenantStore: tenantStore,
+		dialer:      dialer,
 	}
 }
 
@@ -114,7 +136,11 @@ func (p *Plugin) getOrgManager(orgID string, alertCfg *tenant.AlertingConfig) *a
 		return v.(*alertpkg.Manager)
 	}
 
-	// Build channels from org config.
+	// Build channels from org config. An org's webhook and slack channels
+	// send through the guarded egress client, so an org-set URL reaches a
+	// loopback or private address only when mcp.egress.private_allow lists
+	// it, and never a metadata address.
+	client := p.dialer.CallbackClient(alertpkg.ChannelTimeout)
 	channels := make(map[string]alertpkg.Channel, len(alertCfg.Channels))
 	for _, ch := range alertCfg.Channels {
 		if ch == nil {
@@ -122,9 +148,9 @@ func (p *Plugin) getOrgManager(orgID string, alertCfg *tenant.AlertingConfig) *a
 		}
 		switch ch.Type {
 		case "webhook":
-			channels[ch.Name] = alertpkg.NewWebhookChannel(ch.URL, ch.Headers)
+			channels[ch.Name] = alertpkg.NewWebhookChannelWithClient(client, ch.URL, ch.Headers)
 		case "slack":
-			channels[ch.Name] = alertpkg.NewSlackChannel(ch.URL)
+			channels[ch.Name] = alertpkg.NewSlackChannelWithClient(client, ch.URL)
 		case "log":
 			channels[ch.Name] = &alertpkg.LogChannel{}
 		default:
@@ -132,23 +158,71 @@ func (p *Plugin) getOrgManager(orgID string, alertCfg *tenant.AlertingConfig) *a
 		}
 	}
 
-	// Build rules from org config.
+	// Build rules from org config. Each rule carries its severity
+	// (default warning) and its cooldown (default 15m, tenant.
+	// DefaultAlertCooldown), and shares its cooldown state with the rule of
+	// the same name in the org's previous manager.
 	rules := make([]*alertpkg.Rule, 0, len(alertCfg.Rules))
+	keys := make([]string, 0, len(alertCfg.Rules))
+	for _, rc := range alertCfg.Rules {
+		if rc == nil {
+			continue
+		}
+		keys = append(keys, rc.Name)
+	}
+	states := p.cooldownStates(orgID, keys)
+	i := 0
 	for _, rc := range alertCfg.Rules {
 		if rc == nil {
 			continue
 		}
 		window := parseDuration(rc.Window, time.Minute)
-		cooldown := parseDuration(rc.Cooldown, 0)
+		severity, known := rc.AlertSeverity()
+		if !known {
+			slog.Warn("org alert rule severity not recognised; sent as the default",
+				"org_id", orgID, "rule", rc.Name, "severity", rc.Severity, "default", tenant.DefaultAlertSeverity)
+		}
+		if d, err := time.ParseDuration(rc.Cooldown); rc.Cooldown != "" && (err != nil || d < 0) {
+			slog.Warn("org alert rule cooldown is not a duration; using the default",
+				"org_id", orgID, "rule", rc.Name, "cooldown", rc.Cooldown, "default", tenant.DefaultAlertCooldown.String())
+		}
+		cooldown := rc.AlertCooldown()
 		rules = append(rules, alertpkg.NewRule(
 			rc.Name, rc.Metric, rc.Condition, rc.Threshold,
 			window, cooldown, rc.Channels,
-		))
+		).WithSeverity(severity).WithCooldownState(states[i]))
+		i++
 	}
 
 	mgr := alertpkg.NewManagerWithChannels(rules, channels)
 	actual, _ := p.orgManagers.LoadOrStore(orgID, mgr)
 	return actual.(*alertpkg.Manager)
+}
+
+// cooldownStates returns one cooldown state per rule key, in order: the
+// state the org's previous manager used for the same key (rule name and its
+// occurrence among rules of that name), else a new one. States of rules no
+// longer configured are dropped.
+func (p *Plugin) cooldownStates(orgID string, names []string) []*alertpkg.CooldownState {
+	v, _ := p.orgCooldowns.LoadOrStore(orgID, &orgCooldowns{byRule: map[string]*alertpkg.CooldownState{}})
+	oc := v.(*orgCooldowns)
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+	seen := make(map[string]int, len(names))
+	next := make(map[string]*alertpkg.CooldownState, len(names))
+	out := make([]*alertpkg.CooldownState, len(names))
+	for i, name := range names {
+		key := name + "\x00" + strconv.Itoa(seen[name])
+		seen[name]++
+		st := oc.byRule[key]
+		if st == nil {
+			st = alertpkg.NewCooldownState()
+		}
+		next[key] = st
+		out[i] = st
+	}
+	oc.byRule = next
+	return out
 }
 
 // parseDuration parses a duration string, returning fallback on error.

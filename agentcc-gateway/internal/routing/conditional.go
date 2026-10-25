@@ -104,7 +104,9 @@ func NewConditionalRouter(configs []config.ConditionalRouteConfig) (*Conditional
 }
 
 // Evaluate checks all routes in priority order and returns the first match.
-// Returns nil if no route matches.
+// Returns nil if no route matches. It records nothing: the caller stamps
+// route_reason.conditional_rule (RouteReasonConditional) where the rule
+// takes effect, once its provider resolved.
 func (cr *ConditionalRouter) Evaluate(rc *models.RequestContext) *RouteAction {
 	if cr == nil || len(cr.routes) == 0 {
 		return nil

@@ -22,17 +22,31 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack webhook-sink smtp-sink
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
 # same host ports. See e2e/stack/docker-compose.standalone-e2e.yml.
+# E2E_GATEWAY_PROFILE (e2e/lib/profile.ts): which gateway config the stack
+# mounts. stock (the default) is e2e/stack/gateway.e2e.yaml; alt is
+# e2e/stack/gateway.alt.yaml, Standalone only. Exported for every subcommand,
+# so up, compose config/exec/ps and down all interpolate the same mount (shell
+# env wins over --env-file in Compose interpolation; the app's env_file is reset,
+# so it never reaches the container's environment).
+case "${E2E_GATEWAY_PROFILE:-stock}" in
+  stock) export AGENTCC_CONFIG_PATH=e2e/stack/gateway.e2e.yaml ;;
+  alt)
+    [[ "${E2E_STACK:-distributed}" == standalone ]] \
+      || die "E2E_GATEWAY_PROFILE=alt runs on the Standalone stack only (E2E_STACK=standalone)"
+    export AGENTCC_CONFIG_PATH=e2e/stack/gateway.alt.yaml ;;
+  *) die "E2E_GATEWAY_PROFILE=${E2E_GATEWAY_PROFILE} is not one of: stock, alt" ;;
+esac
 if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   ENV_FILE="$ROOT/e2e/stack/standalone-e2e.env"
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm)
+  SERVICES=(app postgres clickhouse mock-llm webhook-sink smtp-sink)
 fi
 
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"

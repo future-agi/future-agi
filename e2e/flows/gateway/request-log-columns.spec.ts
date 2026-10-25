@@ -46,6 +46,18 @@ const REORDERED = [
   'Tokens',
   'Session ID',
 ];
+// The Agent & billing group: opt-in, listed unchecked between the
+// built-ins and the custom properties, in this default order.
+const AGENT_BILLING = [
+  'Billing mode',
+  'Credential type',
+  'Upstream cost',
+  'Markup',
+  'Attempts',
+  'Agent',
+  'Step',
+  'Run',
+];
 // Covers this fixture's picker and table tab stops: Close, search, each
 // checkbox and enabled move arrow, plus labels whose text is actually clipped.
 const MAX_TAB_PRESSES = 40;
@@ -55,6 +67,9 @@ const UI_READY = 60_000;
 // keyboard and local assertions around it, so an assertion that runs out
 // reports its own diff before the step's deadline.
 const STEP_BUDGET = UI_READY + 15_000;
+// scopeActors provisioning 120 + seeding 30 + LOG_VISIBLE 60 + nine UI steps
+// of STEP_BUDGET 75 (675) + teardown/headroom 30.
+const FLOW_TIMEOUT = 915_000;
 
 interface RequestLogRow {
   request_id: string;
@@ -79,6 +94,11 @@ async function pressUntilFocused(page: Page, target: Locator, key: 'Tab' | 'Shif
   }
   await expect(target).toBeFocused({ timeout: UI_READY });
 }
+
+// scopeActors signs its users up before the body runs, so its setup falls
+// under the file's timeout, not the body's test.setTimeout: without this
+// line it gets the 120 s project default.
+test.describe.configure({ timeout: FLOW_TIMEOUT });
 
 test(
   'GW-E2E-003: a platform engineer adds a declared custom property as a Request Logs column',
@@ -121,9 +141,7 @@ test(
     }),
   },
   async ({ browser, scopeActors: scopes, scopeProbe: probe }, testInfo) => {
-    // scopeActors provisioning 120 + seeding 30 + LOG_VISIBLE 60 + nine UI steps
-    // of STEP_BUDGET 75 (675) + teardown/headroom 30.
-    test.setTimeout(915_000);
+    test.setTimeout(FLOW_TIMEOUT);
     // An organization per test: GW-E2E-001 asserts exact org-wide request-log
     // sets on the worker-scoped actor, so these logs must not land there.
     const owner = scopes.ownerA;
@@ -287,7 +305,9 @@ test(
       await expect(pickerOrder.nth(2)).toHaveText('Model', { timeout: UI_READY });
       await expect(modelDown).toBeFocused({ timeout: UI_READY });
       await page.keyboard.press('Enter');
-      await expect(pickerOrder).toHaveText([...REORDERED, propertyName], { timeout: UI_READY });
+      await expect(pickerOrder).toHaveText([...REORDERED, ...AGENT_BILLING, propertyName], {
+        timeout: UI_READY,
+      });
       await expect(modelDown).toBeFocused({ timeout: UI_READY });
 
       const tokensDown = dialog.getByRole('button', { name: 'Move Tokens down' });
@@ -295,13 +315,15 @@ test(
       await pressUntilFocused(page, tokensDown, 'Tab');
       await page.keyboard.press('Enter');
       await expect(pickerOrder).toHaveText(
-        [...REORDERED.slice(0, 8), 'Session ID', 'Tokens', propertyName],
+        [...REORDERED.slice(0, 8), 'Session ID', 'Tokens', ...AGENT_BILLING, propertyName],
         { timeout: UI_READY },
       );
       await expect(tokensDown).toBeDisabled({ timeout: UI_READY });
       await expect(tokensUp).toBeFocused({ timeout: UI_READY });
       await page.keyboard.press('Enter');
-      await expect(pickerOrder).toHaveText([...REORDERED, propertyName], { timeout: UI_READY });
+      await expect(pickerOrder).toHaveText([...REORDERED, ...AGENT_BILLING, propertyName], {
+        timeout: UI_READY,
+      });
       await expect(tokensUp).toBeFocused({ timeout: UI_READY });
 
       await pressUntilFocused(page, tenantBox, 'Tab');

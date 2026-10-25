@@ -3830,6 +3830,25 @@ export const AgentccAnalyticsCostBreakdownResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -3880,6 +3899,25 @@ export const AgentccAnalyticsErrorBreakdownResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -3930,6 +3968,25 @@ export const AgentccAnalyticsGuardrailOverviewResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -3980,6 +4037,25 @@ export const AgentccAnalyticsGuardrailRulesResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -4030,6 +4106,25 @@ export const AgentccAnalyticsGuardrailTrendsResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -4080,6 +4175,25 @@ export const AgentccAnalyticsLatencyStatsResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -4130,6 +4244,25 @@ export const AgentccAnalyticsModelComparisonResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -4178,6 +4311,25 @@ export const AgentccAnalyticsOverviewResponseItem = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
+  generation_id: zod.string().min(1).optional(),
+  attempt_count: zod.number().optional(),
+  billing_mode: zod.string().min(1).optional(),
+  credential_type: zod.string().min(1).optional(),
+  cost_upstream: zod.string().optional(),
+  cost_markup: zod.string().optional(),
+  cost_source: zod.string().min(1).optional(),
+  usage_estimated: zod.boolean().optional(),
+  agent_framework: zod.string().min(1).optional(),
+  agent_id: zod.string().min(1).optional(),
+  agent_run_id: zod.string().min(1).optional(),
+  agent_parent_run_id: zod.string().min(1).optional(),
+  agent_root_run_id: zod.string().min(1).optional(),
+  agent_workflow: zod.string().min(1).optional(),
+  agent_step: zod.string().min(1).optional(),
+  agent_env: zod.string().min(1).optional(),
+  policy_version: zod.string().min(1).optional(),
+  policy_variant: zod.string().min(1).optional(),
+  auto_routed: zod.boolean().optional(),
 });
 export const AgentccAnalyticsOverviewResponse = zod.array(
   AgentccAnalyticsOverviewResponseItem,
@@ -4229,6 +4381,25 @@ export const AgentccAnalyticsUsageTimeseriesResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -4466,6 +4637,10 @@ export const AgentccApiKeysPartialUpdateResponse = zod.object({
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+/**
+ * Delete a key: revoke it on the gateway first, so it stops working
+at once.
+ */
 export const AgentccApiKeysDeleteParams = zod.object({
   id: zod
     .string()
@@ -4713,9 +4888,26 @@ export const AgentccCustomPropertiesListResponse = zod.object({
       property_type: zod
         .enum(["string", "number", "boolean", "enum"])
         .optional(),
-      required: zod.boolean().optional(),
-      allowed_values: zod.object({}).passthrough().optional(),
-      default_value: zod.object({}).passthrough().optional(),
+      required: zod
+        .boolean()
+        .optional()
+        .describe(
+          "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+        ),
+      allowed_values: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe(
+          "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+        ),
+      default_value: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe(
+          "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+        ),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -4732,9 +4924,26 @@ export const AgentccCustomPropertiesCreateBody = zod.object({
   name: zod.string().min(1).max(agentccCustomPropertiesCreateBodyNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
 });
 
 /**
@@ -4747,9 +4956,26 @@ export const AgentccCustomPropertiesValidateBody = zod.object({
   name: zod.string().min(1).max(agentccCustomPropertiesValidateBodyNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
 });
 
 /**
@@ -4771,9 +4997,26 @@ export const AgentccCustomPropertiesReadResponse = zod.object({
   name: zod.string().min(1).max(agentccCustomPropertiesReadResponseNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -4795,9 +5038,26 @@ export const AgentccCustomPropertiesUpdateBody = zod.object({
   name: zod.string().min(1).max(agentccCustomPropertiesUpdateBodyNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
 });
 
 export const agentccCustomPropertiesUpdateResponseNameMax = 255;
@@ -4809,9 +5069,26 @@ export const AgentccCustomPropertiesUpdateResponse = zod.object({
   name: zod.string().min(1).max(agentccCustomPropertiesUpdateResponseNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -4836,9 +5113,26 @@ export const AgentccCustomPropertiesPartialUpdateBody = zod.object({
     .max(agentccCustomPropertiesPartialUpdateBodyNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
 });
 
 export const agentccCustomPropertiesPartialUpdateResponseNameMax = 255;
@@ -4853,9 +5147,26 @@ export const AgentccCustomPropertiesPartialUpdateResponse = zod.object({
     .max(agentccCustomPropertiesPartialUpdateResponseNameMax),
   description: zod.string().optional(),
   property_type: zod.enum(["string", "number", "boolean", "enum"]).optional(),
-  required: zod.boolean().optional(),
-  allowed_values: zod.object({}).passthrough().optional(),
-  default_value: zod.object({}).passthrough().optional(),
+  required: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  allowed_values: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
+    ),
+  default_value: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe(
+      "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
+    ),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -4914,6 +5225,8 @@ export const AgentccEmailAlertsListResponse = zod.object({
         .max(agentccEmailAlertsListResponseResultsItemCooldownMinutesMax)
         .optional(),
       last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+      last_error: zod.string().min(1).optional(),
+      last_error_at: zod.string().datetime({ offset: true }).optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -4973,6 +5286,8 @@ export const AgentccEmailAlertsReadResponse = zod.object({
     .max(agentccEmailAlertsReadResponseCooldownMinutesMax)
     .optional(),
   last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+  last_error: zod.string().min(1).optional(),
+  last_error_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -5027,6 +5342,8 @@ export const AgentccEmailAlertsUpdateResponse = zod.object({
     .max(agentccEmailAlertsUpdateResponseCooldownMinutesMax)
     .optional(),
   last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+  last_error: zod.string().min(1).optional(),
+  last_error_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -5083,6 +5400,8 @@ export const AgentccEmailAlertsPartialUpdateResponse = zod.object({
     .max(agentccEmailAlertsPartialUpdateResponseCooldownMinutesMax)
     .optional(),
   last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+  last_error: zod.string().min(1).optional(),
+  last_error_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -5141,6 +5460,20 @@ export const AgentccGatewaysListResponse = zod.object({
       status: zod.string().min(1),
       provider_count: zod.number().optional(),
       model_count: zod.number().optional(),
+      last_health_check: zod
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+        ),
+      last_health_check_status: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "What the org's last health check found: healthy or unreachable.",
+        ),
     }),
   ),
 });
@@ -5169,6 +5502,20 @@ export const AgentccGatewaysReadResponse = zod.object({
     status: zod.string().min(1),
     provider_count: zod.number().optional(),
     model_count: zod.number().optional(),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+      ),
+    last_health_check_status: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "What the org's last health check found: healthy or unreachable.",
+      ),
   }),
 });
 
@@ -5188,6 +5535,12 @@ export const AgentccGatewaysCancelBatchResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     batch_id: zod.string().min(1),
+    org_id: zod
+      .string()
+      .min(1)
+      .describe(
+        "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
+      ),
     status: zod.string().min(1),
   }),
 });
@@ -5221,11 +5574,20 @@ export const AgentccGatewaysConfigResponse = zod.object({
     audit: zod.object({}).passthrough().optional(),
     model_database: zod.object({}).passthrough().optional(),
     model_map: zod.object({}).passthrough().optional(),
+    managed_models: zod.object({}).passthrough().optional(),
+    tools: zod.object({}).passthrough().optional(),
+    identity: zod.object({}).passthrough().optional(),
     is_active: zod.boolean().optional(),
     created_by: zod.string().uuid().optional(),
     change_description: zod.string().optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    secrets_set: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value.",
+      ),
     providers: zod.record(
       zod.string(),
       zod.object({
@@ -5249,6 +5611,87 @@ export const AgentccGatewaysConfigResponse = zod.object({
     gateway: zod.object({
       status: zod.string().min(1),
     }),
+    server: zod
+      .object({
+        host: zod.string().optional(),
+        port: zod.number().optional(),
+        read_timeout_ms: zod.number().optional(),
+        write_timeout_ms: zod.number().optional(),
+        idle_timeout_ms: zod.number().optional(),
+        max_request_timeout_ms: zod.number().optional(),
+      })
+      .optional(),
+    logging: zod
+      .object({
+        level: zod.string().optional(),
+        request_logging: zod.boolean().optional(),
+        include_bodies: zod.boolean().optional(),
+        content_mode: zod.string().optional(),
+      })
+      .optional(),
+    batch: zod
+      .object({
+        storage: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("Where batches live: memory (the node's)."),
+        default_max_concurrency: zod
+          .number()
+          .optional()
+          .describe("The concurrency a submission that sets none runs at."),
+        max_body_bytes: zod
+          .number()
+          .optional()
+          .describe("The largest submit body the gateway reads."),
+      })
+      .optional(),
+    org_sections_enforced: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "The org config sections this gateway node enforces, from alerting, budgets, cache, ip_acl, rate_limiting and tool_policy. Absent: the gateway did not say.",
+      ),
+    guardrail_pipeline: zod
+      .object({
+        enabled: zod
+          .boolean()
+          .describe(
+            "guardrails.enabled on the node: without it no org check runs.",
+          ),
+        fail_open: zod
+          .boolean()
+          .describe(
+            "The node's guardrails.fail_open: an org check that errors or times out lets the request through when true.",
+          ),
+        mode: zod
+          .string()
+          .min(1)
+          .describe(
+            "sequential: org checks run in turn and the first block stops the rest.",
+          ),
+      })
+      .optional(),
+    org_sections_not_enforced: zod
+      .record(zod.string(), zod.string().min(1))
+      .optional()
+      .describe(
+        "Org config section -> the reason this gateway node gives for not enforcing it. Absent: no such section, or the gateway did not say.",
+      ),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+      ),
+    last_health_check_status: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "What the org's last health check found: healthy or unreachable.",
+      ),
   }),
 });
 
@@ -5264,9 +5707,23 @@ export const AgentccGatewaysGetBatchResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     batch_id: zod.string().min(1),
+    org_id: zod
+      .string()
+      .min(1)
+      .describe(
+        "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
+      ),
+    key_id: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe("The gateway id of the key the batch's items run as."),
     status: zod.string().min(1),
     total: zod.number(),
-    max_concurrency: zod.number(),
+    max_concurrency: zod
+      .number()
+      .optional()
+      .describe("Absent when the gateway does not hold the batch (see error)."),
     created_at: zod.string().datetime({ offset: true }),
     completed_at: zod.string().datetime({ offset: true }).optional(),
     results: zod.array(zod.object({}).passthrough()).optional(),
@@ -5280,6 +5737,20 @@ export const AgentccGatewaysGetBatchResponse = zod.object({
         cancelled: zod.number(),
       })
       .optional(),
+    outcome: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "unknown: the gateway lost the batch before it was seen to end (status failed).",
+      ),
+    error: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Set when the gateway does not hold the batch: the answer is the status recorded when it finished, without results or summary.",
+      ),
   }),
 });
 
@@ -5310,6 +5781,26 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
     }),
     provider_count: zod.number(),
     model_count: zod.number(),
+    org_configs_pushed: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this check re-pushed every org's config to the gateway. Only an Owner or Admin's check does, at most once per 5 minutes.",
+      ),
+    last_health_check: zod
+      .string()
+      .datetime({ offset: true })
+      .optional()
+      .describe(
+        "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+      ),
+    last_health_check_status: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "What the org's last health check found: healthy or unreachable.",
+      ),
   }),
 });
 
@@ -5358,8 +5849,15 @@ export const AgentccGatewaysMcpStatusResponse = zod.object({
     servers: zod
       .array(zod.object({}).passthrough())
       .describe(
-        "Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status.",
+        "The gateway's MCP server statuses (mcp-admin-status-v1, keyed by server_id), limited to the org's own servers.",
       ),
+    reason: zod
+      .enum([
+        "gateway_mcp_disabled",
+        "gateway_unreachable",
+        "gateway_not_org_scoped",
+      ])
+      .optional(),
   }),
 });
 
@@ -5377,8 +5875,9 @@ export const AgentccGatewaysMcpToolsResponse = zod.object({
 });
 
 /**
- * Stateless proxy to the Go gateway (configured via env vars).
-No DB model — returns a virtual singleton gateway with live health.
+ * The org's providers, each with its health from the org's own
+request logs of the last 24 h, and whether the config push sends it to the
+gateway at all.
  */
 export const AgentccGatewaysProvidersParams = zod.object({
   id: zod.string(),
@@ -5411,6 +5910,19 @@ export const AgentccGatewaysProvidersResponse = zod.object({
         request_count: zod.number().optional(),
         avg_latency: zod.number().optional(),
         error_rate: zod.number().optional(),
+        status_reason: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Why the status is what it is: the org's own error rate over the last 24 h (unhealthy at 50% or more, degraded at 10% or more, both from 5 requests), or why the provider is not pushed.",
+          ),
+        pushed: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Whether the config push sends this provider to the gateway. False for a stored credential the push cannot use.",
+          ),
       }),
     ),
   }),
@@ -5438,6 +5950,7 @@ export const AgentccGatewaysReloadResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5466,6 +5979,7 @@ export const AgentccGatewaysRemoveBudgetResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5494,6 +6008,7 @@ export const AgentccGatewaysRemoveMcpServerResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5521,6 +6036,7 @@ export const AgentccGatewaysRemoveProviderResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5550,12 +6066,14 @@ export const AgentccGatewaysSetBudgetResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
 /**
- * Stateless proxy to the Go gateway (configured via env vars).
-No DB model — returns a virtual singleton gateway with live health.
+ * Submit a batch that runs as the caller's org: a key minted for the
+org (24 h) is named to the gateway, which runs each item as a request
+authenticated by it.
  */
 export const AgentccGatewaysSubmitBatchParams = zod.object({
   id: zod.string(),
@@ -5575,6 +6093,17 @@ export const AgentccGatewaysSubmitBatchResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     batch_id: zod.string().min(1),
+    org_id: zod
+      .string()
+      .min(1)
+      .describe(
+        "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
+      ),
+    key_id: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe("The gateway id of the key the batch's items run as."),
     status: zod.string().min(1),
     total: zod.number(),
     max_concurrency: zod.number(),
@@ -5641,8 +6170,24 @@ export const AgentccGatewaysTestPlaygroundResponse = zod.object({
     body: zod.object({}).passthrough(),
     guardrail_headers: zod.record(zod.string(), zod.string().min(1)),
     model: zod.string().min(1),
-    blocked: zod.boolean(),
-    warned: zod.boolean(),
+    blocked: zod
+      .boolean()
+      .describe("HTTP 403 with error.type guardrail_error: a check blocked."),
+    warned: zod
+      .boolean()
+      .describe(
+        "A 2xx with x-agentcc-guardrail-triggered: true: a check warned or logged and the request went through.",
+      ),
+    guardrail_action: zod
+      .enum(["warn", "log"])
+      .optional()
+      .describe("x-agentcc-guardrail-action on a warned answer, when sent."),
+    triggered_checks: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "The check names in x-agentcc-guardrails-triggered on a warned answer; empty when the gateway does not send the header.",
+      ),
   }),
 });
 
@@ -5672,6 +6217,7 @@ export const AgentccGatewaysToggleGuardrailResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5683,29 +6229,114 @@ export const AgentccGatewaysUpdateConfigParams = zod.object({
 });
 
 export const AgentccGatewaysUpdateConfigBody = zod.object({
-  guardrails: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  routing: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  cache: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  guardrails: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  routing: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  cache: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   rate_limiting: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  budgets: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  budgets: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   cost_tracking: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  ip_acl: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  alerting: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  privacy: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  ip_acl: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  alerting: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  privacy: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   tool_policy: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  mcp: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  a2a: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  audit: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  mcp: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  a2a: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  audit: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   model_database: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  model_map: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  model_map: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  managed_models: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  tools: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  identity: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
 });
 
 export const AgentccGatewaysUpdateConfigResponse = zod.object({
@@ -5721,6 +6352,7 @@ export const AgentccGatewaysUpdateConfigResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5753,6 +6385,7 @@ export const AgentccGatewaysUpdateGuardrailResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5781,6 +6414,7 @@ export const AgentccGatewaysUpdateMcpGuardrailsResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5810,6 +6444,7 @@ export const AgentccGatewaysUpdateMcpServerResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5841,6 +6476,7 @@ export const AgentccGatewaysUpdateProviderResponse = zod.object({
     budget: zod.string().optional(),
     server: zod.string().optional(),
     enabled: zod.boolean().optional(),
+    warnings: zod.array(zod.record(zod.string(), zod.string())).optional(),
   }),
 });
 
@@ -5970,7 +6606,8 @@ export const AgentccGuardrailFeedbackCreateBody = zod.object({
 });
 
 /**
- * Aggregate feedback stats per check_name.
+ * Aggregate feedback stats per check_name: one answer per
+(request log, check, reviewer), the reviewer's latest.
  */
 export const AgentccGuardrailFeedbackSummaryQueryParams = zod.object({
   page: zod
@@ -6040,7 +6677,8 @@ export const AgentccGuardrailFeedbackReadResponse = zod.object({
 });
 
 /**
- * Feedback on guardrail decisions. Org-scoped.
+ * Change a saved answer: its feedback and comment only, and only by
+the reviewer who gave it.
  */
 export const AgentccGuardrailFeedbackUpdateParams = zod.object({
   id: zod
@@ -6128,7 +6766,11 @@ export const AgentccGuardrailFeedbackDeleteParams = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesListQueryParams = zod.object({
   page: zod
@@ -6178,7 +6820,11 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesCreateBodyNameMax = 255;
 
@@ -6226,7 +6872,11 @@ export const AgentccGuardrailPoliciesSyncBody = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesReadParams = zod.object({
   id: zod
@@ -6261,7 +6911,11 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesUpdateParams = zod.object({
   id: zod
@@ -6317,7 +6971,11 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesPartialUpdateParams = zod.object({
   id: zod
@@ -6380,7 +7038,11 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``), so every write is an org Owner's
+or Admin's, as every other gateway config write is; every member keeps
+read access.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesDeleteParams = zod.object({
   id: zod
@@ -6421,6 +7083,65 @@ export const AgentccGuardrailPoliciesApplyBody = zod.object({
 });
 
 /**
+ * Whether managed models are offered, enabled for this org, and its balance.
+ */
+export const AgentccManagedModelsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    available: zod
+      .boolean()
+      .describe(
+        "The gateway offers managed models (it has managed providers).",
+      ),
+    enabled: zod
+      .boolean()
+      .describe("This org has opted in (org config managed_models.enabled)."),
+    balance_usd: zod.number(),
+    markup_percent: zod.number(),
+  }),
+});
+
+/**
+ * Every managed model, with upstream and billed (marked-up) prices.
+ */
+
+export const AgentccManagedModelsCatalogResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    markup_percent: zod.number(),
+    providers: zod.array(
+      zod.object({
+        provider: zod.string().min(1),
+        source: zod.string().min(1),
+        fetched_at: zod.string().min(1),
+        models: zod.number(),
+      }),
+    ),
+    models: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().optional(),
+        description: zod.string().optional(),
+        created: zod.number().optional(),
+        provider: zod.string().min(1),
+        vendor: zod.string(),
+        context_length: zod.number().optional(),
+        max_output_tokens: zod.number().optional(),
+        input_modalities: zod.array(zod.string().min(1)).optional(),
+        output_modalities: zod.array(zod.string().min(1)).optional(),
+        supported_parameters: zod.array(zod.string().min(1)).optional(),
+        input_per_mtok: zod.number().optional(),
+        output_per_mtok: zod.number().optional(),
+        cache_read_per_mtok: zod.number().optional(),
+        billed_input_per_mtok: zod.number().optional(),
+        billed_output_per_mtok: zod.number().optional(),
+        dynamic_price: zod.boolean().optional(),
+      }),
+    ),
+  }),
+});
+
+/**
  * Per-org gateway configuration management. Configs are versioned and immutable.
  */
 export const AgentccOrgConfigsListQueryParams = zod.object({
@@ -6458,17 +7179,33 @@ export const AgentccOrgConfigsListResponse = zod.object({
       audit: zod.object({}).passthrough().optional(),
       model_database: zod.object({}).passthrough().optional(),
       model_map: zod.object({}).passthrough().optional(),
+      managed_models: zod.object({}).passthrough().optional(),
+      tools: zod.object({}).passthrough().optional(),
+      identity: zod.object({}).passthrough().optional(),
       is_active: zod.boolean().optional(),
       created_by: zod.string().uuid().optional(),
       change_description: zod.string().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
+      secrets_set: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+        ),
     }),
   ),
 });
 
 /**
- * Create a new config version. Auto-increments version and activates it.
+ * Each section the payload names replaces the active one whole; an
+explicit `{}` or `null` clears it. Sections it leaves out, including
+`managed_models`, are copied from the active version.
+
+A guardrails section may name only policies the org may name (400
+`guardrail_policy_not_in_org`), and every clear-text credential in it
+is stored encrypted in the console policy, whichever shape it has.
+ * @summary Create a new config version from the active one and activate it.
  */
 export const AgentccOrgConfigsCreateBody = zod.object({
   guardrails: zod.object({}).passthrough().optional(),
@@ -6486,6 +7223,9 @@ export const AgentccOrgConfigsCreateBody = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   change_description: zod.string().optional(),
 });
 
@@ -6527,11 +7267,20 @@ export const AgentccOrgConfigsActiveResponse = zod.object({
       audit: zod.object({}).passthrough().optional(),
       model_database: zod.object({}).passthrough().optional(),
       model_map: zod.object({}).passthrough().optional(),
+      managed_models: zod.object({}).passthrough().optional(),
+      tools: zod.object({}).passthrough().optional(),
+      identity: zod.object({}).passthrough().optional(),
       is_active: zod.boolean().optional(),
       created_by: zod.string().uuid().optional(),
       change_description: zod.string().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
+      secrets_set: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+        ),
     }),
   ),
 });
@@ -6564,6 +7313,9 @@ export const AgentccOrgConfigsBulkListResponse = zod.object({
       audit: zod.object({}).passthrough(),
       model_database: zod.object({}).passthrough(),
       model_map: zod.object({}).passthrough(),
+      managed_models: zod.object({}).passthrough().optional(),
+      tools: zod.object({}).passthrough().optional(),
+      identity: zod.object({}).passthrough().optional(),
     }),
   ),
   unbuilt_org_ids: zod
@@ -6602,11 +7354,20 @@ export const AgentccOrgConfigsReadResponse = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   is_active: zod.boolean().optional(),
   created_by: zod.string().uuid().optional(),
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6635,6 +7396,9 @@ export const AgentccOrgConfigsUpdateBody = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   change_description: zod.string().optional(),
 });
 
@@ -6657,11 +7421,20 @@ export const AgentccOrgConfigsUpdateResponse = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   is_active: zod.boolean().optional(),
   created_by: zod.string().uuid().optional(),
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6690,6 +7463,9 @@ export const AgentccOrgConfigsPartialUpdateBody = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   change_description: zod.string().optional(),
 });
 
@@ -6712,11 +7488,20 @@ export const AgentccOrgConfigsPartialUpdateResponse = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   is_active: zod.boolean().optional(),
   created_by: zod.string().uuid().optional(),
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6730,7 +7515,9 @@ export const AgentccOrgConfigsDeleteParams = zod.object({
 });
 
 /**
- * Roll back to a specific config version by activating it.
+ * `warnings` carries `managed_models_change` when the rollback turns
+managed models on or off.
+ * @summary Roll back to a specific config version by activating it.
  */
 export const AgentccOrgConfigsActivateParams = zod.object({
   id: zod
@@ -6755,6 +7542,9 @@ export const AgentccOrgConfigsActivateBody = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   change_description: zod.string().optional(),
 });
 
@@ -6787,11 +7577,20 @@ export const AgentccOrgConfigsDiffResponse = zod.object({
   audit: zod.object({}).passthrough().optional(),
   model_database: zod.object({}).passthrough().optional(),
   model_map: zod.object({}).passthrough().optional(),
+  managed_models: zod.object({}).passthrough().optional(),
+  tools: zod.object({}).passthrough().optional(),
+  identity: zod.object({}).passthrough().optional(),
   is_active: zod.boolean().optional(),
   created_by: zod.string().uuid().optional(),
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 export const AgentccProviderCredentialsListQueryParams = zod.object({
@@ -7457,8 +8256,20 @@ export const AgentccRequestLogsListQueryParams = zod.object({
   fallback_used: zod.boolean().optional(),
   guardrail_triggered: zod.boolean().optional(),
   is_stream: zod.boolean().optional(),
-  started_after: zod.string().datetime({ offset: true }).optional(),
-  started_before: zod.string().datetime({ offset: true }).optional(),
+  started_after: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "Requests that started at or after the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.",
+    ),
+  started_before: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "Requests that started at or before the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.",
+    ),
   min_latency: zod.number().optional(),
   max_latency: zod.number().optional(),
   min_cost: zod.number().optional(),
@@ -7468,6 +8279,61 @@ export const AgentccRequestLogsListQueryParams = zod.object({
   q: zod.string().optional(),
   search: zod.string().optional(),
   ordering: zod.string().min(1).optional(),
+  billing_mode: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated billing modes (managed, byok)."),
+  credential_type: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated credential types (managed, byok)."),
+  agent_id: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent ids."),
+  run_id: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent run ids."),
+  step: zod.string().min(1).optional().describe("Comma-separated agent steps."),
+  policy_variant: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated routing policy variants (stable, candidate)."),
+  env: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent environments."),
+  error_class: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Comma-separated attempt error classes: requests with at least one attempt in one of them.",
+    ),
+  application: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated values of the request's application tag."),
+  service: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated values of the request's service tag."),
+  tags: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.",
+    ),
 });
 
 export const AgentccRequestLogsListResponse = zod.object({
@@ -7502,22 +8368,168 @@ export const AgentccRequestLogsListResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
 
 /**
- * Export filtered request logs as CSV or JSON.
+ * The filters are the list's, validated the same way. 0 matching rows
+answers 400 export_empty; more than the cap answers 400
+export_too_large with the count and the cap, unless max_rows asks for
+the first rows in the list's order. The console reads the list's
+count first and shows the count and the cap before it downloads.
+ * @summary Export filtered request logs as CSV or JSON (at most 10,000 rows).
  */
+
+export const agentccRequestLogsExportQueryApiKeyIdMax = 255;
+
+export const agentccRequestLogsExportQueryMaxRowsMax = 10000;
+
 export const AgentccRequestLogsExportQueryParams = zod.object({
-  page: zod
-    .number()
+  page: zod.number().min(1).optional(),
+  limit: zod.number().min(1).optional(),
+  user_id: zod.string().optional(),
+  session_id: zod.string().optional(),
+  api_key_id: zod
+    .string()
+    .max(agentccRequestLogsExportQueryApiKeyIdMax)
     .optional()
-    .describe("A page number within the paginated result set."),
-  limit: zod
-    .number()
+    .describe("Gateway key id (not the API key's UUID primary key)."),
+  request_id: zod.string().optional(),
+  model: zod
+    .string()
+    .min(1)
     .optional()
-    .describe("Number of results to return per page."),
+    .describe("Comma-separated model names."),
+  provider: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated provider names."),
+  status_code: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated HTTP status codes."),
+  min_status_code: zod.number().optional(),
+  max_status_code: zod.number().optional(),
+  is_error: zod.boolean().optional(),
+  cache_hit: zod.boolean().optional(),
+  fallback_used: zod.boolean().optional(),
+  guardrail_triggered: zod.boolean().optional(),
+  is_stream: zod.boolean().optional(),
+  started_after: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "Requests that started at or after the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.",
+    ),
+  started_before: zod
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .describe(
+      "Requests that started at or before the given time, as ISO 8601. A value with an offset (Z or +05:30; send + as %2B in a query string) is read in that offset; a value with no offset is read as UTC.",
+    ),
+  min_latency: zod.number().optional(),
+  max_latency: zod.number().optional(),
+  min_cost: zod.number().optional(),
+  max_cost: zod.number().optional(),
+  min_tokens: zod.number().optional(),
+  max_tokens: zod.number().optional(),
+  q: zod.string().optional(),
+  search: zod.string().optional(),
+  ordering: zod.string().min(1).optional(),
+  billing_mode: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated billing modes (managed, byok)."),
+  credential_type: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated credential types (managed, byok)."),
+  agent_id: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent ids."),
+  run_id: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent run ids."),
+  step: zod.string().min(1).optional().describe("Comma-separated agent steps."),
+  policy_variant: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated routing policy variants (stable, candidate)."),
+  env: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated agent environments."),
+  error_class: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Comma-separated attempt error classes: requests with at least one attempt in one of them.",
+    ),
+  application: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated values of the request's application tag."),
+  service: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("Comma-separated values of the request's service tag."),
+  tags: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Comma-separated key:value custom tags; any listed value of a key matches, and every key must match.",
+    ),
+  export_format: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "csv (the default) or json (one JSON object per line). An export holds at most 10,000 rows: 0 matching rows answers 400 export_empty and more than 10,000 answers 400 export_too_large with the count, unless max_rows is sent. The list endpoint's count, with the same filters, is the count export uses.",
+    ),
+  max_rows: zod
+    .number()
+    .min(1)
+    .max(agentccRequestLogsExportQueryMaxRowsMax)
+    .optional()
+    .describe(
+      "Export at most this many rows, the first in `ordering` (newest started_at first when no ordering is sent), instead of refusing a filter that matches more than 10,000. Times in the file are UTC.",
+    ),
 });
 
 export const AgentccRequestLogsExportResponse = zod.object({
@@ -7552,6 +8564,25 @@ export const AgentccRequestLogsExportResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -7617,6 +8648,25 @@ export const AgentccRequestLogsSearchResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -7667,6 +8717,25 @@ export const AgentccRequestLogsSessionsResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -7721,6 +8790,25 @@ export const AgentccRequestLogsSessionDetailResponse = zod.object({
       organization: zod.string().uuid().optional(),
       workspace: zod.string().uuid().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      generation_id: zod.string().min(1).optional(),
+      attempt_count: zod.number().optional(),
+      billing_mode: zod.string().min(1).optional(),
+      credential_type: zod.string().min(1).optional(),
+      cost_upstream: zod.string().optional(),
+      cost_markup: zod.string().optional(),
+      cost_source: zod.string().min(1).optional(),
+      usage_estimated: zod.boolean().optional(),
+      agent_framework: zod.string().min(1).optional(),
+      agent_id: zod.string().min(1).optional(),
+      agent_run_id: zod.string().min(1).optional(),
+      agent_parent_run_id: zod.string().min(1).optional(),
+      agent_root_run_id: zod.string().min(1).optional(),
+      agent_workflow: zod.string().min(1).optional(),
+      agent_step: zod.string().min(1).optional(),
+      agent_env: zod.string().min(1).optional(),
+      policy_version: zod.string().min(1).optional(),
+      policy_variant: zod.string().min(1).optional(),
+      auto_routed: zod.boolean().optional(),
     }),
   ),
 });
@@ -7764,11 +8852,129 @@ export const AgentccRequestLogsReadResponse = zod.object({
   organization: zod.string().uuid().optional(),
   workspace: zod.string().uuid().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
+  generation_id: zod.string().min(1).optional(),
+  attempt_count: zod.number().optional(),
+  cached_tokens: zod.number().optional(),
+  cache_write_tokens: zod.number().optional(),
+  reasoning_tokens: zod.number().optional(),
+  served_upstream_provider: zod.string().min(1).optional(),
+  content_mode: zod.string().min(1).optional(),
+  app_title: zod.string().min(1).optional(),
+  app_referer: zod.string().min(1).optional(),
+  end_user: zod.string().min(1).optional(),
+  tags: zod.object({}).passthrough().optional(),
+  attempts: zod
+    .array(
+      zod.object({
+        attempt_id: zod.string().min(1).optional(),
+        index: zod.number().optional(),
+        kind: zod
+          .enum([
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector",
+          ])
+          .optional(),
+        reason: zod.string().min(1).optional(),
+        provider: zod.string().min(1).optional(),
+        model: zod.string().min(1).optional(),
+        endpoint_id: zod.string().min(1).optional(),
+        upstream_provider: zod.string().min(1).optional(),
+        served_upstream_provider: zod.string().min(1).optional(),
+        upstream_key_id: zod.string().min(1).optional(),
+        credential_type: zod.string().min(1).optional(),
+        status_code: zod.number().optional(),
+        outcome: zod
+          .enum([
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
+            "skipped",
+            "circuit_open",
+            "hollow",
+          ])
+          .optional(),
+        error_class: zod.string().min(1).optional(),
+        error_origin: zod.string().min(1).optional(),
+        error_message: zod.string().min(1).optional(),
+        started_at: zod.string().datetime({ offset: true }).optional(),
+        latency_ms: zod.number().optional(),
+        ttfb_ms: zod.number().optional(),
+        prompt_tokens: zod.number().optional(),
+        completion_tokens: zod.number().optional(),
+        cached_tokens: zod.number().optional(),
+        cache_write_tokens: zod.number().optional(),
+        reasoning_tokens: zod.number().optional(),
+        upstream_cost_micros: zod.number().optional(),
+        billed_cost_micros: zod.number().optional(),
+        landed_cost_micros: zod.number().optional(),
+        upstream_fee_bps: zod.number().optional(),
+        processing_fee_bps: zod.number().optional(),
+        cost_source: zod.string().min(1).optional(),
+        usage_estimated: zod.boolean().optional(),
+        billable: zod.boolean().optional(),
+      }),
+    )
+    .optional(),
+  billing: zod
+    .object({
+      mode: zod.string().min(1),
+      credential_type: zod.string().min(1),
+      cost_upstream: zod.string(),
+      cost_markup: zod.string(),
+      billed: zod.string(),
+      cost_source: zod.string().min(1),
+      usage_estimated: zod.boolean(),
+      cost_landed: zod.string().describe("Staff only."),
+    })
+    .optional(),
+  agent: zod
+    .object({
+      framework: zod.string().min(1),
+      agent_id: zod.string().min(1),
+      agent_version: zod.string().min(1),
+      run_id: zod.string().min(1),
+      parent_run_id: zod.string().min(1),
+      root_run_id: zod.string().min(1),
+      task_id: zod.string().min(1),
+      workflow: zod.string().min(1),
+      step: zod.string().min(1),
+      step_source: zod.string().min(1),
+      turn: zod.number(),
+      env: zod.string().min(1),
+      budget_scope: zod.string().min(1),
+      identity_source: zod.string().min(1),
+    })
+    .optional(),
+  routing: zod
+    .object({
+      policy_version: zod.string().min(1),
+      policy_variant: zod.string().min(1),
+      catalog_snapshot_id: zod.string().min(1),
+      auto_routed: zod.boolean(),
+    })
+    .optional(),
+  guardrail: zod
+    .object({
+      tool_calls: zod.object({
+        checked: zod.number(),
+        blocked: zod.array(zod.string().min(1)),
+        stripped: zod.array(zod.string().min(1)),
+      }),
+    })
+    .optional()
+    .describe(
+      "The tool-call guardrail verdict, as the gateway reported it; null when it reported none.",
+    ),
 });
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const AgentccRoutingPoliciesListQueryParams = zod.object({
   page: zod
     .number()
@@ -7805,9 +9011,6 @@ export const AgentccRoutingPoliciesListResponse = zod.object({
   ),
 });
 
-/**
- * Create a new routing policy. Auto-increments version for same name.
- */
 export const agentccRoutingPoliciesCreateBodyNameMax = 255;
 
 export const AgentccRoutingPoliciesCreateBody = zod.object({
@@ -7817,9 +9020,6 @@ export const AgentccRoutingPoliciesCreateBody = zod.object({
   is_active: zod.boolean().optional(),
 });
 
-/**
- * Manual sync all active routing policies to gateway.
- */
 export const agentccRoutingPoliciesSyncBodyNameMax = 255;
 
 export const AgentccRoutingPoliciesSyncBody = zod.object({
@@ -7829,9 +9029,6 @@ export const AgentccRoutingPoliciesSyncBody = zod.object({
   is_active: zod.boolean().optional(),
 });
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const AgentccRoutingPoliciesReadParams = zod.object({
   id: zod
     .string()
@@ -7888,9 +9085,6 @@ export const AgentccRoutingPoliciesUpdateResponse = zod.object({
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const AgentccRoutingPoliciesPartialUpdateParams = zod.object({
   id: zod
     .string()
@@ -7925,9 +9119,6 @@ export const AgentccRoutingPoliciesPartialUpdateResponse = zod.object({
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
-/**
- * Routing policy management with version history. Org-scoped.
- */
 export const AgentccRoutingPoliciesDeleteParams = zod.object({
   id: zod
     .string()
@@ -7935,9 +9126,6 @@ export const AgentccRoutingPoliciesDeleteParams = zod.object({
     .describe("A UUID string identifying this agentcc routing policy."),
 });
 
-/**
- * Activate a specific version (rollback).
- */
 export const AgentccRoutingPoliciesActivateParams = zod.object({
   id: zod
     .string()
@@ -8936,8 +10124,10 @@ export const AgentccShadowResultsReadResponse = zod.object({
 });
 
 /**
- * Returns aggregated spend data so the gateway can seed budget counters
-on startup.  Authenticated by admin token (not user JWT).
+ * Returns aggregated spend data: the gateway seeds its budget counters
+from it on startup (admin token: every org), and the console's Budgets
+page reads its own organization's spend for each budget's period (a
+signed-in user: that organization only, present even at $0).
 
 GET /agentcc/spend-summary/?period=monthly
  */
@@ -9032,7 +10222,9 @@ export const AgentccWebhookEventsReadResponse = zod.object({
 });
 
 /**
- * Manually retry a failed webhook event delivery.
+ * The delivery runs on Temporal, off the request thread; when the start
+fails, the agentcc-webhook-delivery schedule delivers it within 30 s.
+ * @summary Retry a webhook event now: reset it to pending and start its delivery.
  */
 export const AgentccWebhookEventsRetryParams = zod.object({
   id: zod

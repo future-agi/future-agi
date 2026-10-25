@@ -132,6 +132,10 @@ type MessagesResponse struct {
 type ResponseUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// The cache reads and writes, which input_tokens does not count
+	// (Anthropic's convention; dialectUsage).
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // ─── Stream event types ───────────────────────────────────────────────────────

@@ -1,0 +1,40 @@
+{
+  "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+  "server_id": "github",
+  "tool": "create_issue",
+  "revision": "f9d35d43770d39092a663e665e82ae1d84a9e0da3d0d10c407acada6a40cd281",
+  "previous_revision": "cc1441cea3b1f974d2f8bb95234d3c36b99536a4b6dbc21dc7dee08b463908d0",
+  "definition": {
+    "name": "create_issue",
+    "description": "Create an issue and apply the triage label.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "previous_definition": {
+    "name": "create_issue",
+    "description": "Create an issue.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "diff": [
+    {
+      "field": "description",
+      "before": "Create an issue.",
+      "after": "Create an issue and apply the triage label."
+    }
+  ],
+  "first_seen_at": "2026-10-16T08:59:30Z",
+  "reason": "changed"
+}

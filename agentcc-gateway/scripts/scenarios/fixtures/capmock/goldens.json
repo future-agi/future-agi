@@ -1,0 +1,386 @@
+[
+  {
+    "name": "exa search",
+    "request": {
+      "method": "POST",
+      "path": "/exa/search",
+      "headers": { "Content-Type": "application/json" },
+      "body": { "query": "golden", "type": "auto" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "requestId": "string",
+        "results.0.url": "string",
+        "results.0.title": "string",
+        "costDollars.total": "number"
+      }
+    }
+  },
+  {
+    "name": "parallel search",
+    "request": {
+      "method": "POST",
+      "path": "/parallel/v1beta/search",
+      "body": { "objective": "golden", "search_queries": ["golden"] }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "search_id": "string",
+        "results.0.url": "string",
+        "results.0.excerpts": "array",
+        "usage.0.name": "string"
+      }
+    }
+  },
+  {
+    "name": "perplexity search",
+    "request": {
+      "method": "POST",
+      "path": "/perplexity/search",
+      "body": { "query": "golden" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "id": "string",
+        "results.0.url": "string",
+        "results.0.snippet": "string"
+      }
+    }
+  },
+  {
+    "name": "tavily search",
+    "request": {
+      "method": "POST",
+      "path": "/tavily/search",
+      "body": { "query": "golden", "search_depth": "basic" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "query": { "equals": "golden" },
+        "results.0.url": "string",
+        "results.0.score": "number",
+        "response_time": "number"
+      }
+    }
+  },
+  {
+    "name": "brave web search",
+    "request": {
+      "method": "GET",
+      "path": "/brave/res/v1/web/search?q=golden",
+      "headers": { "X-Subscription-Token": "not-a-real-token" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "type": { "equals": "search" },
+        "query.original": { "equals": "golden" },
+        "web.results.0.url": "string",
+        "web.results.0.description": "string"
+      }
+    }
+  },
+  {
+    "name": "searxng search",
+    "request": {
+      "method": "GET",
+      "path": "/searxng/search?q=golden&format=json"
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "query": { "equals": "golden" },
+        "number_of_results": "number",
+        "results.0.url": "string",
+        "results.0.engine": "string"
+      }
+    }
+  },
+  {
+    "name": "firecrawl scrape",
+    "request": {
+      "method": "POST",
+      "path": "/firecrawl/v2/scrape",
+      "body": { "url": "https://example.com", "formats": ["markdown"] }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "success": { "equals": true },
+        "data.markdown": "string",
+        "data.metadata.statusCode": { "equals": 200 }
+      }
+    }
+  },
+  {
+    "name": "jina reader",
+    "request": {
+      "method": "GET",
+      "path": "/jina/https://example.com/page",
+      "headers": { "Accept": "application/json" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "code": { "equals": 200 },
+        "data.url": { "equals": "https://example.com/page" },
+        "data.content": "string",
+        "data.usage.tokens": "number"
+      }
+    }
+  },
+  {
+    "name": "mistral ocr",
+    "request": {
+      "method": "POST",
+      "path": "/mistral-ocr/v1/ocr",
+      "body": {
+        "model": "mistral-ocr-latest",
+        "document": {
+          "type": "document_url",
+          "document_url": "https://example.com/a.pdf"
+        }
+      }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "pages.0.markdown": "string",
+        "pages.0.index": { "equals": 0 },
+        "usage_info.pages_processed": { "equals": 1 }
+      }
+    }
+  },
+  {
+    "name": "azure document intelligence analyze",
+    "request": {
+      "method": "POST",
+      "path": "/azure-di/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
+      "body": { "urlSource": "https://example.com/a.pdf" }
+    },
+    "expect": { "status": 202, "headers": ["Operation-Location"] }
+  },
+  {
+    "name": "textract detect",
+    "request": {
+      "method": "POST",
+      "path": "/textract/",
+      "headers": {
+        "X-Amz-Target": "Textract.DetectDocumentText",
+        "Content-Type": "application/x-amz-json-1.1"
+      },
+      "body": { "Document": { "Bytes": "AA==" } }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "DocumentMetadata.Pages": { "equals": 1 },
+        "Blocks.1.BlockType": { "equals": "LINE" },
+        "Blocks.1.Text": "string"
+      }
+    }
+  },
+  {
+    "name": "deepgram listen",
+    "request": {
+      "method": "POST",
+      "path": "/deepgram/v1/listen?model=nova-3",
+      "headers": { "Content-Type": "audio/wav" },
+      "body": "RIFF"
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "metadata.request_id": "string",
+        "metadata.duration": "number",
+        "results.channels.0.alternatives.0.transcript": "string"
+      }
+    }
+  },
+  {
+    "name": "assemblyai upload",
+    "request": {
+      "method": "POST",
+      "path": "/assemblyai/v2/upload",
+      "headers": { "Content-Type": "application/octet-stream" },
+      "body": "RIFF"
+    },
+    "expect": { "status": 200, "json": { "upload_url": "string" } }
+  },
+  {
+    "name": "voyage embeddings",
+    "request": {
+      "method": "POST",
+      "path": "/voyage/v1/embeddings",
+      "body": {
+        "input": ["golden"],
+        "model": "voyage-3.5",
+        "input_type": "query"
+      }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "object": { "equals": "list" },
+        "data.0.embedding": "array",
+        "usage.total_tokens": "number"
+      }
+    }
+  },
+  {
+    "name": "cohere rerank",
+    "request": {
+      "method": "POST",
+      "path": "/cohere/v2/rerank",
+      "body": {
+        "model": "rerank-v3.5",
+        "query": "golden",
+        "documents": ["a", "b"]
+      }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "results.0.index": "number",
+        "results.0.relevance_score": "number",
+        "meta.billed_units.search_units": { "equals": 1 }
+      }
+    }
+  },
+  {
+    "name": "kernel browser",
+    "request": {
+      "method": "POST",
+      "path": "/kernel/browsers",
+      "body": { "headless": false }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "session_id": "string",
+        "cdp_ws_url": "string",
+        "browser_live_view_url": "string"
+      }
+    }
+  },
+  {
+    "name": "browserbase session",
+    "request": {
+      "method": "POST",
+      "path": "/browserbase/v1/sessions",
+      "body": { "projectId": "golden" }
+    },
+    "expect": {
+      "status": 201,
+      "json": {
+        "id": "string",
+        "status": { "equals": "RUNNING" },
+        "connectUrl": "string",
+        "endedAt": "null"
+      }
+    }
+  },
+  {
+    "name": "sandbox usage records",
+    "request": { "method": "GET", "path": "/sandbox/v1/usage" },
+    "expect": {
+      "status": 200,
+      "json": {
+        "records.0.record_id": "string",
+        "records.0.backend": "string",
+        "records.0.billing_mode": "string",
+        "records.0.cpu_seconds": "number",
+        "records.0.gib_seconds": "number",
+        "records.0.wall_seconds": "number"
+      }
+    }
+  },
+  {
+    "name": "fal queue submit",
+    "request": {
+      "method": "POST",
+      "path": "/fal/fal-ai/flux/dev",
+      "body": { "prompt": "golden" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "request_id": "string",
+        "status_url": "string",
+        "response_url": "string",
+        "cancel_url": "string"
+      }
+    }
+  },
+  {
+    "name": "pipedream mcp tools/list",
+    "request": {
+      "method": "POST",
+      "path": "/pipedream/mcp",
+      "headers": {
+        "x-pd-project-id": "proj",
+        "x-pd-environment": "development",
+        "x-pd-external-user-id": "user-1",
+        "x-pd-app-slug": "slack"
+      },
+      "body": { "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "jsonrpc": { "equals": "2.0" },
+        "result.tools.0.name": { "equals": "slack-send-message" },
+        "result.tools.0.inputSchema.type": { "equals": "object" }
+      }
+    }
+  },
+  {
+    "name": "x402 seller unpaid",
+    "request": { "method": "GET", "path": "/x402/weather" },
+    "expect": {
+      "status": 402,
+      "headers": ["PAYMENT-REQUIRED"],
+      "json": {
+        "x402Version": { "equals": 2 },
+        "accepts.0.scheme": { "equals": "exact" },
+        "accepts.0.amount": "string"
+      }
+    }
+  },
+  {
+    "name": "echo-a",
+    "request": {
+      "method": "POST",
+      "path": "/echo-a/echo",
+      "body": { "text": "golden" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "vendor": { "equals": "echo-a" },
+        "echo.text": { "equals": "golden" },
+        "usage.units": { "equals": 1 }
+      }
+    }
+  },
+  {
+    "name": "echo-b",
+    "request": {
+      "method": "POST",
+      "path": "/echo-b/echo",
+      "body": { "text": "golden" }
+    },
+    "expect": {
+      "status": 200,
+      "json": {
+        "vendor": { "equals": "echo-b" },
+        "echo.text": { "equals": "golden" },
+        "usage.units": { "equals": 1 }
+      }
+    }
+  }
+]

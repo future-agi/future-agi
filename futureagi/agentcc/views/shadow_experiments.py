@@ -8,6 +8,7 @@ from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from agentcc.models import AgentccOrgConfig
 from agentcc.models.shadow_experiment import AgentccShadowExperiment
 from agentcc.models.shadow_result import AgentccShadowResult
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.shadow import (
     AgentccShadowExperimentSerializer,
     AgentccShadowResultSerializer,
@@ -23,10 +24,28 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 
-class AgentccShadowExperimentViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccShadowExperimentViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """CRUD for shadow experiments with pause/resume/complete lifecycle actions."""
 
     permission_classes = [IsAuthenticated]
+    # A shadow experiment mirrors a share of the org's traffic to another
+    # model and provider, and pause, resume and complete push the org config:
+    # every write is an org Owner's or Admin's, as every other gateway config
+    # write is.
+    # Every member keeps read access (list, retrieve, stats).
+    gateway_admin_actions = frozenset(
+        {
+            "create",
+            "update",
+            "partial_update",
+            "destroy",
+            "pause",
+            "resume",
+            "complete",
+        }
+    )
     serializer_class = AgentccShadowExperimentSerializer
     queryset = AgentccShadowExperiment.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -279,7 +298,9 @@ class AgentccShadowExperimentViewSet(BaseModelViewSetMixinWithUserOrg, ModelView
             return self._gm.bad_request(str(e))
 
 
-class AgentccShadowResultViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccShadowResultViewSet(
+    BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet
+):
     """Read-only viewset for shadow results. Paginated."""
 
     permission_classes = [IsAuthenticated]
@@ -310,7 +331,9 @@ class AgentccShadowResultViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModel
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            return self._gm.success_response(AgentccShadowResultSerializer(instance).data)
+            return self._gm.success_response(
+                AgentccShadowResultSerializer(instance).data
+            )
         except Exception as e:
             logger.exception("shadow_result_retrieve_error", error=str(e))
             return self._gm.not_found("Shadow result not found")

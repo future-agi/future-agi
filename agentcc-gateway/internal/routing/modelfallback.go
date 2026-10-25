@@ -1,5 +1,16 @@
 package routing
 
+import "github.com/futureagi/agentcc-gateway/internal/models"
+
+// FallbackAttemptKind is the kind of an attempt that moves down a model
+// fallback chain: an auto-routed request's chain is its runners-up.
+func FallbackAttemptKind(autoRouted bool) models.AttemptKind {
+	if autoRouted {
+		return models.AttemptAutoFallback
+	}
+	return models.AttemptModelFallback
+}
+
 // ModelFallbacks holds model fallback chains.
 type ModelFallbacks struct {
 	chains map[string][]string // model → ordered fallback models

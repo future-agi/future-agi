@@ -216,30 +216,13 @@ func (h *Histogram) render(b *strings.Builder, name string) {
 	}
 }
 
-// labelsKey produces a deterministic string key from label pairs.
+// labelsKey produces a deterministic string key from label pairs: the
+// labels as formatLabels writes them, so two different label sets never share
+// a key (an escaped value cannot hold the quote that ends it, whatever commas
+// or equals signs it holds).
 func labelsKey(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(labels[k])
-	}
-	return b.String()
+	return formatLabels(labels)
 }
-
-// labelValueEscaper escapes label values per the Prometheus text format.
-var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
 
 // formatLabels formats labels for Prometheus output (key="value").
 func formatLabels(labels map[string]string) string {
@@ -256,7 +239,25 @@ func formatLabels(labels map[string]string) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, "%s=\"%s\"", k, labelValueEscaper.Replace(labels[k]))
+		b.WriteString(k)
+		b.WriteString(`="`)
+		b.WriteString(escapeLabelValue(labels[k]))
+		b.WriteByte('"')
 	}
 	return b.String()
+}
+
+// labelValueEscaper escapes a label value as the Prometheus text exposition
+// format defines: backslash, double quote and line feed. A label value can be
+// a name the caller chose or the upstream echoed (the model); escaped, it
+// always stays inside its own label set.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+// escapeLabelValue returns v escaped for a label value; a value with nothing
+// to escape is returned as it is.
+func escapeLabelValue(v string) string {
+	if !strings.ContainsAny(v, "\\\"\n") {
+		return v
+	}
+	return labelValueEscaper.Replace(v)
 }

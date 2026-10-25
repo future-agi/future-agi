@@ -3,27 +3,84 @@
 # build-image-multiarch.yml (native linux/amd64 + linux/arm64, registry layer
 # cache) so the two paths cannot drift. The size budget only reports here: an
 # ad-hoc build is never blocked by it.
+#
+# Release integrity (docs/gateway/security/supply-chain.md). `prepare`
+# refuses a run dispatched from any ref but main (the signer identity is the
+# workflow file's ref) and resolves the branch to one commit, and every job
+# uses that commit:
+#   release   the image, built by build-image-multiarch.yml, only after the
+#             binaries job's verify-local.sh gate passed
+#   binaries  verify-local.sh as a gate (go mod verify, two identical builds,
+#             SBOM, secrets lint, actions pinned by commit SHA), then
+#             reproducible linux/amd64 and linux/arm64 binaries, the CycloneDX
+#             SBOM, SHA256SUMS and a keyless Sigstore bundle for it
+#   attest    a SLSA v1 build-provenance attestation and a keyless signature on
+#             the published image digest, after checking the image's revision
+#             label is that commit
+# Signing uses the job's GitHub OIDC identity (id-token: write): no key is
+# stored. Every action this file names is pinned by full commit SHA;
+# supply-chain.md lists the actions of the reusable build. No
+# action installs Go or cosign: the runner's Go fetches the go.mod toolchain,
+# and `go install` builds cosign, both checked against sum.golang.org.
 name: Release agentcc-gateway
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to publish (e.g. v2.1.0-dev)'
+        description: "Version tag to publish (e.g. v2.1.0-dev)"
         required: true
         type: string
       branch:
-        description: 'Branch to build from'
+        description: "Branch to build from"
         required: true
-        default: 'main'
+        default: "main"
         type: choice
         options: [main, dev]
 
 permissions:
   contents: read
 
+env:
+  IMAGE: docker.io/futureagi/agentcc-gateway
+  # sigstore/cosign v3.1.3 (tag revision 11926fa5bbbbde47e88fc006b625a17769b743b2).
+  COSIGN_MODULE: github.com/sigstore/cosign/v3/cmd/cosign@v3.1.3
+
 jobs:
+  prepare:
+    name: Resolve the commit and the Go toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+      toolchain: ${{ steps.source.outputs.toolchain }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 1
+          sparse-checkout: agentcc-gateway
+          persist-credentials: false
+      - name: Commit and toolchain
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The signatures name this workflow file's ref; only main's is trusted.
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::dispatch the release from main, not $GITHUB_REF"; exit 1; }
+          revision=$(git rev-parse HEAD)
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected revision '$revision'"; exit 1; }
+          # go.mod's toolchain line, else its go line; a release name has three parts.
+          toolchain=$(sed -n 's/^toolchain go\([0-9.]*\)$/\1/p' agentcc-gateway/go.mod)
+          [ -n "$toolchain" ] || toolchain=$(sed -n 's/^go \([0-9.]*\)$/\1/p' agentcc-gateway/go.mod)
+          [[ "$toolchain" =~ ^[0-9]+\.[0-9]+$ ]] && toolchain="$toolchain.0"
+          [[ "$toolchain" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no Go version in go.mod"; exit 1; }
+          { echo "revision=$revision"; echo "toolchain=go$toolchain"; } >> "$GITHUB_OUTPUT"
+          echo "Building $revision with go$toolchain" >> "$GITHUB_STEP_SUMMARY"
+
   release:
+    # The image publishes only after verify-local.sh passed in binaries.
+    needs: [prepare, binaries]
     permissions:
       contents: read
       packages: write # ghcr build cache
@@ -33,7 +90,7 @@ jobs:
       context: ./agentcc-gateway
       dockerfile: ./agentcc-gateway/Dockerfile
       version: ${{ inputs.version }}
-      ref: ${{ inputs.branch }}
+      ref: ${{ needs.prepare.outputs.revision }}
       push-latest: false
       size-budget: report
       free-disk: false
@@ -46,3 +103,157 @@ jobs:
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  binaries:
+    name: Reproducible binaries, SBOM and checksums
+    needs: prepare
+    runs-on: ubuntu-latest
+    # Six clean builds (two in the gate, two per architecture), each with an
+    # empty build cache.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # keyless signing of SHA256SUMS
+    env:
+      GOTOOLCHAIN: ${{ needs.prepare.outputs.toolchain }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.revision }}
+          persist-credentials: false
+      - name: Go toolchain from go.mod
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The one assumption: the runner ships a Go (1.21+) on PATH or in its
+          # tool cache. It only fetches the pinned toolchain (GOTOOLCHAIN).
+          if ! command -v go >/dev/null; then
+            bootstrap=$(ls -d /opt/hostedtoolcache/go/*/*/bin 2>/dev/null | sort -V | tail -n1)
+            [ -n "$bootstrap" ] || { echo "::error::no bootstrap Go on this runner"; exit 1; }
+            echo "$bootstrap" >> "$GITHUB_PATH"
+            export PATH="$bootstrap:$PATH"
+          fi
+          go version
+      - name: Download modules (checked against go.sum)
+        working-directory: agentcc-gateway
+        # `all`: every module of the build list, so `go list -m all` and
+        # go mod verify then run offline in the gate below.
+        run: go mod download all
+      - name: Release integrity gate
+        run: bash agentcc-gateway/scripts/release/verify-local.sh
+      - name: Reproducible binaries
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch bash agentcc-gateway/scripts/release/build-reproducible.sh --out dist
+          done
+          rm -f dist/*.sha256
+      - name: SBOM
+        id: sbom
+        run: |
+          bash agentcc-gateway/scripts/release/sbom.sh \
+            --binary dist/agentcc-gateway_linux_amd64 --out dist/agentcc-gateway.cdx.json
+      - name: Checksums
+        id: checksums
+        working-directory: dist
+        run: |
+          sha256sum agentcc-gateway_linux_amd64 agentcc-gateway_linux_arm64 agentcc-gateway.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+      - name: Install cosign
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go install "$COSIGN_MODULE"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Sign the checksums (keyless)
+        id: sign-checksums
+        working-directory: dist
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: agentcc-gateway-${{ inputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+  attest:
+    name: Provenance and signature on the image digest
+    needs: [prepare, release, binaries]
+    runs-on: ubuntu-latest
+    # Runs only after `release` published the image, which already waited on
+    # its environment's review.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # keyless signing and attestation
+    env:
+      DIGEST: ${{ needs.release.outputs.digest }}
+      REVISION: ${{ needs.prepare.outputs.revision }}
+    steps:
+      - name: Install cosign
+        shell: bash
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::unexpected digest '$DIGEST'"; exit 1; }
+          if ! command -v go >/dev/null; then
+            bootstrap=$(ls -d /opt/hostedtoolcache/go/*/*/bin 2>/dev/null | sort -V | tail -n1)
+            [ -n "$bootstrap" ] || { echo "::error::no bootstrap Go on this runner"; exit 1; }
+            export PATH="$bootstrap:$PATH"
+          fi
+          go install "$COSIGN_MODULE"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build provenance (SLSA v1)
+        id: provenance
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          # The image must be the commit the binaries and SBOM were built from.
+          label=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Image}}' \
+            | jq -r 'if has("config") then .config.Labels else (to_entries[0].value.config.Labels) end
+                     | .["org.opencontainers.image.revision"] // ""')
+          if [ "$label" != "$REVISION" ]; then
+            echo "::error::$IMAGE@$DIGEST has revision label '$label', expected $REVISION"
+            exit 1
+          fi
+          repo="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          workflow=".github/workflows/release-agentcc-gateway.yml"
+          jq -n --arg repo "$repo" --arg ref "$GITHUB_REF" --arg branch "$BRANCH" --arg version "$VERSION" \
+            --arg revision "$REVISION" --arg event "$GITHUB_EVENT_NAME" --arg workflow "$workflow" \
+            --arg run "$repo/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" '{
+              buildDefinition: {
+                buildType: "https://actions.github.io/buildtypes/workflow/v1",
+                externalParameters: {
+                  workflow: {ref: $ref, repository: $repo, path: $workflow},
+                  inputs: {version: $version, branch: $branch}
+                },
+                internalParameters: {github: {event_name: $event}},
+                resolvedDependencies: [{uri: ("git+" + $repo + "@refs/heads/" + $branch), digest: {gitCommit: $revision}}]
+              },
+              runDetails: {
+                builder: {id: ($repo + "/" + $workflow + "@" + $ref)},
+                metadata: {invocationId: $run}
+              }
+            }' > provenance.json
+          cat provenance.json
+          cosign attest --yes --type slsaprovenance1 --predicate provenance.json "$IMAGE@$DIGEST"
+      - name: Sign the image digest (keyless)
+        id: sign
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - name: Summary
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "### $IMAGE:$VERSION"
+            echo "Digest \`$DIGEST\` (commit \`$REVISION\`): signed, with a SLSA v1 provenance attestation."
+            echo "Verify: docs/gateway/security/supply-chain.md"
+          } >> "$GITHUB_STEP_SUMMARY"

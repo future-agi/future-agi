@@ -295,12 +295,18 @@ class APIKeyAuthentication(BaseAuthentication):
             or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
-        if (
+        is_checked_write = (
             request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
             and not should_skip_write_check
-        ):
+        )
+        if is_checked_write and workspace:
             if not self._can_write_to_workspace(user, workspace):
+                raise PermissionDenied("Write access denied to this workspace")
+        elif is_checked_write and getattr(request, "auth_scope", None) is not None:
+            # A SAML-scoped session resolves no workspace for a member who can
+            # access none of the bound org's workspaces; such a write needs write
+            # access to every workspace of the org (Owner, Admin).
+            if not user.has_global_workspace_access(organization):
                 raise PermissionDenied("Write access denied to this workspace")
 
         # Per-request attributes (safe, no race condition)

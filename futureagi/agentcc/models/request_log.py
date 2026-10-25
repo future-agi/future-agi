@@ -62,6 +62,61 @@ class AgentccRequestLog(BaseModel):
     response_headers = models.JSONField(null=True, blank=True)
     guardrail_results = models.JSONField(null=True, blank=True)
 
+    # Log entry v2 columns. Each is nullable (NULL = not reported) or carries a
+    # database default, so a process still
+    # running the v1 model can keep inserting while the migration rolls out.
+    # Billing
+    billing_mode = models.CharField(max_length=16, null=True, blank=True)
+    credential_type = models.CharField(max_length=8, null=True, blank=True)
+    cost_upstream = models.DecimalField(
+        max_digits=16, decimal_places=8, null=True, blank=True
+    )
+    cost_markup = models.DecimalField(
+        max_digits=16, decimal_places=8, null=True, blank=True
+    )
+    cost_landed = models.DecimalField(
+        max_digits=16, decimal_places=8, null=True, blank=True
+    )
+    cost_source = models.CharField(max_length=32, null=True, blank=True)
+    usage_estimated = models.BooleanField(null=True, blank=True)
+    served_upstream_provider = models.CharField(max_length=64, null=True, blank=True)
+    upstream_key_id = models.CharField(max_length=128, null=True, blank=True)
+    # Tokens and attempts
+    cached_tokens = models.IntegerField(null=True, blank=True)
+    cache_write_tokens = models.IntegerField(null=True, blank=True)
+    reasoning_tokens = models.IntegerField(null=True, blank=True)
+    attempt_count = models.SmallIntegerField(default=1, db_default=1)
+    # Identity
+    generation_id = models.CharField(max_length=64, null=True, blank=True)
+    # Agent
+    agent_framework = models.CharField(max_length=32, null=True, blank=True)
+    agent_id = models.CharField(max_length=128, null=True, blank=True)
+    agent_version = models.CharField(max_length=128, null=True, blank=True)
+    agent_run_id = models.CharField(max_length=128, null=True, blank=True)
+    agent_parent_run_id = models.CharField(max_length=128, null=True, blank=True)
+    agent_root_run_id = models.CharField(max_length=128, null=True, blank=True)
+    agent_task_id = models.CharField(max_length=128, null=True, blank=True)
+    agent_workflow = models.CharField(max_length=128, null=True, blank=True)
+    agent_step = models.CharField(max_length=32, null=True, blank=True)
+    agent_step_source = models.CharField(max_length=32, null=True, blank=True)
+    agent_turn = models.IntegerField(null=True, blank=True)
+    agent_env = models.CharField(max_length=32, null=True, blank=True)
+    agent_identity_source = models.CharField(max_length=32, null=True, blank=True)
+    budget_scope = models.CharField(max_length=128, null=True, blank=True)
+    # Routing
+    policy_version = models.CharField(max_length=64, null=True, blank=True)
+    policy_variant = models.CharField(max_length=16, null=True, blank=True)
+    catalog_snapshot_id = models.CharField(max_length=32, null=True, blank=True)
+    auto_routed = models.BooleanField(null=True, blank=True)
+    # App, user and privacy
+    app_title = models.CharField(max_length=128, null=True, blank=True)
+    app_referer = models.CharField(max_length=256, null=True, blank=True)
+    end_user = models.CharField(max_length=256, null=True, blank=True)
+    tags = models.JSONField(null=True, blank=True)
+    content_mode = models.CharField(max_length=8, null=True, blank=True)
+    # The log entry's evidence object, agent.identity and eval_export.
+    evidence = models.JSONField(null=True, blank=True)
+
     class Meta:
         db_table = "agentcc_request_log"
         ordering = ["-created_at"]
@@ -78,6 +133,26 @@ class AgentccRequestLog(BaseModel):
                 fields=["metadata"],
                 name="agentcc_req_metadata_gin",
                 opclasses=["jsonb_path_ops"],
+            ),
+            models.Index(
+                fields=["organization", "agent_run_id"],
+                name="agentcc_rl_org_run_idx",
+            ),
+            models.Index(
+                fields=["organization", "agent_id", "-started_at"],
+                name="agentcc_rl_org_agent_idx",
+            ),
+            models.Index(
+                fields=["organization", "billing_mode", "-started_at"],
+                name="agentcc_rl_org_billing_idx",
+            ),
+            models.Index(
+                fields=["organization", "request_id"],
+                name="agentcc_rl_org_request_idx",
+            ),
+            models.Index(
+                fields=["organization", "policy_variant", "-started_at"],
+                name="agentcc_rl_org_variant_idx",
             ),
         ]
 

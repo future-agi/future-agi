@@ -119,9 +119,26 @@ type bedrockResponse struct {
 	Usage      bedrockUsage          `json:"usage"`
 }
 
+// bedrockUsage is the Anthropic usage block Bedrock returns for Claude.
+// InputTokens counts only the input after the last cache breakpoint; the
+// cache reads and writes are counted apart.
 type bedrockUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens"`
+}
+
+// toUsage maps the usage to the OpenAI shape: prompt tokens count every
+// input token, cache reads and writes included, and the reads and writes go
+// in prompt_tokens_details as cached_tokens and cache_write_tokens.
+func (u bedrockUsage) toUsage() *models.Usage {
+	prompt := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+	usage := &models.Usage{PromptTokens: prompt, CompletionTokens: u.OutputTokens, TotalTokens: prompt + u.OutputTokens}
+	usage.PromptDetails.CachedTokens = u.CacheReadInputTokens
+	usage.PromptDetails.CacheWriteTokens = u.CacheCreationInputTokens
+	usage.MergeDetails()
+	return usage
 }
 
 // --- Translation functions ---
@@ -627,11 +644,7 @@ func translateResponse(resp *bedrockResponse) *models.ChatCompletionResponse {
 				FinishReason: mapStopReason(resp.StopReason),
 			},
 		},
-		Usage: &models.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		},
+		Usage: resp.Usage.toUsage(),
 	}
 }
 

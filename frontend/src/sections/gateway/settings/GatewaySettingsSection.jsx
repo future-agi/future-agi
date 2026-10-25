@@ -44,6 +44,8 @@ import {
   useReloadConfig,
 } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 import OrgConfigSection from "./OrgConfigSection";
 import EmailAlertsCard from "./EmailAlertsCard";
@@ -57,9 +59,70 @@ import {
 // Gateway Settings Tab
 // ---------------------------------------------------------------------------
 
+// Every value on these cards is what the gateway reports in GET /-/config,
+// passed through by the config action. A value
+// the gateway does not report reads "Not reported", never a default.
+const NOT_REPORTED = "Not reported";
+
+const isBlock = (value) =>
+  value != null && typeof value === "object" && !Array.isArray(value);
+
+function formatMs(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return NOT_REPORTED;
+  if (Math.abs(ms) < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} s`;
+}
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return NOT_REPORTED;
+  const MiB = 1024 * 1024;
+  if (bytes >= MiB && bytes % MiB === 0) return `${bytes / MiB} MiB`;
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024} KiB`;
+  return `${bytes} bytes`;
+}
+
+const onOff = (value, on, off) =>
+  typeof value === "boolean" ? (value ? on : off) : NOT_REPORTED;
+
+function lastHealthCheckText(config, gateway) {
+  const fromConfig = config?.last_health_check;
+  const at = fromConfig ?? gateway?.lastHealthCheck ?? null;
+  if (!at) return "No check recorded";
+  const outcome = fromConfig
+    ? config?.last_health_check_status
+    : gateway?.last_health_check_status ?? gateway?.lastHealthCheckStatus;
+  const when = new Date(at).toLocaleString();
+  return outcome ? `${when} (${outcome})` : when;
+}
+
+function enforcedSectionsText(enforced) {
+  if (!Array.isArray(enforced)) return "Not reported (enforcement unknown)";
+  return enforced.length > 0 ? enforced.join(", ") : "None on this gateway";
+}
+
+// "section: reason" for each org section the gateway says it does not
+// enforce (org_sections_not_enforced), or null when it names none.
+function notEnforcedSectionsText(reasons) {
+  if (!reasons || typeof reasons !== "object" || Array.isArray(reasons)) {
+    return null;
+  }
+  const entries = Object.entries(reasons).filter(
+    ([, reason]) => typeof reason === "string" && reason,
+  );
+  if (entries.length === 0) return null;
+  return entries.map(([section, reason]) => `${section}: ${reason}`).join("; ");
+}
+
+const NotReported = ({ what }) => (
+  <Typography variant="body2" color="text.secondary">
+    This gateway did not report its {what} settings.
+  </Typography>
+);
+
 const SettingsTab = ({ config, gateway }) => {
-  const serverConfig = config?.server || {};
-  const logging = config?.logging || {};
+  const server = isBlock(config?.server) ? config.server : null;
+  const logging = isBlock(config?.logging) ? config.logging : null;
   const costTracking = config?.cost_tracking ?? config?.costTracking ?? {};
 
   return (
@@ -70,42 +133,37 @@ const SettingsTab = ({ config, gateway }) => {
           <Typography variant="h6" mb={2}>
             Server Configuration
           </Typography>
-          <Stack spacing={1}>
-            <InfoLine label="Host" value={serverConfig.host || "\u2014"} />
-            <InfoLine label="Port" value={serverConfig.port || "\u2014"} />
-            <InfoLine
-              label="Read Timeout"
-              value={
-                serverConfig.read_timeout ??
-                serverConfig.readTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Write Timeout"
-              value={
-                serverConfig.write_timeout ??
-                serverConfig.writeTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Idle Timeout"
-              value={
-                serverConfig.idle_timeout ??
-                serverConfig.idleTimeout ??
-                "\u2014"
-              }
-            />
-            <InfoLine
-              label="Shutdown Timeout"
-              value={
-                serverConfig.shutdown_timeout ??
-                serverConfig.shutdownTimeout ??
-                "\u2014"
-              }
-            />
-          </Stack>
+          {server ? (
+            <Stack spacing={1}>
+              <InfoLine
+                label="Host"
+                value={
+                  typeof server.host === "string"
+                    ? server.host || "All interfaces"
+                    : NOT_REPORTED
+                }
+              />
+              <InfoLine label="Port" value={server.port ?? NOT_REPORTED} />
+              <InfoLine
+                label="Read Timeout"
+                value={formatMs(server.read_timeout_ms)}
+              />
+              <InfoLine
+                label="Write Timeout"
+                value={formatMs(server.write_timeout_ms)}
+              />
+              <InfoLine
+                label="Idle Timeout"
+                value={formatMs(server.idle_timeout_ms)}
+              />
+              <InfoLine
+                label="Max Request Time"
+                value={formatMs(server.max_request_timeout_ms)}
+              />
+            </Stack>
+          ) : (
+            <NotReported what="server" />
+          )}
         </CardContent>
       </Card>
 
@@ -126,12 +184,20 @@ const SettingsTab = ({ config, gateway }) => {
             <InfoLine label="Models" value={gateway?.modelCount ?? "\u2014"} />
             <InfoLine
               label="Last Health Check"
-              value={
-                gateway?.lastHealthCheck
-                  ? new Date(gateway.lastHealthCheck).toLocaleString()
-                  : "Never"
-              }
+              value={lastHealthCheckText(config, gateway)}
             />
+            <InfoLine
+              label="Org Sections Enforced"
+              value={enforcedSectionsText(config?.org_sections_enforced)}
+            />
+            {notEnforcedSectionsText(config?.org_sections_not_enforced) && (
+              <InfoLine
+                label="Org Sections Not Enforced"
+                value={notEnforcedSectionsText(
+                  config?.org_sections_not_enforced,
+                )}
+              />
+            )}
           </Stack>
         </CardContent>
       </Card>
@@ -142,18 +208,25 @@ const SettingsTab = ({ config, gateway }) => {
           <Typography variant="h6" mb={2}>
             Logging
           </Typography>
-          <Stack spacing={1}>
-            <InfoLine label="Level" value={logging.level || "\u2014"} />
-            <InfoLine label="Format" value={logging.format || "\u2014"} />
-            <InfoLine
-              label="Request Logging"
-              value={logging.request_logging?.enabled ? "Enabled" : "Disabled"}
-            />
-            <InfoLine
-              label="Include Bodies"
-              value={logging.request_logging?.include_bodies ? "Yes" : "No"}
-            />
-          </Stack>
+          {logging ? (
+            <Stack spacing={1}>
+              <InfoLine label="Level" value={logging.level || NOT_REPORTED} />
+              <InfoLine
+                label="Request Logging"
+                value={onOff(logging.request_logging, "Enabled", "Disabled")}
+              />
+              <InfoLine
+                label="Include Bodies"
+                value={onOff(logging.include_bodies, "Yes", "No")}
+              />
+              <InfoLine
+                label="Content Mode"
+                value={logging.content_mode || NOT_REPORTED}
+              />
+            </Stack>
+          ) : (
+            <NotReported what="logging" />
+          )}
         </CardContent>
       </Card>
 
@@ -280,7 +353,8 @@ const SAMPLE_REQUEST = {
 };
 
 const BatchJobsTab = ({ config, gatewayId }) => {
-  const batchConfig = config?.batch || config?.batch_api || {};
+  // The gateway's batch facts (GET /-/config).
+  const batchConfig = isBlock(config?.batch) ? config.batch : null;
   const [submitOpen, setSubmitOpen] = useState(false);
   const [requestsJson, setRequestsJson] = useState(
     JSON.stringify([SAMPLE_REQUEST], null, 2),
@@ -292,6 +366,9 @@ const BatchJobsTab = ({ config, gatewayId }) => {
 
   const submitBatch = useSubmitBatch();
   const cancelBatch = useCancelBatch();
+  // Submitting or cancelling a batch spends the org's credits on its
+  // providers: Owner or Admin only (useGatewayAdmin). Reading stays open.
+  const { canEdit } = useGatewayAdmin();
 
   const handleJsonChange = useCallback((val) => {
     setRequestsJson(val);
@@ -354,43 +431,43 @@ const BatchJobsTab = ({ config, gatewayId }) => {
             mb={2}
           >
             <Typography variant="h6">Batch API</Typography>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<Iconify icon="mdi:plus" width={18} />}
-              onClick={() => setSubmitOpen(true)}
-            >
-              Submit Batch Job
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<Iconify icon="mdi:plus" width={18} />}
+                onClick={() => setSubmitOpen(true)}
+                disabled={!canEdit}
+              >
+                Submit Batch Job
+              </Button>
+            </GatewayAdminOnly>
           </Stack>
-          {Object.keys(batchConfig).length > 0 ? (
+          {batchConfig ? (
             <Stack spacing={1}>
-              <InfoLine
-                label="Enabled"
-                value={batchConfig.enabled ? "Yes" : "No"}
-              />
-              <InfoLine
-                label="Max Concurrent"
-                value={
-                  batchConfig.max_concurrent ??
-                  batchConfig.maxConcurrent ??
-                  "\u2014"
-                }
-              />
               <InfoLine
                 label="Storage"
                 value={
-                  batchConfig.storage_path ??
-                  batchConfig.storagePath ??
-                  "\u2014"
+                  batchConfig.storage === "memory"
+                    ? "In this gateway node's memory: a restart loses its batches"
+                    : batchConfig.storage || NOT_REPORTED
                 }
+              />
+              <InfoLine
+                label="Concurrency"
+                value={
+                  typeof batchConfig.default_max_concurrency === "number"
+                    ? `Set per submission (${batchConfig.default_max_concurrency} when a submission sets none)`
+                    : "Set per submission"
+                }
+              />
+              <InfoLine
+                label="Largest Submission"
+                value={formatBytes(batchConfig.max_body_bytes)}
               />
             </Stack>
           ) : (
-            <Typography variant="body2" color="text.secondary">
-              Batch API configuration not found in gateway config. Jobs can
-              still be submitted directly.
-            </Typography>
+            <NotReported what="batch" />
           )}
         </CardContent>
       </Card>
@@ -409,8 +486,9 @@ const BatchJobsTab = ({ config, gatewayId }) => {
                 sx={{ color: "text.disabled" }}
               />
               <Typography variant="body2" color="text.secondary">
-                No batch jobs submitted yet. Click &quot;Submit Batch Job&quot;
-                to get started.
+                {canEdit
+                  ? 'No batch jobs submitted yet. Click "Submit Batch Job" to get started.'
+                  : "No batch jobs submitted yet. An Owner or Admin can submit one."}
               </Typography>
             </Stack>
           ) : (
@@ -432,6 +510,7 @@ const BatchJobsTab = ({ config, gatewayId }) => {
                       job={job}
                       gatewayId={gatewayId}
                       onCancel={handleCancel}
+                      canCancel={canEdit}
                       onViewDetails={setSelectedJob}
                     />
                   ))}
@@ -533,7 +612,13 @@ const BatchJobsTab = ({ config, gatewayId }) => {
 // Batch Job Row — auto-polls status
 // ---------------------------------------------------------------------------
 
-const BatchJobRow = ({ job, gatewayId, onCancel, onViewDetails }) => {
+const BatchJobRow = ({
+  job,
+  gatewayId,
+  onCancel,
+  canCancel,
+  onViewDetails,
+}) => {
   const { data: status } = useBatchStatus(gatewayId, job.batch_id);
 
   const batchStatus = status?.status || "pending";
@@ -590,17 +675,29 @@ const BatchJobRow = ({ job, gatewayId, onCancel, onViewDetails }) => {
               <Iconify icon="mdi:eye-outline" width={18} />
             </IconButton>
           </Tooltip>
-          {(batchStatus === "pending" || batchStatus === "processing") && (
-            <Tooltip title="Cancel">
-              <IconButton
-                size="small"
-                color="error"
-                onClick={() => onCancel(job.batch_id)}
-              >
-                <Iconify icon="mdi:close-circle-outline" width={18} />
-              </IconButton>
-            </Tooltip>
-          )}
+          {(batchStatus === "pending" || batchStatus === "processing") &&
+            (canCancel ? (
+              <Tooltip title="Cancel">
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => onCancel(job.batch_id)}
+                >
+                  <Iconify icon="mdi:close-circle-outline" width={18} />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <GatewayAdminOnly allowed={false}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  aria-label="Cancel"
+                  disabled
+                >
+                  <Iconify icon="mdi:close-circle-outline" width={18} />
+                </IconButton>
+              </GatewayAdminOnly>
+            ))}
         </Stack>
       </TableCell>
     </TableRow>
@@ -876,10 +973,19 @@ const GatewaySettingsSection = () => {
   const queryClient = useQueryClient();
   const { gateway, gatewayId, isLoading: gwLoading } = useGatewayContext();
 
-  const { data: config, isLoading: configLoading } =
-    useGatewayConfig(gatewayId);
+  const {
+    data: config,
+    isLoading: configLoading,
+    refetch: refetchConfig,
+  } = useGatewayConfig(gatewayId);
   const reloadMutation = useReloadConfig();
 
+  // A check records its time and outcome either way, so both the gateway
+  // list and the config are re-read after it.
+  const refreshAfterHealthCheck = () => {
+    queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] });
+    refetchConfig?.();
+  };
   const healthCheckMutation = useMutation({
     mutationFn: async (id) => {
       const { data } = await axiosInstance.post(
@@ -889,10 +995,11 @@ const GatewaySettingsSection = () => {
       return data.result;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateways"] });
+      refreshAfterHealthCheck();
       enqueueSnackbar("Health check complete", { variant: "success" });
     },
     onError: () => {
+      refreshAfterHealthCheck();
       enqueueSnackbar("Health check failed", { variant: "error" });
     },
   });

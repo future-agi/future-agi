@@ -23,6 +23,7 @@ vi.mock("../providers/hooks/useOrgConfig", () => ({
 
 vi.mock("../providers/hooks/useGatewayConfig", () => ({
   useProviderHealth: () => mockProviderHealthReturn,
+  useGatewayConfig: () => ({ data: undefined, isLoading: false }),
 }));
 
 vi.mock("../context/useGatewayContext", () => ({

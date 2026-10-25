@@ -1,0 +1,37 @@
+{
+  "tools": {
+    "capabilities": {
+      "search": {
+        "enabled": true,
+        "providers": ["exa", "brave", "tavily"],
+        "max_cost_usd_per_call": 0.02,
+        "defaults": { "num_results": 10, "depth": "standard" },
+        "pinned": { "safe_search": true }
+      },
+      "fetch": {
+        "enabled": true,
+        "providers": ["firecrawl"],
+        "max_cost_usd_per_call": null
+      },
+      "documents.parse": { "enabled": false }
+    },
+    "policy": {
+      "domains": {
+        "allow": ["*.example.com", "docs.python.org"],
+        "deny": ["*.internal.example.com"]
+      },
+      "no_training_vendors_only": true,
+      "zdr_required": false,
+      "regions": ["us", "eu"],
+      "retention_override": "metadata"
+    }
+  },
+  "mcp": {
+    "enabled": true,
+    "managed_tools": {
+      "enabled": true,
+      "allow": ["search/exa", "search/brave", "fagi.web/*"],
+      "deny": ["fetch/*"]
+    }
+  }
+}

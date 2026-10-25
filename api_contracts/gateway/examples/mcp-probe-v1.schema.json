@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-probe-v1.schema.json",
+  "title": "mcp-probe-v1",
+  "description": "POST /-/mcp/probe: the request (MCPProbeRequest; auth is a typed secret used for that one probe, never stored or logged) and the results of a successful and a refused probe (MCPProbeResult). Nothing is stored.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "results"],
+  "properties": {
+    "request": {
+      "$ref": "../agentcc-admin.schema.json#/$defs/MCPProbeRequest"
+    },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "../agentcc-admin.schema.json#/$defs/MCPProbeResult" }
+    }
+  }
+}

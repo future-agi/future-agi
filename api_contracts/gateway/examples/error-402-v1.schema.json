@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/error-402-v1.schema.json",
+  "title": "error-402-v1",
+  "description": "Payment and limit refusals: the 402 rows, the 429 managed_spend_velocity and the 503 rows. A limit refusal names its limit_source, scope and resets_at (null when the limit lifts only on a top-up, a grant or a new run). The 503 rows carry no limit_source; managed_billing_unavailable names a reason. Retry-After is a header, not a body field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "code": {
+          "type": "string",
+          "enum": [
+            "managed_credits_exhausted",
+            "managed_credits_insufficient",
+            "managed_spend_paused",
+            "agent_budget_exhausted",
+            "agent_call_cap_exceeded",
+            "call_cap_unenforceable",
+            "key_limit_exceeded",
+            "managed_spend_velocity",
+            "managed_billing_unavailable",
+            "agent_run_stopped",
+            "managed_upstream_key_missing"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "param": { "type": "null" },
+        "metadata": { "$ref": "#/$defs/Metadata" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "managed_billing_unavailable",
+                  "managed_upstream_key_missing"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "metadata": { "not": { "required": ["limit_source"] } }
+            }
+          },
+          "else": {
+            "properties": {
+              "metadata": {
+                "required": [
+                  "limit_source",
+                  "remedy_hint",
+                  "scope",
+                  "resets_at"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "code": { "const": "managed_billing_unavailable" } }
+          },
+          "then": { "properties": { "metadata": { "required": ["reason"] } } }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit_source": {
+          "type": "string",
+          "enum": [
+            "agentcc_credits",
+            "agentcc_in_flight",
+            "agentcc_budget",
+            "agentcc_agent_budget",
+            "agentcc_call_cap",
+            "agentcc_key_limit",
+            "agentcc_spend_guard",
+            "agentcc_run_stop"
+          ]
+        },
+        "remedy_hint": { "type": "string" },
+        "required_usd": { "type": "number", "minimum": 0 },
+        "available_usd": { "type": "number" },
+        "scope": {
+          "type": "string",
+          "pattern": "^(org|key:[^:]+(:parallel)?|team:.+|user:.+|run:.+)$"
+        },
+        "resets_at": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "null" }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["redis_unavailable", "account_state_missing"]
+        }
+      }
+    }
+  }
+}

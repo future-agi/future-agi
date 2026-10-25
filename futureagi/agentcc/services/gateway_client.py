@@ -58,6 +58,13 @@ def _note_missing_admin_token(token):
 _note_missing_admin_token(AGENTCC_ADMIN_TOKEN)
 
 
+# The header naming the API key a /-/batches submit's items run as.
+BATCH_KEY_HEADER = "x-agentcc-batch-key"
+
+# Headers only the client sets: a caller's extra headers never replace them.
+_CLIENT_OWNED_HEADERS = frozenset({"authorization", "content-type"})
+
+
 class GatewayClientError(Exception):
     def __init__(self, message, status_code=None):
         super().__init__(message)
@@ -77,14 +84,21 @@ class GatewayClient:
             headers["Authorization"] = f"Bearer {self.admin_token}"
         return headers
 
-    def _request(self, method, path, params=None, json_body=None):
+    def _request(self, method, path, params=None, json_body=None, headers=None):
+        """Call the gateway admin API. ``headers`` are sent next to the admin
+        token and the JSON content type, never in place of them: an
+        Authorization or Content-Type among them (any case) is dropped."""
         url = f"{self.base_url}{path}"
+        request_headers = self._headers()
+        for name, value in (headers or {}).items():
+            if name.lower() not in _CLIENT_OWNED_HEADERS:
+                request_headers[name] = value
         try:
             with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
                 resp = client.request(
                     method,
                     url,
-                    headers=self._headers(),
+                    headers=request_headers,
                     params=params,
                     json=json_body,
                 )
@@ -176,6 +190,28 @@ class GatewayClient:
         """Remove a per-org config from the gateway."""
         return self._request("DELETE", f"/-/orgs/{org_id}/config")
 
+    # --- Managed models ---
+
+    def get_catalog(self):
+        """The managed providers' model catalog, with upstream and billed prices."""
+        return self._request("GET", "/-/catalog")
+
+    def get_org_credits(self, org_id):
+        """An org's managed-model credit balance."""
+        return self._request("GET", f"/-/orgs/{org_id}/credits")
+
+    def add_org_credits(self, org_id, amount_usd):
+        """The gateway answers 410 here; credits.put_granted sets an org's balance."""
+        return self._request(
+            "POST", f"/-/orgs/{org_id}/credits", json_body={"amount_usd": amount_usd}
+        )
+
+    def set_org_credits(self, org_id, balance_usd):
+        """The gateway answers 410 here; credits.put_granted sets an org's balance."""
+        return self._request(
+            "PUT", f"/-/orgs/{org_id}/credits", json_body={"balance_usd": balance_usd}
+        )
+
     def get_org_config(self, org_id):
         """Fetch a per-org config from the gateway."""
         return self._request("GET", f"/-/orgs/{org_id}/config")
@@ -219,22 +255,31 @@ class GatewayClient:
 
     # --- Batch API ---
 
-    def submit_batch(self, requests, max_concurrency=5):
+    def submit_batch(self, requests, max_concurrency=5, batch_key=None):
+        """Submit a batch whose items run as ``batch_key``: the gateway runs
+        each item as a chat request authenticated by that key (its org's
+        providers, guardrails, budgets, credits and request log), and with
+        auth enabled refuses a submit without one (400 batch_key_required)."""
         return self._request(
             "POST",
             "/-/batches",
             json_body={"requests": requests, "max_concurrency": max_concurrency},
+            headers={BATCH_KEY_HEADER: batch_key} if batch_key else None,
         )
 
-    def get_batch(self, batch_id):
-        return self._request(
-            "GET", f"/-/batches/{batch_id}", params={"batch_id": batch_id}
-        )
+    def get_batch(self, batch_id, org_id=None):
+        """The gateway answers 404 unless ``org_id`` is the batch's org."""
+        params = {"batch_id": batch_id}
+        if org_id is not None:
+            params["org_id"] = str(org_id)
+        return self._request("GET", f"/-/batches/{batch_id}", params=params)
 
-    def cancel_batch(self, batch_id):
-        return self._request(
-            "POST", f"/-/batches/{batch_id}/cancel", params={"batch_id": batch_id}
-        )
+    def cancel_batch(self, batch_id, org_id=None):
+        """The gateway answers 404 unless ``org_id`` is the batch's org."""
+        params = {"batch_id": batch_id}
+        if org_id is not None:
+            params["org_id"] = str(org_id)
+        return self._request("POST", f"/-/batches/{batch_id}/cancel", params=params)
 
     # --- MCP ---
 

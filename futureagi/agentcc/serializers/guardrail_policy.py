@@ -3,8 +3,13 @@ import copy
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.services import guardrail_urls
+from agentcc.services.guardrail_env_refs import (
+    GuardrailEnvReference,
+    policy_checks_env_reference_path,
+)
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -93,6 +98,37 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must have a 'name' field"
                 )
+            # A check's name is a non-empty string, the key the gateway runs it
+            # under.
+            name = check["name"]
+            if not isinstance(name, str) or not name.strip():
+                raise serializers.ValidationError(
+                    f"checks[{i}].name must be a non-empty string",
+                    code="guardrail_check_name_invalid",
+                )
+            # A check's config is an object, or absent / null (no settings,
+            # pushed as {}).
+            config = check.get("config")
+            if config is not None and not isinstance(config, dict):
+                raise serializers.ValidationError(
+                    f"checks[{i}].config must be a JSON object",
+                    code="guardrail_check_config_not_an_object",
+                )
+        # A "${" in a check's credential, URL or other provider setting (a
+        # futureagi check's credentials or base_url, an external-provider
+        # check's top-level settings) is refused on the policy save path, as on
+        # the org-config write paths; any other "${" is plain text.
+        path = policy_checks_env_reference_path(value, "checks")
+        if path:
+            raise serializers.ValidationError(
+                str(GuardrailEnvReference(path)), code=GuardrailEnvReference.code
+            )
+        # A check's callback URL is validated on the policy write path before a
+        # policy sync pushes it into the org config.
+        try:
+            guardrail_urls.reject_bad_policy_check_urls(value)
+        except guardrail_urls.BadGuardrailURL as e:
+            raise serializers.ValidationError(str(e), code=e.code) from None
         return value
 
     def validate_scope(self, value):

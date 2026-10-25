@@ -959,7 +959,7 @@
 ### GW-E2E-003 — a platform engineer adds a declared custom property as a Request Logs column
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization  
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`  
+**Spec:** `flows/gateway/request-log-columns.spec.ts:103`  
 **Tags:** —
 
 **User steps:**
@@ -993,6 +993,436 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — Request Logs show how each gateway request was billed and every upstream attempt behind it
+
+**Goal:** A platform engineer sees, for each gateway request, how it was billed and every upstream attempt behind it  
+**Spec:** `flows/gateway/request-attempts.spec.ts:73`  
+**Tags:** —
+
+**User steps:**
+
+1. mint a gateway API key in an organization of its own
+2. deliver two gateway requests on the logs webhook: a managed request whose first attempt was rate limited and fell back, and a BYOK request served on its first attempt
+3. open Request Logs, open Columns and tick Billing mode, Upstream cost, Markup and Attempts
+4. read the two rows' billing cells
+5. open the managed request and read its attempts in the detail drawer
+
+**Backend state verified:**
+
+- each request is stored in PG agentcc_request_log under the key's organization with the billing mode, upstream cost, markup and attempt count the gateway reported
+- PG agentcc_request_attempt holds exactly the managed request's two attempts in index order, error then success, and the BYOK request's one
+- the request-log detail endpoint returns those attempts in order and no landed cost
+- the table shows exactly Managed and BYOK with each row's upstream cost, markup and attempt count
+- the drawer lists the two attempts in order, rate-limited primary then the auto fallback that was billed, and the landed cost appears nowhere on the page
+
+### GW-E2E-005 — a saved auto routing preference and price caps reach the gateway and survive a reload
+
+**Goal:** A platform engineer tunes how model "auto" picks a model, and the gateway serves with the saved tuning  
+**Spec:** `flows/gateway/auto-routing.spec.ts:37`  
+**Tags:** —
+
+**User steps:**
+
+1. open Models, then the Auto routing tab
+2. choose the Quality preference and type a maximum input and output price
+3. save changes
+4. reload the page and see the saved preference and caps
+5. clear the output cap and save again
+
+**Backend state verified:**
+
+- the save sends one update-config patch carrying only routing.auto with the preference and both caps
+- the org's active PG agentcc_org_config version holds routing.auto with the Quality preference and both caps
+- the gateway's own copy of the org config carries the same routing.auto
+- after a reload the tab shows the saved preference and caps
+- clearing a cap deletes that key in a new active version, keeps the rest, and reaches the gateway
+
+### GW-E2E-006 — the Models page lists the gateway managed catalog at provider price plus the managed markup
+
+**Goal:** A developer browses the managed model catalog and sees what each model will be billed before using it  
+**Spec:** `flows/gateway/managed-catalog.spec.ts:72`  
+**Tags:** —
+
+**User steps:**
+
+1. open Models
+2. read the managed models card and the catalog's model count
+3. search the catalog for one model id
+4. open that model's details
+5. clear the search and filter the catalog by that model's vendor
+
+**Backend state verified:**
+
+- the managed-models status API reports managed models available and off for this org, at the gateway's 5% markup
+- the console's catalog API serves the gateway's own catalog: the same model ids as the gateway admin catalog, each list price billed at provider price plus 5%
+- the page counts exactly the catalog API's models and says the prices come from the bundled list
+- a search for one model id leaves exactly that model's row, with its billed input and output prices
+- the details drawer shows that model's provider and managed prices
+- the vendor filter leaves exactly the API's model count for that vendor
+
+### GW-E2E-007 — an org admin turns on managed models and, with no credit, sees why managed calls are refused
+
+**Goal:** An org admin turns on managed models and, with no credit left, sees in the console why managed requests are refused  
+**Spec:** `flows/gateway/managed-optin-credits.spec.ts:63`  
+**Tags:** —
+
+**User steps:**
+
+1. mint a gateway API key in an organization of its own
+2. call a managed catalog model with the key before opting in
+3. open Models, switch on Use managed models and confirm Enable
+4. read the card: Enabled, the credit balance and the out-of-credit warning
+5. call the same managed model again
+6. open Request Logs and the refused request
+
+**Backend state verified:**
+
+- before opt-in the gateway refuses the managed model for this org's key as not permitted, not as a 402
+- the switch saves managed_models.enabled true in the org's active PG agentcc_org_config version and creates the org's managed-credit account at zero in PG usage_managedcreditaccount
+- the card shows Enabled, a $0.00 balance and the out-of-credit warning naming HTTP 402
+- the managed-models status API reports enabled with a zero balance at the gateway markup
+- after opt-in the gateway answers the same call with 402 managed_credits_exhausted from the agentcc_credits limit, so the zero account was pushed to it
+- the refused call is logged under the org as a managed 402 with the gateway's reason, and Request Logs show exactly that row and reason
+
+### GW-E2E-008 — a stored org-config alert channel credential URL is write-only: masked to every reader, encrypted at rest, still sent to the gateway
+
+**Goal:** An org admin stores an alert channel whose webhook URL carries a credential; no member can read it back, and the gateway still gets it  
+**Spec:** `flows/gateway/org-config-secrets.spec.ts:56`  
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway Settings, then Org Config, and open the config editor
+2. on the Alerting tab enable per-org alerting, add a webhook channel and type its URL, which carries a token
+3. save and activate
+4. reopen the editor and see the stored URL as dots with a Replace action
+5. add a second channel with a plain URL and save again
+6. as a view-only member, search the Full Config view for the URL
+
+**Backend state verified:**
+
+- the first save sends one update-config patch carrying the typed channel and its URL
+- the active PG agentcc_org_config version stores the URL as enc:: ciphertext, never the typed value
+- the gateway's own copy of the org config carries the typed URL in clear
+- a view-only member reads the URL on org-configs/active and gateways/default/config only as the read mask, listed in secrets_set
+- the second save's patch carries the stored URL only as its read mask, never the URL; the new active version keeps the same ciphertext and the gateway keeps the URL
+
+**Browser observations:**
+
+- the reopened editor shows the stored URL as read-only dots with Replace, never the value or the mask
+- the view-only member's Full Config search finds the URL's pointer once and its value nowhere
+
+### GW-E2E-009 — a console batch job runs as the organization: served by its own provider, logged and announced as its, refused to a member, hidden from another organization
+
+**Goal:** An org admin runs a console batch job that is served by the organization's own provider, logged and announced as the organization's, while a member can only watch and check health, and another organization cannot see or cancel it. The batch's trace id is checked by GW-E2E-018 on the alt profile, the only one whose request log keeps request headers  
+**Spec:** `flows/gateway/batch-jobs-as-org.spec.ts:94`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock, an org key, and a webhook subscribed to batch.completed
+2. as a member, open Gateway Settings, then Batch Jobs, and see Submit Batch Job disabled, Owner or Admin only
+3. as the member, wait until the gateway's copy of the org config carries no push stamp, then click Health Check on Settings
+4. as the admin, open Batch Jobs, click Submit Batch Job, replace the JSON with two requests for the org's model, submit, and watch the job reach completed
+5. open View Details
+6. leave Batch Jobs for Settings
+7. as another organization's owner, try to read and cancel the batch; read it twice more as the admin
+
+**Backend state verified:**
+
+- a Member's submit-batch POST is refused with 403
+- the Member's refusal leaves no agentcc_batch_job row and no console-batch key for the org
+- the Member's health check pushes no org config to the gateway: it answers org_configs_pushed false and the gateway's copy of the org config gains no push stamp
+- the Admin's batch is recorded under the org with both items and reaches completed
+- each item is one request log row under the org, under the batch's minted key, with the request id the batch result names, served by the org provider
+- the org provider was called with the org's own credential for each item
+- another org cannot read or cancel the batch: the gateway answers 404 for that org's id on get and cancel, and Django answers 404 to that org
+- the org's webhook receives batch.completed exactly once, for this batch, as the org, even after the batch is read again
+- the batch's minted key is revoked in Django and at the gateway once the batch finished
+
+**Browser observations:**
+
+- the Member sees Submit Batch Job disabled with "Owner or Admin only" and the Member empty state
+- the Member's Health Check shows "Health check complete" and Last Health Check ends "(healthy)"
+- the Admin's job row shows completed
+- Batch Details shows Total 2, Completed 2, Failed 0 and both items' echoes
+
+### GW-E2E-010 — Gateway Settings show what this gateway runs, and Org Config notes only the org sections it does not enforce
+
+**Goal:** An org admin reads in Gateway Settings what this gateway actually runs (its timeouts, logging, batch limits and last health check) and, in Org Config, which of the organization's settings this gateway does not enforce, and only those. This is proven for the cache section, the one a node turns on or off by its own config (stock vs alt); the IP ACL note the stock node shows (it resolves no client IP) is asserted as shown. Runs on the stock and alt gateway profiles; the expected values are the declared profile's  
+**Spec:** `flows/gateway/settings-enforcement.spec.ts:153`  
+**Tags:** —
+
+**User steps:**
+
+1. read the gateway config the Settings page reads, before opening any page
+2. open Gateway Settings and read the Server Configuration, Gateway Info and Logging cards
+3. click Health Check
+4. open the Batch Jobs tab with a full navigation and read the Batch API card
+5. open Org Config with a full navigation, open the config editor, and read the notes above the Rate Limiting, Cache, Budgets, Security and Alerting tabs
+
+**Backend state verified:**
+
+- the config read reports the gateway's own server, logging and batch settings and the org sections it enforces and does not, exactly as this node runs them
+- a health check is recorded for the org: no check is recorded before the click, and after it the config read names one, status healthy
+
+**Browser observations:**
+
+- the Server Configuration, Logging and Gateway Info cards show exactly the profile's values (Last Health Check aside)
+- after the Health Check, Last Health Check ends "(healthy)"
+- the Batch API card shows memory storage, "10 when a submission sets none" and "10 MiB"
+- per Org Config tab the enforcement notes are exactly: stock - Cache and IP ACL only; alt - IP ACL only
+
+### GW-E2E-011 — org rate limits set in the console refuse the first request past each limit, across the organization's keys, naming the limit
+
+**Goal:** An org admin sets organization-wide, per-model and per-key token rate limits in the console, and the gateway refuses the first request past each limit, counting every key of the organization together where the limit says so, and names the limit that refused it  
+**Spec:** `flows/gateway/org-rate-limits.spec.ts:78`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving three models, and two org keys A and B
+2. open Org Config, open the config editor, Rate Limiting: switch on per-org rate limiting, set Requests per Minute (RPM) to 1, Save & Activate
+3. in a fresh minute of the gateway's clock, call model 1 with key A, then with key B
+4. Rate Limiting: clear RPM, set RPM per Model to 1, save; in a fresh minute call model 2 with A, model 2 with B, model 3 with B
+5. Rate Limiting: clear RPM per Model, set TPM per Key to 10, save; in a fresh minute call model 1 with A twice and with B once, each with max_tokens 5
+6. open Request Logs
+
+**Backend state verified:**
+
+- each save reaches the gateway: before each pair the gateway's copy of the org config carries the rate limits that save sent
+- with global_rpm 1 the org's second request in the minute is refused even from another key: A 200, B 429 rate_limit_exceeded naming global_rpm, with Retry-After
+- with per_model_rpm 1 a model's second request is refused from any key while another model passes: model 2 by A 200, model 2 by B 429 naming per_model_rpm, model 3 by B 200
+- with per_key_tpm 10 a key's request once its tokens this minute reached the limit is refused while another key passes: A 200, A 429 naming per_key_tpm, B 200
+- the three saves sent exactly these merge patches: rate limiting on with global_rpm 1; global_rpm 0 and per_model_rpm 1; per_model_rpm 0 and per_key_tpm 10
+- the org's request log holds every call in order, the three refusals as 429 rows whose message names global_rpm, per_model_rpm and per_key_tpm
+
+**Browser observations:**
+
+- the Rate Limiting tab shows "This gateway enforces these limits." on the stock node
+- Request Logs shows exactly the eight calls, Status newest first 200 429 200 200 429 200 429 200
+
+### GW-E2E-012 — a key budget and an organization budget refuse past their limits, Block then Throttle, and each level is announced once by email and webhook
+
+**Goal:** An org admin sets a budget on one API key and an organization budget that first blocks and then throttles spending past its limit, and is told once per budget level in this period, by email and by webhook, that the budget was exceeded. Once per level per period is proven for two levels (key, org) within one period; a second period needs clock control  
+**Spec:** `flows/gateway/budget-block-throttle.spec.ts:117`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving gpt-4o-mini, org keys A and B, a webhook and an SMTP email alert subscribed to Budget Exceeded; read key B's name back from the gateway
+2. open Org Config, open the config editor, Budgets: enable per-org budgets, add a Key Budget for key B with Limit (USD) 0.000001, Save & Activate
+3. call with key B three times, then with key A once
+4. open Budgets, Set Budget: Organization, Limit 0.000015, When Limit Exceeded Block, Save
+5. call with key A three times
+6. Set Budget again: Organization, Limit 0.000015, Throttle, Requests per minute 1, Save
+7. in a fresh minute of the gateway's clock, call with key A twice
+8. wait out the returned Retry-After plus 1 s, then call with key A once
+9. open Budget Config, then Webhooks > Delivery Log
+
+**Backend state verified:**
+
+- the key budget save reaches the gateway: per-org budgets on, key B's limit as sent
+- past its key budget a key is refused while the org's other key passes: B 200, 429 org_budget_exceeded, 429 org_budget_exceeded; A 200
+- the key level is announced once though it refused twice: one budget.exceeded webhook for level key:<B>, action block, and one Budget Exceeded email
+- the Block save reaches the gateway as the org budget, beside the key budget: org_limit and action as the dialog sent
+- past the org limit Block refuses: A 200, then 429 org_budget_exceeded twice
+- the Throttle save reaches the gateway: action throttle with throttle_rpm as sent
+- past the limit Throttle admits one request in the gateway's minute and refuses the next with budget_throttled, whose Retry-After is the seconds left in that minute
+- once that minute is over, Throttle admits the next request
+- every refusal is logged under the org with its refusal metadata, oldest first: key level twice, org Block twice, org Throttle once, all monthly from this month's start
+- each level is announced to the webhook exactly once in the period: two budget.exceeded deliveries, key level then org level, and two event rows
+- each level is emailed exactly once in the period: two Budget Exceeded emails, and the alert holds two budget keys with nothing pending
+- the saves sent exactly the console's bodies: the key budget patch, org_limit 0.000015 block with alert threshold 80, then the same with throttle and throttle_rpm 1
+
+**Browser observations:**
+
+- Budget Config shows exactly the Organization card (Limit $0.0000150, Period monthly, Alert Threshold 80%, Throttle 1 requests a minute per gateway replica past the limit) and key B's card
+- the Delivery Log lists exactly two budget.exceeded deliveries, both delivered
+
+### GW-E2E-013 — the gateway's background schedules are registered and running on a fresh install, so a refused webhook delivery is retried on its own
+
+**Goal:** On a fresh install, the gateway's background jobs (alert evaluation, webhook delivery retries and console batch reporting) are scheduled and running without anyone opening the console, so a webhook delivery that failed is retried on its own  
+**Spec:** `flows/gateway/background-schedules.spec.ts:66`  
+**Tags:** —
+
+**User steps:**
+
+1. on a freshly booted stack, before anyone opens the console, look the gateway's schedules up in Temporal
+2. seed an org provider on the echo mock, an org key, and a webhook subscribed to Request Completed whose receiver refuses its first delivery
+3. send one request through the gateway with the org key
+4. open Webhooks, then Delivery Log
+
+**Backend state verified:**
+
+- the three gateway schedules are registered in Temporal: agentcc-alerts-evaluator, agentcc-webhook-delivery and agentcc-batches
+- each runs its activity on its interval on the default queue: evaluator 60 s, webhook delivery 30 s, batches 60 s
+- none is paused and each has started at least one run since the boot
+- a webhook delivery the receiver refused is delivered by the delivery schedule with no one acting: the event ends delivered on its second attempt, and the receiver saw exactly a refused then an accepted request for it
+
+**Browser observations:**
+
+- the Delivery Log shows the one Request Completed event delivered on attempt 2 of 5, with no Retry action and no error
+
+### GW-E2E-014 — an org Model Database override prices the organization's own-key calls, refuses more output than its limit, fills the limit when none is asked, and refuses tools it turned off
+
+**Goal:** An org admin overrides a model's price, output limit and tool use in the organization's Model Database, and calls made through the organization's own provider are priced by that override, refused when they ask for more output than the limit (and sent with the limit when they name none), and refused tools. As the source does it, an over-limit max_tokens is refused (400), an unset one is filled with the limit  
+**Spec:** `flows/gateway/org-model-database.spec.ts:76`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving a minted model, and an org key
+2. open Org Config, open the config editor, Model Database: add an override for the model with Input per Token 0.001, Output per Token 0.002, Max Output Tokens 50 and Function Calling Off, Save & Activate
+3. call the model with max_tokens 100, then with a tool, then with no max_tokens
+4. open Request Logs
+
+**Backend state verified:**
+
+- the save reaches the gateway: its copy of the org's Model Database holds the override as sent
+- a request asking for more output than the override allows is refused 400 max_tokens_exceeds_limit on max_tokens, naming 50, and never reaches the provider
+- a request with tools is refused 400 model_capability_error naming function_calling, and never reaches the provider
+- a request that sets no max_tokens is sent to the provider with max_tokens 50
+- that call is priced by the override: 7 input and 7 output tokens at 0.001 and 0.002 cost 0.021 in the request log
+- the save sent exactly the override as one merge patch of model_database
+
+**Browser observations:**
+
+- Request Logs shows exactly the three calls, Status newest first 200 400 400, and Cost $0.0210 $0.00 $0.00
+
+### GW-E2E-015 — an agent's deadline ends the call with the gateway's timeout answer by the deadline, when the provider is slower and when the organization's retry would wait past it
+
+**Goal:** An agent developer gives a call a deadline and gets the gateway's timeout answer by that deadline, both when the organization's provider is slower than the deadline and when the organization's retry would wait past it. The answer for a deadline that cuts a running attempt is 504 gateway_timeout with x-agentcc-deadline-exceeded: true.  
+**Spec:** `flows/gateway/agent-deadline.spec.ts:75`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two org providers on the mock, one answering after 400 ms for model 1 and one answering 503 for model 2, and an org key
+2. open Org Config, open the config editor, Routing: Enable Retries, Max Retries 1, Initial Delay 10s, Max Delay 10s, Multiplier 1, retry on 503, Save & Activate
+3. call model 1 with x-agentcc-deadline-ms 50
+4. call model 2 with x-agentcc-deadline-ms 150
+5. open Request Logs
+
+**Backend state verified:**
+
+- the retry settings reach the gateway as saved
+- with a 50 ms deadline against a 400 ms provider the gateway answers 504 gateway_timeout with x-agentcc-deadline-exceeded: true, before the provider would have answered
+- the gateway's own record of that request ends within about 100 ms of its start (latency_ms under 150)
+- a retry whose backoff would outlive a 150 ms deadline never holds the answer past it (answered as the gateway's 502 within 500 ms), and no provider call is sent past it
+
+**Browser observations:**
+
+- Request Logs shows exactly the two calls, Status newest first 502 504
+
+### GW-E2E-016 — a customer key's retry, failover, circuit breaker and model map run on the organization's own providers only
+
+**Goal:** An org admin who runs two providers for a model sets failover on 503, retries and a circuit breaker, and maps an alias to a third provider, and the organization's API key is retried, failed over, cut off from a failing provider and routed by the alias, always on the organization's own providers. That the key never reaches the operator's provider is carried by the attempt rows, which name no provider outside the organization's, because the operator's node provider is the mock's default route, which the upstream recorder does not record; and an upstream 503 matches a [503] list by the upstream status only, the gateway's own status being 502  
+**Spec:** `flows/gateway/org-provider-failover.spec.ts:99`  
+**Tags:** —
+
+**User steps:**
+
+1. seed providers A (the mock answering 503) and B (echo) serving one model, provider C (echo) serving exactly one other model, and an org key
+2. open Providers > Routing: Failover on, Max Attempts 2, Failover on Status Codes 503, Save Routing Config
+3. open Org Config, the config editor, Routing: Enable Retries, Max Retries 1, Initial Delay 1ms, Max Delay 2ms, Multiplier 1, retry on 503; Model Map: the alias to C; Save & Activate
+4. call the model (request 1), then the alias
+5. Org Config, Routing: Enable Circuit Breaker, Failure Threshold 1, Success Threshold 1, Cooldown 60s, on 503, Save & Activate
+6. call the model twice more (requests 2 and 3)
+7. open Request Logs, then request 1's detail
+
+**Backend state verified:**
+
+- the failover, retry and model map saves reach the gateway as sent
+- an upstream 503 on the first provider matches the [503] lists (the gateway's own status for it, 502, is what the attempt rows record): it is retried once, then failed over to the second provider, which answers (200; A called twice, B once; attempts A primary error 502, A retry error 502, B failover success)
+- only the organization's providers are ever called, each with its own credential: no foreign (scenario, authorization) pair at the mock and no attempt naming another provider
+- the alias is routed to the mapped provider and sent as its one model
+- once the breaker opens on the failing provider, the next request makes no call to it: A's calls for requests 2 and 3 are [2, 0], B's [1, 1], both answered 200
+- the three saves sent exactly the console's merge patches
+
+**Browser observations:**
+
+- Request Logs shows exactly the four calls, all 200
+- request 1's drawer lists three attempts, data-outcome error, error, success
+
+### GW-E2E-017 — a critical alert rule fires once per cooldown with its severity, across a config change, and shows Active only once per-org alerting is on
+
+**Goal:** An org admin creates a critical alert rule with a cooldown on a webhook channel and gets exactly one critical alert while the condition holds within the cooldown, even across a config change, and the console shows the rule active once per-org alerting is on and only while the gateway reports it enforces alerting. No real "not installed" node is reachable end to end; the chip's dependence on the reported list is proven by a route rewrite of the console's config read  
+**Spec:** `flows/gateway/alert-rule-severity.spec.ts:82`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. open Org Config, open the config editor, Alerting: switch on per-org alerting, add a webhook channel to the sink, add rule critical (Request Count >= 1, window 1m, cooldown 1h, Critical, on the channel) and rule every (the same with cooldown 0s, Info), switch per-org alerting off again, Save & Activate
+3. open Monitoring > Alert Rules with a full navigation
+4. Alerting: switch per-org alerting on, Save & Activate; open Alert Rules again with a full navigation
+5. call the gateway with the org key once
+6. call it twice more
+7. Rate Limiting: switch on per-org rate limiting, Requests per Minute (RPM) 1000, Save & Activate
+8. call it a fourth time
+9. open Alert Rules again with a full navigation
+
+**Backend state verified:**
+
+- the saves reach the gateway: per-org alerting on, both rules with their severity and cooldown, the channel URL in clear
+- the critical rule's first alert is one webhook naming the rule, severity critical and metric request_count
+- inside its cooldown the critical rule sends nothing more, across more requests and a config push, while the 0s rule fires on every request: critical 1, every 4
+- the saves sent exactly the console's patches: the alerting draft with enabled false, then alerting enabled true, then rate limiting on with global_rpm 1000
+
+**Browser observations:**
+
+- before per-org alerting is on both rules' Status chips read "Alerting off"; after, both read "Active"
+- the Severity cells read critical and info, the Cooldown cells 1h and 0s
+
+### GW-E2E-018 — a console batch job's items share one trace id in the request log, the batch's, carried by no other request
+
+**Goal:** An org admin who runs a console batch job on a gateway that logs request headers can find both of its items in the request log under one trace id that no other request carries. It is proven on the alt gateway profile only, because the trace id reaches the request log only inside request_headers, which a stock gateway does not send; and the batch's trace id is proven as one well-formed id carried once by both items, distinct from each item's request id and from an independent request's trace id, because no surface shows the batch's own trace id  
+**Spec:** `flows/gateway/batch-trace-id.spec.ts:59`  
+**Tags:** @gw-profile-alt
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. send one independent request with the org key and keep its trace id and request id
+3. as the admin, open Batch Jobs, submit two requests for the org's model, and watch the job reach completed
+4. wait until the request log holds the batch's two rows besides the independent one
+
+**Backend state verified:**
+
+- both batch items are logged under one trace id, the batch's: present on both rows, carried once on each, well formed, the same on both, not either item's request id, and not the trace id of an independent request
+
+**Browser observations:**
+
+- the admin's job row shows completed
+
+### GW-E2E-019 — a streamed chat answer that the organization's blocking answer check blocks never reaches the client, and a passing one streams in full
+
+**Goal:** An org admin switches on a check on the model's answer in block mode in the console; a developer streaming chat through the gateway then gets a passing answer in full, and for an answer the check blocks gets none of its text, only the guardrail's error, and the request log records the block  
+**Spec:** `flows/gateway/stream-answer-check.spec.ts:92`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. open Org Config, open the config editor, Guardrails: switch on Data Leakage Prevention (block, the switch's default), Save & Activate
+3. stream a chat answer that carries no leak
+4. stream a chat answer that echoes a minted table name in a DROP TABLE statement next to /etc/passwd
+5. open Request Logs
+
+**Backend state verified:**
+
+- the check reaches the gateway as saved: the gateway's copy of the org config has data-leakage-prevention enabled in block mode
+- a passing answer streams in full: its deltas join to the whole echo, with no error event, and the stream ends [DONE]
+- a blocked answer: no frame carries the minted table name, and the stream is only the guardrail's error event (guardrail_error content_blocked, naming data-leakage-prevention), then [DONE]
+- the provider streamed both answers, so the gateway withheld the blocked one rather than skipping the call
+- the request log records the blocked stream as 403 with guardrail_triggered and metadata guardrail_action blocked, and the passing one as 200 with neither
+
+**Browser observations:**
+
+- the Data Leakage Prevention card shows "Action: block" once switched on
+- Request Logs shows exactly the two calls, Status newest first 403 200
 
 ## observe
 

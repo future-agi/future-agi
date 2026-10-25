@@ -1,0 +1,26 @@
+{
+  "vendor": "google_model_armor",
+  "capability": "guardrails",
+  "skus": [
+    {
+      "sku": "google_model_armor.char_1k",
+      "unit": "char_1k",
+      "usd_per_unit": 2.5e-5,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://cloud.google.com/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

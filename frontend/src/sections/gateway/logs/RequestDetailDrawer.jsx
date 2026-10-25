@@ -29,6 +29,15 @@ import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
 import { formatCost } from "../utils/formatters";
+import {
+  AutoRoutingSection,
+  BillingSection,
+  isAutoRouted,
+} from "./RequestRoutingDetails";
+import { PolicyRows } from "./RoutingContextRows";
+import AttemptsTimeline from "./attempts/AttemptsTimeline";
+import RequestAgentSection from "./RequestAgentSection";
+import GenerationIdCopyButton from "./GenerationIdCopyButton";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -264,6 +273,8 @@ function OverviewTab({ log }) {
             <strong>Resolved Model:</strong>{" "}
             {log.resolved_model || log.model || "N/A"}
           </Typography>
+          {/* The auto block shows these itself. */}
+          {!isAutoRouted(log) && <PolicyRows routing={log.routing} />}
         </Stack>
         {log.is_error && log.error_message && (
           <Alert severity="error" sx={{ mt: 1 }}>
@@ -271,6 +282,14 @@ function OverviewTab({ log }) {
           </Alert>
         )}
       </Box>
+
+      <AttemptsTimeline attempts={log.attempts} />
+
+      <AutoRoutingSection log={log} />
+
+      <BillingSection log={log} />
+
+      <RequestAgentSection log={log} />
 
       {/* Identity */}
       <Box>
@@ -523,12 +542,15 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
             </>
           ) : log ? (
             <>
-              <Tooltip title={log.request_id || log.id} placement="top" arrow>
-                <Typography variant="h6" noWrap>
-                  {(log.request_id || log.id || "").slice(0, 20)}
-                  {(log.request_id || log.id || "").length > 20 ? "..." : ""}
-                </Typography>
-              </Tooltip>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Tooltip title={log.request_id || log.id} placement="top" arrow>
+                  <Typography variant="h6" noWrap>
+                    {(log.request_id || log.id || "").slice(0, 20)}
+                    {(log.request_id || log.id || "").length > 20 ? "..." : ""}
+                  </Typography>
+                </Tooltip>
+                <GenerationIdCopyButton generationId={log.generation_id} />
+              </Stack>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="body2" color="text.secondary">
                   {log.model}
@@ -630,9 +652,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       )}
 
       {/* ---- Loading spinner ---- */}
-      {isLoading && (
-        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
-      )}
+      {isLoading && <LoadingScreen variant="orbit" sx={{ flex: 1 }} />}
 
       {/* ---- Detail content ---- */}
       {!isLoading && log && (

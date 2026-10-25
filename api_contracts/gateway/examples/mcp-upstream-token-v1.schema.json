@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-upstream-token-v1.schema.json",
+  "title": "mcp-upstream-token-v1",
+  "description": "A user's upstream token for an MCP server: the request ($defs/Request) and its success and refusal answers ($defs/Success, $defs/Refusal).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "success", "refusal"],
+  "properties": {
+    "request": {
+      "$ref": "#/$defs/Request"
+    },
+    "success": {
+      "$ref": "#/$defs/Success"
+    },
+    "refusal": {
+      "$ref": "#/$defs/Refusal"
+    }
+  },
+  "$defs": {
+    "Request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "user_id", "server_id"],
+      "properties": {
+        "org_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "server_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Success": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "access_token",
+        "token_type",
+        "expires_at",
+        "credential_version"
+      ],
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_type": {
+          "const": "Bearer"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "credential_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "string",
+          "enum": ["no_credential", "needs_reauth", "revoked", "expired"]
+        },
+        "connect_hint": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

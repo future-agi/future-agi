@@ -16,6 +16,15 @@ import { val } from "../utils/analyticsHelpers";
 import { useOrgConfig, useCreateOrgConfig } from "./hooks/useOrgConfig";
 import OrgConfigEditor from "../../gateway/settings/OrgConfigEditor";
 
+// Whether this gateway runs response caching for orgs, from its own
+// org_sections_enforced, never from anything else: null when it
+// does (nothing to say).
+function cacheEnforcementText(enforced) {
+  if (!Array.isArray(enforced)) return "Enforcement unknown";
+  if (enforced.includes("cache")) return null;
+  return "Off on this gateway: saved, not applied (response caching is off on this gateway)";
+}
+
 const CacheStatusView = ({ config, gatewayId }) => {
   const cache = config?.cache;
   const [editorOpen, setEditorOpen] = useState(false);
@@ -93,32 +102,22 @@ const CacheStatusView = ({ config, gatewayId }) => {
               Configure Cache
             </Button>
           </Stack>
+          {/* Only what the gateway applies for an org's cache: on or off and
+              the default TTL. Backend, max entries, semantic and
+              edge settings are never read for an org, so they are not
+              shown. */}
           <Stack spacing={1}>
             <InfoLine label="Enabled" value={cache?.enabled ? "Yes" : "No"} />
-            <InfoLine
-              label="L1 Backend"
-              value={(cache?.backend || "memory").replace(/-/g, " ")}
-            />
             <InfoLine
               label="Default TTL"
               value={cache?.defaultTtl ?? cache?.default_ttl ?? "\u2014"}
             />
-            <InfoLine
-              label="Max Entries"
-              value={cache?.maxEntries ?? cache?.max_entries ?? "\u2014"}
-            />
-            <InfoLine
-              label="Semantic Cache"
-              value={
-                cache?.semantic?.enabled
-                  ? `Enabled (${cache?.semantic?.backend || "memory"})`
-                  : "Disabled"
-              }
-            />
-            <InfoLine
-              label="Edge Cache"
-              value={cache?.edge?.enabled ?? false ? "Enabled" : "Disabled"}
-            />
+            {cacheEnforcementText(config?.org_sections_enforced) && (
+              <InfoLine
+                label="On This Gateway"
+                value={cacheEnforcementText(config?.org_sections_enforced)}
+              />
+            )}
           </Stack>
 
           {!cache?.enabled && (

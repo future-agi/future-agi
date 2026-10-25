@@ -232,6 +232,14 @@ services:
       AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
       AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      # The gateway refuses to start on the default above or any weak token,
+      # and the API's admin endpoints refuse it too. Left on the
+      # default or empty, bin/start makes a random one for this start (the
+      # gateway and the API both run in this container); set one in .env to
+      # call the admin API from outside. 1 keeps the token as it is and accepts
+      # it, for local development and the E2E stack only. Which gateways read it:
+      # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
+      AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: ${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}
       RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
       RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
       MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}

@@ -69,6 +69,11 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// UpstreamModelName is the id the Messages API translation sends the host
+// for model (providers.UpstreamModelNamer). The native pass-through sends
+// the body's model as it is.
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.

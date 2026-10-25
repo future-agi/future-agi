@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Typography,
@@ -11,7 +11,11 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
-import { useCreateGuardrailFeedback } from "./hooks/useGuardrailFeedback";
+import {
+  useCreateGuardrailFeedback,
+  useMyGuardrailFeedback,
+  useUpdateGuardrailFeedback,
+} from "./hooks/useGuardrailFeedback";
 
 const FEEDBACK_OPTIONS = [
   { value: "correct", label: "Correct", color: "success" },
@@ -20,16 +24,62 @@ const FEEDBACK_OPTIONS = [
   { value: "unsure", label: "Unsure", color: "default" },
 ];
 
+// One reviewer's answer on one guardrail check of one request: the
+// widget loads the answer this reviewer saved, shows it, and Edit changes
+// that answer (PATCH) instead of adding another.
 const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
   const [expanded, setExpanded] = useState(false);
   const [feedback, setFeedback] = useState(existingFeedback?.feedback || "");
   const [comment, setComment] = useState(existingFeedback?.comment || "");
   const [selectedCheck, setSelectedCheck] = useState(checkName || "");
-  const createMutation = useCreateGuardrailFeedback();
   const [submitted, setSubmitted] = useState(Boolean(existingFeedback));
+  const [savedId, setSavedId] = useState(existingFeedback?.id || null);
+  // The answer as last saved, which Cancel goes back to.
+  const [savedAnswer, setSavedAnswer] = useState({
+    feedback: existingFeedback?.feedback || "",
+    comment: existingFeedback?.comment || "",
+  });
+  const createMutation = useCreateGuardrailFeedback();
+  const updateMutation = useUpdateGuardrailFeedback();
+  const { answer } = useMyGuardrailFeedback(requestLogId, checkName);
+
+  // Show the saved answer once it loads, unless the reviewer is editing.
+  useEffect(() => {
+    if (!answer || expanded) return;
+    setSavedId(answer.id);
+    setFeedback(answer.feedback || "");
+    setComment(answer.comment || "");
+    setSavedAnswer({
+      feedback: answer.feedback || "",
+      comment: answer.comment || "",
+    });
+    setSubmitted(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer?.id, answer?.feedback, answer?.comment]);
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
 
   const handleSubmit = () => {
     if (!feedback || !requestLogId) return;
+    const onSuccess = (result) => {
+      if (result?.id) setSavedId(result.id);
+      setSavedAnswer({ feedback, comment });
+      enqueueSnackbar(savedId ? "Feedback updated" : "Feedback submitted", {
+        variant: "success",
+      });
+      setSubmitted(true);
+      setExpanded(false);
+    };
+    const onError = () =>
+      enqueueSnackbar("Failed to submit feedback", { variant: "error" });
+
+    if (savedId) {
+      updateMutation.mutate(
+        { id: savedId, feedback, comment },
+        { onSuccess, onError },
+      );
+      return;
+    }
     createMutation.mutate(
       {
         request_log: requestLogId,
@@ -37,15 +87,7 @@ const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
         feedback,
         comment,
       },
-      {
-        onSuccess: () => {
-          enqueueSnackbar("Feedback submitted", { variant: "success" });
-          setSubmitted(true);
-          setExpanded(false);
-        },
-        onError: () =>
-          enqueueSnackbar("Failed to submit feedback", { variant: "error" }),
-      },
+      { onSuccess, onError },
     );
   };
 
@@ -122,11 +164,21 @@ const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
               size="small"
               variant="contained"
               onClick={handleSubmit}
-              disabled={!feedback || createMutation.isPending}
+              disabled={!feedback || isPending}
             >
-              {createMutation.isPending ? "Submitting..." : "Submit Feedback"}
+              {isPending ? "Submitting..." : "Submit Feedback"}
             </Button>
-            <Button size="small" onClick={() => setExpanded(false)}>
+            <Button
+              size="small"
+              onClick={() => {
+                setExpanded(false);
+                if (savedId) {
+                  setFeedback(savedAnswer.feedback);
+                  setComment(savedAnswer.comment);
+                  setSubmitted(true);
+                }
+              }}
+            >
               Cancel
             </Button>
           </Stack>

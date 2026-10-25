@@ -1,0 +1,31 @@
+{
+  "pages": [
+    {
+      "index": 0,
+      "markdown": "# INVOICE 2026-0042\nBill to: Example Customer",
+      "images": [],
+      "dimensions": { "dpi": 200, "height": 2200, "width": 1700 },
+      "header": "ACME Corp",
+      "footer": "Page 1 of 3"
+    },
+    {
+      "index": 1,
+      "markdown": "| Item | Amount |\n|---|---|\n| Widgets | 40.00 |",
+      "images": [],
+      "dimensions": { "dpi": 200, "height": 2200, "width": 1700 },
+      "header": "ACME Corp",
+      "footer": "Page 2 of 3"
+    },
+    {
+      "index": 2,
+      "markdown": "Total due: 42.00",
+      "images": [],
+      "dimensions": { "dpi": 200, "height": 2200, "width": 1700 },
+      "header": "ACME Corp",
+      "footer": "Page 3 of 3"
+    }
+  ],
+  "model": "mistral-ocr-4-0",
+  "document_annotation": "{\"invoice_number\":\"2026-0042\",\"total\":42.0}",
+  "usage_info": { "pages_processed": 3, "doc_size_bytes": 51234 }
+}

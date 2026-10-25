@@ -1,0 +1,538 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-tool-call-v1.schema.json",
+  "title": "mcp-tool-call-v1",
+  "description": "One tools/call record (allowed, denied, failed or errored), event kind tool_call. Tool and server names are kept under every content mode; arguments and result appear only under content_mode full (redacted, 16 KiB each). No secret, token or session id appears: session_hash is a hash. Uses only the keywords internal/contracts/schematest supports, so the gateway's tests can check records against it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "v",
+    "event_id",
+    "org_id",
+    "request_id",
+    "tool_call_id",
+    "ts_ms",
+    "started_at",
+    "api_key_id",
+    "principal_kind",
+    "virtual_server_id",
+    "server_id",
+    "tool",
+    "upstream_tool",
+    "era",
+    "protocol_version",
+    "agent",
+    "outcome",
+    "is_error",
+    "latency_ms",
+    "upstream_latency_ms",
+    "gateway_overhead_ms",
+    "bytes_in",
+    "bytes_out",
+    "billing_mode",
+    "credential_type",
+    "credential_source",
+    "upstream_cost_micros",
+    "billed_cost_micros",
+    "markup_micros",
+    "markup_bps",
+    "cost_source",
+    "usage_estimated",
+    "dispatched",
+    "guardrail",
+    "content_mode"
+  ],
+  "properties": {
+    "kind": {
+      "const": "tool_call"
+    },
+    "v": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Equals tool_call_id."
+    },
+    "org_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_call_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ts_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "api_key_id": {
+      "type": "string",
+      "description": "Empty for a principal with no key (OAuth, runtime token)."
+    },
+    "principal_kind": {
+      "type": "string",
+      "enum": ["key", "oauth", "runtime", "callback", "admin"]
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "client_id": {
+      "type": "string"
+    },
+    "virtual_server_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The exposed tool name."
+    },
+    "upstream_tool": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_revision": {
+      "type": "string"
+    },
+    "via": {
+      "type": "string",
+      "enum": ["call_tool"],
+      "description": "Set when the call came through the search-mode call_tool meta tool."
+    },
+    "era": {
+      "type": "string",
+      "enum": [
+        "2026-07-28",
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05"
+      ]
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "agent": {
+      "$ref": "#/$defs/Agent"
+    },
+    "generation_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "is_error", "denied", "error", "timeout", "cancelled"]
+    },
+    "is_error": {
+      "type": "boolean"
+    },
+    "error_class": {
+      "$ref": "#/$defs/ErrorClass",
+      "description": "Set on every outcome but success; absent on success, as in generation-v1's AttemptSummary."
+    },
+    "error_origin": {
+      "type": "string",
+      "description": "Set on every outcome but success; absent on success.",
+      "enum": ["gateway", "upstream", "client", "network"]
+    },
+    "error_code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "error_message": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "Credentials scrubbed."
+    },
+    "latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "upstream_latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "gateway_overhead_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_in": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_out": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "billing_mode": {
+      "type": "string",
+      "enum": ["byok", "managed"],
+      "description": "A customer-connected server is byok with billed 0."
+    },
+    "credential_type": {
+      "type": "string",
+      "enum": ["byok", "managed", "none"]
+    },
+    "credential_source": {
+      "type": "string",
+      "enum": ["none", "org_shared", "user", "managed"]
+    },
+    "fallback_from": {
+      "type": "string",
+      "enum": ["revoked", "expired", "needs_reauth", "no_token"],
+      "description": "Set only when managed_tools.fallback_to_managed moved the call to managed."
+    },
+    "upstream_cost_micros": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "billed_cost_micros": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "markup_micros": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "markup_bps": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cost_source": {
+      "type": "string",
+      "enum": ["none", "tool_price", "upstream_reported"]
+    },
+    "usage_estimated": {
+      "type": "integer",
+      "enum": [0, 1],
+      "description": "1 when a dispatched call ended without a result and was settled at its price."
+    },
+    "dispatched": {
+      "type": "boolean"
+    },
+    "budget_scope": {
+      "type": "string"
+    },
+    "guardrail": {
+      "$ref": "#/$defs/Guardrail"
+    },
+    "approval_id": {
+      "type": "string"
+    },
+    "content_mode": {
+      "type": "string",
+      "enum": ["full", "metadata", "none"],
+      "description": "The stricter of the resolved content mode and the call's terms retention."
+    },
+    "arguments": {
+      "description": "Content mode full only: the call's arguments, redacted and capped at 16 KiB."
+    },
+    "result": {
+      "description": "Content mode full only: the result, redacted and capped at 16 KiB."
+    },
+    "identity": {
+      "$ref": "#/$defs/IdentityChain"
+    },
+    "account_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy": {
+      "$ref": "#/$defs/Policy"
+    },
+    "flow": {
+      "$ref": "#/$defs/Flow"
+    },
+    "shaped": {
+      "$ref": "#/$defs/Shaped"
+    }
+  },
+  "$defs": {
+    "Step": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "Agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent context. Empty when the caller sent none.",
+      "properties": {
+        "framework": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_version": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "parent_run_id": {
+          "type": "string"
+        },
+        "root_run_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "step": {
+          "$ref": "#/$defs/Step"
+        },
+        "turn": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "identity_source": {
+          "type": "string",
+          "pattern": "^(runtime_token|callback_token|oauth|header|meta|body|alias:[a-z0-9-]+)$"
+        }
+      }
+    },
+    "ErrorClass": {
+      "type": "string",
+      "enum": [
+        "rate_limited",
+        "timeout",
+        "upstream_5xx",
+        "upstream_4xx",
+        "context_length",
+        "content_filter",
+        "auth",
+        "invalid_request",
+        "network",
+        "circuit_open",
+        "policy",
+        "budget",
+        "insufficient_credits",
+        "cancelled",
+        "unknown",
+        "denied",
+        "quarantined",
+        "approval_required",
+        "auth_required",
+        "invalid_arguments",
+        "protocol"
+      ]
+    },
+    "Guardrail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blocked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "masked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shadow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "IdentityChain": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "identity-chain-v1.",
+      "required": ["actor_chain", "source"],
+      "properties": {
+        "sponsor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["user_id", "org_id"],
+          "properties": {
+            "user_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "org_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idp": {
+              "type": "string"
+            },
+            "idp_subject": {
+              "type": "string"
+            }
+          }
+        },
+        "actor_chain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Actor"
+          }
+        },
+        "grant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "enum": ["oauth", "runtime", "key_owner", "grant"]
+        }
+      }
+    },
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "run_id"],
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deployment_id": {
+          "type": "string"
+        }
+      }
+    },
+    "Policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The tool policy decision.",
+      "required": ["rule", "action", "shadow"],
+      "properties": {
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "enum": ["allow", "approve", "deny"]
+        },
+        "shadow": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TaintSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_call_id", "tool"],
+      "properties": {
+        "tool_call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The flow-control decision. state_before is the run's taint state before the call.",
+      "required": ["state_before", "decision"],
+      "properties": {
+        "state_before": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "private_read": {
+              "$ref": "#/$defs/TaintSource"
+            },
+            "untrusted_seen": {
+              "$ref": "#/$defs/TaintSource"
+            }
+          }
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "approve", "deny"]
+        },
+        "shadow": {
+          "type": "boolean",
+          "description": "True when flow_control.mode is shadow: the decision was recorded, not applied."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaintSource"
+          }
+        }
+      }
+    },
+    "Shaped": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Result shaping.",
+      "required": ["original_bytes", "returned_bytes", "spilled"],
+      "properties": {
+        "original_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "returned_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "spilled": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

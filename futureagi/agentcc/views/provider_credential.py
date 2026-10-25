@@ -1,19 +1,23 @@
 import requests as http_requests
 import structlog
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialCreateSerializer,
     AgentccProviderCredentialSerializer,
     AgentccProviderCredentialUpdateSerializer,
+    unsupported_credential_keys,
+    unsupported_credential_keys_message,
 )
 from agentcc.services.config_push import push_org_config
+from agentcc.services.org_config_writer import lock_org
 from agentcc.services.url_safety import (
     PROVIDER_PRIVATE_URL_ERROR,
     PROVIDER_URL_ERROR,
@@ -22,6 +26,7 @@ from agentcc.services.url_safety import (
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -53,8 +58,14 @@ def _join_api_endpoint(base_url, api_path_prefix, path):
     return base + prefix + path
 
 
-class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccProviderCredentialViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     permission_classes = [IsAuthenticated]
+    # fetch_models only reads through the saved key, so members keep it.
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "rotate"}
+    )
     serializer_class = AgentccProviderCredentialSerializer
     queryset = AgentccProviderCredential.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -216,6 +227,18 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 )
             if "api_key" not in credentials:
                 return self._gm.bad_request("credentials must contain 'api_key'")
+            # The new credentials replace the stored ones, so a key the
+            # provider contract does not take would drop the provider from
+            # every push; refuse it and keep the stored credentials.
+            unsupported = unsupported_credential_keys(
+                instance.provider_name, credentials
+            )
+            if unsupported:
+                return self._gm.bad_request(
+                    unsupported_credential_keys_message(
+                        instance.provider_name, unsupported
+                    )
+                )
 
             instance.encrypted_credentials = CredentialManager.encrypt(credentials)
             instance.last_rotated_at = timezone.now()
@@ -391,7 +414,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
             url = "https://generativelanguage.googleapis.com/v1beta/models"
             resp = http.get(
                 url,
@@ -450,14 +476,20 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
     def _push_config_to_gateway(self, org):
         """Returns True if gateway was updated, False if push failed."""
         try:
-            config = AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org, is_active=True, deleted=False
-            ).first()
-            if not config:
-                config = AgentccOrgConfig.no_workspace_objects.create(
-                    organization=org, version=1, is_active=True
-                )
-            return push_org_config(str(org.id), config)
+            with transaction.atomic():
+                # Org lock first, as every config write: an org without a
+                # config gets version 1 here. The push runs under the lock,
+                # as write_config_version's does, so a writer cannot push a
+                # newer version between this read and this push.
+                lock_org(org.pk)
+                config = AgentccOrgConfig.no_workspace_objects.filter(
+                    organization=org, is_active=True, deleted=False
+                ).first()
+                if not config:
+                    config = AgentccOrgConfig.no_workspace_objects.create(
+                        organization=org, version=1, is_active=True
+                    )
+                return push_org_config(str(org.id), config)
         except Exception as e:
             logger.warning("config_push_failed", org_id=str(org.id), error=str(e))
             return False

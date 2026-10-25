@@ -124,6 +124,15 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "Enter your Mistral API key",
     supportedFormats: ["openai"],
   },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    apiFormat: "openai",
+    apiPathPrefix: "/v1",
+    keyPlaceholder: "sk-or-...",
+    supportedFormats: ["openai"],
+    note: "Requests through your own OpenRouter key are billed by OpenRouter, with no gateway markup.",
+  },
   custom: {
     label: "Custom / Self-hosted",
     baseUrl: "",
@@ -525,7 +534,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setGcpProject("");
     setGcpLocation("us-central1");
     setServiceAccountJSON("");
-    setApiPathPrefix(DEFAULT_API_PATH_PREFIX);
+    setApiPathPrefix(preset?.apiPathPrefix ?? DEFAULT_API_PATH_PREFIX);
     // Clear models since provider changed
     setModels([]);
     setModelOptions([]);
@@ -559,12 +568,14 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // What "Select All" covers. Tagged models stay out, which is what keeps them
   // unselected by default; they remain individually selectable.
   const bulkSelectable = useMemo(
-    () => defaultSelectableModels(modelOptions, { providerName: name, baseUrl }),
+    () =>
+      defaultSelectableModels(modelOptions, { providerName: name, baseUrl }),
     [modelOptions, name, baseUrl],
   );
 
   const allSelected =
-    bulkSelectable.length > 0 && bulkSelectable.every((m) => models.includes(m));
+    bulkSelectable.length > 0 &&
+    bulkSelectable.every((m) => models.includes(m));
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -799,7 +810,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               value={name}
               onChange={(e) => handleProviderChange(e.target.value)}
               error={!!errors.name}
-              helperText={errors.name}
+              helperText={errors.name || preset.note}
             >
               {PROVIDER_OPTIONS.map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>

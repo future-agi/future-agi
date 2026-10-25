@@ -14,8 +14,11 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/anthropicfmt"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	anthropicprov "github.com/futureagi/agentcc-gateway/internal/providers/anthropic"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
 	anthropictrans "github.com/futureagi/agentcc-gateway/internal/translation/anthropic"
 )
@@ -71,10 +74,11 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = model
 	rc.IsStream = isStream
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
+	readGuardrailPolicyHeader(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header and the body's own
 	// non-spec fields. Read from the raw bytes: the native pass-through below
 	// never unmarshals this body.
@@ -131,6 +135,10 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicErrorFromError(w, err)
 		return
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		writeAnthropicErrorFromError(w, apiErr)
+		return
+	}
 
 	// Build Anthropic-specific headers to forward.
 	anthropicHeaders := make(map[string]string)
@@ -140,10 +148,12 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fast path: provider natively speaks Anthropic.
+	// Fast path: provider natively speaks Anthropic. The body reaches it as
+	// written, so it names the id the org registered when the org's own
+	// provider took the request under it (passThroughModel).
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
-			body, err = rewriteRequestModel(body, upstreamModel)
+		if sent := passThroughModel(rc, upstreamModel); rc.Metadata["model_alias"] != "" || sent != model {
+			body, err = rewriteRequestModel(body, sent)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -154,10 +164,15 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		// every prompt (BuildCacheKey marshals Messages), and the response
 		// stored against it holds usage only — so a later request would be
 		// served a content-less 200. Request-shaped plugins skip on nil.
+		// The guardrail checks on the request read the body the provider
+		// gets, in the chat shape, from rc.PassThrough, and a check's rewrite
+		// of it (a remediation) is written into the body sent.
+		passThrough := requestview.Anthropic(body)
+		rc.PassThrough = passThrough
 		if isStream {
-			h.handleAnthropicStream(ctx, w, rc, ap, body, anthropicHeaders)
+			h.handleAnthropicStream(ctx, w, rc, ap, passThrough, anthropicHeaders)
 		} else {
-			h.handleAnthropicNonStream(ctx, w, rc, ap, body, anthropicHeaders)
+			h.handleAnthropicNonStream(ctx, w, rc, ap, passThrough, anthropicHeaders)
 		}
 		return
 	}
@@ -233,8 +248,9 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	}
 
 	rc.Model = model
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	setAuthMetadataFromRequest(rc, r)
+	readGuardrailPolicyHeader(rc, r)
 
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -279,11 +295,16 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 		writeAnthropicErrorFromError(w, err)
 		return
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		writeAnthropicErrorFromError(w, apiErr)
+		return
+	}
 
-	// Fast path: native Anthropic provider supports count_tokens.
+	// Fast path: native Anthropic provider supports count_tokens. The body
+	// names the model as /v1/messages's does (passThroughModel).
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
-			body, err = rewriteRequestModel(body, upstreamModel)
+		if sent := passThroughModel(rc, upstreamModel); rc.Metadata["model_alias"] != "" || sent != model {
+			body, err = rewriteRequestModel(body, sent)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -295,9 +316,31 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 				anthropicHeaders[key] = v
 			}
 		}
-		respBody, statusCode, err := ap.CountAnthropicTokens(ctx, body, anthropicHeaders)
-		if err != nil {
+		// The provider gets the whole prompt to count it, so the request
+		// goes through the pipeline as /v1/messages does: the key is
+		// authenticated, the call is rate-limited and logged, and the checks
+		// on the request read the body (rc.PassThrough; rc.Request stays
+		// nil). A check that blocks refuses it before the provider is
+		// called, and a check's rewrite reaches the provider.
+		passThrough := requestview.AnthropicCountTokens(body)
+		rc.PassThrough = passThrough
+		var respBody []byte
+		var statusCode int
+		if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+			var callErr error
+			respBody, statusCode, callErr = ap.CountAnthropicTokens(ctx, passThrough.Body(), anthropicHeaders)
+			if callErr == nil {
+				// The answer is passed through as the provider sent it: the
+				// log records its status and the count (rc has no answer).
+				models.RecordPassedThroughAnswer(rc, statusCode, respBody, true)
+			}
+			return callErr
+		}); err != nil {
 			writeAnthropicErrorFromError(w, err)
+			return
+		}
+		if respBody == nil {
+			writeAnthropicErrorFromError(w, models.ErrInternal("no response from provider"))
 			return
 		}
 		h.setAgentccHeaders(w, rc)
@@ -332,22 +375,35 @@ func rewriteRequestModel(body []byte, model string) ([]byte, error) {
 
 // ─── Native pass-through helpers (unchanged from original) ───────────────────
 
-func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, body []byte, headers map[string]string) {
+func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, req *requestview.View, headers map[string]string) {
 	var respBody []byte
 	var statusCode int
 
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		respBody, statusCode, callErr = ap.CreateAnthropicMessage(ctx, body, headers)
+		// The body after the checks on the request, with any rewrite of
+		// theirs.
+		respBody, statusCode, callErr = ap.CreateAnthropicMessage(ctx, req.Body(), headers)
 		if callErr != nil {
 			return callErr
 		}
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
+			// An output check reads the answer the client gets, not only its
+			// usage.
+			if rc.Flags.AnswerReaders != 0 {
+				if answer, err := anthropicprov.AnswerFromNative(respBody); err == nil {
+					giveChecksTheAnswer(rc, answer)
+				} else {
+					markAnswerUnreadable(rc)
+				}
+			}
 		}
 		return nil
 	})
-	if err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, and respBody is never served.
+	if err = pipelineErr(rc, err); err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
 	}
@@ -387,7 +443,10 @@ func applyAnthropicUsage(rc *models.RequestContext, respBody []byte) {
 	if resolvedModel := anthropicfmt.ExtractModel(respBody); resolvedModel != "" {
 		rc.ResolvedModel = resolvedModel
 	}
-	if inputTokens == 0 && outputTokens == 0 {
+	// Server-tool counters (web search, web fetch) are metered on the native
+	// path too.
+	serverTools := anthropicprov.ServerToolUsage(respBody)
+	if inputTokens == 0 && outputTokens == 0 && serverTools == nil {
 		return
 	}
 	model := rc.ResolvedModel
@@ -400,6 +459,7 @@ func applyAnthropicUsage(rc *models.RequestContext, respBody []byte) {
 			PromptTokens:     inputTokens,
 			CompletionTokens: outputTokens,
 			TotalTokens:      inputTokens + outputTokens,
+			ServerToolUse:    serverTools,
 		},
 	}
 }
@@ -427,16 +487,20 @@ func (h *Handlers) writeAnthropicShortCircuit(w http.ResponseWriter, rc *models.
 	w.Write(out)
 }
 
-func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, body []byte, headers map[string]string) {
+func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, ap providers.AnthropicNativeProvider, req *requestview.View, headers map[string]string) {
 	var stream io.ReadCloser
 	var statusCode int
 
 	// Post-plugins wait for the close, when the counts are known.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, body, headers)
+		// The body after the checks on the request, with any rewrite of
+		// theirs.
+		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, req.Body(), headers)
 		return callErr
-	}); err != nil {
+	})
+	// A cache hit an output check withheld is refused like a pre-stage block.
+	if err = pipelineErr(rc, err); err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
 	}
@@ -454,13 +518,20 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 
 	// Without this the stream would be priced at zero and logged as such.
 	var usage anthropicfmt.StreamUsageScanner
+	// The text the stream sends, for an output check that reads the answer.
+	answer := newSSEAnswer(rc.Flags.AnswerReaders != 0, anthropicStreamDelta)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		answer.holdAll()
+	}
 	finalize := func(detach bool) {
 		applyAnthropicStreamUsage(rc, &usage)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		answer.giveTo(rc)
+		held.beforeChecks(rc, answer.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// If upstream returned an error status, read and forward. Still finalised:
@@ -476,6 +547,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 		return
 	}
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -497,6 +571,7 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 		n, readErr := stream.Read(buf)
 		if n > 0 {
 			usage.Write(buf[:n])
+			answer.Write(buf[:n])
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				slog.Warn("error writing anthropic stream", "request_id", rc.RequestID, "error", writeErr)
 				// Client gone, tokens still spent — detach from its context.
@@ -510,12 +585,18 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 				slog.Warn("error reading anthropic stream", "request_id", rc.RequestID, "error", readErr)
 			}
 			finalize(false)
+			if readErr == io.EOF {
+				endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
+			} else {
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
+			}
 			return
 		}
 
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 			return
 		default:
 		}
@@ -579,7 +660,9 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 		rc.Response = canonicalResp
 		return nil
 	})
-	if err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, and canonicalResp is never served.
+	if err = pipelineErr(rc, err); err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
 			status, body, ct := translator.ErrorFromCanonical(apiErr)
@@ -692,7 +775,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
@@ -717,7 +800,9 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			}
 		}
 		return models.ErrInternal("upstream stream did not start")
-	}); err != nil {
+	})
+	// A cache hit an output check withheld is refused like a pre-stage block.
+	if err = pipelineErr(rc, err); err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
 	}
@@ -760,8 +845,17 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	}()
 
 	// Tee for usage: the counts are already structured here, unlike in the
-	// translated SSE bytes.
-	chunkCh, usageCh := teeStreamUsage(streamCtx, startedChunks)
+	// translated SSE bytes. It assembles the text for an output check that
+	// reads the answer.
+	capture := newStreamCapture(rc.Flags.AnswerReaders != 0)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		capture.holdAll()
+	}
+	chunkCh, usageCh := teeStreamUsage(streamCtx, startedChunks, capture)
 	if alias := rc.Metadata["model_alias"]; alias != "" {
 		chunkCh = rewriteStreamModel(streamCtx, chunkCh, alias)
 	}
@@ -769,11 +863,10 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	// Must be reached from every exit below — the tokens were spent either way.
 	finalize := func(detach bool) {
 		applyCanonicalStreamUsage(rc, usageCh)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		// After the usage: the tee has finished writing the capture.
+		giveChecksTheStreamedAnswer(rc, capture)
+		held.beforeChecks(rc, capture.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// Translate the OpenAI chunk stream into Anthropic SSE events. If the
@@ -796,6 +889,9 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		eventCh, translatorErrCh = translator.StreamEventsFromCanonical(streamCtx, chunkCh)
 	}
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -814,6 +910,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 			return
 
 		case event, ok := <-eventCh:
@@ -834,6 +931,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// reason, so waiting for every channel keeps the HTTP body open.
 				streamCancel()
 				finalize(false)
+				endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 
@@ -851,6 +949,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
 				// Error event already emitted by the translator; just stop.
 				finalize(false)
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 
@@ -862,6 +961,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
 				finalize(false)
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 		}
@@ -869,6 +969,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// Once every channel is drained, we're done.
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
 			finalize(false)
+			endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
 			return
 		}
 	}
@@ -909,9 +1010,10 @@ type streamUsage struct {
 }
 
 // teeStreamUsage passes chunks through untouched, keeping the last usage and
-// model. The result travels on a channel so reading it after the drain loop is
+// model, and assembling the text into capture when it is not nil. The result
+// travels on a channel so reading it, or capture, after the drain loop is
 // ordered against the goroutine that wrote it.
-func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan models.StreamChunk, <-chan streamUsage) {
+func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk, capture *streamCapture) (<-chan models.StreamChunk, <-chan streamUsage) {
 	out := make(chan models.StreamChunk)
 	done := make(chan streamUsage, 1)
 
@@ -922,6 +1024,7 @@ func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan m
 		if chunk.Model != "" {
 			seen.model = chunk.Model
 		}
+		capture.observe(chunk)
 	}
 
 	go func() {

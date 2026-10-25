@@ -35,6 +35,74 @@ const EVENT_OPTIONS = [
   { value: "cost.threshold", label: "Cost Threshold" },
 ];
 
+// Request events are sent when the gateway's request log arrives; threshold
+// events are evaluated every minute from the org's request logs.
+const THRESHOLD_EVENTS = [
+  "error.rate_spike",
+  "latency.spike",
+  "cost.threshold",
+];
+
+// The backend's defaults (agentcc/services/alert_dispatcher.py DEFAULT_THRESHOLDS).
+const THRESHOLD_DEFAULTS = {
+  error_rate_percent: 5,
+  latency_ms: 5000,
+  cost_usd: 10,
+  window_minutes: 5,
+  min_requests: 5,
+};
+
+const THRESHOLD_FIELDS = [
+  {
+    key: "error_rate_percent",
+    label: "Error rate (%)",
+    events: ["error.rate_spike"],
+    helperText: "Share of failed requests in the window",
+    check: (v) => v > 0 && v <= 100,
+    error: "Error rate must be above 0 and at most 100.",
+  },
+  {
+    key: "latency_ms",
+    label: "p95 latency (ms)",
+    events: ["latency.spike"],
+    helperText: "95th percentile latency in the window",
+    check: (v) => Number.isInteger(v) && v >= 1,
+    error: "p95 latency must be a whole number of milliseconds, at least 1.",
+  },
+  {
+    key: "cost_usd",
+    label: "Spend (USD)",
+    events: ["cost.threshold"],
+    helperText: "Total spend in the window",
+    check: (v) => v > 0,
+    error: "Spend must be above 0.",
+  },
+  {
+    key: "window_minutes",
+    label: "Window (minutes)",
+    events: THRESHOLD_EVENTS,
+    helperText: "How far back each check looks (1 to 1440)",
+    check: (v) => Number.isInteger(v) && v >= 1 && v <= 1440,
+    error: "Window must be a whole number of minutes from 1 to 1440.",
+  },
+  {
+    key: "min_requests",
+    label: "Minimum requests",
+    events: ["error.rate_spike", "latency.spike"],
+    helperText:
+      "Rate and latency are checked only with at least this many requests",
+    check: (v) => Number.isInteger(v) && v >= 1,
+    error: "Minimum requests must be a whole number, at least 1.",
+  },
+];
+
+const thresholdState = (stored) => {
+  const values = { ...THRESHOLD_DEFAULTS, ...(stored || {}) };
+  return Object.fromEntries(
+    THRESHOLD_FIELDS.map((f) => [f.key, String(values[f.key])]),
+  );
+};
+
 const PROVIDER_OPTIONS = [
   { value: "sendgrid", label: "SendGrid" },
   { value: "resend", label: "Resend" },
@@ -52,6 +120,9 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
     alert?.cooldownMinutes ?? alert?.cooldown_minutes ?? 5,
   );
   const [isActive, setIsActive] = useState(alert?.is_active !== false);
+  const [thresholds, setThresholds] = useState(() =>
+    thresholdState(alert?.thresholds),
+  );
 
   // Provider config
   const [apiKey, setApiKey] = useState("");
@@ -76,6 +147,7 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
       setProvider(alert.provider || "sendgrid");
       setCooldownMinutes(alert.cooldownMinutes ?? alert.cooldown_minutes ?? 5);
       setIsActive(alert.is_active !== false);
+      setThresholds(thresholdState(alert.thresholds));
       // Provider config is masked, so we don't pre-fill sensitive fields
       const cfg = alert.providerConfig || alert.provider_config || {};
       setFromEmail(cfg.from_email || "");
@@ -91,6 +163,7 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
       setProvider("sendgrid");
       setCooldownMinutes(5);
       setIsActive(true);
+      setThresholds(thresholdState());
       setApiKey("");
       setFromEmail("");
       setSmtpHost("");
@@ -101,6 +174,13 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
     setError(null);
     setTestResult(null);
   }, [alert, open]);
+
+  const shownThresholds = THRESHOLD_FIELDS.filter((field) =>
+    field.events.some((event) => events.includes(event)),
+  );
+
+  const setThreshold = (key, value) =>
+    setThresholds((prev) => ({ ...prev, [key]: value }));
 
   const buildProviderConfig = () => {
     if (provider === "sendgrid" || provider === "resend") {
@@ -137,10 +217,29 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
       return;
     }
 
+    // Stored keys the dialog does not show are kept as they are, except a
+    // threshold value the backend would refuse (it is never evaluated).
+    const thresholdPayload = {};
+    for (const [key, value] of Object.entries(alert?.thresholds || {})) {
+      const field = THRESHOLD_FIELDS.find((f) => f.key === key);
+      if (!field || (typeof value === "number" && field.check(value))) {
+        thresholdPayload[key] = value;
+      }
+    }
+    for (const field of shownThresholds) {
+      const value = Number(thresholds[field.key]);
+      if (thresholds[field.key] === "" || !field.check(value)) {
+        setError(field.error);
+        return;
+      }
+      thresholdPayload[field.key] = value;
+    }
+
     const payload = {
       name: name.trim(),
       recipients,
       events,
+      thresholds: thresholdPayload,
       provider,
       provider_config: buildProviderConfig(),
       cooldown_minutes: cooldownMinutes,
@@ -278,7 +377,49 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
                 />
               ))}
             </Stack>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
+              Error Occurred, Guardrail Triggered and Budget Exceeded are sent
+              when the gateway logs the request; Budget Exceeded is sent once
+              per budget level per budget period, or, when the gateway does not
+              name the level, once per error code per UTC day.
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              Error Rate Spike, Latency Spike and Cost Threshold are checked
+              every minute against your gateway&apos;s request logs, and sent
+              again after each cooldown while the threshold is still crossed.
+            </Typography>
           </Box>
+
+          {shownThresholds.length > 0 && (
+            <Box>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 500,
+                  mb: 1,
+                  color: "text.primary",
+                }}
+              >
+                Thresholds
+              </Typography>
+              <Stack spacing={2}>
+                {shownThresholds.map((field) => (
+                  <TextField
+                    key={field.key}
+                    label={field.label}
+                    value={thresholds[field.key]}
+                    onChange={(e) => setThreshold(field.key, e.target.value)}
+                    size="small"
+                    fullWidth
+                    type="number"
+                    helperText={field.helperText}
+                  />
+                ))}
+              </Stack>
+            </Box>
+          )}
 
           <TextField
             select
@@ -371,7 +512,7 @@ export default function EmailAlertDialog({ open, onClose, alert }) {
             size="small"
             fullWidth
             type="number"
-            helperText="Minimum time between repeated alerts"
+            helperText="At most one email per alert every cooldown period; events in between are sent together in the next email."
           />
 
           <FormControlLabel

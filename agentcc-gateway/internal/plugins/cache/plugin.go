@@ -2,9 +2,9 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +12,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/servertools"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Plugin is a pipeline plugin that caches non-streaming chat completion responses.
@@ -55,47 +57,77 @@ func (p *Plugin) SetEdgeHandler(h *EdgeCacheHandler) {
 	p.edgeHandler = h
 }
 
-func (p *Plugin) Name() string  { return "cache" }
-func (p *Plugin) Priority() int { return 35 } // After auth (20) + RBAC (30), before budget/guardrails/validation/rate-limit. Cache hits skip all heavier plugins.
+func (p *Plugin) Name() string { return "cache" }
 
-// ProcessRequest checks the cache for a hit before the provider call.
+// Priority 35: after auth (20), RBAC (30), the request quota (33) and the
+// guardrails (34), before budget, validation and rate limit. A hit skips the
+// plugins after it; the checks on the request have read it first
+// (guardrails.GuardrailPlugin's Priority), and the checks on the answer read
+// the cached answer.
+func (p *Plugin) Priority() int { return 35 }
+
+// ProcessRequest checks the cache for a hit before the provider call, and
+// sets HeaderCacheStatus on every request it does not refuse, next to the
+// internal cache_status, which the pipeline's cache-hit skip and the
+// cost, otel and prometheus plugins read.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	controls, apiErr := parseControls(rc)
+	if apiErr != nil {
+		return pipeline.ResultError(apiErr)
+	}
+
 	// Per-org cache override: if the org has disabled caching, skip entirely.
 	if rc.Metadata["org_cache_disabled"] == "true" {
-		rc.Metadata["cache_status"] = "skip_org_disabled"
+		setStatus(rc, "skip_org_disabled")
 		return pipeline.ResultContinue()
 	}
 
 	// Streaming requests bypass cache.
 	if rc.IsStream {
-		rc.Metadata["cache_status"] = "skip"
+		setStatus(rc, "skip")
 		return pipeline.ResultContinue()
 	}
 
 	// Cache-Control: no-store skips caching entirely.
 	if cc, ok := rc.Metadata["cache_control"]; ok && strings.Contains(cc, "no-store") {
-		rc.Metadata["cache_status"] = "skip"
+		setStatus(rc, "skip")
 		return pipeline.ResultContinue()
 	}
 
 	if rc.Request == nil {
-		rc.Metadata["cache_status"] = "skip"
+		setStatus(rc, "skip")
 		return pipeline.ResultContinue()
 	}
 
-	// Build cache key.
+	// x-agentcc-cache: bypass neither reads nor writes: no key is set, so
+	// ProcessResponse stores nothing.
+	if controls.bypass {
+		setStatus(rc, "skip_bypass")
+		return pipeline.ResultContinue()
+	}
+
+	// Build cache key: the caller's own key when it sent one, else the
+	// request's. The org partition comes first in both, so that nothing a
+	// caller controls (namespace header, cache key header, model, messages)
+	// can reach another org's entries.
+	scope := orgScope(rc)
 	namespace := rc.Metadata["cache_namespace"]
 	if namespace == "" {
 		namespace = "default"
 	}
-	key := BuildCacheKey(namespace, rc.Request)
+	var key string
+	if controls.key != "" {
+		key = buildCustomCacheKey(scope, namespace, controls.key)
+	} else {
+		key = BuildCacheKey(scope, namespace, rc.Request)
+	}
 	rc.Metadata["cache_key"] = key
 
 	// Edge cache: check conditional request (If-None-Match → 304).
 	if p.edgeHandler != nil && p.edgeHandler.IsEnabled() {
 		if ifNoneMatch, ok := rc.Metadata["if_none_match"]; ok {
 			if p.edgeHandler.CheckConditional(rc, ifNoneMatch) {
-				rc.Metadata["cache_status"] = "hit_conditional"
+				setStatus(rc, "hit_conditional")
 				rc.Metadata["edge_cache"] = "HIT"
 				// Return 304 via short-circuit with nil response (handler checks for 304).
 				rc.Flags.CacheHit = true
@@ -112,7 +144,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	if forceRefresh || noCache {
-		rc.Metadata["cache_status"] = "miss"
+		setStatus(rc, "miss")
 		return pipeline.ResultContinue()
 	}
 
@@ -120,7 +152,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	if resp, ok := p.store.Get(key); ok {
 		rc.Response = resp
 		rc.Flags.CacheHit = true
-		rc.Metadata["cache_status"] = "hit_exact"
+		setStatus(rc, "hit_exact")
 
 		// Edge cache headers.
 		if p.edgeHandler != nil {
@@ -130,15 +162,16 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		return pipeline.ResultShortCircuit(resp)
 	}
 
-	// L2: Check semantic cache.
-	if p.semanticStore != nil {
+	// L2: Check semantic cache, which agent traffic and caller-chosen keys
+	// never use.
+	if p.semanticStore != nil && fuzzyAllowed(rc, controls) {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Request.Model); result != nil {
+			if result := p.semanticStore.Search(scope, vec, rc.Request.Model); result != nil {
 				rc.Response = result.Response
 				rc.Flags.CacheHit = true
-				rc.Metadata["cache_status"] = "hit_semantic"
+				setStatus(rc, "hit_semantic")
 				rc.Metadata["cache_similarity"] = strconv.FormatFloat(result.Similarity, 'f', 4, 64)
 
 				if p.edgeHandler != nil {
@@ -150,7 +183,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		}
 	}
 
-	rc.Metadata["cache_status"] = "miss"
+	setStatus(rc, "miss")
 	return pipeline.ResultContinue()
 }
 
@@ -176,20 +209,29 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// Never store Gemini Grounded Results: the Gemini API terms forbid
+	// caching them, and a hit would skip the eval_export marking.
+	if u := rc.Response.Usage; u != nil && servertools.GeminiGrounded(u.ServerToolUse) {
+		return pipeline.ResultContinue()
+	}
+
 	key, ok := rc.Metadata["cache_key"]
 	if !ok || key == "" {
 		return pipeline.ResultContinue()
 	}
 
-	ttl := p.resolveTTL(rc)
+	// ProcessRequest validated the headers before it set the key.
+	controls, _ := parseControls(rc)
+	ttl := p.resolveTTL(rc, controls)
 	p.store.Set(key, rc.Response, ttl)
 
-	// Also store in semantic cache (L2).
-	if p.semanticStore != nil && rc.Request != nil {
+	// Also store in semantic cache (L2), except for agent traffic and
+	// caller-chosen keys.
+	if p.semanticStore != nil && rc.Request != nil && fuzzyAllowed(rc, controls) {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			p.semanticStore.Set(key, vec, rc.Request.Model, rc.Response, ttl)
+			p.semanticStore.Set(orgScope(rc), key, vec, rc.Request.Model, rc.Response, ttl)
 		}
 	}
 
@@ -201,14 +243,21 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	return pipeline.ResultContinue()
 }
 
+// orgScope returns the cache partition for the request's org. The org is the
+// authenticated key's metadata org_id, which the auth plugin (priority 20, so
+// it runs first) and Handlers.peekKeyOrgID copy into key_org_id. Callers
+// cannot write key_* metadata (isBlockedMetadataKey), so this is never caller
+// input. A key without an org lands in cache.NoOrgScope.
+func orgScope(rc *models.RequestContext) string {
+	return cache.OrgScope(rc.Metadata[tenant.MetadataKeyOrgID])
+}
+
 // resolveTTL returns the TTL for the cache entry.
-// Priority: per-request header > per-org config > global default.
-func (p *Plugin) resolveTTL(rc *models.RequestContext) time.Duration {
-	// 1. Per-request TTL override (from x-agentcc-cache-ttl header).
-	if v, ok := rc.Metadata["cache_ttl"]; ok {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
+// Priority: per-request header (clamped) > per-org config > global default.
+func (p *Plugin) resolveTTL(rc *models.RequestContext, controls requestControls) time.Duration {
+	// 1. Per-request TTL override (x-agentcc-cache-ttl), clamped.
+	if controls.hasTTL {
+		return controls.ttl
 	}
 	// 2. Per-org TTL override (from org config).
 	if v, ok := rc.Metadata["org_cache_ttl"]; ok {
@@ -254,9 +303,19 @@ func extractLastUserMessage(req *models.ChatCompletionRequest) string {
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
-// Uses FNV-1a 128-bit for speed (no crypto needed, just collision resistance).
-func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
-	h := fnv.New128a()
+//
+// scope is the tenant partition from cache.OrgScope and is hashed first. Its
+// tokens are fixed-format and contain no separator, so no namespace, model or
+// message content can make one org's key equal another's.
+//
+// The hash is SHA-256 truncated to 128 bits, rendered as 32 hex digits (the
+// shape vector stores such as Qdrant accept as a point id). It resists
+// chosen-input collisions, as the key is the tenant boundary.
+func BuildCacheKey(scope, namespace string, req *models.ChatCompletionRequest) string {
+	h := sha256.New()
+	h.Write([]byte("v2|"))
+	h.Write([]byte(scope))
+	h.Write([]byte("|"))
 	h.Write([]byte(namespace))
 	h.Write([]byte("|"))
 	h.Write([]byte(req.Model))
@@ -302,5 +361,5 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 		h.Write([]byte(strconv.Itoa(*req.Seed)))
 	}
 
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }

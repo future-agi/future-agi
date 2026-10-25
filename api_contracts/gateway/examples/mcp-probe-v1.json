@@ -1,0 +1,32 @@
+{
+  "request": {
+    "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+    "url": "https://mcp.github.example.com/mcp",
+    "transport": "http",
+    "auth": {
+      "type": "bearer",
+      "header": "Authorization",
+      "value": "test-probe-secret-not-a-real-token"
+    }
+  },
+  "results": [
+    {
+      "ok": true,
+      "era": "2025-11-25",
+      "server_info": {
+        "name": "github-mcp",
+        "title": "GitHub",
+        "version": "1.4.0"
+      },
+      "tool_count": 27,
+      "tools_hash": "f9d35d43770d39092a663e665e82ae1d84a9e0da3d0d10c407acada6a40cd281",
+      "latency_ms": 184,
+      "error": null
+    },
+    {
+      "ok": false,
+      "latency_ms": 2,
+      "error": "egress_refused"
+    }
+  ]
+}

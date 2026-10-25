@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/outcome-event-v1.schema.json",
+  "title": "outcome-event-v1",
+  "description": "An outcome event in the log webhook batch, next to log entries. The gateway emits it through the flusher's EnqueueEvent and the backend ingests it. It never carries content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "event_id",
+    "org_id",
+    "generation_id",
+    "outcome",
+    "source",
+    "ts_ms"
+  ],
+  "properties": {
+    "kind": { "const": "outcome" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "org_id": { "type": "string", "minLength": 1 },
+    "generation_id": { "type": "string", "minLength": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": ["ok", "bad", "empty", "verify_failed", "retried"]
+    },
+    "source": { "type": "string", "enum": ["feedback", "prev_outcome"] },
+    "score": { "type": "number" },
+    "agent_run_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "agent_step": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "model": { "type": "string" },
+    "ts_ms": { "type": "integer", "minimum": 0 }
+  }
+}

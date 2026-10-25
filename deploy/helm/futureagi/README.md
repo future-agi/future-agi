@@ -478,7 +478,12 @@ means migrating the data yourself (`pg_dump`, `clickhouse-backup`,
 When any datastore is bundled, the bootstrap job runs after the release's
 resources (`post-install`) because it has to reach them; the API answers
 `/health/` meanwhile, the Temporal workers wait until the job's migrations
-are applied, and Helm returns only once the job has finished.
+are applied, and Helm returns only once the job has finished. The AI gateway
+reports ready meanwhile too: until the migrations have created the table of
+gateway keys, the API answers the gateway's key sync with 503
+`migrations_pending` (no key has been made yet), which the gateway counts as
+its first key list. So `helm install --wait`, which runs post-install hooks
+only once every workload is ready, works with bundled datastores.
 
 ### Install-time settings
 

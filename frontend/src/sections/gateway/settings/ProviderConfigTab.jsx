@@ -8,6 +8,7 @@ import {
   Button,
   Chip,
   Alert,
+  Link,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
@@ -45,8 +46,15 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
       </Stack>
 
       <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
-        Providers are managed in the <strong>Providers</strong> tab. Changes
-        here are per-org overrides (e.g., custom API keys, model restrictions).
+        This list is read-only. To change a provider&apos;s key, base URL or
+        models, open{" "}
+        <Link
+          component={RouterLink}
+          href={`${paths.dashboard.gateway.providers}/config`}
+        >
+          Providers &gt; Provider Config
+        </Link>{" "}
+        and use the provider&apos;s Edit button.
       </Alert>
 
       {configuredProviders.length === 0 ? (
@@ -75,13 +83,20 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
         configuredProviders.map((p) => {
           const name = p.name || p.provider_id || p.providerId || "unknown";
           const models = Array.isArray(p.models) ? p.models : [];
-          const status = (p.status || "unknown").toLowerCase();
+          // The org's own health; a provider the config push
+          // leaves out (pushed: false) reads "not pushed".
+          const status =
+            p.pushed === false
+              ? "not pushed"
+              : (p.status || "unknown").toLowerCase();
           const statusColor =
             status === "healthy"
               ? "success"
               : status === "degraded"
                 ? "warning"
-                : "error";
+                : status === "unknown"
+                  ? "default"
+                  : "error";
 
           return (
             <Card key={name} variant="outlined">
@@ -107,6 +122,16 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
                     />
                   </Stack>
                 </Stack>
+                {p.status_reason && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    component="div"
+                    sx={{ mt: 0.5, pl: 3.5 }}
+                  >
+                    {p.status_reason}
+                  </Typography>
+                )}
                 {models.length > 0 && (
                   <Stack
                     direction="row"

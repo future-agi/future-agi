@@ -63,6 +63,11 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          # /readyz waits for the gateway's first key list from the backend.
+          # Before the bootstrap job has migrated a new install's database (a
+          # post-install hook with bundled datastores, run by `helm install
+          # --wait` only once this probe passes) the backend answers 503
+          # migrations_pending, which counts as that list: no key exists yet.
           readinessProbe:
             httpGet:
               path: /readyz

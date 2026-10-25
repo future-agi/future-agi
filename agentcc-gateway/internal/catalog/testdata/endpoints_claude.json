@@ -1,0 +1,90 @@
+{
+  "data": {
+    "id": "anthropic/claude-sonnet-5.5",
+    "name": "Anthropic: Claude Sonnet 5.5",
+    "endpoints": [
+      {
+        "name": "Anthropic | anthropic/claude-sonnet-5.5-20260901",
+        "model_id": "anthropic/claude-sonnet-5.5",
+        "context_length": 1000000,
+        "pricing": {
+          "prompt": "0.000003",
+          "completion": "0.000015",
+          "input_cache_read": "0.0000003",
+          "input_cache_write": "0.00000375",
+          "discount": 0
+        },
+        "provider_name": "Anthropic",
+        "tag": "anthropic",
+        "quantization": "unknown",
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools", "reasoning", "max_tokens"],
+        "status": 0,
+        "uptime_last_30m": 99.6,
+        "supports_implicit_caching": false,
+        "latency_last_30m": {
+          "p50": 640,
+          "p75": 900,
+          "p90": 1510,
+          "p99": 4000
+        },
+        "throughput_last_30m": { "p50": 71.4 }
+      },
+      {
+        "name": "Google | anthropic/claude-sonnet-5.5-20260901",
+        "model_id": "anthropic/claude-sonnet-5.5",
+        "context_length": 1000000,
+        "pricing": {
+          "prompt": "0.0000033",
+          "completion": "0.0000165",
+          "discount": 0
+        },
+        "provider_name": "Google",
+        "tag": "google-vertex/europe",
+        "quantization": null,
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": 900000,
+        "supported_parameters": ["tools", "max_tokens"],
+        "status": -2,
+        "uptime_last_30m": null,
+        "supports_implicit_caching": true,
+        "latency_last_30m": null,
+        "throughput_last_30m": null
+      },
+      {
+        "name": "Amazon Bedrock | anthropic/claude-sonnet-5.5-20260901",
+        "model_id": "anthropic/claude-sonnet-5.5",
+        "context_length": 200000,
+        "pricing": {
+          "prompt": "0.000003",
+          "completion": "0.000015",
+          "discount": 0
+        },
+        "provider_name": "Amazon Bedrock",
+        "tag": "amazon-bedrock/fp8/us-east-1",
+        "quantization": "fp8",
+        "max_completion_tokens": 32000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools"],
+        "status": 0,
+        "uptime_last_30m": 100,
+        "supports_implicit_caching": false
+      },
+      {
+        "name": "Router | anthropic/claude-sonnet-5.5",
+        "model_id": "anthropic/claude-sonnet-5.5",
+        "context_length": 1000000,
+        "pricing": { "prompt": "-1", "completion": "-1" },
+        "provider_name": "Router",
+        "tag": "router",
+        "quantization": null,
+        "max_completion_tokens": null,
+        "max_prompt_tokens": null,
+        "supported_parameters": [],
+        "status": 0,
+        "uptime_last_30m": null
+      }
+    ]
+  }
+}

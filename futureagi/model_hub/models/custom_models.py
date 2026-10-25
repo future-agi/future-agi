@@ -4,11 +4,12 @@ from django.db import models
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
-from model_hub.models.api_key import ApiKey, validate_model_provider_choice
+from model_hub.models.api_key import KeysAtRestMixin, validate_model_provider_choice
+from model_hub.services import key_at_rest
 from tfc.utils.base_model import BaseModel
 
 
-class CustomAIModel(BaseModel):
+class CustomAIModel(KeysAtRestMixin, BaseModel):
     class EnvTypes(models.TextChoices):
         PRODUCTION = "Production", "Production"
         TRAINING = "Training", "Training"
@@ -19,6 +20,7 @@ class CustomAIModel(BaseModel):
     created_at = models.DateTimeField(auto_now_add=True)
     user_model_id = models.CharField(max_length=255, null=False)
     deleted = models.BooleanField(default=False)
+    # Every string ``enc::`` plus Fernet ciphertext.
     key_config = models.JSONField(null=True, blank=True)
     provider = models.CharField(
         max_length=50, validators=[validate_model_provider_choice], null=False
@@ -55,27 +57,25 @@ class CustomAIModel(BaseModel):
         blank=True,
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._actual_json = {}
-        if self.key_config:
-            self._actual_json = ApiKey().decrypt_json(self.key_config)
-
-    def save(self, *args, **kwargs):
-        # if self.key_config and not all(
-        #     [v.startswith(b"gAAAAA".decode()) for v in self.key_config.values()]
-        # ):
-        if self.key_config:
-            self._actual_json = self.key_config
-            self.key_config = ApiKey().encrypt_json(self.key_config)
-        else:
-            self._actual_json = {}
-        self.full_clean()
-        super().save(*args, **kwargs)
+    secret_fields = ("key_config",)
 
     @property
     def actual_json(self):
-        return self._actual_json
+        """The clear credentials, for a provider call only; ``KeyUnreadable``
+        (a ``ValueError``) when this deployment cannot decrypt them."""
+        if not self.key_config:
+            return {}
+        return self._clear("key_config", f"key of custom model {self.user_model_id}")
+
+    @property
+    def masked_json(self):
+        """What every response shows: the masked credentials, a placeholder for
+        a value that cannot be decrypted, never a key or its ciphertext."""
+        if not self.key_config:
+            return {}
+        return key_at_rest.mask(
+            self.key_config, self._stored_snapshot().get("key_config")
+        )
 
     class Meta:
         unique_together = ["organization", "user_model_id", "deleted"]

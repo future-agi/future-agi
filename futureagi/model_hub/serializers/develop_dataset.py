@@ -173,7 +173,9 @@ class SecretSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
         extra_kwargs = {
-            "key": {"write_only": True}  # Key will not be included in responses
+            # Key will not be included in responses. The column is text (it
+            # holds ciphertext); the API still takes at most 2500 characters.
+            "key": {"write_only": True, "max_length": 2500}
         }
 
     def create(self, validated_data):
@@ -189,14 +191,9 @@ class SecretSerializer(serializers.ModelSerializer):
         """Customize the output representation"""
         data = super().to_representation(instance)
         # Add a masked version of the key for display purposes
-        actual_key = instance.actual_key
-        if actual_key:
-            if len(actual_key) <= 8:
-                data["masked_key"] = actual_key[:2] + "•" * max(len(actual_key) - 2, 4)
-            else:
-                data["masked_key"] = (
-                    actual_key[:4] + "•" * (len(actual_key) - 8) + actual_key[-4:]
-                )
+        masked_key = instance.masked_key
+        if masked_key:
+            data["masked_key"] = masked_key
         return data
 
 

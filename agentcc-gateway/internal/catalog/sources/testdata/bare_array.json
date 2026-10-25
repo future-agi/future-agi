@@ -1,0 +1,24 @@
+[
+  {
+    "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "object": "model",
+    "created": 1733461920,
+    "type": "chat",
+    "display_name": "Meta Llama 3.3 70B Instruct Turbo",
+    "organization": "Meta",
+    "context_length": 131072,
+    "pricing": {
+      "hourly": 0,
+      "input": 0.88,
+      "output": 0.88,
+      "base": 0,
+      "finetune": 0
+    }
+  },
+  {
+    "id": "togethercomputer/m2-bert-80M-32k-retrieval",
+    "object": "model",
+    "type": "embedding",
+    "context_length": 32768
+  }
+]

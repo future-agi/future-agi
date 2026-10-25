@@ -12,7 +12,7 @@ import {
   setSession,
 } from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
-import { apiPath } from "src/api/contracts/api-surface";
+import { apiPath, uncontractedApiPath } from "src/api/contracts/api-surface";
 import {
   assertContractedRequestConfig,
   assertContractedResponse,
@@ -1988,6 +1988,76 @@ export const endpoints = {
     analyticsLatency: apiPath("/agentcc/analytics/latency-stats/"),
     analyticsErrors: apiPath("/agentcc/analytics/error-breakdown/"),
     analyticsModels: apiPath("/agentcc/analytics/model-comparison/"),
+    analyticsBillingSummary: uncontractedApiPath(
+      "/agentcc/analytics/billing-summary/",
+    ),
+    analyticsBillingMargin: uncontractedApiPath(
+      "/agentcc/analytics/billing-margin/",
+    ),
+    analyticsAgents: uncontractedApiPath("/agentcc/analytics/agents/"),
+    analyticsFailures: uncontractedApiPath("/agentcc/analytics/failures/"),
+    analyticsHealthSeries: uncontractedApiPath(
+      "/agentcc/analytics/health-series/",
+    ),
+    analyticsReport: uncontractedApiPath("/agentcc/analytics/report/"),
+    runs: uncontractedApiPath("/agentcc/runs/"),
+    runDetail: (runId) =>
+      uncontractedApiPath("/agentcc/runs/{run_id}/", { run_id: runId }),
+    managedModels: apiPath("/agentcc/managed-models/"),
+    managedModelsCatalog: apiPath("/agentcc/managed-models/catalog/"),
+    managedCatalogEndpoints: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/endpoints/",
+    ),
+    managedCatalogAccess: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/access/",
+    ),
+    managedCatalogStats: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/stats/",
+    ),
+    managedCatalogHistory: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/history/",
+    ),
+    managedCatalogRefresh: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/refresh/",
+    ),
+    managedCatalogReplay: uncontractedApiPath(
+      "/agentcc/managed-models/catalog/replay/",
+    ),
+    managedCredits: uncontractedApiPath("/agentcc/managed-credits/"),
+    managedCreditEntries: uncontractedApiPath(
+      "/agentcc/managed-credits/entries/",
+    ),
+    managedCreditStatement: uncontractedApiPath(
+      "/agentcc/managed-credits/statement/",
+    ),
+    managedCreditCheckout: uncontractedApiPath(
+      "/agentcc/managed-credits/checkout/",
+    ),
+    managedCreditCheckoutStatus: (sessionId) =>
+      uncontractedApiPath("/agentcc/managed-credits/checkout/{session_id}/", {
+        session_id: sessionId,
+      }),
+    managedCreditSettings: uncontractedApiPath(
+      "/agentcc/managed-credits/settings/",
+    ),
+    managedCreditGrant: uncontractedApiPath("/agentcc/managed-credits/grant/"),
+    managedCreditAdjust: uncontractedApiPath(
+      "/agentcc/managed-credits/adjust/",
+    ),
+    managedCreditRefund: uncontractedApiPath(
+      "/agentcc/managed-credits/refund/",
+    ),
+    managedCreditReconciliation: uncontractedApiPath(
+      "/agentcc/managed-credits/reconciliation/",
+    ),
+    capabilities: uncontractedApiPath("/agentcc/capabilities/"),
+    playgroundRun: uncontractedApiPath("/agentcc/playground/run/"),
+    policyRollout: uncontractedApiPath("/agentcc/policy-rollout/"),
+    policyRolloutStage: uncontractedApiPath("/agentcc/policy-rollout/stage/"),
+    policyRolloutPromote: uncontractedApiPath(
+      "/agentcc/policy-rollout/promote/",
+    ),
+    policyRolloutAbort: uncontractedApiPath("/agentcc/policy-rollout/abort/"),
     orgConfig: {
       list: apiPath("/agentcc/org-configs/"),
       active: apiPath("/agentcc/org-configs/active/"),
@@ -2076,6 +2146,8 @@ export const endpoints = {
     providerCredentials: {
       fetchModels: apiPath("/agentcc/provider-credentials/fetch_models/"),
     },
+    providerCredentialRotate: (id) =>
+      apiPath("/agentcc/provider-credentials/{id}/rotate/", { id: id }),
   },
   integrations: {
     slack: {

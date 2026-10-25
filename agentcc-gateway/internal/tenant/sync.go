@@ -34,6 +34,8 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 	}
 
+	// Pushes numbered after this may not be in the response (MergeFetched).
+	fetchedAt := store.Generation()
 	resp, err := syncHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("control plane unreachable: %w", err)
@@ -62,7 +64,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 	}
 
 	// Build set of all org IDs in the response, including those that fail to
-	// parse here and those the control plane could not build. MergeBulk keeps
+	// parse here and those the control plane could not build. MergeFetched keeps
 	// the stored entry of every org in this set that has no parsed config.
 	allOrgIDs := make(map[string]struct{}, len(envelope.Result)+len(envelope.UnbuiltOrgIDs))
 	for _, orgID := range envelope.UnbuiltOrgIDs {
@@ -84,7 +86,7 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		configs[orgID] = &cfg
 	}
 
-	store.MergeBulk(configs, allOrgIDs)
+	store.MergeFetched(configs, allOrgIDs, fetchedAt)
 	if len(envelope.UnbuiltOrgIDs) > 0 {
 		slog.Warn("control plane sync: control plane could not build some org configs, keeping existing entries",
 			"org_ids", envelope.UnbuiltOrgIDs,

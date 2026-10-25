@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/runtime-token-claims-v1.schema.json",
+  "title": "runtime-token-claims-v1",
+  "description": "A Future AGI managed-runtime token: its JWT header ($defs/Header) and claims ($defs/Claims). exp - iat is at most runtime_tokens.max_ttl (15 min). root_run_id is the root of the run scope, and budget_scope defaults to root_run_id. sponsor_user_id, grant_id and act are optional.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["header", "claims"],
+  "properties": {
+    "header": { "$ref": "#/$defs/Header" },
+    "claims": { "$ref": "#/$defs/Claims" }
+  },
+  "$defs": {
+    "Actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "run_id"],
+      "properties": {
+        "agent_id": { "type": "string", "minLength": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "deployment_id": { "type": "string" }
+      }
+    },
+    "Header": {
+      "type": "object",
+      "required": ["alg", "kid"],
+      "properties": {
+        "alg": { "type": "string", "enum": ["RS256", "ES256"] },
+        "kid": { "type": "string", "minLength": 1 },
+        "typ": { "type": "string" }
+      }
+    },
+    "Claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typ",
+        "iss",
+        "aud",
+        "iat",
+        "nbf",
+        "exp",
+        "jti",
+        "org_id",
+        "deployment_id",
+        "agent_id",
+        "root_run_id",
+        "scopes"
+      ],
+      "properties": {
+        "typ": { "const": "futureagi-runtime-token" },
+        "iss": { "type": "string", "minLength": 1 },
+        "aud": { "type": "string", "minLength": 1 },
+        "iat": { "type": "integer", "minimum": 0 },
+        "nbf": { "type": "integer", "minimum": 0 },
+        "exp": { "type": "integer", "minimum": 0 },
+        "jti": { "type": "string", "minLength": 1 },
+        "org_id": { "type": "string", "minLength": 1 },
+        "deployment_id": { "type": "string", "minLength": 1 },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "workspace_id": { "type": "string" },
+        "agent_version": { "type": "string" },
+        "env": { "type": "string" },
+        "framework": { "type": "string" },
+        "root_run_id": { "type": "string", "minLength": 1 },
+        "parent_run_id": { "type": "string" },
+        "session_id": { "type": "string" },
+        "budget_scope": { "type": "string" },
+        "budget_usd": { "type": "number", "minimum": 0 },
+        "billing_mode": {
+          "type": "string",
+          "enum": ["byok", "managed", "any"]
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "gateway:chat",
+              "gateway:responses",
+              "gateway:messages",
+              "gateway:embeddings",
+              "gateway:models",
+              "gateway:mcp"
+            ]
+          }
+        },
+        "sponsor_user_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The human the token acts for."
+        },
+        "grant_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The standing grant the token runs under."
+        },
+        "act": {
+          "type": "array",
+          "description": "The actor chain, oldest first: each agent and run between the sponsor and this token (identity-chain-v1).",
+          "items": { "$ref": "#/$defs/Actor" }
+        },
+        "key_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed_models": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "allowed_providers": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

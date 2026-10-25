@@ -1,0 +1,57 @@
+# Gateway profile alt (E2E_GATEWAY_PROFILE=alt, Standalone only; e2e/lib/profile.ts).
+# Exactly e2e/stack/gateway.e2e.yaml deep-merged with ALT_DELTA: request bodies
+# logged, the response cache on (memory backend), logging at warn, read timeout 7s
+# and idle timeout 90s, so every node value the console shows differs from stock.
+# The managed-mock inspector refuses this file if it is anything else, and an
+# offline case in harness/managed-mock.spec.ts fails as soon as it drifts: when
+# gateway.e2e.yaml changes, rewrite this file as that merge (lib/profile.ts
+# altConfig). The comments in gateway.e2e.yaml apply here unchanged.
+server:
+  port: 8080
+  host: 0.0.0.0
+  read_timeout: 7s
+  write_timeout: 300s
+  idle_timeout: 90s
+  shutdown_timeout: 30s
+  max_request_body_size: 10485760
+  default_request_timeout: 60s
+providers:
+  openai:
+    base_url: http://mock-llm:8080
+    api_key: e2e-mock
+    api_format: openai
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - gpt-4-turbo
+      - gpt-3.5-turbo
+      - o1
+      - o1-mini
+      - turing_flash
+  fagi-managed:
+    base_url: http://mock-llm:8080
+    api_key: e2e-mock
+    api_format: openai
+    type: openrouter
+    managed: true
+    auto_discover: false
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+managed:
+  markup_percent: 5
+  require_credits: true
+  require_redis: false
+  catalog_refresh: 0s
+logging:
+  level: warn
+  request_logging:
+    enabled: true
+    include_bodies: true
+guardrails:
+  enabled: true
+cache:
+  enabled: true

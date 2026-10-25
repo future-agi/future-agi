@@ -25,6 +25,8 @@ import ClippedColumnLabel from "./ClippedColumnLabel";
 
 const MOVE_HINT_ID = `${COLUMNS_POPOVER_ID}-move-hint`;
 
+const NO_ENTRIES = [];
+
 function matches(label, query) {
   return label.toLowerCase().includes(query);
 }
@@ -166,8 +168,8 @@ GroupHeading.propTypes = { children: PropTypes.node.isRequired };
 
 /**
  * Columns picker for the Request Logs table. Clone of the house
- * PersonasColumnsPopover pattern with reorder, a custom-properties group,
- * declaration states and a stale group.
+ * PersonasColumnsPopover pattern with reorder, an Agent & billing group, a
+ * custom-properties group, declaration states and a stale group.
  */
 const ColumnsPickerPopover = ({
   anchorEl,
@@ -202,6 +204,14 @@ const ColumnsPickerPopover = ({
         : entries.builtin,
     [entries.builtin, query],
   );
+  const gatewayEntries = entries.gateway ?? NO_ENTRIES;
+  const filteredGateway = useMemo(
+    () =>
+      query
+        ? gatewayEntries.filter((e) => matches(e.label, query))
+        : gatewayEntries,
+    [gatewayEntries, query],
+  );
   const filteredCustom = useMemo(
     () =>
       query
@@ -225,6 +235,7 @@ const ColumnsPickerPopover = ({
     filteredCustom.length === 0;
   const noMatches =
     filteredBuiltin.length === 0 &&
+    filteredGateway.length === 0 &&
     customFilteredOut &&
     filteredStale.length === 0;
 
@@ -349,6 +360,20 @@ const ColumnsPickerPopover = ({
               entry={entry}
               onToggle={onToggle}
               onMove={onMove}
+              searching={Boolean(query)}
+            />
+          ))}
+
+          {filteredGateway.length > 0 && (
+            <GroupHeading>Agent &amp; billing</GroupHeading>
+          )}
+          {filteredGateway.map((entry) => (
+            <ColumnEntryRow
+              key={entry.id}
+              entry={entry}
+              onToggle={onToggle}
+              onMove={onMove}
+              atCap={atCap}
               searching={Boolean(query)}
             />
           ))}
@@ -493,6 +518,7 @@ ColumnsPickerPopover.propTypes = {
   entries: PropTypes.shape({
     builtin: PropTypes.array.isRequired,
     custom: PropTypes.array.isRequired,
+    gateway: PropTypes.array,
   }).isRequired,
   stale: PropTypes.arrayOf(PropTypes.string).isRequired,
   visibleCount: PropTypes.number.isRequired,

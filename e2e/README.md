@@ -23,8 +23,9 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │  docker compose -p futureagi-e2e                                                │
 │    postgres · clickhouse · redis · minio · temporal                              │
 │    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
-│    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
+│    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, reads :28082) │
 │    backend / worker ─► mock-slack (OAuth and chat, host :28081)                  │
+│    backend / worker ─► webhook-sink (org webhooks, reads :28083)                 │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
@@ -103,15 +104,15 @@ CDC — takes 20.6–58.5 s (21.1 s in the run recorded for this document).
 Ports come from `e2e/stack/e2e.env` and are chosen to collide with neither a normal dev stack nor
 `futureagi-test` (1xxxx), so the E2E stack can run side by side with both:
 
-| Service                       | Port          | Service                  | Port          |
-| ----------------------------- | ------------- | ------------------------ | ------------- |
-| frontend                      | 3100          | Postgres                 | 25432         |
-| backend                       | 8100          | ClickHouse HTTP / native | 28123 / 29000 |
-| agentcc-gateway               | 28090         | Redis                    | 26379         |
-| fi-collector OTLP HTTP / gRPC | 24318 / 24317 | MinIO API / console      | 29005 / 29006 |
-| observation Kafka             | 29093         |                          |               |
-| fi-collector admin            | 29464         | Temporal                 | 27233         |
-| peerdb-server                 | 29900         | peerdb-ui (not started)  | 23001         |
+| Service                       | Port          | Service                       | Port          |
+| ----------------------------- | ------------- | ----------------------------- | ------------- |
+| frontend                      | 3100          | Postgres                      | 25432         |
+| backend                       | 8100          | ClickHouse HTTP / native      | 28123 / 29000 |
+| agentcc-gateway               | 28090         | Redis                         | 26379         |
+| fi-collector OTLP HTTP / gRPC | 24318 / 24317 | MinIO API / console           | 29005 / 29006 |
+| observation Kafka             | 29093         | mock-llm / webhook-sink reads | 28082 / 28083 |
+| fi-collector admin            | 29464         | Temporal                      | 27233         |
+| peerdb-server                 | 29900         | peerdb-ui (not started)       | 23001         |
 
 Always address the stack as `localhost`, never `127.0.0.1`: login skips reCAPTCHA only when the
 request `Host` contains `localhost`.
@@ -247,6 +248,9 @@ E2E_STACK=standalone bin/e2e test
 E2E_STACK=standalone bin/e2e down -v
 ```
 
+With `E2E_GATEWAY_PROFILE=alt` the Standalone gateway mounts `e2e/stack/gateway.alt.yaml` instead
+of `gateway.e2e.yaml` (see "Gateway harness pieces"); export the same value for `up`, `test` and `down`.
+
 `bin/e2e build standalone-app` is the last step on its own: it assembles `futureagi/standalone`
 from the four component images already built with that tag. The managed-mock inspection
 (`lib/managed-mock.ts`) checks the Standalone stack against its own spec
@@ -381,12 +385,14 @@ Assert in as many lanes as the flow has meaning in, from the outside in:
 Everything downstream of a write is eventually consistent, so poll with the shared budgets in
 `lib/state-probe.ts` rather than inventing timeouts:
 
-| Budget              | Timeout | Covers                                                                                                                                                                         |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POLL.SPAN_VISIBLE` | 15 s    | collector-written spans: OTLP POST → row readable in ClickHouse (measured 1.6–2.6 s; the collector's batch ticker dominates)                                                   |
-| `POLL.EVAL_RESULT`  | 90 s    | a Temporal eval task reaching `completed` — the schedule ticks every 10 s, plus worker latency                                                                                 |
-| `POLL.CDC_VISIBLE`  | 180 s   | any read of a CDC-fed table (`tracer_eval_logger`, `model_hub_score`, …): PG write → PeerDB mirror → ClickHouse. ~20.7 s typically, but observed past 90 s under parallel load |
-| `POLL.ASYNC_JOB`    | 60 s    | generic Temporal workflow completion                                                                                                                                           |
+| Budget               | Timeout | Covers                                                                                                                                                                         |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POLL.SPAN_VISIBLE`  | 15 s    | collector-written spans: OTLP POST → row readable in ClickHouse (measured 1.6–2.6 s; the collector's batch ticker dominates)                                                   |
+| `POLL.EVAL_RESULT`   | 90 s    | a Temporal eval task reaching `completed` — the schedule ticks every 10 s, plus worker latency                                                                                 |
+| `POLL.CDC_VISIBLE`   | 180 s   | any read of a CDC-fed table (`tracer_eval_logger`, `model_hub_score`, …): PG write → PeerDB mirror → ClickHouse. ~20.7 s typically, but observed past 90 s under parallel load |
+| `POLL.ASYNC_JOB`     | 60 s    | generic Temporal workflow completion                                                                                                                                           |
+| `POLL.GATEWAY_SYNC`  | 75 s    | the gateway's periodic org-config and key sync (`AGENTCC_SYNC_INTERVAL`, 60 s in both stacks) plus 15 s: a change Django's push on save did not carry                          |
+| `POLL.SCHEDULE_TICK` | 150 s   | a Temporal schedule's next tick after a retry backoff: a 30-60 s interval (`agentcc_alerts.py`) after the 30 s first retry (`webhook_delivery.retry_delay`), plus the run      |
 
 Pick by _what you are waiting on_, not by which flow you are writing: `SPAN_VISIBLE` for anything
 the collector writes, `EVAL_RESULT` for a Temporal eval task's own status, and `CDC_VISIBLE` for
@@ -467,6 +473,27 @@ bin/e2e test harness/
 Local runs use 3 workers (4 or more concurrent browsers overwhelm the stack's single-Granian-worker
 backend and the SPA never finishes booting); CI uses 2. Also available from `e2e/`: `yarn typecheck`
 and `yarn selftest` (unit tests for the catalog generator).
+
+#### Gateway harness pieces
+
+Small `lib/` and `stack/` pieces the gateway flows share. Each has its own test: an offline half
+that runs without a stack (`bin/e2e test harness/<spec> --grep offline`, or `yarn selftest` for the
+`scripts/*.test.mjs` ones) and, where it reads the stack, a live half that runs with the suite.
+
+| Piece                                                                               | Gives a flow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Its own test                                                                      |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `lib/gateway-admin.ts` `GatewayAdmin`                                               | the gateway admin API with the stack's dev token: `config()`, `orgConfig(org)` (`null` on 404), `putOrgConfig` (proof fallback only), `batch` / `cancelBatch(id, org)`, `key(id)`; local gateways only                                                                                                                                                                                                                                                                                                                          | `harness/gateway-admin.spec.ts`                                                   |
+| `lib/state-probe.ts` `POLL.GATEWAY_SYNC`, `POLL.SCHEDULE_TICK`                      | the two waits above, named by what they wait on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `scripts/state-probe.test.mjs`                                                    |
+| `lib/clock.ts` `gatewayNow`, `freshWindow`                                          | the gateway's own time (its `Date` header, never the host clock) and a wait until 5-35 s into its minute, so a per-minute pair of calls never straddles a window                                                                                                                                                                                                                                                                                                                                                                | `harness/clock.spec.ts`                                                           |
+| `lib/public-network.ts` `PUBLIC_NETWORK`; the `e2e-public` network in both overlays | an internal compose network on `11.88.0.0/24`, outside every private, reserved and CGNAT range, so the product's SSRF guards (Django `ssrf_guard.classify_ip`, the gateway's netguard) treat it as public with their defaults on; nothing on it leaves the host. Members: the app containers (Standalone `app`; Distributed `agentcc-gateway`, `backend`, `worker`), `mock-llm` at `11.88.0.11` (`llm.e2e-public.test`) and `webhook-sink` at `11.88.0.10` (`hooks.e2e-public.test`); those aliases exist on this network only  | the managed-mock inspector (below)                                                |
+| `lib/sinks.ts` `WebhookSink`; `stack/webhook-sink/server.mjs`                       | `url(channel, { failFirst })` to save as an org webhook (the product refuses private webhook addresses at save and delivery); `received(channel)` reads what arrived (host `127.0.0.1:28083`, `E2E_WEBHOOK_SINK_URL`); `/fail/<n>` answers the channel's first n requests 500                                                                                                                                                                                                                                                   | `scripts/webhook-sink.test.mjs`, `harness/webhook-sink.spec.ts`                   |
+| `lib/upstream.ts` `MockUpstream`; `stack/mock-llm/server.mjs` scoped routes         | `baseUrl(scenario, { latencyMs, status })` as an org provider's base URL (with `api_path_prefix: '/v1'`): `/s/<scenario>/<lat=ms,status=code or ->/v1/...` answers exactly the unscoped echo (usage 7/7/14) after the delay, or that status with an OpenAI error body; `requests(scenario)` reads every call it received (host `127.0.0.1:28082`, `E2E_MOCK_LLM_URL`)                                                                                                                                                           | `scripts/mock-llm.test.mjs`, `harness/mock-upstream.spec.ts`                      |
+| `lib/managed-mock.ts` public-network rule                                           | the inspector the mock-model flows run before registering a model accepts exactly the declared `e2e-public`: the project's own internal bridge on exactly its subnet, attached to exactly the members (an unlisted container is STOP), the pinned addresses and aliases, no pinned alias on `default`; every other service on `default` only; the new read URLs must be `localhost`                                                                                                                                             | `harness/managed-mock.spec.ts` (`--grep 'managed mock'`: offline N1-N7 per stack) |
+| `lib/sinks.ts` `MailSink`; the `smtp-sink` service in both overlays                 | `host` / `port` (`smtp-sink:1025`) to save as an SMTP alert's provider config; `messagesTo(address)` reads every message to exactly that address, oldest first, with subject and HTML (mailpit `axllent/mailpit:v1.31.4`, which offers STARTTLS with a self-signed certificate; API on host `127.0.0.1:28025`, `E2E_MAIL_SINK_URL`); on `default` only, not inspected                                                                                                                                                           | `harness/smtp-sink.spec.ts`                                                       |
+| `lib/temporal-probe.ts` `TemporalProbe`                                             | `listSchedules`, `describeSchedule(id)` (paused, interval, queue, workflow, the TaskRunnerInput's activity, action count), `pause` / `unpause` / `trigger` / `deleteSchedule` on both stacks: the `temporal` CLI in Standalone `app` (`127.0.0.1:7233`) or the Distributed `temporal` service (`temporal:7233`) via `bin/e2e compose exec` (DOCKER_HOST, never a context). Standalone only: the product's `registerSchedules()`, `--list` and `setIntervalViaManager`. Its CLI JSON: `fixtures/temporal/schedule-describe.json` | `harness/temporal-probe.spec.ts`                                                  |
+| `lib/profile.ts`; `stack/gateway.alt.yaml`; `E2E_GATEWAY_PROFILE` in `bin/e2e`      | the gateway config a stack runs: `stock` (default, `gateway.e2e.yaml`) or `alt` (Standalone only: exactly stock plus `ALT_DELTA`, bodies logged, cache on, other timeouts). `bin/e2e` mounts it for every subcommand and refuses anything else; a flow that needs a profile is tagged `@gw-profile-<name>` and runs only on that profile (`grepInvertPattern`; the catalog lists all); `gatewayProfile()` is what a flow reads its expectations from; `PROFILE_FINGERPRINTS` is what `GET /-/config` shows of each              | `harness/gateway-profile.spec.ts`, `scripts/quarantine.test.mjs`                  |
+| `lib/managed-mock.ts` profile rule                                                  | the declared profile's file must be the mounted one (`gateway profile <p> expects <file> mounted`), `alt` must be exactly stock plus its delta and is Standalone only; the routing contract stays the stock file's; the receipt carries `profile` and the mounted file's hash                                                                                                                                                                                                                                                   | `harness/managed-mock.spec.ts` (offline P3, P4, N8-N12)                           |
+| `stack/gateway.e2e.yaml` `guardrails`; `lib/managed-mock.ts` guardrails rule        | the guardrail plugin on both profiles with no rule of the file's own, so the checks an organization saves in the console (Org Config, Guardrails) run on the stack, and only those (GW-E2E-019); the inspector accepts the section only as exactly `enabled: true`, so the file names no webhook or external provider                                                                                                                                                                                                           | `harness/managed-mock.spec.ts` (offline)                                          |
 
 ---
 
@@ -552,7 +579,8 @@ E2E_LIVE_LLM=1 bin/e2e test --grep @live-llm   # run flows that need a real prov
 ```
 
 `@live-llm` flows are excluded from every ordinary run — the stack's LLM is the deterministic mock.
-Both exclusions are produced by the single `grepInvertPattern()` function feeding the config's
+A flow tagged `@gw-profile-<name>` runs only when `E2E_GATEWAY_PROFILE` declares that gateway profile.
+All three exclusions are produced by the single `grepInvertPattern()` function feeding the config's
 `grepInvert`, deliberately: Playwright's CLI `--grep-invert` _replaces_ the config value entirely, so
 passing the live-LLM filter on the command line would silently un-quarantine everything.
 

@@ -13,8 +13,15 @@ import (
 )
 
 // BatchHandler processes a single chat completion request through the pipeline.
-// Returns the response, metadata (with "cost" key if available), and error.
+// Returns the response, metadata (with "cost" key if available, and
+// MetaRequestID once the item ran), and error. ctx carries the trace id of the
+// batch request that submitted the item (models.GetTraceID), when it had one.
 type BatchHandler func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error)
+
+// MetaRequestID is the metadata key a BatchHandler sets to the request id of
+// the item's run: the id the request log keeps the item's entry under. It
+// becomes the item's Result.RequestID.
+const MetaRequestID = "request_id"
 
 // Processor manages batch lifecycle.
 type Processor struct {
@@ -22,12 +29,20 @@ type Processor struct {
 	handler   BatchHandler
 	retention time.Duration
 	stopCh    chan struct{}
+	// keyCheck settles each submit's batch key (WithKeyStore); nil checks
+	// none and requires none.
+	keyCheck *KeyCheck
 }
 
 // Batch represents a group of requests processed together.
 type Batch struct {
-	ID          string     `json:"batch_id"`
-	Status      string     `json:"status"`
+	ID     string `json:"batch_id"`
+	Status string `json:"status"`
+	// OrgID and KeyID are the org and id of the batch key the items run as
+	// (KeyHeader); empty for a batch submitted without one. Get and cancel
+	// answer only for the batch's own org (GetForOrg, CancelForOrg).
+	OrgID       string     `json:"org_id"`
+	KeyID       string     `json:"key_id,omitempty"`
 	Total       int        `json:"total"`
 	Results     []*Result  `json:"results,omitempty"`
 	MaxConc     int        `json:"max_concurrency"`
@@ -43,8 +58,12 @@ type Batch struct {
 
 // Result is the outcome of a single sub-request.
 type Result struct {
-	Index        int                            `json:"index"`
-	Status       string                         `json:"status"` // success, error, cancelled
+	Index  int    `json:"index"`
+	Status string `json:"status"` // success, error, cancelled
+	// RequestID is the request id the item ran with (MetaRequestID), so its
+	// request-log entry can be found from the batch; empty for an item that
+	// never ran (cancelled, or refused before the pipeline).
+	RequestID    string                         `json:"request_id,omitempty"`
 	Response     *models.ChatCompletionResponse `json:"response,omitempty"`
 	Error        string                         `json:"error,omitempty"`
 	Cost         float64                        `json:"cost,omitempty"`
@@ -54,23 +73,26 @@ type Result struct {
 
 // Summary holds aggregated batch metrics.
 type Summary struct {
-	TotalCost        float64 `json:"total_cost"`
-	TotalInputTokens int     `json:"total_input_tokens"`
-	TotalOutputTokens int    `json:"total_output_tokens"`
-	Completed        int     `json:"completed"`
-	Failed           int     `json:"failed"`
-	Cancelled        int     `json:"cancelled"`
+	TotalCost         float64 `json:"total_cost"`
+	TotalInputTokens  int     `json:"total_input_tokens"`
+	TotalOutputTokens int     `json:"total_output_tokens"`
+	Completed         int     `json:"completed"`
+	Failed            int     `json:"failed"`
+	Cancelled         int     `json:"cancelled"`
 }
 
 const defaultBatchRetention = 1 * time.Hour
 
 // NewProcessor creates a batch processor with the given handler.
 // Completed batches are cleaned up after 1 hour.
-func NewProcessor(handler BatchHandler) *Processor {
+func NewProcessor(handler BatchHandler, opts ...Option) *Processor {
 	p := &Processor{
 		handler:   handler,
 		retention: defaultBatchRetention,
 		stopCh:    make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 	go p.cleanupLoop()
 	return p
@@ -103,6 +125,21 @@ func (p *Processor) cleanupLoop() {
 
 // Submit creates and starts processing a batch. Returns immediately.
 func (p *Processor) Submit(requests []*models.ChatCompletionRequest, maxConc int) *Batch {
+	return p.SubmitWithTraceID(requests, maxConc, "")
+}
+
+// SubmitWithTraceID is Submit for a batch request whose trace id is traceID:
+// each item's handler gets it on its context (models.WithTraceID), so every
+// item's run carries the trace id of the request that submitted it.
+func (p *Processor) SubmitWithTraceID(requests []*models.ChatCompletionRequest, maxConc int, traceID string) *Batch {
+	return p.SubmitAs(requests, maxConc, traceID, Caller{})
+}
+
+// SubmitAs is SubmitWithTraceID for a batch that runs as caller (CallerFor):
+// the batch records the caller's org and key id, and each item's handler gets
+// the caller on its context, which RunAsChatRequest sends as the item's
+// credential and client address.
+func (p *Processor) SubmitAs(requests []*models.ChatCompletionRequest, maxConc int, traceID string, caller Caller) *Batch {
 	if maxConc <= 0 {
 		maxConc = 10
 	}
@@ -111,10 +148,16 @@ func (p *Processor) Submit(requests []*models.ChatCompletionRequest, maxConc int
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	if traceID != "" {
+		ctx = models.WithTraceID(ctx, traceID)
+	}
+	ctx = withCaller(ctx, caller)
 
 	b := &Batch{
 		ID:        generateBatchID(),
 		Status:    "processing",
+		OrgID:     caller.OrgID,
+		KeyID:     caller.KeyID,
 		Total:     len(requests),
 		Results:   make([]*Result, len(requests)),
 		MaxConc:   maxConc,
@@ -141,6 +184,25 @@ func (p *Processor) Get(batchID string) (*Batch, bool) {
 		return nil, false
 	}
 	return raw.(*Batch), true
+}
+
+// GetForOrg is Get for a caller acting for orgID: a batch of another org
+// (or, for an orgID of "", any batch with an org) is not found.
+func (p *Processor) GetForOrg(batchID, orgID string) (*Batch, bool) {
+	b, ok := p.Get(batchID)
+	if !ok || b.OrgID != orgID {
+		return nil, false
+	}
+	return b, true
+}
+
+// CancelForOrg is Cancel for a caller acting for orgID: a batch of another
+// org is not found and keeps running.
+func (p *Processor) CancelForOrg(batchID, orgID string) (*Batch, bool) {
+	if _, ok := p.GetForOrg(batchID, orgID); !ok {
+		return nil, false
+	}
+	return p.Cancel(batchID)
 }
 
 // Cancel cancels a batch and returns its current state.
@@ -193,7 +255,7 @@ func (p *Processor) processBatch(ctx context.Context, b *Batch, requests []*mode
 
 			resp, metadata, err := p.handler(ctx, r)
 
-			result := &Result{Index: idx}
+			result := &Result{Index: idx, RequestID: metadata[MetaRequestID]}
 			if err != nil {
 				result.Status = "error"
 				result.Error = err.Error()

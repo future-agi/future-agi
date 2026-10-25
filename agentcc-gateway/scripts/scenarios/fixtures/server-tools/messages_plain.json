@@ -1,0 +1,9 @@
+{
+  "id": "msg_scn_plain",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [{ "type": "text", "text": "Spain won Euro 2024." }],
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 1000, "output_tokens": 100 }
+}

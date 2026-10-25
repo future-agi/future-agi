@@ -173,6 +173,9 @@ type Tool struct {
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ToolAnnotations provides hints about tool behavior.
@@ -194,6 +197,9 @@ type ToolCallParams struct {
 type ToolCallResult struct {
 	Content []ContentPart `json:"content"`
 	IsError bool          `json:"isError,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ContentPart is a piece of content in a tool result.
@@ -208,6 +214,9 @@ type ContentPart struct {
 type ListToolsResult struct {
 	Tools      []Tool `json:"tools"`
 	NextCursor string `json:"nextCursor,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // --- MCP Resource Types ---
@@ -218,6 +227,9 @@ type Resource struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	MIMEType    string `json:"mimeType,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ResourceTemplate describes a parameterized resource URI template.
@@ -231,6 +243,9 @@ type ResourceTemplate struct {
 // ListResourcesResult is the result of resources/list.
 type ListResourcesResult struct {
 	Resources []Resource `json:"resources"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ReadResourceParams is the params for resources/read.
@@ -241,6 +256,9 @@ type ReadResourceParams struct {
 // ReadResourceResult is the result of resources/read.
 type ReadResourceResult struct {
 	Contents []ResourceContent `json:"contents"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ResourceContent is the content of a resource.
@@ -258,6 +276,9 @@ type Prompt struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Arguments   []PromptArgument `json:"arguments,omitempty"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // PromptArgument describes a parameter for a prompt.
@@ -270,6 +291,9 @@ type PromptArgument struct {
 // ListPromptsResult is the result of prompts/list.
 type ListPromptsResult struct {
 	Prompts []Prompt `json:"prompts"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // GetPromptParams is the params for prompts/get.
@@ -282,6 +306,9 @@ type GetPromptParams struct {
 type GetPromptResult struct {
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages"`
+	// Raw is the object exactly as the upstream sent it, kept by the decoder
+	// for pass-through; never marshalled.
+	Raw json.RawMessage `json:"-"`
 }
 
 // PromptMessage is a message in a prompt result.
@@ -315,3 +342,149 @@ const (
 	MethodToolsListChanged    = "notifications/tools/list_changed"
 	MethodCancelled           = "notifications/cancelled"
 )
+
+// --- Raw bytes ---
+//
+// Each decoder below is the type's default JSON decoding plus a copy of the
+// input in Raw, so the json.Unmarshal calls (client.go) keep the bytes
+// the upstream sent without any change at the call sites.
+
+// keepRaw returns a private copy of b.
+func keepRaw(b []byte) json.RawMessage {
+	return append(json.RawMessage(nil), b...)
+}
+
+// UnmarshalJSON decodes a tool and keeps its raw bytes.
+func (t *Tool) UnmarshalJSON(b []byte) error {
+	type plain Tool
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*t = Tool(v)
+	t.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a tools/call result and keeps its raw bytes.
+func (r *ToolCallResult) UnmarshalJSON(b []byte) error {
+	type plain ToolCallResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ToolCallResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a tools/list result and keeps its raw bytes.
+func (r *ListToolsResult) UnmarshalJSON(b []byte) error {
+	type plain ListToolsResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListToolsResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resource and keeps its raw bytes.
+func (r *Resource) UnmarshalJSON(b []byte) error {
+	type plain Resource
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = Resource(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resources/list result and keeps its raw bytes.
+func (r *ListResourcesResult) UnmarshalJSON(b []byte) error {
+	type plain ListResourcesResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListResourcesResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a resources/read result and keeps its raw bytes.
+func (r *ReadResourceResult) UnmarshalJSON(b []byte) error {
+	type plain ReadResourceResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ReadResourceResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompt and keeps its raw bytes.
+func (p *Prompt) UnmarshalJSON(b []byte) error {
+	type plain Prompt
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*p = Prompt(v)
+	p.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompts/list result and keeps its raw bytes.
+func (r *ListPromptsResult) UnmarshalJSON(b []byte) error {
+	type plain ListPromptsResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = ListPromptsResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}
+
+// UnmarshalJSON decodes a prompts/get result and keeps its raw bytes.
+func (r *GetPromptResult) UnmarshalJSON(b []byte) error {
+	type plain GetPromptResult
+	if string(b) == "null" {
+		return nil // as json.Unmarshal itself treats null
+	}
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = GetPromptResult(v)
+	r.Raw = keepRaw(b)
+	return nil
+}

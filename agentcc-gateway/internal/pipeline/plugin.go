@@ -75,6 +75,20 @@ type PostParallel interface {
 	IsPostParallel() bool
 }
 
+// PostOrdered is an optional interface for a plugin whose post-processing
+// must run at a different point than its Priority puts it. Sequential post
+// plugins run in ascending PostPriority, which defaults to Priority.
+type PostOrdered interface {
+	PostPriority() int
+}
+
+func postPriority(p Plugin) int {
+	if po, ok := p.(PostOrdered); ok {
+		return po.PostPriority()
+	}
+	return p.Priority()
+}
+
 // SkipOnCacheHit is an optional interface plugins can implement to indicate
 // their ProcessResponse should be skipped when the request was served from cache.
 // Cost calculation and credits deduction are meaningless on cache hits.

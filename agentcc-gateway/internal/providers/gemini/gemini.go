@@ -97,6 +97,11 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// UpstreamModelName is the id every translated call sends the host for
+// model (providers.UpstreamModelNamer). The native GenAI pass-through sends
+// the model it is given as it is.
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
@@ -121,9 +126,9 @@ const maxRedirects = 10
 // when the upstream redirects.
 //
 // Go carries a custom header through every redirect and only strips the ones
-// it knows, Authorization and Cookie among them. Putting the key in
-// x-goog-api-key therefore made it follow a redirect anywhere the upstream
-// pointed, including to plaintext. A downgrade is refused outright; a move
+// it knows, Authorization and Cookie among them, so this policy decides what
+// happens to x-goog-api-key on every redirect, a plaintext one included.
+// A downgrade is refused outright; a move
 // away from the configured origin keeps going without the credential, so the
 // request fails on authentication rather than handing the key to whoever
 // answered.
@@ -131,8 +136,8 @@ const maxRedirects = 10
 // Every hop is judged against via[0], the origin the operator configured and
 // trusted with the key — not against the hop before it. Go rebuilds each
 // redirected request from the original, so a header dropped on one hop comes
-// back on the next: comparing neighbours let A -> B -> B restore the
-// credential at B, because the second hop looked like it stayed put.
+// back on the next; judging every hop against the configured origin keeps
+// the credential off each hop that leaves it.
 func keepCredentialInOrigin(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
@@ -150,11 +155,9 @@ func keepCredentialInOrigin(req *http.Request, via []*http.Request) error {
 
 // setAPIKey puts this provider's credential on the request.
 //
-// The key goes in a header, never in the URL. A failed call surfaces as a
-// *url.Error carrying the whole URL, and that error reaches the client's 502
-// body and the request log — so a key in the query string is a key published
-// to anyone who can read either. The native pass-through path has always used
-// this header; everything else used to append ?key= and leak it.
+// The key goes in a header, never in the URL, so a failed call's error,
+// which reaches the client and the request log, does not carry it. Every
+// call sends the credential in a header and none in the URL.
 func (p *Provider) setAPIKey(req *http.Request) {
 	if p.vertexAI {
 		if tok := p.bearerToken(); tok != "" {
@@ -202,7 +205,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
+		return nil, models.ErrInternal("gemini: creating request: " + withoutURL(err))
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -216,7 +219,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("gemini: request timed out")
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: request failed: %v", err))
+		return nil, models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
 	}
 	defer resp.Body.Close()
 
@@ -274,7 +277,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer cancelUpstream()
 		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
+			errs <- models.ErrInternal("gemini: creating request: " + withoutURL(err))
 			return
 		}
 
@@ -291,7 +294,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				errs <- models.ErrGatewayTimeout("gemini: request timed out")
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: request failed: %v", err))
+			errs <- models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
 			return
 		}
 		defer resp.Body.Close()

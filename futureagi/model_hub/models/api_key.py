@@ -1,4 +1,4 @@
-import base64
+import copy
 import uuid
 
 from django.core.exceptions import ValidationError
@@ -7,7 +7,7 @@ from django.db import models
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import LiteLlmModelProvider
-from tfc.settings import settings
+from model_hub.services import key_at_rest
 from tfc.utils.base_model import BaseModel
 
 
@@ -50,7 +50,78 @@ def mask_key(key):
         return key
 
 
-class ApiKey(BaseModel):
+class KeysAtRestMixin:
+    """Stores a model's key fields encrypted at rest (see
+    ``model_hub.services.key_at_rest``) and decrypts them only on use.
+
+    A row remembers the stored values it loaded (``from_db``,
+    ``refresh_from_db``) and last saved. On save a value unchanged since then
+    keeps its ciphertext (an old-encoding one is upgraded); any other value is
+    one a caller set and is encrypted, whatever it looks like. Reads go through
+    ``_clear``: a stored value is decrypted, a value set in memory and not yet
+    saved is already clear.
+    """
+
+    secret_fields = ()
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._remember_stored(cls.secret_fields)
+        return instance
+
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        names = self.secret_fields if fields is None else fields
+        self._remember_stored([n for n in names if n in self.secret_fields])
+
+    def _stored_snapshot(self):
+        return self.__dict__.setdefault("_keys_at_rest_loaded", {})
+
+    def _remember_stored(self, names):
+        snapshot = self._stored_snapshot()
+        for name in names:
+            if name in self.__dict__:  # a deferred field was not loaded
+                snapshot[name] = copy.deepcopy(self.__dict__[name])
+
+    def _clear(self, name, what):
+        """The clear value of a key field; ``KeyUnreadable`` when it cannot be
+        decrypted."""
+        value = getattr(self, name)
+        return key_at_rest.reveal_tree(
+            value, what, loaded=self._stored_snapshot().get(name)
+        )
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        deferred = self.get_deferred_fields()
+        names = [
+            n
+            for n in self.secret_fields
+            if n not in deferred and (update_fields is None or n in update_fields)
+        ]
+        before = {n: getattr(self, n) for n in names}
+        snapshot = self._stored_snapshot()
+        for name, value in before.items():
+            if value:
+                setattr(self, name, key_at_rest.encrypt_tree(value, snapshot.get(name)))
+        try:
+            self.full_clean()
+            super().save(*args, **kwargs)
+        except BaseException:
+            for name, value in before.items():
+                setattr(self, name, value)
+            raise
+        self._remember_stored(names)
+        if any(before.values()):
+            # Without a stable key the key was stored in the old encoding: say
+            # so and how to fix it (never the key, never the variable's value).
+            key_at_rest.warn_if_not_encrypted(
+                model=type(self).__name__, row_id=str(self.pk)
+            )
+
+
+class ApiKey(KeysAtRestMixin, BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     organization = models.ForeignKey(
@@ -70,160 +141,46 @@ class ApiKey(BaseModel):
     provider = models.CharField(
         max_length=50, validators=[validate_model_provider_choice]
     )
-    key = models.CharField(max_length=2500, null=True, blank=True)
+    # ``enc::`` plus Fernet ciphertext; text, because the ciphertext of
+    # a key of the 2500 characters the API accepts is longer than that.
+    key = models.TextField(null=True, blank=True)
+    # The same, for every string of a JSON key.
     config_json = models.JSONField(null=True, blank=True)
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, blank=True, default=None
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._actual_key = None
-        self._actual_json = {}
-        if self.key:
-            self._actual_key = self.decrypt_key()
-        if self.config_json:
-            self._actual_json = self.decrypt_json(self.config_json)
+    secret_fields = ("key", "config_json")
 
-    def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
-
-    def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
-
-    def is_encrypted_key(self, key):
-        if not key:
-            return False
-        try:
-            decoded = base64.b64decode(key, validate=True)
-        except Exception:
-            return False
-        return decoded.startswith(settings.SECRET_KEY[:16].encode())
+    @property
+    def _what(self):
+        return f"{self.provider or 'provider'} key"
 
     @property
     def actual_key(self):
-        return self._actual_key
+        """The clear key, for a provider call only; ``KeyUnreadable`` (a
+        ``ValueError``) when this deployment cannot decrypt it."""
+        return self._clear("key", self._what) if self.key else None
 
     @property
     def actual_json(self):
-        return self._actual_json
+        """The clear JSON key, for a provider call only; ``KeyUnreadable`` when
+        any of it cannot be decrypted."""
+        return self._clear("config_json", self._what) if self.config_json else {}
 
     @property
     def masked_actual_key(self):
-        if not self.actual_key:
-            if self.actual_json:
-                return mask_key(self.actual_json)
-            else:
-                return None
-        return mask_key(self.actual_key)
+        """What every response shows; never the key or its ciphertext, and a
+        placeholder for a key that cannot be decrypted."""
+        for name in ("key", "config_json"):
+            value = getattr(self, name)
+            if value:
+                return key_at_rest.mask(value, self._stored_snapshot().get(name))
+        return None
 
     def clean(self):
         super().clean()
         validate_model_provider_choice(self.provider)
-
-    def save(self, *args, **kwargs):
-        if self.key and not self.is_encrypted_key(self.key):
-            self._actual_key = self.key
-            self.key = self.encrypt_key(self.key)
-        elif self.key:
-            self._actual_key = self.decrypt_key()
-        else:
-            self._actual_key = None
-        if self.config_json:
-            self._actual_json = self.decrypt_json(self.config_json)
-            self.config_json = self.encrypt_json(self.config_json)
-        else:
-            self._actual_json = {}
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def encrypt_json(self, config_json):
-        encrypted_json = {}
-        for key in config_json.keys():
-            encrypted_json[key] = self._encrypt_value(config_json[key])
-        return encrypted_json
-
-    def _encrypt_value(self, value):
-        """Recursively encrypt values, handling nested structures"""
-        if isinstance(value, dict):
-            # Recursively encrypt nested dictionaries
-            encrypted_dict = {}
-            for k, v in value.items():
-                encrypted_dict[k] = self._encrypt_value(v)
-            return encrypted_dict
-        elif isinstance(value, list):
-            # Recursively encrypt nested lists
-            return [self._encrypt_value(item) for item in value]
-        elif isinstance(value, str):
-            if self.is_encrypted_key(value):
-                return value
-            return self.encrypt_key(value)
-        else:
-            # For other types (int, float, bool, etc.), return as-is
-            return value
-
-    def get_decrypted_json_key(self, json_key):
-        if not json_key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(json_key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
-
-    def decrypt_json(self, json_key=None):
-        actual_key = {}
-        if not json_key:
-            json_key = self.config_json
-        if json_key is not None:
-            for key in json_key.keys():
-                key_val = self._decrypt_value(json_key[key])
-                actual_key.update({key: key_val})
-        return actual_key
-
-    def _decrypt_value(self, value):
-        """Recursively decrypt values, handling nested structures"""
-        if isinstance(value, dict):
-            # Recursively decrypt nested dictionaries
-            decrypted_dict = {}
-            for k, v in value.items():
-                decrypted_dict[k] = self._decrypt_value(v)
-            return decrypted_dict
-        elif isinstance(value, list):
-            # Recursively decrypt nested lists
-            return [self._decrypt_value(item) for item in value]
-        elif isinstance(value, str):
-            decrypted_value = self.get_decrypted_json_key(value)
-            return decrypted_value if decrypted_value is not None else value
-        else:
-            # For other types (int, float, bool, etc.), return as-is
-            return value
-
-    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
-        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
-        self._actual_key = self.decrypt_key() if self.key else None
-        self._actual_json = (
-            self.decrypt_json(self.config_json) if self.config_json else {}
-        )
 
 
 class SecretType(models.TextChoices):  # pragma: allowlist secret
@@ -241,7 +198,7 @@ def validate_secret_type(value):
         )
 
 
-class SecretModel(BaseModel):
+class SecretModel(KeysAtRestMixin, BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
@@ -268,65 +225,36 @@ class SecretModel(BaseModel):
         default=SecretType.OTHER,
     )
 
-    key = models.CharField(max_length=2500, null=True, blank=True)
+    # ``enc::`` plus Fernet ciphertext, like ApiKey.key.
+    key = models.TextField(null=True, blank=True)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._actual_key = None
-        if self.key:
-            self._actual_key = self.decrypt_key()
-
-    def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
-
-    def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
+    secret_fields = ("key",)
 
     @property
     def actual_key(self):
-        return self._actual_key
+        """The clear secret, for the call that uses it only; ``KeyUnreadable``
+        (a ``ValueError``) when this deployment cannot decrypt it."""
+        return self._clear("key", f"secret {self.name!r}") if self.key else None
 
-    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
-        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
-        self._actual_key = self.decrypt_key() if self.key else None
-
-    def is_encrypted_key(self, key):
-        if not key:
-            return False
+    @property
+    def masked_key(self):
+        """What the secrets list shows: the first and last four characters around
+        bullets (only the first two for a secret of eight or fewer), a
+        placeholder for a secret that cannot be decrypted, never the secret
+        or its ciphertext."""
         try:
-            decoded = base64.b64decode(key, validate=True)
-        except Exception:
-            return False
-        return decoded.startswith(settings.SECRET_KEY[:16].encode())
+            clear = self.actual_key
+        except key_at_rest.KeyUnreadable:
+            return key_at_rest.UNREADABLE_MASK
+        if not clear:
+            return None
+        if len(clear) <= 8:
+            return clear[:2] + "•" * max(len(clear) - 2, 4)
+        return clear[:4] + "•" * (len(clear) - 8) + clear[-4:]
 
     def clean(self):
         super().clean()
         validate_secret_type(self.secret_type)
-
-    def save(self, *args, **kwargs):
-        if self.key and not self.is_encrypted_key(self.key):
-            self._actual_key = self.key
-            self.key = self.encrypt_key(self.key)
-        elif self.key:
-            self._actual_key = self.decrypt_key()
-        self.full_clean()
-        super().save(*args, **kwargs)
 
     class Meta:
         db_table = "secrets"

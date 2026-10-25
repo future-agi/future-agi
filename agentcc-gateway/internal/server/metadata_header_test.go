@@ -34,6 +34,14 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"tenant"},
 		},
 		{
+			// rbac_* keys belong to the gateway's RBAC and budget plugins, so a
+			// caller cannot set them.
+			name:       "rbac keys are rejected, not recorded",
+			header:     `{"rbac_team":"engineering","RBAC_ROLE":"admin","tenant":"ok"}`,
+			wantMeta:   map[string]string{"tenant": "ok"},
+			wantCustom: []string{"tenant"},
+		},
+		{
 			name:       "malformed json is ignored",
 			header:     `not json`,
 			wantMeta:   map[string]string{},
@@ -262,6 +270,7 @@ func TestIsBlockedMetadataKeyCostFamily(t *testing.T) {
 		"cost", "cost_source", "cost_SOURCE",
 		"credits_used", "credits_remaining", "credit_balance",
 		"budget_remaining", "ratelimit_limit", "org_id", "authorization",
+		"rbac_team", "rbac_role",
 	}
 	for _, k := range blocked {
 		if !isBlockedMetadataKey(k) {
@@ -402,6 +411,28 @@ func TestDialectHandlersCaptureCallerExtrasBeforeThePipeline(t *testing.T) {
 		if capture > process {
 			t.Errorf("%s captures caller extras after the pipeline runs; the OTel "+
 				"plugin reads rc.CallerExtras inside it, so they would be exported empty", file)
+		}
+	}
+}
+
+// ocr_pages is the page count the cost plugin
+// prices OCR by; a caller cannot plant it on any endpoint.
+func TestOCRPagesMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.OCRPagesMetadataKey, "OCR_PAGES"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the cost plugin owns it", k)
+		}
+	}
+}
+
+// The rerank handler records the upstream's
+// billed search units under this key, so no caller may set it on any
+// endpoint (it would be logged as gateway evidence, and a content_mode none
+// flush strips caller keys).
+func TestRerankSearchUnitsMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.RerankSearchUnitsMetadataKey, "Search_Units"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the rerank handler owns it", k)
 		}
 	}
 }

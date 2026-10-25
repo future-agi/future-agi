@@ -24,7 +24,7 @@ func New(store *rbacpkg.Store, enabled bool) *Plugin {
 }
 
 func (p *Plugin) Name() string  { return "rbac" }
-func (p *Plugin) Priority() int { return 30 } // After auth (20), before budget/guardrails.
+func (p *Plugin) Priority() int { return 30 } // After auth (20), before the quota (33), guardrails (34) and budget (40).
 
 // ProcessRequest checks role-based permissions.
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {

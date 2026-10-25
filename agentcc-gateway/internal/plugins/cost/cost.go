@@ -2,10 +2,7 @@ package cost
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -18,10 +15,10 @@ import (
 const (
 	// CostSourceUnpriced is written to Metadata["cost_source"] when the request
 	// used something billable (tokens, seconds of audio, characters of text) but
-	// the model database has no price for the model. The request is recorded
-	// without a cost. Budgets price requests from their own table, so this flag
-	// says nothing about whether a budget counted the request.
-	CostSourceUnpriced = "unpriced"
+	// no price is known for the model. The request is recorded without a cost.
+	// Budgets price requests from their own table, so this flag says nothing
+	// about whether a budget counted the request.
+	CostSourceUnpriced = string(models.CostSourceUnpriced)
 
 	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
 	// model names cannot grow it without limit.
@@ -39,29 +36,80 @@ const (
 	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
 )
 
-// Plugin is a post-response pipeline plugin that calculates per-request cost.
+// Plugin is a post-response pipeline plugin that prices every attempt of a
+// request in integer micros and fills rc.Billing (FinalizeRequest).
 type Plugin struct {
 	modelDB          func() *modeldb.ModelDB // getter for hot-reloadable model database
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 
+	// managedMarkupPercent (managed.markup_percent) is added to the upstream
+	// cost of managed attempts, as markupBps basis points.
+	managedMarkupPercent float64
+	markupBps            int
+
+	pricing  atomic.Pointer[Pricer]
+	feesHeld atomic.Pointer[Fees]
+
 	unpricedWarned      sync.Map     // model → struct{}: models already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
-// New creates a new cost tracking plugin.
+// Fees are the landed-cost rates.
+type Fees struct {
+	// ProcessingFeeBps is managed.processing_fee_bps: card processing as a
+	// share of billed revenue.
+	ProcessingFeeBps int
+	// UpstreamFeeBps is each provider's effective
+	// providers.<id>.upstream_fee_bps: what the upstream adds on top of
+	// model prices (550 for OpenRouter, 0 for a direct source).
+	UpstreamFeeBps map[string]int
+}
+
+// New creates a new cost tracking plugin. It prices from the model database
+// until SetPricer installs the gateway's injected price lookup.
 func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenant.Store, aliasCostFactors map[string]float64) *Plugin {
-	return &Plugin{
+	p := &Plugin{
 		modelDB:          modelDBGetter,
 		enabled:          enabled,
 		tenantStore:      tenantStore,
 		aliasCostFactors: aliasCostFactors,
 	}
+	p.pricing.Store(NewPricer(modelDBGetter, nil))
+	p.feesHeld.Store(&Fees{})
+	return p
 }
 
-func (p *Plugin) Name() string           { return "cost" }
-func (p *Plugin) Priority() int          { return 500 }
+// SetManagedMarkup sets the percentage added to managed requests' upstream
+// cost (managed.markup_percent): 5 bills 10,500 micros for 10,000.
+func (p *Plugin) SetManagedMarkup(percent float64) {
+	p.managedMarkupPercent = percent
+	p.markupBps = markupBpsOf(percent)
+}
+
+// SetFees sets the landed-cost rates. Call it before the gateway serves.
+func (p *Plugin) SetFees(f Fees) { p.feesHeld.Store(&f) }
+
+// SetPricer replaces the plugin's prices, for the gateway's injected lookup.
+func (p *Plugin) SetPricer(pr *Pricer) {
+	if pr != nil {
+		p.pricing.Store(pr)
+	}
+}
+
+// Priced reports whether model can be priced on endpoint (see Pricer.Priced).
+func (p *Plugin) Priced(endpoint, model string) bool { return p.pricer().Priced(endpoint, model) }
+
+func (p *Plugin) pricer() *Pricer { return p.pricing.Load() }
+func (p *Plugin) fees() *Fees     { return p.feesHeld.Load() }
+
+func (p *Plugin) Name() string  { return "cost" }
+func (p *Plugin) Priority() int { return 500 }
+
+// PostPriority runs cost first among the post plugins: budget (40) records
+// the spend it computes, and credits (510) charges it.
+func (p *Plugin) PostPriority() int          { return 1 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
 
 // ProcessRequest is a no-op for the cost plugin.
@@ -69,107 +117,28 @@ func (p *Plugin) ProcessRequest(_ context.Context, _ *models.RequestContext) pip
 	return pipeline.ResultContinue()
 }
 
-// ProcessResponse calculates request cost from usage data and stores it in metadata.
+// ProcessResponse prices the request (FinalizeRequest). It keeps the
+// metadata keys every consumer reads: cost (billed for a managed request,
+// the upstream cost for a BYOK one), cost_base and cost_markup_percent
+// (managed), and cost_source.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled {
-		return pipeline.ResultContinue()
+	if p.enabled {
+		p.FinalizeRequest(rc)
 	}
-
-	db := p.modelDB()
-	if db == nil {
-		return pipeline.ResultContinue()
-	}
-
-	// Try resolved model first (actual model used), then requested model.
-	model := rc.ResolvedModel
-	if model == "" {
-		model = rc.Model
-	}
-
-	// Check for per-org custom pricing.
-	if p.tenantStore != nil {
-		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
-		if orgID != "" {
-			orgCfg := p.tenantStore.Get(orgID)
-			if orgCfg != nil && orgCfg.CostTracking != nil && orgCfg.CostTracking.Enabled && len(orgCfg.CostTracking.CustomPricing) > 0 {
-				if orgCost, done := p.tryOrgPricing(rc, model, orgCfg.CostTracking); done {
-					if orgCost > 0 {
-						rc.Metadata["cost"] = fmt.Sprintf("%.6f", orgCost)
-						rc.Metadata["cost_source"] = "org_custom"
-					}
-					return pipeline.ResultContinue()
-				}
-			}
-		}
-	}
-
-	opts := modeldb.CostOptions{
-		Cached: rc.Metadata["cache_status"] == "hit",
-	}
-
-	var cost float64
-	var ok bool
-	// billed is how much the request used, in the unit its endpoint is priced
-	// by: tokens, seconds of audio, or characters of text. A positive amount
-	// with no price is what goes unpriced.
-	var billed float64
-	priceHint := tokenPriceHint
-
-	switch rc.EndpointType {
-	case "embedding":
-		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
-			billed = float64(rc.EmbeddingResponse.Usage.PromptTokens)
-			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
-		}
-	case "image":
-		// Image cost varies by provider; skip for now.
-	case "transcription", "translation", "transcription_relay":
-		priceHint = audioPriceHint
-		if seconds, err := strconv.ParseFloat(rc.Metadata["audio_seconds"], 64); err == nil {
-			billed = seconds
-			cost, ok = db.AudioCost(model, seconds)
-		}
-	case "speech", "speech_stream", "speech_relay":
-		priceHint = characterPriceHint
-		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
-			billed = float64(characters)
-			cost, ok = db.CharacterCost(model, characters)
-		}
-	case "rerank":
-		// Rerank billing varies by provider; skip for now.
-	default: // "chat" or empty
-		if rc.Response == nil || rc.Response.Usage == nil {
-			return pipeline.ResultContinue()
-		}
-		usage := rc.Response.Usage
-		billed = float64(usage.PromptTokens + usage.CompletionTokens)
-		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
-		if !ok && model == rc.ResolvedModel && rc.Model != "" {
-			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
-		}
-	}
-
-	if ok {
-		// Apply alias-based cost factors from config.
-		if alias := rc.Metadata["model_alias"]; alias != "" && len(p.aliasCostFactors) > 0 {
-			for prefix, factor := range p.aliasCostFactors {
-				if strings.HasPrefix(alias, prefix) {
-					cost *= factor
-					break
-				}
-			}
-		}
-		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
-	} else if billed > 0 {
-		// The request used something billable but there is no price for this
-		// model. Leaving this silent made the request look free in the request
-		// log and analytics. Mark the request so they can surface it, and tell
-		// the operator once per model.
-		rc.Metadata["cost_source"] = CostSourceUnpriced
-		p.warnUnpriced(rc, model, priceHint)
-	}
-
 	return pipeline.ResultContinue()
+}
+
+// priceHintFor names the model-database price an operator sets for an
+// endpoint, by the unit the endpoint is billed in.
+func priceHintFor(endpoint string) string {
+	switch {
+	case isSpeechEndpoint(endpoint):
+		return characterPriceHint
+	case isAudioSecondsEndpoint(endpoint):
+		return audioPriceHint
+	default:
+		return tokenPriceHint
+	}
 }
 
 // warnUnpriced logs, once per model, that traffic is being recorded without a
@@ -188,34 +157,4 @@ func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string
 		"request_id", rc.RequestID,
 		"hint", priceHint+budgetPriceHint,
 	)
-}
-
-// tryOrgPricing checks per-org custom pricing for the model.
-// Returns (cost, true) if org pricing was found and applied; (0, false) to fall through to global.
-func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tenant.CostTrackingConfig) (float64, bool) {
-	pricing := ct.CustomPricing[model]
-	if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
-		pricing = ct.CustomPricing[rc.Model]
-	}
-	if pricing == nil {
-		return 0, false // No org pricing for this model, fall through to global.
-	}
-
-	var promptTokens, completionTokens int
-	switch rc.EndpointType {
-	case "embedding":
-		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
-			promptTokens = rc.EmbeddingResponse.Usage.PromptTokens
-		}
-	default:
-		if rc.Response == nil || rc.Response.Usage == nil {
-			return 0, true
-		}
-		promptTokens = rc.Response.Usage.PromptTokens
-		completionTokens = rc.Response.Usage.CompletionTokens
-	}
-
-	cost := float64(promptTokens)*pricing.InputPerMTok/1_000_000 +
-		float64(completionTokens)*pricing.OutputPerMTok/1_000_000
-	return cost, true
 }

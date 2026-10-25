@@ -428,7 +428,9 @@ func TestProcessResponse_KnownModel_NotMarkedUnpriced(t *testing.T) {
 
 	p.ProcessResponse(context.Background(), rc)
 
-	if got, ok := rc.Metadata["cost_source"]; ok {
+	// The cost plugin records the precise source of a priced request
+	// ("modeldb" here); what matters is that it is never "unpriced".
+	if got := rc.Metadata["cost_source"]; got == CostSourceUnpriced {
 		t.Fatalf("priced model got cost_source=%q", got)
 	}
 }
@@ -490,13 +492,20 @@ func TestProcessResponse_UnknownModel_WarningSetIsBounded(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // audioRC is a speech or transcription request carrying its billed amount in
-// the metadata key the audio handlers record it under.
+// the metadata key the audio handlers record it under, and, for a
+// transcription or translation, the response the handler received.
 func audioRC(model, endpoint, key, amount string) *models.RequestContext {
 	rc := &models.RequestContext{
 		Model:        model,
 		EndpointType: endpoint,
 		Metadata:     make(map[string]string),
 		Timings:      make(map[string]time.Duration),
+	}
+	switch endpoint {
+	case "transcription":
+		rc.TranscriptionResp = &models.TranscriptionResponse{}
+	case "translation":
+		rc.TranslationResp = &models.TranslationResponse{}
 	}
 	if amount != "" {
 		rc.Metadata[key] = amount
@@ -551,7 +560,6 @@ func TestProcessResponse_UnpricedAudio_NothingUsedNotMarked(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ name, endpoint, key, amount string }{
 		{"zero seconds", "transcription", "audio_seconds", "0.000000"},
-		{"no duration known", "transcription", "audio_seconds", ""},
 		{"zero characters", "speech", "input_characters", "0"},
 		{"no character count", "speech_relay", "input_characters", ""},
 	}
@@ -569,6 +577,46 @@ func TestProcessResponse_UnpricedAudio_NothingUsedNotMarked(t *testing.T) {
 	}
 }
 
+// A relayed speech session that named no model ran on a model the vendor
+// picked, which has no price here: it is flagged unpriced, with no cost,
+// rather than left looking free.
+func TestProcessResponse_RelaySessionWithoutAModel_MarkedUnpriced(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ endpoint, key, amount string }{
+		{"transcription_relay", "audio_seconds", "1.500000"},
+		{"speech_relay", "input_characters", "12"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			t.Parallel()
+			rc := audioRC("", tc.endpoint, tc.key, tc.amount)
+
+			audioTestPlugin().ProcessResponse(context.Background(), rc)
+
+			if got := rc.Metadata["cost_source"]; got != CostSourceUnpriced {
+				t.Fatalf("Metadata[cost_source] = %q, want %q", got, CostSourceUnpriced)
+			}
+			if _, ok := rc.Metadata["cost"]; ok {
+				t.Fatal("Metadata[cost] must stay unset for a session with no model")
+			}
+		})
+	}
+}
+
+// A transcription whose audio length the gateway could not read may have
+// been billable, so it is flagged unpriced rather than left looking free;
+// only a reported zero (above) is nothing to price.
+func TestProcessResponse_UnmeasuredAudio_MarkedUnpriced(t *testing.T) {
+	t.Parallel()
+	rc := audioRC("custom-speech-model", "transcription", "audio_seconds", "")
+
+	audioTestPlugin().ProcessResponse(context.Background(), rc)
+
+	if got := rc.Metadata["cost_source"]; got != CostSourceUnpriced {
+		t.Fatalf("Metadata[cost_source] = %q, want %q", got, CostSourceUnpriced)
+	}
+}
+
 func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -576,6 +624,9 @@ func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 	}{
 		{"whisper-1", "transcription", "audio_seconds", "60.000000", "0.006000"}, // 60 s * $0.0001
 		{"tts-1", "speech", "input_characters", "1000", "0.015000"},              // 1000 chars * $0.000015
+		// A relayed speech session is priced the same way, from what the client sent.
+		{"whisper-1", "transcription_relay", "audio_seconds", "60.000000", "0.006000"},
+		{"tts-1", "speech_relay", "input_characters", "1000", "0.015000"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.endpoint, func(t *testing.T) {
@@ -587,7 +638,7 @@ func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 			if got := rc.Metadata["cost"]; got != tc.want {
 				t.Fatalf("Metadata[cost] = %q, want %q", got, tc.want)
 			}
-			if got, ok := rc.Metadata["cost_source"]; ok {
+			if got := rc.Metadata["cost_source"]; got == CostSourceUnpriced {
 				t.Fatalf("priced model got cost_source=%q", got)
 			}
 		})

@@ -135,6 +135,10 @@ x-backend-env: &backend-env
   AGENTCC_HARNESS_API_KEY: ${AGENTCC_HARNESS_API_KEY:-}
   AGENTCC_BASE_URL: ${AGENTCC_BASE_URL:-}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+  # The API's gateway admin endpoints refuse the default above and any weak
+  # token, as the gateway refuses to start on one. bin/install fills a random
+  # one in .env. 1 accepts it anyway, for local development and the E2E stack only.
+  AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: ${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
   MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
@@ -558,6 +562,11 @@ services:
       AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-}
       AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      # The gateway refuses to start on the default above or any weak token.
+      # bin/install fills a random one in .env on any install;
+      # without it, set AGENTCC_ADMIN_TOKEN there (openssl rand -hex 32).
+      # 1 starts it anyway, for local development and the E2E stack only.
+      AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: ${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}
       # Load UI-created keys and org settings from the backend, and send
       # request logs to it (AGENTCC_WEBHOOK_SECRET, as the backend has it).
       AGENTCC_CONTROL_PLANE_URL: http://backend

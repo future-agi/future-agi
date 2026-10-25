@@ -241,7 +241,7 @@ func TestPlugin_ModelAccessDenied(t *testing.T) {
 
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-	rc.Model = "claude-3-opus"           // test-key only allows gpt-4o
+	rc.Model = "claude-3-opus" // test-key only allows gpt-4o
 	rc.Provider = "openai"
 	rc.Metadata["authorization"] = "Bearer sk-agentcc-test-key-123"
 
@@ -461,5 +461,35 @@ func TestPlugin_NoModelNoProvider(t *testing.T) {
 	result := p.ProcessRequest(context.Background(), rc)
 	if result.Action != pipeline.Continue {
 		t.Fatalf("expected Continue when no model/provider set, got action=%d, err=%v", result.Action, result.Error)
+	}
+}
+
+// A key's metadata is copied under "key_"; key_type is always the key's own
+// type, whatever an entry of its metadata is named.
+func TestPlugin_MetadataCannotOverrideKeyType(t *testing.T) {
+	ks := authpkg.NewKeyStore(config.AuthConfig{
+		Enabled: true,
+		Keys: []config.AuthKeyConfig{{
+			Name:     "tenant-key",
+			Key:      "sk-agentcc-tenant-type",
+			KeyType:  "byok",
+			Metadata: map[string]string{"type": "internal", "env": "prod"},
+		}},
+	})
+	p := New(ks, true)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.Metadata["authorization"] = "Bearer sk-agentcc-tenant-type"
+
+	result := p.ProcessRequest(context.Background(), rc)
+	if result.Action != pipeline.Continue {
+		t.Fatalf("expected Continue, got action=%d, err=%v", result.Action, result.Error)
+	}
+	if v := rc.Metadata["key_type"]; v != "byok" {
+		t.Errorf("key_type = %q, want %q", v, "byok")
+	}
+	if v := rc.Metadata["key_env"]; v != "prod" {
+		t.Errorf("key_env = %q, want %q", v, "prod")
 	}
 }

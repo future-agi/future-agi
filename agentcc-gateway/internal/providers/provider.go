@@ -38,6 +38,15 @@ type ClientTimeoutReporter interface {
 	ClientTimeout() time.Duration
 }
 
+// UpstreamModelNamer is implemented by adapters that do not send a request's
+// model to their host as they get it: they drop a leading "<prefix>/" segment
+// (the Anthropic, Bedrock, Gemini, Cohere and Azure adapters). UpstreamModelName
+// is the id the adapter sends for model, through the same function its calls
+// use. An adapter without it (the OpenAI adapter) sends the model as it is.
+type UpstreamModelNamer interface {
+	UpstreamModelName(model string) string
+}
+
 // EmbeddingProvider is implemented by providers that support embedding generation.
 type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)

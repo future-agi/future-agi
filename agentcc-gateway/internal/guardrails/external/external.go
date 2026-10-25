@@ -15,6 +15,10 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+// defaultExternalTimeout bounds one external-provider call when the rule
+// sets none.
+const defaultExternalTimeout = 5 * time.Second
+
 // providerAdapter builds HTTP requests and parses responses for a specific provider.
 type providerAdapter interface {
 	buildRequest(ctx context.Context, text string) (*http.Request, error)
@@ -27,17 +31,43 @@ type ExternalGuardrail struct {
 	adapter providerAdapter
 	retry   int
 	client  *http.Client
+	// configErr is why the rule cannot run (an org config that names an
+	// environment reference), or nil. Check refuses every request while it is
+	// set, failing closed rather than passing a request unchecked.
+	configErr error
 }
 
-// New creates an ExternalGuardrail from rule config.
-func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
+// NewConfigFileRule creates an ExternalGuardrail from a rule in the
+// gateway's own config file, the one constructor that reads the environment:
+// a config-file rule is operator-trusted, so each adapter's string settings
+// expand a whole-string ${VAR} from the gateway's environment
+// (getStringConfig), and it keeps a plain client (a config.yaml check may
+// point at the operator's own host, such as a presidio sidecar on localhost,
+// without listing it). Only the config.yaml registry loop
+// calls it: anything an organization configures is built with New
+// (orgconfig.go), which never reaches the environment and dials through the
+// guarded egress dialer.
+func NewConfigFileRule(name string, cfg map[string]interface{}) *ExternalGuardrail {
+	return build(name, cfg, func(timeout time.Duration) *http.Client {
+		return &http.Client{Timeout: timeout}
+	})
+}
+
+// build parses a rule into a guardrail and its provider adapter. Every
+// adapter string setting goes through getStringConfig, which expands a
+// whole-string ${VAR}; New calls it only for a config with no "${" in any
+// top-level string, so for New that expansion never fires. Its client comes
+// from mkClient once the timeout is known: the external call and
+// crowdstrike's OAuth token call share it, so both go through the same guard.
+func build(name string, cfg map[string]interface{}, mkClient func(time.Duration) *http.Client) *ExternalGuardrail {
 	g := &ExternalGuardrail{
-		name:   name,
-		retry:  0,
-		client: &http.Client{Timeout: 5 * time.Second},
+		name:  name,
+		retry: 0,
 	}
+	timeout := defaultExternalTimeout
 
 	if cfg == nil {
+		g.client = mkClient(timeout)
 		return g
 	}
 
@@ -51,9 +81,10 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	}
 	if v, ok := cfg["timeout"].(string); ok {
 		if d, err := time.ParseDuration(v); err == nil {
-			g.client.Timeout = d
+			timeout = d
 		}
 	}
+	g.client = mkClient(timeout)
 
 	provider, _ := cfg["provider"].(string)
 	switch provider {
@@ -80,7 +111,7 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	case "zscaler":
 		g.adapter = newZscalerAdapter(cfg)
 	case "crowdstrike":
-		g.adapter = newCrowdstrikeAdapter(cfg)
+		g.adapter = newCrowdstrikeAdapter(cfg, g.client)
 	case "aporia":
 		g.adapter = newAporiaAdapter(cfg)
 	case "lasso":
@@ -97,6 +128,12 @@ func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePr
 
 // Check evaluates text against the external provider.
 func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	// A rule an org config could not build (an environment reference in its
+	// config) fails closed: no call is made, and the request is refused at
+	// any threshold, as an incomplete futureagi rule is.
+	if g.configErr != nil {
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: g.configErr.Error()}
+	}
 	if input == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -108,7 +145,7 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 	if input.Response != nil {
 		text = extractOutputText(input)
 	} else {
-		text = extractInputText(input)
+		text = extractInputText(ctx, input)
 	}
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
@@ -146,15 +183,19 @@ func (g *ExternalGuardrail) callProvider(ctx context.Context, text string) ([]by
 	return nil, fmt.Errorf("failed after %d attempts: %w", attempts, lastErr)
 }
 
+// doCall makes one provider call. A failure that could carry where the
+// gateway connected (the URL, a dial, DNS or proxy address) is reported
+// through guardrails.CallError, which names neither: the message reaches the
+// org whose request is checked.
 func (g *ExternalGuardrail) doCall(ctx context.Context, text string) ([]byte, error) {
 	req, err := g.adapter.buildRequest(ctx, text)
 	if err != nil {
-		return nil, err
+		return nil, guardrails.CallError(g.name, err)
 	}
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, guardrails.CallError(g.name, err)
 	}
 	defer resp.Body.Close()
 
@@ -165,18 +206,24 @@ func (g *ExternalGuardrail) doCall(ctx context.Context, text string) ([]byte, er
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	if err != nil {
+		return nil, guardrails.CallError(g.name, err)
+	}
+	return body, nil
 }
 
-// extractInputText concatenates all message contents from the request.
-func extractInputText(input *guardrails.CheckInput) string {
+// extractInputText is the text of the request's messages the service reads.
+func extractInputText(ctx context.Context, input *guardrails.CheckInput) string {
 	if input.Request == nil || len(input.Request.Messages) == 0 {
 		return ""
 	}
+	// Each message's text and its tool calls' arguments
+	// (guardrails.MessageText), so the service reads a value in a tool
+	// call's arguments as it reads one in a message.
 	var parts []string
-	for _, msg := range input.Request.Messages {
-		text := extractContentText(msg.Content)
-		if text != "" {
+	for i := range input.Request.Messages {
+		if text, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok && text != "" {
 			parts = append(parts, text)
 		}
 	}

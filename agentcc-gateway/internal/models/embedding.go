@@ -5,10 +5,32 @@ import "encoding/json"
 // EmbeddingRequest represents an OpenAI-compatible embedding request.
 type EmbeddingRequest struct {
 	Model          string          `json:"model"`
-	Input          json.RawMessage `json:"input"`           // string or []string
+	Input          json.RawMessage `json:"input"`                     // string or []string
 	EncodingFormat string          `json:"encoding_format,omitempty"` // "float" | "base64"
 	Dimensions     *int            `json:"dimensions,omitempty"`
 	User           string          `json:"user,omitempty"`
+	// InputType is what the input is embedded for (EmbeddingInputType*),
+	// sent per request as Cohere's input_type or Gemini's task_type. Empty
+	// keeps the provider's default.
+	InputType string `json:"input_type,omitempty"`
+}
+
+// The embedding input types a request may name.
+const (
+	EmbeddingInputTypeQuery          = "query"
+	EmbeddingInputTypeDocument       = "document"
+	EmbeddingInputTypeClassification = "classification"
+	EmbeddingInputTypeClustering     = "clustering"
+)
+
+// ValidEmbeddingInputType reports whether t is one of the input types a
+// request may name.
+func ValidEmbeddingInputType(t string) bool {
+	switch t {
+	case EmbeddingInputTypeQuery, EmbeddingInputTypeDocument, EmbeddingInputTypeClassification, EmbeddingInputTypeClustering:
+		return true
+	}
+	return false
 }
 
 // EmbeddingResponse represents an OpenAI-compatible embedding response.

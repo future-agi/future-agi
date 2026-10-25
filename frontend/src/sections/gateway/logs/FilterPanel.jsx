@@ -19,6 +19,15 @@ import Iconify from "src/components/iconify";
 import { useAvailableModels } from "../hooks/useAvailableModels";
 import { CUSTOM_TAG_SEPARATOR } from "../constants/requestTags";
 import useMetadataValues from "./hooks/useMetadataValues";
+import AgentBillingFilters from "./AgentBillingFilters";
+import {
+  EMPTY_AGENT_BILLING_FILTERS,
+  isoToLocalInput,
+  localInputToIso,
+  readAgentBillingFilters,
+  timeZoneLabel,
+  writeAgentBillingFilters,
+} from "./explorerFilters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -45,6 +54,7 @@ const EMPTY_STATE = {
   isError: false,
   cacheHit: false,
   guardrailTriggered: false,
+  ...EMPTY_AGENT_BILLING_FILTERS,
 };
 
 const splitList = (value) => (value ? value.split(",").filter(Boolean) : []);
@@ -125,8 +135,10 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
   useEffect(() => {
     if (open) {
       setLocal({
-        startedAfter: filters.startedAfter || "",
-        startedBefore: filters.startedBefore || "",
+        // The inputs hold local time; the applied filter holds ISO 8601 with
+        // an offset.
+        startedAfter: isoToLocalInput(filters.startedAfter),
+        startedBefore: isoToLocalInput(filters.startedBefore),
         model: filters.model || "",
         provider: filters.provider || "",
         application: splitList(filters.application),
@@ -143,6 +155,7 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
         isError: filters.isError === "true",
         cacheHit: filters.cacheHit === "true",
         guardrailTriggered: filters.guardrailTriggered === "true",
+        ...readAgentBillingFilters(filters),
       });
     }
   }, [open, filters]);
@@ -162,6 +175,10 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
     [],
   );
 
+  const handlePatch = useCallback((patch) => {
+    setLocal((prev) => ({ ...prev, ...patch }));
+  }, []);
+
   const handleSwitch = useCallback(
     (key) => (event) => {
       setLocal((prev) => ({ ...prev, [key]: event.target.checked }));
@@ -178,8 +195,10 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
     if (filters.view) out.view = filters.view;
     if (filters.search) out.search = filters.search;
 
-    if (local.startedAfter) out.startedAfter = local.startedAfter;
-    if (local.startedBefore) out.startedBefore = local.startedBefore;
+    const startedAfter = localInputToIso(local.startedAfter);
+    const startedBefore = localInputToIso(local.startedBefore);
+    if (startedAfter) out.startedAfter = startedAfter;
+    if (startedBefore) out.startedBefore = startedBefore;
     if (local.model) out.model = local.model;
     if (local.provider) out.provider = local.provider;
     if (local.application.length) out.application = local.application.join(",");
@@ -196,6 +215,7 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
     if (local.isError) out.isError = "true";
     if (local.cacheHit) out.cacheHit = "true";
     if (local.guardrailTriggered) out.guardrailTriggered = "true";
+    Object.assign(out, writeAgentBillingFilters(local));
 
     onApply(out);
   }, [local, filters.view, filters.search, onApply]);
@@ -260,6 +280,9 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
                 onChange={handleText("startedBefore")}
                 InputLabelProps={{ shrink: true }}
               />
+              <Typography variant="caption" color="text.secondary">
+                Times are in {timeZoneLabel()}, as the table shows them.
+              </Typography>
             </Stack>
           </Box>
 
@@ -455,6 +478,8 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
               onChange={handleText("sessionId")}
             />
           </Box>
+
+          <AgentBillingFilters value={local} onChange={handlePatch} />
 
           {/* Boolean toggles */}
           <Box>

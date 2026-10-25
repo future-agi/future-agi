@@ -71,7 +71,7 @@ func (g *BlocklistGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	text := extractAllText(input)
+	text := extractAllText(ctx, input)
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -134,11 +134,13 @@ func compilePattern(word string, wholeWord bool) blocklistPattern {
 	return blocklistPattern{original: word, regex: re}
 }
 
-func extractAllText(input *guardrails.CheckInput) string {
+func extractAllText(ctx context.Context, input *guardrails.CheckInput) string {
 	var parts []string
 	if input.Request != nil {
-		for _, m := range input.Request.Messages {
-			if t, ok := extractContentText(m.Content); ok {
+		// Each message's text and its tool calls' arguments
+		// (guardrails.MessageText).
+		for i := range input.Request.Messages {
+			if t, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok {
 				parts = append(parts, t)
 			}
 		}

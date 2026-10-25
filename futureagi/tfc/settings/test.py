@@ -23,6 +23,11 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
 os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
+# ee/licensing's activation client and heartbeat default FUTURE_AGI_LICENSE_URL
+# to production (https://api.futureagi.com), so a test run that sets nothing
+# would send activations and heartbeats there. A closed local port keeps every
+# test run off production; an exported value still wins.
+os.environ.setdefault("FUTURE_AGI_LICENSE_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
@@ -182,6 +187,7 @@ INTEGRATION_ENCRYPTION_KEY = os.environ.get(
     "INTEGRATION_ENCRYPTION_KEY",
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 )
+INTEGRATION_ENCRYPTION_KEY_EPHEMERAL = False
 
 # Security settings for tests
 SECURE_SSL_REDIRECT = False

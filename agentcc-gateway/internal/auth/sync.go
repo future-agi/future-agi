@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,17 +16,46 @@ import (
 // keySyncHTTPClient is a shared, reusable HTTP client for key sync.
 var keySyncHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
+// MigrationsPendingCode is the error code of the control plane's 503 answer to
+// a key sync while its database has no key table: a new install whose
+// bootstrap job has not migrated the database yet (futureagi
+// agentcc/views/api_key_bulk.py).
+const MigrationsPendingCode = "migrations_pending"
+
+// ErrAppNotMigrated is SyncKeysFromControlPlane's error when the control plane
+// answers 503 MigrationsPendingCode. See KeyStore.AppHasNoKeyTable.
+var ErrAppNotMigrated = errors.New("the app's database has no key table yet: its migrations have not run, so it has made no key")
+
+// isMigrationsPending reports whether a key sync answer is 503 with the
+// error code MigrationsPendingCode.
+func isMigrationsPending(status int, body []byte) bool {
+	if status != http.StatusServiceUnavailable {
+		return false
+	}
+	var answer struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal(body, &answer) == nil && answer.Code == MigrationsPendingCode
+}
+
 // SyncKeysFromControlPlane fetches all active API key hashes from the Django
 // control plane and loads them into the KeyStore. A failure leaves the store
 // as it was (config.yaml seed keys only, on a fresh start) and is returned for
-// the caller to log.
+// the caller to log. A 503 migrations_pending answer is ErrAppNotMigrated,
+// recorded in the store as its latest answer (AppHasNoKeyTable) until another
+// one comes.
 func SyncKeysFromControlPlane(ctx context.Context, baseURL, adminToken string, ks *KeyStore) error {
 	if baseURL == "" {
 		slog.Info("key sync skipped: no control plane URL configured")
 		return nil
 	}
+	noKeyTable := false
+	defer func() { ks.appHasNoKeyTable.Store(noKeyTable) }()
 
 	endpoint := baseURL + "/agentcc/api-keys/bulk/"
+	// The sync grace window counts back from here: a key created after this
+	// may be missing from the list however fast the answer comes.
+	fetchedAt := ks.now()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -43,6 +73,10 @@ func SyncKeysFromControlPlane(ctx context.Context, baseURL, adminToken string, k
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if isMigrationsPending(resp.StatusCode, body) {
+			noKeyTable = true
+			return fmt.Errorf("key sync from %s: %w", endpoint, ErrAppNotMigrated)
+		}
 		return fmt.Errorf("key sync returned status %d from %s: %s", resp.StatusCode, endpoint, body)
 	}
 
@@ -81,7 +115,7 @@ func SyncKeysFromControlPlane(ctx context.Context, baseURL, adminToken string, k
 		)
 	}
 
-	loaded := ks.SyncFromHashes(keys)
+	loaded := ks.syncFromList(keys, fetchedAt)
 	slog.Info("key sync from control plane completed",
 		"keys_received", len(envelope.Result),
 		"keys_synced", loaded,

@@ -88,64 +88,153 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	return g
 }
 
-func (g *PIIGuardrail) Name() string           { return "pii-detection" }
+func (g *PIIGuardrail) Name() string            { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
-// Check scans messages for PII and returns a result.
+// RewritesRequest says whether the check rewrites the messages it reads: a
+// remediation other than block (guardrails.RequestRewriter).
+func (g *PIIGuardrail) RewritesRequest() bool { return g.remediation != RemediationBlock }
+
+// Masked is the check that rewrites the messages it reads
+// (guardrails.Masker): g itself when its remediation already does (mask,
+// redact or hash), else a copy of g that masks each match as "***". The copy
+// shares g's detectors, which are read only, so g is unchanged.
+func (g *PIIGuardrail) Masked() guardrails.Guardrail {
+	if g.remediation != RemediationBlock {
+		return g
+	}
+	masked := *g
+	masked.remediation = RemediationMask
+	return &masked
+}
+
+// Check scans messages for PII and returns a result: each message's text,
+// and in the request the arguments of each tool call a message makes
+// (guardrails.ArgumentTexts). With a remediation other than block it
+// rewrites each match where it is: in the message's content, and in the
+// arguments (guardrails.RewriteArguments), which stay JSON when they are.
+// The tool call's name is not read or rewritten. On the request it is given
+// a copy of the messages, which the guardrail plugin writes back only when
+// the check returns in time (guardrails.isolate), so a check that outlives
+// its timeout never writes the request the gateway sends.
 func (g *PIIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	// Collect pointers to messages. Remediation (mask/redact/hash) mutates
-	// content in-place intentionally — the redacted content should flow to
-	// the provider. We only take pointers to the request/response slices
-	// which are owned by the current request context.
-	var msgPtrs []*models.Message
+	var allDetections []Detection
 	if input.Request != nil {
 		for i := range input.Request.Messages {
-			msgPtrs = append(msgPtrs, &input.Request.Messages[i])
+			if ctx.Err() != nil {
+				return g.buildResult(allDetections)
+			}
+			msg := &input.Request.Messages[i]
+			allDetections = g.checkContent(msg, allDetections)
+			for k := range msg.ToolCalls {
+				allDetections = g.checkArguments(ctx, &msg.ToolCalls[k].Function, allDetections)
+			}
 		}
 	}
 	if input.Response != nil {
 		for i := range input.Response.Choices {
-			msgPtrs = append(msgPtrs, &input.Response.Choices[i].Message)
+			if ctx.Err() != nil {
+				return g.buildResult(allDetections)
+			}
+			allDetections = g.checkContent(&input.Response.Choices[i].Message, allDetections)
 		}
 	}
-
-	if len(msgPtrs) == 0 {
-		return &guardrails.CheckResult{Pass: true}
-	}
-
-	var allDetections []Detection
-
-	for _, msg := range msgPtrs {
-		text, ok := extractContentText(msg.Content)
-		if !ok || text == "" {
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return g.buildResult(allDetections)
-		default:
-		}
-
-		detections := g.detect(text)
-		if len(detections) == 0 {
-			continue
-		}
-
-		allDetections = append(allDetections, detections...)
-
-		// Apply remediation (mutate message content in-place).
-		if g.remediation != RemediationBlock {
-			remediated := applyRemediation(text, detections, g.remediation)
-			msg.Content = marshalContentString(remediated)
-		}
-	}
-
 	return g.buildResult(allDetections)
+}
+
+// checkContent adds the matches in msg's content to detections and, with a
+// remediation other than block, rewrites them in it.
+func (g *PIIGuardrail) checkContent(msg *models.Message, detections []Detection) []Detection {
+	text, ok := extractContentText(msg.Content)
+	if !ok || text == "" {
+		return detections
+	}
+	found := g.detect(text)
+	if len(found) == 0 {
+		return detections
+	}
+	if g.remediation != RemediationBlock {
+		msg.Content = marshalContentString(applyRemediation(text, found, g.remediation))
+	}
+	return append(detections, found...)
+}
+
+// checkArguments adds the matches in a tool call's arguments to detections
+// and, with a remediation other than block, rewrites them in the arguments.
+// Each text of the arguments is read on its own (a member as "key: value"),
+// so a match's start and end are offsets in that text.
+func (g *PIIGuardrail) checkArguments(ctx context.Context, call *models.FunctionCall, detections []Detection) []Detection {
+	if call.Arguments == "" {
+		return detections
+	}
+	if g.remediation == RemediationBlock {
+		for _, t := range guardrails.ArgumentTexts(ctx, call.Arguments) {
+			detections = append(detections, g.detect(t.Text())...)
+		}
+		return detections
+	}
+	rewritten, changed := guardrails.RewriteArguments(ctx, call.Arguments, func(t guardrails.ArgumentText) guardrails.ArgumentText {
+		text := t.Text()
+		found := g.detect(text)
+		if len(found) == 0 {
+			return t
+		}
+		detections = append(detections, found...)
+		return remediateArgument(t, text, found, g.remediation)
+	})
+	if changed {
+		call.Arguments = rewritten
+	}
+	return detections
+}
+
+// remediateArgument is t with each match of found, in text (t.Text()),
+// rewritten. A match in the key rewrites the key; a match that starts in the
+// key and runs into the value (a keyword and the number after it, as
+// passport's pattern matches) rewrites the value's part of it, so the key
+// stays; any other match rewrites the value.
+func remediateArgument(t guardrails.ArgumentText, text string, found []Detection, rem Remediation) guardrails.ArgumentText {
+	keyEnd, valueStart := 0, 0
+	switch {
+	case t.HasValue && t.Key != "":
+		keyEnd, valueStart = len(t.Key), len(t.Key)+2
+	case !t.HasValue:
+		keyEnd, valueStart = len(t.Key), len(text)
+	}
+	var keyEdits, valueEdits []Detection
+	for _, d := range mergeDetections(text, found) {
+		token := remediate(d.Value, d.EntityType, rem)
+		switch {
+		case d.End <= keyEnd:
+			keyEdits = append(keyEdits, Detection{Value: token, Start: d.Start, End: d.End})
+		case d.Start < keyEnd && d.End <= valueStart:
+			keyEdits = append(keyEdits, Detection{Value: token, Start: d.Start, End: keyEnd})
+		default:
+			start := max(d.Start, valueStart)
+			valueEdits = append(valueEdits, Detection{Value: token, Start: start - valueStart, End: d.End - valueStart})
+		}
+	}
+	if len(keyEdits) > 0 {
+		t.Key = replaceRanges(t.Key, keyEdits)
+	}
+	if len(valueEdits) > 0 {
+		t.Value = replaceRanges(t.Value, valueEdits)
+	}
+	return t
+}
+
+// replaceRanges is s with each edit's range [Start, End) replaced by its
+// Value. The edits do not overlap.
+func replaceRanges(s string, edits []Detection) string {
+	sort.Slice(edits, func(i, j int) bool { return edits[i].Start > edits[j].Start })
+	for _, e := range edits {
+		s = s[:e.Start] + e.Value + s[e.End:]
+	}
+	return s
 }
 
 func (g *PIIGuardrail) detect(text string) []Detection {
@@ -239,20 +328,42 @@ func marshalContentString(s string) json.RawMessage {
 }
 
 // applyRemediation replaces all detections in text with remediated values.
-// Processes matches in reverse order to preserve positions.
+// Matches that overlap (a URL's credentials and the email-shaped text in it)
+// are replaced as one (mergeDetections).
 func applyRemediation(text string, detections []Detection, rem Remediation) string {
-	// Sort by start position descending so replacements don't shift offsets.
+	merged := mergeDetections(text, detections)
+	edits := make([]Detection, len(merged))
+	for i, d := range merged {
+		edits[i] = Detection{Value: remediate(d.Value, d.EntityType, rem), Start: d.Start, End: d.End}
+	}
+	return replaceRanges(text, edits)
+}
+
+// mergeDetections is detections, in text, with the ones that overlap merged
+// into one that spans them: its type is the type of the match that starts
+// first (the longest, of those that start together), and its value is the
+// text it spans. The result is sorted by start and does not overlap.
+func mergeDetections(text string, detections []Detection) []Detection {
 	sorted := make([]Detection, len(detections))
 	copy(sorted, detections)
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Start > sorted[j].Start
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
+		}
+		return sorted[i].End > sorted[j].End
 	})
-
+	var merged []Detection
 	for _, d := range sorted {
-		replacement := remediate(d.Value, d.EntityType, rem)
-		text = text[:d.Start] + replacement + text[d.End:]
+		if n := len(merged); n > 0 && d.Start < merged[n-1].End {
+			if d.End > merged[n-1].End {
+				merged[n-1].End = d.End
+				merged[n-1].Value = text[merged[n-1].Start:d.End]
+			}
+			continue
+		}
+		merged = append(merged, d)
 	}
-	return text
+	return merged
 }
 
 func remediate(value, entityType string, rem Remediation) string {

@@ -1,0 +1,239 @@
+/* eslint-disable react/prop-types */
+import React, { useState, useMemo } from "react";
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Grid,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { enqueueSnackbar } from "notistack";
+import Iconify from "src/components/iconify";
+import { useRemoveMCPServer } from "../hooks/useMCPConfig";
+import GatewayAdminOnly from "../../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../../hooks/useGatewayAdmin";
+import {
+  getMCPServerId,
+  getMCPServerStatusColor,
+  getMCPServerStatusLabel,
+  getMCPServerToolCount,
+  hasStoredCredential,
+} from "../utils";
+
+// One card per configured server, with its health from the status API. A
+// server's credential shows only as set or not set.
+const ServerCards = ({ config, mcpStatus, gatewayId, onEditServer }) => {
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const removeMutation = useRemoveMCPServer();
+  const { canEdit } = useGatewayAdmin();
+
+  const mcpConfig = config?.mcp || {};
+  const servers = mcpConfig.servers || {};
+  const serverIds = Object.keys(servers);
+
+  const healthMap = useMemo(() => {
+    const map = {};
+    const statusServers = mcpStatus?.servers || [];
+    statusServers.forEach((s) => {
+      const id = getMCPServerId(s);
+      if (id) map[id] = s;
+    });
+    return map;
+  }, [mcpStatus]);
+
+  const handleDelete = (serverId) => {
+    removeMutation.mutate(
+      { gatewayId, serverId },
+      {
+        onSuccess: () => {
+          enqueueSnackbar(`Server "${serverId}" removed`, {
+            variant: "success",
+          });
+          setConfirmDelete(null);
+        },
+        onError: () => {
+          enqueueSnackbar("Failed to remove server", { variant: "error" });
+        },
+      },
+    );
+  };
+
+  if (serverIds.length === 0) {
+    return (
+      <Card>
+        <CardContent>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            align="center"
+            sx={{ py: 3 }}
+          >
+            No MCP servers configured. Click &quot;Add Server&quot; to connect
+            an upstream MCP tool server.
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Box>
+      <Grid container spacing={3}>
+        {serverIds.map((serverId) => {
+          const serverCfg = servers[serverId] || {};
+          const health = healthMap[serverId];
+          const transport = serverCfg.transport || "http";
+          const authType = serverCfg.auth?.type || "none";
+          const hasCredentialSlot =
+            authType !== "none" || Boolean(serverCfg.credential);
+
+          return (
+            <Grid item xs={12} sm={6} md={4} key={serverId}>
+              <Card sx={{ height: "100%" }}>
+                <CardContent>
+                  <Stack spacing={1.5}>
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                    >
+                      <Typography variant="subtitle1" fontWeight={700}>
+                        {serverId}
+                      </Typography>
+                      {health ? (
+                        <Chip
+                          label={getMCPServerStatusLabel(health)}
+                          color={getMCPServerStatusColor(health)}
+                          size="small"
+                        />
+                      ) : (
+                        <Chip label="Unknown" size="small" />
+                      )}
+                    </Stack>
+
+                    <Box>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        display="block"
+                      >
+                        URL
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontFamily: "monospace",
+                          fontSize: 12,
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        {serverCfg.url || "—"}
+                      </Typography>
+                    </Box>
+
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      flexWrap="wrap"
+                      useFlexGap
+                    >
+                      <Chip
+                        label={transport.toUpperCase()}
+                        size="small"
+                        variant="outlined"
+                      />
+                      <Chip
+                        label={`Auth: ${authType}`}
+                        size="small"
+                        variant="outlined"
+                      />
+                      {hasCredentialSlot && (
+                        <Chip
+                          label={
+                            hasStoredCredential(serverCfg)
+                              ? "Credential: set"
+                              : "Credential: not set"
+                          }
+                          size="small"
+                          variant="outlined"
+                        />
+                      )}
+                      {health && (
+                        <Chip
+                          label={`${getMCPServerToolCount(health)} tools`}
+                          size="small"
+                          variant="outlined"
+                          color="primary"
+                        />
+                      )}
+                    </Stack>
+
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <GatewayAdminOnly allowed={canEdit}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<Iconify icon="mdi:pencil" width={16} />}
+                          onClick={() => onEditServer(serverId, serverCfg)}
+                          disabled={!canEdit}
+                        >
+                          Edit
+                        </Button>
+                      </GatewayAdminOnly>
+                      <GatewayAdminOnly allowed={canEdit}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
+                          startIcon={<Iconify icon="mdi:delete" width={16} />}
+                          onClick={() => setConfirmDelete(serverId)}
+                          disabled={removeMutation.isPending || !canEdit}
+                        >
+                          Delete
+                        </Button>
+                      </GatewayAdminOnly>
+                    </Stack>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          );
+        })}
+      </Grid>
+
+      <Dialog
+        open={Boolean(confirmDelete)}
+        onClose={() => setConfirmDelete(null)}
+      >
+        <DialogTitle>Remove MCP Server</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to remove the server &quot;{confirmDelete}
+            &quot;? All tools from this server will be unregistered.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => handleDelete(confirmDelete)}
+            disabled={removeMutation.isPending}
+          >
+            {removeMutation.isPending ? "Removing..." : "Remove"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default ServerCards;

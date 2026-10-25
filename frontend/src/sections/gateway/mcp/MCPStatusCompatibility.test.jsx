@@ -3,18 +3,35 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
-import AddMCPServerDialog from "./AddMCPServerDialog";
-import MCPGuardrailsTab from "./MCPGuardrailsTab";
-import MCPOverviewTab from "./MCPOverviewTab";
-import MCPServersTab from "./MCPServersTab";
-import MCPToolsTab from "./MCPToolsTab";
+import AddMCPServerDialog from "./servers/AddMCPServerDialog";
+import GuardrailsTab from "./guardrails/GuardrailsTab";
+import OverviewTab from "./overview/OverviewTab";
+import ServerCards from "./servers/ServerCards";
+import ToolsTable from "./servers/ToolsTable";
 
-const { mockRemoveMutate, mockUpdateMutate } = vi.hoisted(() => ({
-  mockRemoveMutate: vi.fn(),
-  mockUpdateMutate: vi.fn(),
+// The write controls are Owner or Admin only (useGatewayAdmin); these cases
+// act as an Admin. AdminGating.test.jsx covers the other levels.
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: 8 }),
 }));
 
+const { mockRemoveMutate, mockUpdateMutate, configuredStatus, configQuery } =
+  vi.hoisted(() => ({
+    mockRemoveMutate: vi.fn(),
+    mockUpdateMutate: vi.fn(),
+    configuredStatus: {
+      enabled: true,
+      sessions: 0,
+      tools: 0,
+      resources: 0,
+      prompts: 0,
+      servers: [{ id: "browser_smoke_mcp", status: "configured" }],
+    },
+    configQuery: { current: { data: undefined, isLoading: false } },
+  }));
+
 vi.mock("./hooks/useMCPConfig", () => ({
+  useMCPStatus: () => ({ data: configuredStatus, isLoading: false }),
   useRemoveMCPServer: () => ({ mutate: mockRemoveMutate, isPending: false }),
   useUpdateMCPServer: () => ({ mutate: mockUpdateMutate, isPending: false }),
   useUpdateMCPGuardrails: () => ({
@@ -22,15 +39,9 @@ vi.mock("./hooks/useMCPConfig", () => ({
     isPending: false,
   }),
 }));
-
-const configuredStatus = {
-  enabled: true,
-  sessions: 0,
-  tools: 0,
-  resources: 0,
-  prompts: 0,
-  servers: [{ id: "browser_smoke_mcp", status: "configured" }],
-};
+vi.mock("../providers/hooks/useGatewayConfig", () => ({
+  useGatewayConfig: () => configQuery.current,
+}));
 
 describe("Gateway MCP status compatibility", () => {
   beforeEach(() => {
@@ -39,7 +50,7 @@ describe("Gateway MCP status compatibility", () => {
   });
 
   it("renders configured fallback status rows with id/status fields", () => {
-    render(<MCPOverviewTab mcpStatus={configuredStatus} />);
+    render(<OverviewTab gatewayId="default" />);
 
     expect(screen.getByText("Server Health")).toBeInTheDocument();
     expect(screen.getByText("browser_smoke_mcp")).toBeInTheDocument();
@@ -51,7 +62,7 @@ describe("Gateway MCP status compatibility", () => {
     const user = userEvent.setup();
 
     render(
-      <MCPServersTab
+      <ServerCards
         gatewayId="default"
         config={{
           mcp: {
@@ -81,27 +92,25 @@ describe("Gateway MCP status compatibility", () => {
   });
 
   it("uses id/status fallback server ids as guardrail allowed-server options", () => {
-    render(
-      <MCPGuardrailsTab
-        gatewayId="default"
-        config={{
-          mcp: {
-            guardrails: {
-              enabled: true,
-              allowed_servers: ["browser_smoke_mcp"],
-            },
+    configQuery.current = {
+      data: {
+        mcp: {
+          guardrails: {
+            enabled: true,
+            allowed_servers: ["browser_smoke_mcp"],
           },
-        }}
-        mcpStatus={configuredStatus}
-      />,
-    );
+        },
+      },
+      isLoading: false,
+    };
+    render(<GuardrailsTab gatewayId="default" />);
 
     expect(screen.getByText("Allowed Servers")).toBeInTheDocument();
     expect(screen.getByText("browser_smoke_mcp")).toBeInTheDocument();
   });
 
   it("shows an explicit all-servers label for the empty tool filter", () => {
-    render(<MCPToolsTab mcpTools={[]} isLoading={false} />);
+    render(<ToolsTable mcpTools={[]} isLoading={false} />);
 
     expect(screen.getByText("All Servers")).toBeInTheDocument();
     expect(

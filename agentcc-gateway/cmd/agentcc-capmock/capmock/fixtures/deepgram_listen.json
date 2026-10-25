@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "transaction_key": "deprecated",
+    "request_id": "{{id}}",
+    "created": "{{now}}",
+    "duration": 3.5,
+    "channels": 1,
+    "models": ["capmock-nova-3"]
+  },
+  "results": {
+    "channels": [
+      {
+        "alternatives": [
+          {
+            "transcript": "hello from the capability mock",
+            "confidence": 0.98,
+            "words": [
+              { "word": "hello", "start": 0.1, "end": 0.4, "confidence": 0.99 }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

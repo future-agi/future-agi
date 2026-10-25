@@ -47,7 +47,10 @@ describe("GuardrailAnalyticsTab", () => {
     render(<GuardrailAnalyticsTab gatewayId="default" />);
 
     expect(screen.getByText("12.3%")).toBeInTheDocument();
-    expect(screen.getByText("45ms")).toBeInTheDocument();
+    // The gateway records no per-check latency, so the average is always 0;
+    // the Avg Latency card is not shown.
+    expect(screen.queryByText("Avg Latency")).toBeNull();
+    expect(screen.queryByText("45ms")).toBeNull();
     expect(screen.getByText("pii-detection")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
     expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);

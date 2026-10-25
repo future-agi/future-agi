@@ -83,6 +83,10 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
 @pytest.mark.parametrize(
     "command",
     [
+        "agentcc_check_key_org",
+        "agentcc_export_ledger",
+        "agentcc_managed_credits",
+        "agentcc_managed_upstream_keys",
         "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",

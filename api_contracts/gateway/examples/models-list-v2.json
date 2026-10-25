@@ -1,0 +1,41 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "omega-default",
+      "object": "model",
+      "created": 1792022400,
+      "owned_by": "agentcc",
+      "pricing": {
+        "prompt": "0.00000315",
+        "completion": "0.00001575",
+        "input_cache_read": "0.000000315",
+        "input_cache_write": "0.0000039375",
+        "request": "0"
+      },
+      "pricing_guarantee": "upper_bound",
+      "pricing_basis": "ceiling"
+    },
+    {
+      "id": "auto",
+      "object": "model",
+      "created": 1792022400,
+      "owned_by": "agentcc",
+      "pricing": {
+        "prompt": "0.00000525",
+        "completion": "0.00002625",
+        "input_cache_read": "0.000000525",
+        "input_cache_write": "0.0000065625",
+        "request": "0"
+      },
+      "pricing_guarantee": "upper_bound",
+      "pricing_basis": "pool_max:3f9a1c0b2d4e"
+    },
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "object": "model",
+      "created": 1790000000,
+      "owned_by": "anthropic"
+    }
+  ]
+}

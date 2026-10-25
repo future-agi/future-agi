@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "id": "Vendor/Model-A",
+      "name": "Model A",
+      "created": 1790000000,
+      "context_length": 131072,
+      "pricing": {
+        "prompt": "0.0000004",
+        "completion": "0.0000016",
+        "input_cache_read": "0.0000001"
+      },
+      "supported_parameters": ["tools"],
+      "architecture": { "input_modalities": ["text"] }
+    },
+    {
+      "id": "vendor/router",
+      "context_length": 32768,
+      "pricing": { "prompt": "-1", "completion": "-1" }
+    },
+    {
+      "id": "vendor/free-model",
+      "context_length": 8192,
+      "pricing": { "prompt": 0, "completion": 0 }
+    }
+  ]
+}

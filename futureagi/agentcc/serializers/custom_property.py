@@ -3,6 +3,16 @@ from rest_framework import serializers
 from agentcc.models.custom_property import AgentccCustomPropertySchema
 from agentcc.validators import validate_safe_agentcc_name
 
+# Nothing reads a property's Default (the gateway, ingestion and the logs API
+# do not fill it), so a new non-null Default is refused. A stored Default stays
+# readable; an edit may keep it unchanged or clear it (null). Required and
+# Allowed Values are applied by POST custom-properties/validate/.
+PROPERTY_RULE_NOT_ENFORCED = "property_rule_not_enforced"
+DEFAULT_NOT_APPLIED_MESSAGE = (
+    "A default value is not applied to requests: the gateway and the request "
+    "logs never fill it in. Leave default_value empty (null)."
+)
+
 
 class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,6 +36,36 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "required": {
+                "help_text": (
+                    "Checked by POST custom-properties/validate/; the gateway "
+                    "does not apply it to requests."
+                )
+            },
+            "allowed_values": {
+                "help_text": (
+                    "For enum properties. Checked by POST "
+                    "custom-properties/validate/; the gateway does not apply "
+                    "it to requests."
+                )
+            },
+            "default_value": {
+                "help_text": (
+                    "Not applied anywhere. A new non-null value answers 400 "
+                    "property_rule_not_enforced; a stored value stays readable and "
+                    "may be kept unchanged or cleared with null."
+                )
+            },
+        }
+
+    def validate_default_value(self, value):
+        stored = getattr(self.instance, "default_value", None)
+        if value is not None and (self.instance is None or value != stored):
+            raise serializers.ValidationError(
+                DEFAULT_NOT_APPLIED_MESSAGE, code=PROPERTY_RULE_NOT_ENFORCED
+            )
+        return value
 
     def validate_allowed_values(self, value):
         if not isinstance(value, list):
@@ -106,4 +146,4 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
         try:
             return validate_safe_agentcc_name(value)
         except ValueError as exc:
-            raise serializers.ValidationError(str(exc))
+            raise serializers.ValidationError(str(exc)) from exc

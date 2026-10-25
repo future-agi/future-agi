@@ -118,3 +118,30 @@ func TestStore_Count(t *testing.T) {
 		t.Errorf("Count = %d, want 2", s.Count())
 	}
 }
+
+// An org id of "" is the no-org tenant (single-tenant or ops keys), not a
+// wildcard: it reaches only jobs that have no org, and an org never reaches
+// another org's jobs or the no-org ones.
+func TestStore_GetForOrgIsStrict(t *testing.T) {
+	s := NewStore()
+	expires := time.Now().Add(time.Hour)
+	s.Put(&Job{ID: "a1", OrgID: "org-a", ExpiresAt: expires})
+	s.Put(&Job{ID: "none1", ExpiresAt: expires})
+
+	cases := []struct {
+		id, caller string
+		ok         bool
+	}{
+		{"a1", "org-a", true},
+		{"none1", "", true},
+		{"a1", "org-b", false},
+		{"a1", "", false},
+		{"none1", "org-a", false},
+		{"missing", "", false},
+	}
+	for _, tc := range cases {
+		if got := s.GetForOrg(tc.id, tc.caller); (got != nil) != tc.ok {
+			t.Errorf("GetForOrg(%s, %q) found=%v, want %v", tc.id, tc.caller, got != nil, tc.ok)
+		}
+	}
+}

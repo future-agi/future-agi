@@ -1,0 +1,17 @@
+{
+  "request": {
+    "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+    "user_id": "user_42",
+    "server_id": "issues"
+  },
+  "success": {
+    "access_token": "test-upstream-access-token-not-real",
+    "token_type": "Bearer",
+    "expires_at": "2026-10-16T10:10:12Z",
+    "credential_version": 4
+  },
+  "refusal": {
+    "error": "needs_reauth",
+    "connect_hint": "https://app.futureagi.com/agentcc/mcp/connect/issues/start/"
+  }
+}
