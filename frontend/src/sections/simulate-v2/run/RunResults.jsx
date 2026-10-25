@@ -267,8 +267,6 @@ export default function RunResults({
   });
   const [replaying, setReplaying] = useState(null);
   const [openTask, setOpenTask] = useState(null);
-  /* The call drawer hides while one opened from it (an eval, a fix) is open. */
-  const callCovered = useDrawerCovered(!!openTask);
   /* Which left pane the call drawer opens on — "trace" from Insights. */
   const [openPane, setOpenPane] = useState(null);
   /* A voice run's call drawer is Observe's; its trace opens on its own. */
@@ -344,6 +342,10 @@ export default function RunResults({
   const [addingEvals, setAddingEvals] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const { envState, patch, addAgentVersion } = useEnvState(envId);
+  /* The voice call drawer hides while one opened from it (an eval, a fix) is
+     open. Other runs use SideDrawer, which registers itself — registering
+     here too put this entry on top and hid that drawer behind itself. */
+  const callCovered = useDrawerCovered(!!openTask && effectiveModality(env, envState) === "voice");
   /* Same edit drawer the Evaluations tab uses — the variable mapping and any
      configurable fields live there. Opens when a column is edited from its
      kebab menu. Delegated to the environment's applied evals so a saved edit

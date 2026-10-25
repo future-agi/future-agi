@@ -3,6 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Chip, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PLATFORM_LOGOS } from "./connectOptions";
+import { COLOR_LOGO } from "./colorLogos";
 import { PANEL_SX, focusRing } from "./landingStyles";
 
 /*
@@ -44,11 +45,9 @@ export function BrandMark({ logo, icon, size = 16 }) {
       />
     );
   }
+  const mono = SIMPLE_ICON[logo] || icon || "solar:widget-linear";
   return (
-    <Iconify
-      icon={SIMPLE_ICON[logo] || icon || "solar:widget-linear"}
-      width={size}
-    />
+    <Iconify icon={COLOR_LOGO[logo] || COLOR_LOGO[mono] || mono} width={size} />
   );
 }
 BrandMark.propTypes = {

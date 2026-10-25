@@ -726,13 +726,13 @@ export default function ImprovementRunsView({
             ) : null}
             <Button
               size="small"
-              variant="outlined"
+              variant="contained"
+              color="primary"
               disabled={selected.length < 2}
               onClick={compare}
               startIcon={
                 <Iconify icon="solar:transfer-horizontal-linear" width={16} />
               }
-              sx={{ color: "text.primary", borderColor: "divider" }}
             >
               Compare
             </Button>
