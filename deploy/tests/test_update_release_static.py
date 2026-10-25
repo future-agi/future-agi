@@ -532,6 +532,36 @@ def fake_digest(seed: str) -> str:
     return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
+# Faithful CLI boundary for the extracted image-publisher step. No Docker daemon
+# or registry is contacted. Buildx dry-run prints manifest bytes plus ONE newline.
+FAKE_IMAGE_PUBLISHER = '''
+import json, os, re, sys
+args = sys.argv[1:]
+with open(os.environ['FAKE_LOG'], 'a') as log:
+    log.write(json.dumps(['docker'] + args) + '\\n')
+assert args[:2] == ['buildx', 'imagetools'], args
+if args[2:4] == ['create', '--dry-run']:
+    assert all(re.fullmatch(r'.+@sha256:[a-f0-9]{64}', ref) for ref in args[4:]), args
+    if os.environ.get('FAKE_DRY_RUN_FAIL') == '1':
+        sys.exit(1)
+    sys.stdout.write(os.environ['FAKE_CANDIDATE'] + '\\n')
+elif args[2] == 'inspect':
+    assert args[4:] == ['--format', '{{json .Manifest}}'], args
+    state = os.environ.get('FAKE_EXISTING', 'missing')
+    if state == 'missing':
+        print('ERROR: ' + args[3] + ': not found', file=sys.stderr)
+        sys.exit(1)
+    if state == 'error':
+        print(os.environ['FAKE_INSPECT_ERROR'], file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({'digest': state}))
+elif args[2] == 'create':
+    assert '--dry-run' not in args and '-t' in args, args
+else:
+    raise AssertionError(args)
+'''
+
+
 FAKE_GH = '''
 import fnmatch, json, os, shutil, sys
 from pathlib import Path
@@ -1082,6 +1112,53 @@ class _StepHarness(unittest.TestCase):
 
     def tools(self) -> List[str]:
         return [call[0] for call in calls(self.log)]
+
+
+class ImagePublisherWiringTests(_StepHarness):
+    def test_immutable_check_is_in_the_tag_creation_step_after_sources(self):
+        doc = load(BUILD_MULTIARCH)
+        job = doc['jobs']['publish']
+        self.assertEqual(needs_of(job), ['prepare', 'build'])
+        self.assertEqual(doc['permissions'], {'contents': 'read'})
+        self.assertNotIn('permissions', job)  # publisher gains no GitHub write scope
+        step = one_step(job, runs_containing('Immutable prerelease'))
+        script = step['run']
+        self.assertLess(script.index('sources+=('), script.index('create --dry-run'))
+        self.assertLess(script.index('create --dry-run'), script.index('imagetools inspect "$ref"'))
+        self.assertLess(script.index('imagetools inspect "$ref"'), script.index('"$existing" != "$candidate"'))
+        self.assertLess(script.index('"$existing" != "$candidate"'),
+                        script.index('docker buildx imagetools create "${tags[@]}"'))
+        self.assertEqual(step['env']['VERSION'], '${{ needs.prepare.outputs.version }}')
+        self.assertEqual(step['env']['SUFFIX'], '${{ inputs.tag-suffix }}')
+        self.assertNotIn('${{', script)  # all untrusted inputs stay in env
+        self.assertFalse(any('id-token' in (node or {}) for node in [doc['permissions'], job.get('permissions')]))
+
+    def test_stable_tag_creation_and_alias_options_are_unchanged(self):
+        step = one_step(load(BUILD_MULTIARCH)['jobs']['publish'], runs_containing('Immutable prerelease'))
+        write_fake(self.bin, 'docker', FAKE_IMAGE_PUBLISHER)
+        digests = self.tmp / 'digests'
+        digests.mkdir()
+        for digest in ('a' * 64, 'b' * 64):
+            (digests / digest).touch()
+        for suffix in ('', '-slim', '-gpu'):
+            for latest in ('false', 'true'):
+                with self.subTest(suffix=suffix, latest=latest):
+                    self.log.unlink(missing_ok=True)
+                    image = 'docker.io/futureagi/synthetic'
+                    env = self.base_env(IMAGE=image, VERSION='v1.60.0', MINOR='v1.60', SUFFIX=suffix,
+                                        PUSH_LATEST=latest, FAKE_EXISTING='error', FAKE_INSPECT_ERROR='unreachable')
+                    result = run_step(step, env, digests, self.scratch)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    commands = calls(self.log)
+                    self.assertEqual(len(commands), 1)  # no new stable existence check
+                    command = commands[0]
+                    self.assertEqual(command[:4], ['docker', 'buildx', 'imagetools', 'create'])
+                    tags = [command[i + 1] for i, arg in enumerate(command) if arg == '-t']
+                    expected = [image + ':v1.60.0' + suffix, image + ':v1.60' + suffix]
+                    if latest == 'true':
+                        expected.append(image + ':latest' + suffix)
+                    self.assertEqual(tags, expected)
+                    self.assertEqual(command[-2:], [image + '@sha256:' + c * 64 for c in ('a', 'b')])
 
 
 class VersionGuardStepTests(_StepHarness):

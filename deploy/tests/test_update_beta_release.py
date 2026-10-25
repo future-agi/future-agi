@@ -159,7 +159,7 @@ class BetaWorkflowTests(release._StepHarness):
     def test_real_builder_shell_cannot_move_any_stable_alias_for_beta(self):
         doc = release.load(release.BUILD_MULTIARCH)
         step = release.one_step(doc["jobs"]["publish"], release.runs_containing("docker buildx imagetools create"))
-        release.write_fake(self.bin, "docker", release.FAKE_RECORDER)
+        release.write_fake(self.bin, "docker", release.FAKE_IMAGE_PUBLISHER)
         digests = self.tmp / "digests"
         digests.mkdir()
         (digests / ("a" * 64)).touch()
@@ -167,10 +167,16 @@ class BetaWorkflowTests(release._StepHarness):
             for suffix in ("", "-slim", "-gpu"):
                 self.log.unlink(missing_ok=True)
                 env = self.base_env(VERSION=version, IMAGE="docker.io/futureagi/synthetic", MINOR="v1.60",
-                                    SUFFIX=suffix, PUSH_LATEST="true")  # even if a caller requests it
+                                    SUFFIX=suffix, PUSH_LATEST="true",  # even if a caller requests it
+                                    FAKE_CANDIDATE='{"schemaVersion":2,"manifests":[]}')
                 result = release.run_step(step, env, digests, self.scratch)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                command = release.calls(self.log)[0]
+                commands = release.calls(self.log)
+                self.assertEqual([command[3] for command in commands], ['create', 'inspect', 'create'])
+                self.assertIn('--dry-run', commands[0])
+                self.assertNotIn('-t', commands[0])
+                self.assertEqual(commands[1][4], "docker.io/futureagi/synthetic:" + version + suffix)
+                command = commands[2]
                 tags = [command[i + 1] for i, arg in enumerate(command) if arg == "-t"]
                 self.assertEqual(tags, ["docker.io/futureagi/synthetic:" + version + suffix])
         for job in release.load(release.RELEASE_IMAGES)["jobs"].values():
@@ -186,6 +192,112 @@ class BetaWorkflowTests(release._StepHarness):
                 release.validate_manifest(target)
         self.assertLess(parse_version("v1.60.0-beta.10"), parse_version("v1.60.0-rc.0"))
         self.assertLess(parse_version("v1.60.0-rc.9"), parse_version("v1.60.0"))
+
+
+class ImmutablePrereleasePublisherTests(release._StepHarness):
+    """Run the real late publisher, with no prepare/guard job to protect a rerun."""
+
+    def setUp(self):
+        super().setUp()
+        self.step = release.one_step(release.load(release.BUILD_MULTIARCH)['jobs']['publish'],
+                                     release.runs_containing('Immutable prerelease'))
+        release.write_fake(self.bin, 'docker', release.FAKE_IMAGE_PUBLISHER)
+        # The hashing and JSON parsing are real, not registry-client stubs.
+        release.write_fake(self.bin, 'python3',
+                           'import os, sys; os.execv(sys.executable, [sys.executable] + sys.argv[1:])')
+        self.digests = self.tmp / 'digests'
+        self.digests.mkdir()
+        for digest in ('a' * 64, 'b' * 64):
+            (self.digests / digest).touch()
+        self.manifest = json.dumps({
+            'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json',
+            'manifests': [{'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+                           'digest': 'sha256:' + letter * 64, 'size': 123,
+                           'platform': {'os': 'linux', 'architecture': arch}}
+                          for letter, arch in (('a', 'amd64'), ('b', 'arm64'))],
+        }, indent=2)
+        self.candidate = 'sha256:' + hashlib.sha256(self.manifest.encode()).hexdigest()
+
+    def publish(self, version='v1.60.0-beta.1', suffix='', **extra):
+        self.log.unlink(missing_ok=True)
+        env = self.base_env(IMAGE='docker.io/futureagi/synthetic', VERSION=version, MINOR='v1.60',
+                            SUFFIX=suffix, PUSH_LATEST='true', FAKE_CANDIDATE=self.manifest)
+        env.update(extra)
+        return release.run_step(self.step, env, self.digests, self.scratch)
+
+    def assert_no_write(self):
+        commands = release.calls(self.log)
+        self.assertTrue(commands)
+        self.assertEqual(commands[0][3:5], ['create', '--dry-run'])
+        self.assertFalse(any(command[3] == 'create' and '--dry-run' not in command for command in commands))
+        self.assertFalse(any('-t' in command for command in commands))
+        return commands
+
+    def test_same_digest_retry_succeeds_without_rewriting_any_tag(self):
+        for version in ('v1.60.0-beta.0', 'v1.60.0-rc.12'):
+            for suffix in ('', '-slim', '-gpu'):
+                with self.subTest(version=version, suffix=suffix):
+                    result = self.publish(version, suffix, FAKE_EXISTING=self.candidate)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('no tag is rewritten', result.stdout)
+                    self.assertEqual(len(self.assert_no_write()), 2)
+                    self.assertIn(self.candidate, result.stdout)
+
+    def test_different_digest_retry_refuses_and_names_tag_and_both_digests(self):
+        existing = 'sha256:' + 'f' * 64
+        for version in ('v1.60.0-beta.1', 'v1.60.0-rc.1'):
+            for suffix in ('', '-slim', '-gpu'):
+                with self.subTest(version=version, suffix=suffix):
+                    result = self.publish(version, suffix, FAKE_EXISTING=existing)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('::error::Immutable prerelease docker.io/futureagi/synthetic:' + version + suffix,
+                                  result.stdout)
+                    self.assertIn(existing, result.stdout)
+                    self.assertIn(self.candidate, result.stdout)
+                    self.assertIn('never replace', result.stdout)
+                    self.assertEqual(len(self.assert_no_write()), 2)
+
+    def test_only_exact_missing_tag_allows_creation_after_the_late_check(self):
+        for version in ('v1.60.0-beta.1', 'v1.60.0-rc.1'):
+            result = self.publish(version)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = release.calls(self.log)
+            self.assertEqual([command[3] for command in commands], ['create', 'inspect', 'create'])
+            self.assertEqual(commands[0][4], '--dry-run')
+            self.assertEqual(commands[0][5:], commands[2][6:])  # exact same ordered digest sources
+            self.assertEqual(commands[2][4:6], ['-t', 'docker.io/futureagi/synthetic:' + version])
+            self.assertEqual(len(commands[2]), 8)
+
+    def test_unknown_registry_errors_and_malformed_digests_fail_closed(self):
+        ref = 'docker.io/futureagi/synthetic:v1.60.0-beta.1'
+        for error in ('401 Unauthorized', '429 Too Many Requests', '500 Internal Server Error',
+                      'timeout', '', 'not found', 'ERROR: other/repository: not found',
+                      'ERROR: ' + ref + ': not found\ntransport failure'):
+            with self.subTest(error=error):
+                result = self.publish(FAKE_EXISTING='error', FAKE_INSPECT_ERROR=error)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Cannot establish', result.stdout)
+                self.assert_no_write()
+        for digest in ('', 'not-a-digest', 'sha256:' + 'A' * 64, 'sha256:' + 'a' * 63):
+            with self.subTest(digest=digest):
+                result = self.publish(FAKE_EXISTING=digest)
+                self.assertNotEqual(result.returncode, 0)
+                self.assert_no_write()
+
+    def test_failed_candidate_resolution_never_inspects_or_writes(self):
+        result = self.publish(FAKE_DRY_RUN_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.assert_no_write()), 1)
+
+    def test_candidate_digest_preserves_manifest_whitespace(self):
+        # Buildx adds one newline even when copied manifest bytes end in whitespace.
+        # Removing all trailing newlines or reserializing JSON would change its digest.
+        raw = self.manifest + '\n\n'
+        digest = 'sha256:' + hashlib.sha256(raw.encode()).hexdigest()
+        result = self.publish(FAKE_CANDIDATE=raw, FAKE_EXISTING=digest)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(digest, result.stdout)
+        self.assert_no_write()
 
 
 class ProofProducerTests(unittest.TestCase):
