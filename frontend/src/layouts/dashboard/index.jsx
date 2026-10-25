@@ -19,6 +19,7 @@ import FalconAIFab from "src/sections/falcon-ai/components/FalconAIFab";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
+import HostUpdateNotice from "src/components/host-update-status/HostUpdateNotice";
 import { Typography } from "@mui/material";
 import { ShowComponent } from "../../components/show";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
@@ -108,7 +109,10 @@ export default function DashboardLayout({ children }) {
       <Box sx={boxStyles}>
         {navComponent}
         <NavGatewayPanel />
-        <Main>{children}</Main>
+        <Main>
+          <HostUpdateNotice />
+          {children}
+        </Main>
         {falconAllowed && <FalconAISidebar />}
       </Box>
       <FalconAIFab />
