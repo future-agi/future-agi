@@ -26,6 +26,8 @@ AUTHORING = {
     "generic-harness/certified-bundle/manifest.json": b"{}",
     "generic-harness/certification.json": b"{}",
     "generic-harness/repair-patch-1.json": b"{}",
+    "generic-harness/runtime-plan-repair-1.json": b"{}",
+    "generic-harness/setup-checks-passed.json": b"[]",
     "runtime-validation.json": b'{"status": "passed"}',
     "cost.json": b'{"usd": 1}',
     ".futureagi-conversation.json": b"{}",
@@ -206,6 +208,8 @@ class TestRealTarOutput:
             {
                 "harness-events.jsonl": b"{}",
                 "written.jsonl": b"{}",
+                "generic-harness/source-data-review-early-error.txt": b"error",
+                "provider-import-profile.json": b"{}",
                 "contract.json": b"{}",
             }
         )
@@ -260,6 +264,8 @@ class TestSplitAndCompose:
             "generic-harness/certified-bundle/manifest.json",
             "generic-harness/certification.json",
             "generic-harness/repair-patch-1.json",
+            "generic-harness/runtime-plan-repair-1.json",
+            "generic-harness/setup-checks-passed.json",
             "runtime-validation.json",
         }
 

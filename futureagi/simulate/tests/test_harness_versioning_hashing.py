@@ -179,6 +179,8 @@ class TestEnvironmentHash:
             "scenarios/refund/scenario.json",
             "environment-bundle/manifest.json",
             "generic-harness/certified-bundle/manifest.json",
+            "generic-harness/setup-checks-passed.json",
+            "generic-harness/a-record-alk-adds-later.json",
             ".futureagi-authoring-basis.json",
             "handlers/__pycache__/lookup.cpython-311.pyc",
         ],

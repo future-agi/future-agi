@@ -46,12 +46,11 @@ SCENARIO_OVERLAY_PERSONA_FIELDS = (
 
 # In an authoring tree but not part of the environment's identity: the contract is
 # hashed separately; the rest embed the agent's source digest, belong to the suite or
-# to a build, or are run noise.
+# to a build, or are run noise. ALK keeps its derived records and caches under
+# generic-harness/, so a file it adds there never moves the hash.
 ENVIRONMENT_UNHASHED_FILES = frozenset(
     {
         "contract.json",
-        "generic-harness/source-model.json",
-        "generic-harness/world-ir.json",
         "runtime-validation.json",
         "cost.json",
         "harness-events.jsonl",
@@ -63,7 +62,7 @@ ENVIRONMENT_UNHASHED_ROOTS = (
     "scenarios/",
     "scenario/",
     "environment-bundle/",
-    "generic-harness/certified-bundle/",
+    "generic-harness/",
 )
 WORLD_SEED_FILES = ("world.sqlite", "store.json", "collections.json", "schema.sql")
 SCENARIO_ROOTS = ("scenarios", "scenario")

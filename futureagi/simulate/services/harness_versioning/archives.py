@@ -45,17 +45,28 @@ SEALED_FILES = frozenset(
         "generic-harness/tool-certification.json",
         "generic-harness/action-certification.json",
         "generic-harness/repair-history.json",
+        "generic-harness/setup-checks-passed.json",
     }
 )
 SEALED_PREFIXES = (
     "generic-harness/repair-patch-",
     "generic-harness/scenario-repair-",
+    "generic-harness/runtime-plan-repair-",
 )
 
-# Never stored in a version: per-run spend, build logs, the scenario writers' journal,
-# interpreter caches and the hidden session files at the root of a chat workspace,
-# some of which hold credentials.
-DROPPED_FILES = frozenset({"cost.json", "harness-events.jsonl", "written.jsonl"})
+# Never stored in a version: per-run spend, build and error logs, the scenario writers'
+# journal, the provider agent's fetched definition (it belongs to the agent),
+# interpreter caches and the hidden session files at the root of a chat workspace, some
+# of which hold credentials.
+DROPPED_FILES = frozenset(
+    {
+        "cost.json",
+        "harness-events.jsonl",
+        "written.jsonl",
+        "provider-import-profile.json",
+        "generic-harness/source-data-review-early-error.txt",
+    }
+)
 
 
 @dataclass(frozen=True)
