@@ -71,6 +71,11 @@ const unsafeRoutes: [string, (cfg: any) => void][] = [
   ['managed Redis ledger', c => { c.managed.require_redis = true; }],
   ['managed provider without its section', c => { delete c.managed; }],
   ['managed section without its provider', c => { delete c.providers['fagi-managed']; }],
+  // The guardrail plugin is on with no rule of the file's own; a file rule can name
+  // a webhook or an external provider.
+  ['a guardrail rule', c => { c.guardrails.rules = [{ name: 'webhook', stage: 'pre', action: 'block' }]; }],
+  ['a guardrail setting', c => { c.guardrails.default_timeout = '1s'; }],
+  ['guardrails as a list', c => { c.guardrails = [{ enabled: true }]; }],
 ];
 for (const [name, mutate] of unsafeRoutes) {
   test(`managed mock rejects ${name} before registration`, async () => {

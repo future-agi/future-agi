@@ -1397,6 +1397,33 @@
 
 - the admin's job row shows completed
 
+### GW-E2E-019 — a streamed chat answer that the organization's blocking answer check blocks never reaches the client, and a passing one streams in full
+
+**Goal:** An org admin switches on a check on the model's answer in block mode in the console; a developer streaming chat through the gateway then gets a passing answer in full, and for an answer the check blocks gets none of its text, only the guardrail's error, and the request log records the block  
+**Spec:** `flows/gateway/stream-answer-check.spec.ts:92`  
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. open Org Config, open the config editor, Guardrails: switch on Data Leakage Prevention (block, the switch's default), Save & Activate
+3. stream a chat answer that carries no leak
+4. stream a chat answer that echoes a minted table name in a DROP TABLE statement next to /etc/passwd
+5. open Request Logs
+
+**Backend state verified:**
+
+- the check reaches the gateway as saved: the gateway's copy of the org config has data-leakage-prevention enabled in block mode
+- a passing answer streams in full: its deltas join to the whole echo, with no error event, and the stream ends [DONE]
+- a blocked answer: no frame carries the minted table name, and the stream is only the guardrail's error event (guardrail_error content_blocked, naming data-leakage-prevention), then [DONE]
+- the provider streamed both answers, so the gateway withheld the blocked one rather than skipping the call
+- the request log records the blocked stream as 403 with guardrail_triggered and metadata guardrail_action blocked, and the passing one as 200 with neither
+
+**Browser observations:**
+
+- the Data Leakage Prevention card shows "Action: block" once switched on
+- Request Logs shows exactly the two calls, Status newest first 403 200
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state

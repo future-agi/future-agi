@@ -54,7 +54,8 @@ export function validateManagedMock(provider: Record<string, unknown> | undefine
 
 /** Strict safety contract, not a general gateway config validator. No env expansion,
  * aliases, extra providers, presets, model maps, mirrors, tools or control plane;
- * the one exception is the managed provider and section validateManagedMock pins.
+ * the exceptions are the managed provider and section validateManagedMock pins and
+ * the guardrail plugin switched on with no rules (exactly `guardrails: { enabled: true }`).
  * Gateway config.Load expands env; registry.NewRegistry applies these routing knobs.
  */
 export function validateMockRouting(source: string, evalBackground = false): void {
@@ -63,7 +64,16 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   let cfg;
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
-  const sections = cfg ? Object.keys(cfg).sort() : [];
+  const all = cfg ? Object.keys(cfg).sort() : [];
+  // The guardrail plugin with no rule of the file's own (gateway.e2e.yaml): exactly
+  // `enabled: true`. It then runs only the checks an org saves; a file rule can
+  // name a webhook or an external provider, so any other key is STOP.
+  if (all.includes('guardrails')) {
+    const g = cfg.guardrails;
+    requireSafe(g !== null && typeof g === 'object' && !Array.isArray(g) && same(Object.keys(g), ['enabled']) &&
+      g.enabled === true, 'unexpected guardrails configuration');
+  }
+  const sections = all.filter(s => s !== 'guardrails');
   const withManaged = same(sections, ['logging', 'managed', 'providers', 'server']);
   requireSafe(withManaged || same(sections, ['logging', 'providers', 'server']), 'unexpected gateway sections');
   requireSafe(same(Object.keys(cfg.providers ?? {}), withManaged ? ['openai', MANAGED_PROVIDER] : ['openai']),

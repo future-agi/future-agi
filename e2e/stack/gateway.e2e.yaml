@@ -395,6 +395,15 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
+
+# The guardrail plugin, with no rule of this file's own: the gateway runs the
+# checks an organization saves in the console (its org config's guardrails
+# section), and only those, so a flow can show what a saved check does
+# (GW-E2E-019). fail_open and default_timeout keep the gateway's defaults.
+# lib/managed-mock.ts validateMockRouting accepts this section only as exactly
+# `enabled: true`; a rule here (a webhook, an external provider) is refused.
+guardrails:
+  enabled: true
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)

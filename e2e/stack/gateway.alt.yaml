@@ -51,5 +51,7 @@ logging:
   request_logging:
     enabled: true
     include_bodies: true
+guardrails:
+  enabled: true
 cache:
   enabled: true
