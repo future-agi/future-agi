@@ -232,7 +232,7 @@ class Installation:
                  environ: Optional[Mapping[str, str]] = None, runner=subprocess.run,
                  compose: Optional[Sequence[str]] = None, docker: Optional[Sequence[str]] = None,
                  caller_cwd: Optional[Path] = None, compose_version: Optional[Sequence[int]] = None,
-                 command_options: Sequence[str] = ()) -> None:
+                 command_options: Sequence[str] = (), status_overlay: Optional[Path] = None) -> None:
         self.root = root.resolve()
         # The release options this run was given (argv words, as __main__ collects them): the check commands
         # this installation prints repeat them (production_command), so a pasted command plans the same release.
@@ -242,6 +242,11 @@ class Installation:
         # `cd <checkout> && ` when that is not the checkout (see cd_prefix).
         self.caller_cwd = Path(caller_cwd) if caller_cwd is not None else self.root
         self.production = production
+        # Explicit registered production status mount; never discovered from an
+        # ambient export. The registration adapter qualifies its content/hash.
+        self.status_overlay = Path(status_overlay).absolute() if status_overlay is not None else None
+        if self.status_overlay is not None and (not production or not self.status_overlay.is_file()):
+            raise InstallError('registered production status overlay is unavailable')
         self.runner = runner
         self.environ = dict(os.environ if environ is None else environ)
         self.docker = list(docker or ["docker"])
@@ -443,6 +448,8 @@ class Installation:
             words[0] = name
         if self.production:
             words += ["--env-file", self.relative(self.env_file), "-f", DISTRIBUTED_FILE, "-f", PRODUCTION_OVERLAY]
+            if getattr(self, 'status_overlay', None) is not None:
+                words += ['-f', self.relative(self.status_overlay)]
         return self.cd_prefix() + " ".join(shlex.quote(word) for word in words)
 
     def _on_path(self, name: str, program: str) -> bool:
@@ -455,6 +462,14 @@ class Installation:
             return os.path.samefile(found, program)
         except OSError:
             return False
+
+    def fresh(self) -> "Installation":
+        """Independent live model. An in-memory download overlay is never reused."""
+        return Installation(self.root, production=self.production,
+                            env_file=getattr(self, 'env_alias', self.env_file),
+                            environ=self.environ, runner=self.runner, compose=self.compose, docker=self.docker,
+                            caller_cwd=self.caller_cwd, compose_version=self.compose_version,
+                            command_options=self.command_options, status_overlay=self.status_overlay)
 
     def overlay_env(self, values: Mapping[str, Optional[str]]) -> None:
         """Plan as if the env file had these values (None: as if the key were unset).
@@ -499,8 +514,10 @@ class Installation:
 
     def compose_args(self, *args: str) -> List[str]:
         if self.production:
+            overlay = getattr(self, 'status_overlay', None)
             return [*self.compose, "--env-file", str(self.env_file),
-                    "-f", str(self.root / DISTRIBUTED_FILE), "-f", str(self.root / PRODUCTION_OVERLAY), *args]
+                    "-f", str(self.root / DISTRIBUTED_FILE), "-f", str(self.root / PRODUCTION_OVERLAY),
+                    *(['-f', str(overlay)] if overlay is not None else []), *args]
         return [*self.compose, *args]
 
     def run(self, args: Sequence[str], *, check: bool = True, stream: bool = False,
@@ -823,6 +840,8 @@ class Installation:
 
         if self.production:
             paths = [self.root / DISTRIBUTED_FILE, self.root / PRODUCTION_OVERLAY]
+            if getattr(self, 'status_overlay', None) is not None:
+                paths.append(self.status_overlay)
         else:
             env = dict(read_env(self.env_file), **self.subprocess_env())
             selected = env.get("COMPOSE_FILE")

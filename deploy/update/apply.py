@@ -55,6 +55,7 @@ from typing import (Any, Callable, Collection, Dict, Iterable, Iterator, List, M
                     Tuple)
 
 from . import envfile
+from .contracts import AutomationGuard, GuardBoundary, LockedContext, ReasonCode
 from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, Installation, component_for
 from .manifest import (DEPLOYMENT_FILE_LIST, ManifestError, _skipped_in_directory_hash, component_tag, hash_path,
                        is_version, parse_image_ref, parse_version, read_deployment_file_list)
@@ -544,16 +545,63 @@ def preview_recovery(installation: Installation, journal: Mapping[str, Any],
 class Updater:
     def __init__(self, installation: Installation, settings: Settings, state: StateDir, *,
                  out: TextIO = sys.stderr, readiness: Optional[Readiness] = None,
-                 hook_runner: Callable[..., Any] = run_hook, command_options: Sequence[str] = ()) -> None:
+                 hook_runner: Callable[..., Any] = run_hook, command_options: Sequence[str] = (),
+                 automation_guard: Optional[AutomationGuard] = None,
+                 guard_context: Optional[Callable[["Updater"], LockedContext]] = None) -> None:
         self.installation = installation
         self.settings = settings
         self.state = state
         self.out = out
         self.readiness = readiness or Readiness(installation, out)
         self.hook_runner = hook_runner
+        if (automation_guard is None) != (guard_context is None):
+            raise ValueError("automation guard and locked context must be supplied together")
+        self.automation_guard = automation_guard
+        self.guard_context = guard_context
+        self._automation_context: Optional[LockedContext] = None
+        self.active_record: Optional[Dict[str, Any]] = None
+        self.active_plan: Optional[Dict[str, Any]] = None
+        self.automatic_fallback = False
         # The release options this run was given (--manifest, --bundle, --policy, --channel), as argv words:
         # every apply (or check) command it prints carries them, so it plans with the same release.
         self.command_options = list(command_options)
+
+    def _guard(self, boundary: GuardBoundary) -> None:
+        """Only called under update.lock. Manual invocations take this no-op path.
+
+        A guard never performs recovery. Before any recovery, scheduled calls
+        refuse *all* journals, including a finished run's leftover journal.
+        Guard errors are typed and sanitized; a missing guard fact is a refusal.
+        """
+        if self.automation_guard is None:
+            return
+        from .orchestrator import GuardRefused
+        if self.installation.production:
+            raise GuardRefused(ReasonCode.INITIALIZATION_REQUIRED)
+        if boundary == 'before_recovery' and self.state.read_journal() is not None:
+            raise GuardRefused(ReasonCode.RECOVERY_REQUIRED)
+        try:
+            context = self.guard_context(self)
+            self.automation_guard.validate(boundary, context)
+            self._automation_context = context
+        except GuardRefused:
+            raise
+        except Exception as exc:
+            reason = getattr(exc, 'reason_code', ReasonCode.CONTROL_INVALID)
+            try:
+                reason = ReasonCode(reason)
+            except ValueError:
+                reason = ReasonCode.CONTROL_INVALID
+            raise GuardRefused(reason) from None
+
+    def _automation_metadata(self) -> Dict[str, Any]:
+        if self.automation_guard is None:
+            return {}
+        metadata = dict(getattr(self._automation_context, 'receipt_metadata', {}))
+        if self.automatic_fallback and self.active_record is not None:
+            metadata['forward_run_id'] = metadata.get('run_id')
+            metadata['run_id'] = self.active_record['run_id']
+        return metadata
 
     def say(self, text: str) -> None:
         self.out.write(text.rstrip("\n") + "\n")
@@ -601,7 +649,8 @@ class Updater:
         # after taking the lock: another updater may have finished meanwhile.
         if self.state.read_journal() is None:
             return None
-        with self.state.lock():
+        with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
+            self._guard('before_recovery')
             return self._recover_locked(again)
 
     def _recover_locked(self, again: str = "") -> Optional[Dict[str, Any]]:
@@ -731,8 +780,10 @@ class Updater:
             return {"ran": False}
         timeout = self.settings.integer("FUTURE_AGI_UPDATE_BACKUP_TIMEOUT_SECONDS", 1, 86400)
         self.say(f"Running the backup hook: {argv[0]}")
-        env = dict(os.environ)
+        env = dict(os.environ) if self.automation_guard is None else dict(self.installation.environ)
         env.update(context)
+        if self.automation_guard is not None:
+            env.update(getattr(self._automation_context, 'backup_environment', {}))
         started = time.monotonic()
         try:
             result = self.hook_runner(argv, cwd=str(self.installation.root), env=env, check=False, timeout=timeout)
@@ -914,6 +965,10 @@ class Updater:
 
         installation = self.installation
         stage = "prepare"
+        self.active_record = record
+        self._guard('before_env_commit')
+        if self.automation_guard is not None:
+            record['automation'] = self._automation_metadata()
         installation.check_ownership()
         record.update(stage=stage, status="running", journal_version=2,
                       env_recovery=envfile.recovery_record(self._env_path(), record["env_changes"]))
@@ -985,6 +1040,7 @@ class Updater:
                     up = ["up", "-d", "--no-build"]
                     if installation.supports_up_pull_never():
                         up += ["--pull", "never"]
+                    self._guard('before_rollout')
                     advance("rollout")
                     self.say("Restarting the stack on the new images")
                     if installation.mode == "standalone":
@@ -1011,6 +1067,28 @@ class Updater:
             detail = scrub(str(exc) or exc.__class__.__name__, secrets)
             record["error"] = "interrupted" if interrupted and not str(exc) else detail
             record["finished_at"] = _now()
+            if self.automation_guard is not None:
+                from .processes import ProcessError
+                from .orchestrator import GuardRefused
+                if isinstance(exc, GuardRefused) and exc.reason_code in (
+                        ReasonCode.RECOVERY_REQUIRED, ReasonCode.ENV_CONFLICT, ReasonCode.OWNERSHIP_UNCONFIRMED):
+                    # Do not recover through or clear evidence that a foreign
+                    # writer replaced while this run held its cooperative lock.
+                    raise UpdateError(ReasonCode.RECOVERY_REQUIRED.value) from exc
+                # A client timeout cannot prove the daemon stopped. Retain the
+                # journal/inverse and forbid automatic fallback or next-tick recovery.
+                cause = exc
+                seen = set()
+                uncertain = getattr(installation.runner, 'uncertain', False) is True
+                while cause is not None and id(cause) not in seen:
+                    seen.add(id(cause))
+                    uncertain = uncertain or (isinstance(cause, ProcessError) and cause.uncertain)
+                    cause = cause.__cause__
+                if uncertain:
+                    record['automation']['reason_code'] = (ReasonCode.OPERATION_INTERRUPTED if interrupted
+                                                           else ReasonCode.OPERATION_TIMEOUT).value
+                    self.state.write_journal(record)
+                    raise (InterruptedRun if interrupted else UpdateError)(ReasonCode.RECOVERY_REQUIRED.value) from exc
             if stage in STAGES_BEFORE_ROLLOUT:
                 try:
                     self._restore_env(record)
@@ -1315,7 +1393,16 @@ class Updater:
                 self._refuse_stage(plan["target_version"], resumed)
             self._check_readiness_settings()
             if not dry_run and not resumed:
-                self._backup_argv(backup_command, allow_no_backup)
+                if self.automation_guard is not None:
+                    from .orchestrator import GuardRefused
+                    if allow_no_backup:
+                        raise GuardRefused(ReasonCode.BACKUP_REQUIRED)
+                    try:
+                        self._backup_argv(backup_command, False)
+                    except Blocked:
+                        raise GuardRefused(ReasonCode.BACKUP_REQUIRED) from None
+                else:
+                    self._backup_argv(backup_command, allow_no_backup)
         except Blocked as exc:
             return exc
         return None
@@ -1420,9 +1507,43 @@ class Updater:
                      f"update instead, run `{self._rollback_command(path)}`. Receipt: {path}")
         return " ".join(steps)
 
+    def _check_stage_binding(self, staged, binding, acknowledge):
+        """Opt-in exact-byte manual stage adapter; never adopted by automation.
+
+        New host/CLI adapters pass release_binding for both stage and finish.
+        The legacy operator entry point (no binding argument) keeps its existing
+        behavior. Acknowledgement excuses age/absent proof only, never identity.
+        """
+        from datetime import datetime, timezone
+        from .orchestrator import GuardRefused
+        saved = self.state.read_private('stage', staged['run_id']) if staged.get('run_id') else None
+        if saved is None:
+            if not acknowledge:
+                raise GuardRefused(ReasonCode.STALE_STAGE)
+            return
+        keys = ('manifest_hash', 'manifest_sha256', 'bundle_sha256', 'installation_fingerprint',
+                'config_fingerprint', 'profile_fingerprint', 'trust_fingerprint')
+        if any(not saved.get(key) or saved[key] != binding.get(key) for key in keys):
+            raise GuardRefused(ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+        try:
+            created = datetime.strptime(saved['created_at'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - created).total_seconds()
+            # A manual hook without the attempt-bound attestation is explicitly
+            # legacy/absent, not automatically upgraded by another successful hook.
+            proof_time = saved.get('backup_completed_at')
+            proof_age = None if proof_time is None else (datetime.now(timezone.utc) - datetime.strptime(
+                proof_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)).total_seconds()
+            stale = age < 0 or age > 86400 or proof_age is None or not 0 <= proof_age <= 3600
+        except (ValueError, TypeError, KeyError):
+            stale = True
+        if stale and not acknowledge:
+            raise GuardRefused(ReasonCode.STALE_STAGE)
+
     def apply(self, make_plan: Callable[[List[Dict[str, Any]]], Dict[str, Any]], manifest: Mapping[str, Any],
               *, allow_no_backup: bool = False, backup_command: Optional[str] = None,
-              dry_run: bool = False, stage: bool = False) -> Optional[Path]:
+              dry_run: bool = False, stage: bool = False,
+              release_binding: Optional[Mapping[str, Any]] = None,
+              acknowledge_stale_stage: bool = False) -> Optional[Path]:
         """Plan with `make_plan(history)` (this install's receipts, oldest first) and carry the plan out.
 
         stage=True stops before restarting anything (see the module docstring).
@@ -1433,11 +1554,14 @@ class Updater:
                  + (["--backup-command", backup_command] if backup_command else [])
                  + (["--allow-no-backup"] if allow_no_backup else []))
         again = self._command(" ".join(_quote(word) for word in words))
-        with self.state.lock():
+        with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
             notes: List[str] = []
             if not dry_run:
+                self._guard('before_recovery')
                 self.installation.check_ownership()
                 self._recover_locked(again)
+                if self.automation_guard is not None:
+                    self.installation.reload_env()
             history = self._history()
             journal = self.state.read_journal() if dry_run else None
             if journal:
@@ -1447,11 +1571,17 @@ class Updater:
                 if finished_run(journal, history) is None:
                     history = history + [preview]
             plan = make_plan(history)
+            self.active_plan = plan
             plan["notes"].extend(notes)
             # The unfinished update this run continues: one that stopped while containers were being replaced
             # (through any later run that stopped before restarting anything), or one staged earlier.
             resumed = self._unfinished_update(history) if plan["resume"] else None
             staged = resumed if resumed and resumed.get("status") == STAGED else None
+            if resumed and resumed.get('manifest_hash') and resumed['manifest_hash'] != plan.get('manifest_hash'):
+                from .orchestrator import GuardRefused
+                raise GuardRefused(ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+            if staged and release_binding is not None:
+                self._check_stage_binding(staged, release_binding, acknowledge_stale_stage)
             # Every refusal that needs no backup is decided before the plan is printed.
             refusal = self._refusal(plan, manifest, resumed, staged, stage=stage, dry_run=dry_run,
                                     backup_command=backup_command, allow_no_backup=allow_no_backup)
@@ -1470,6 +1600,7 @@ class Updater:
             if dry_run:
                 self.say(self._dry_run_text(plan, resumed, stage))
                 return None
+            self._guard('before_backup')
             target = plan["target_version"]
             items = plan["components"]
             services = sorted({s for item in items for s in item["services"]})
@@ -1484,6 +1615,7 @@ class Updater:
                     "FUTURE_AGI_UPDATE_FROM_VERSION": ",".join(plan["current_versions"]),
                     "FUTURE_AGI_UPDATE_TO_VERSION": target,
                 })
+            self._guard('after_backup')
             env_changes = dict(plan["env_changes"])
             found_values = {var: self.installation.env.get(var) for var in env_changes}
             # A key the stopped update did not change was, before it, what this run found.
@@ -1512,6 +1644,11 @@ class Updater:
                 "previous_images": (resumed or {}).get("previous_images") or self._snapshot_images(services, containers),
                 "backup": backup,
             }
+            if release_binding is not None:
+                saved_binding = (self.state.read_private('stage', resumed['run_id'])
+                                 if resumed and resumed.get('run_id') else None)
+                record['stage_binding'] = (saved_binding if saved_binding is not None else
+                                           dict(release_binding, created_at=_now(), backup_proof_state='legacy_absent'))
             if resumed:
                 record["resumes"] = resumed.get("_path")
             digests = {item["component"]: item["target_digest"] for item in items}
@@ -1977,6 +2114,10 @@ class Updater:
     def _git(self, *args: str) -> "subprocess.CompletedProcess[bytes]":
         """git in this checkout (never in a repository the environment points it at); raises OSError without git."""
 
+        if self.automation_guard is not None:
+            return self.installation.runner(['git', '-C', str(self.installation.root), '--literal-pathspecs', *args],
+                                            capture_output=True, timeout=GIT_TIMEOUT_SECONDS, check=False,
+                                            env=self.installation.environ)
         env = {key: value for key, value in os.environ.items() if key not in _GIT_LOCATION_VARIABLES}
         return subprocess.run(["git", "-C", str(self.installation.root), "--literal-pathspecs", *args],
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
@@ -2310,7 +2451,11 @@ class Updater:
         words = (["rollback"] + (["--receipt", str(receipt_path)] if receipt_path is not None else [])
                  + (["--yes"] if yes else []))
         again = self._command(" ".join(_quote(word) for word in words))
-        with self.state.lock():
+        with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
+            self.active_rollback_receipt = receipt_path
+            self.automatic_fallback = self.automation_guard is not None
+            self._guard('before_recovery')
+            self._guard('before_fallback')
             self.installation.check_ownership()
             # A journal whose run already wrote its receipt: recovering only removes it (recover). Another install's
             # journal is refused first, as recover refuses it.

@@ -17,6 +17,8 @@ import json
 import os
 import re
 import shlex
+import stat
+import uuid
 import sys
 import time
 from contextlib import contextmanager
@@ -50,6 +52,10 @@ _LOCK_RETRY_SECONDS = 0.25
 
 class StateError(RuntimeError):
     """Update state cannot be read, written or locked."""
+
+
+class StateBusy(StateError):
+    """Typed update.lock contention; manual error text and behavior are unchanged."""
 
 
 def secret_values(env: Mapping[str, str]) -> List[str]:
@@ -197,21 +203,30 @@ class StateDir:
         return self.path / LOCK
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
-        """One bin/update at a time per checkout (apply and rollback)."""
+    def lock(self, *, automation: bool = False) -> Iterator[None]:
+        """One bin/update at a time; scheduled callers never adopt shared/link state."""
 
-        self.ensure()
+        if automation:
+            with self.private_directory(create=True):
+                pass
+        else:
+            self.ensure()
         try:
             import fcntl
         except ImportError as exc:  # Windows
             raise StateError("bin/update needs a POSIX system (Linux, macOS or WSL)") from exc
         path = self.lock_path
         try:
-            fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+            fd = os.open(str(path), os.O_RDWR | os.O_CREAT | (os.O_NOFOLLOW | os.O_NONBLOCK if automation else 0), 0o600)
         except OSError as exc:
             raise StateError(f"cannot open {path}: {exc}{self._hint(path)}") from exc
         try:
-            deadline = time.monotonic() + _LOCK_RETRY_SECONDS
+            if automation:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise StateError('untrusted update lock')
+            deadline = time.monotonic() + (0 if automation else _LOCK_RETRY_SECONDS)
             while True:
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -221,7 +236,7 @@ class StateDir:
                         time.sleep(0.02)
                         continue
                     holder = self._holder_text(fd)
-                    raise StateError(
+                    raise (StateBusy if automation else StateError)(
                         f"another bin/update is running in this checkout ({holder or 'lock held'})") from exc
                 except OSError as exc:
                     if exc.errno in _NO_LOCKS:
@@ -354,6 +369,10 @@ class StateDir:
         existing = self.receipts()
         number = max(time.time_ns(), _receipt_number(existing[-1]) + 1 if existing else 0)
         path = self.path / f"receipt-{stamp}-{number}.json"
+        if 'stage_binding' in record:
+            self.write_private('stage', record['run_id'], record['stage_binding'])
+        if 'automation' in record:
+            self.write_private('automation', record['run_id'], record['automation'])
         body = {key: value for key, value in record.items() if key in _PUBLIC_RECEIPT_FIELDS}
         body["schema_version"] = RECEIPT_SCHEMA
         ids = self._retain_env_reference(record)
@@ -361,6 +380,89 @@ class StateDir:
             body["env_commit_ids"] = ids
         _write_json(path, scrub_record(body, self.secrets), self.path)
         return path
+
+    @contextmanager
+    def private_directory(self, *, create: bool = False) -> Iterator[int]:
+        """Qualified descriptor for private automation evidence, never a public receipt.
+
+        Caller holds update.lock for writes. No operation follows a leaf/parent
+        symlink, opens a FIFO, or accepts a shared/multiply linked evidence file.
+        """
+        fd = None
+        try:
+            if create:
+                # Refuse an existing symlink before ensure's manual chmod path.
+                try:
+                    info = self.path.lstat()
+                    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+                        raise StateError('untrusted private update state')
+                except FileNotFoundError:
+                    self.ensure()
+            fd = os.open(str(self.path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            info = os.fstat(fd)
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise StateError('untrusted private update state')
+            yield fd
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    @staticmethod
+    def _private_name(kind: str, key: str) -> str:
+        if kind not in ('download', 'automation', 'fallback', 'stage') or not re.fullmatch(r'[0-9a-f]{32,64}', key):
+            raise StateError('invalid private update identity')
+        return kind + '-' + key + '.json'
+
+    def write_private(self, kind: str, key: str, value: Mapping[str, Any]) -> Path:
+        """Atomic private evidence, independent of unfinished/ROLLBACKABLE history."""
+        name = self._private_name(kind, key)
+        raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+        if len(raw) > 262144:
+            raise StateError('private update evidence exceeds limit')
+        with self.private_directory(create=True) as directory:
+            temp = '.' + name + '.' + uuid.uuid4().hex
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            try:
+                with os.fdopen(fd, 'wb') as handle:
+                    handle.write(raw)
+                    handle.flush()
+                    from .envcommit import sync_file
+                    sync_file(handle.fileno())
+                os.replace(temp, name, src_dir_fd=directory, dst_dir_fd=directory)
+                os.fsync(directory)
+            finally:
+                try:
+                    os.unlink(temp, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+        return self.path / name
+
+    def read_private(self, kind: str, key: str) -> Optional[Dict[str, Any]]:
+        name = self._private_name(kind, key)
+        try:
+            with self.private_directory() as directory:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                with os.fdopen(fd, 'rb') as handle:
+                    before = os.fstat(handle.fileno())
+                    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                            or before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600
+                            or before.st_size > 262144):
+                        raise StateError('untrusted private update evidence')
+                    raw = handle.read(262145)
+                    after = os.fstat(handle.fileno())
+                    fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns',
+                              'st_mode', 'st_uid', 'st_nlink')
+                    if any(getattr(before, f) != getattr(after, f) for f in fields) or len(raw) != before.st_size:
+                        raise StateError('private update evidence changed')
+            from .compatibility import decode_document
+            value = decode_document(raw)
+            if not isinstance(value, dict):
+                raise StateError('invalid private update evidence')
+            return value
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            raise StateError('unreadable private update evidence') from None
 
     def receipts(self) -> List[Path]:
         try:
