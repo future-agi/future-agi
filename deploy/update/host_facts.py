@@ -16,15 +16,16 @@ import stat
 import struct
 import sys
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from .compatibility import Observations, RuntimeImage, decode_document, topology_profile
 from .contracts import InstallationBinding, ReasonCode, VerificationSnapshot
-from .install import Installation, PRODUCTION_ENV
-from .manifest import hash_path, manifest_hash, parse_image_ref, validate_manifest
-from .orchestrator import check_binding, fingerprints, profiles, require
+from .install import Installation, DISTRIBUTED_FILE, PRODUCTION_ENV, PRODUCTION_OVERLAY
+from .manifest import ManifestError, hash_path, manifest_hash, parse_image_ref, read_deployment_file_list, validate_manifest
+from .orchestrator import GuardRefused, check_binding, check_deployment, fingerprints, profiles, require
 from .runner_state import RunnerStateStore, StoreError
 from .trust import FetchedManifest, Verifier
 
@@ -58,6 +59,97 @@ def selected_store(root, *, production=False, env_file=None):
     return RunnerStateStore(root, env, production, mode)
 
 
+STATUS_OVERLAY = 'deploy/docker-compose.host-status.distributed.yml'
+
+
+class HostInstallation(Installation):
+    """CLI-only remedy; never infer an overlay from untrusted provenance."""
+    def _ownership_error(self, detail):
+        error = super()._ownership_error(detail)
+        if self.production and self.status_overlay is None and 'config_files' in detail:
+            return type(error)(str(error) + ' If this production install uses the host-status overlay, explicitly '
+                'enroll with `bin/update --production schedule init --docker-context NAME --status-overlay` '
+                '(keep the same --env-file selection). See the README for re-enrollment; labels are never adopted.')
+        return error
+
+
+def production_status_overlay(root):
+    """One fixed inventory member, not a path supplied by flags or labels.
+
+    Enrollment is identity, not signature verification. Release operations also
+    require this entry in the verified manifest and check its bytes below.
+    """
+    try:
+        require(STATUS_OVERLAY in read_deployment_file_list(root), ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+        path = safe_path(root / STATUS_OVERLAY)
+        require(path.is_file(), ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+        return path
+    except (OSError, ManifestError):
+        raise GuardRefused(ReasonCode.DEPLOYMENT_FILES_MISMATCH) from None
+
+
+def _binding_fingerprint(binding):
+    return manifest_hash({'checkout': str(binding.checkout), 'env_alias': str(binding.env_alias),
+        'env_target': str(binding.env_target), 'production': binding.production, 'topology': binding.topology,
+        'project': binding.compose_project, 'files': [str(p) for p in binding.compose_files],
+        'profiles': binding.profiles, 'context': binding.docker_context,
+        'daemon': binding.daemon_identity, 'uid': binding.host_uid})
+
+
+def binding_status_overlay(binding):
+    """Decode only the two fixed production identities; COMPOSE_FILE is unchanged."""
+    if not binding.production:
+        return None
+    base = (binding.checkout / DISTRIBUTED_FILE, binding.checkout / PRODUCTION_OVERLAY)
+    overlay = binding.checkout / STATUS_OVERLAY
+    require(binding.compose_files in (base, (*base, overlay))
+            and binding.installation_fingerprint == _binding_fingerprint(binding), ReasonCode.CONFIGURATION_CHANGED)
+    return production_status_overlay(binding.checkout) if len(binding.compose_files) == 3 else None
+
+
+def registered_status_overlay(store):
+    if not store.production:
+        return None
+    # A legacy core journal directory is not automation enrollment. Do not let
+    # its older permissions hide the Installation's original preflight remedy.
+    try:
+        store.path.lstat()
+    except FileNotFoundError:
+        return None
+    try:
+        return binding_status_overlay(store.read_registration().binding)
+    except StoreError as exc:
+        if exc.reason_code != ReasonCode.SCHEDULER_UNREGISTERED:
+            raise
+        return None
+
+
+def check_status_deployment(installation, manifest):
+    """Do not let an older signed manifest silently omit the selected overlay."""
+    require(STATUS_OVERLAY in manifest['deployment']['files'], ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    check_deployment(installation, manifest)
+
+
+def overlay_discovery(store, settings, registration, supervisor, clock):
+    """Qualify signed overlay bytes even for notify, without changing the runner."""
+    from .runner import host_discovery
+    discovery = host_discovery(store, settings, registration, supervisor, clock)
+
+    class CheckedDiscovery:
+        def checked(self, result):
+            if result.candidate is not None and result.candidate.verification.verified:
+                check_status_deployment(SimpleNamespace(root=store.checkout), result.candidate.manifest)
+            return result
+
+        def discover(self, **kwargs):
+            return self.checked(discovery.discover(**kwargs))
+
+        def refresh(self, *args, **kwargs):
+            return self.checked(discovery.refresh(*args, **kwargs))
+
+    return CheckedDiscovery()
+
+
 def installation_binding(installation, store, context):
     """Fresh read-only ownership and daemon identity; deterministic re-init."""
     require(context and all(ord(c) >= 33 and ord(c) != 127 for c in context), ReasonCode.OWNERSHIP_UNCONFIRMED)
@@ -67,20 +159,16 @@ def installation_binding(installation, store, context):
     alias = Path(getattr(installation, 'env_alias', installation.env_file)).absolute()
     files = tuple(installation._ownership_files())
     selected_profiles = profiles(installation)
-    identity = {'checkout': str(store.checkout), 'env_alias': str(alias), 'env_target': str(store.env_target),
-                'production': store.production, 'topology': store.topology, 'project': installation.project,
-                'files': [str(p) for p in files], 'profiles': selected_profiles, 'context': context,
-                'daemon': daemon, 'uid': os.geteuid()}
-    fingerprint = manifest_hash(identity)
     try:
         slot = store.read_registration().binding.slot_id
     except StoreError as exc:
         if exc.reason_code != ReasonCode.SCHEDULER_UNREGISTERED:
             raise
         slot = uuid.uuid4().hex  # Public correlation, never a private path hash.
-    return InstallationBinding(slot, store.selection_hash, fingerprint, store.checkout,
-                               alias, store.env_target, store.topology, store.production, installation.project,
-                               files, selected_profiles, context, daemon, os.geteuid())
+    binding = InstallationBinding(slot, store.selection_hash, '0' * 64, store.checkout,
+                                  alias, store.env_target, store.topology, store.production, installation.project,
+                                  files, selected_profiles, context, daemon, os.geteuid())
+    return replace(binding, installation_fingerprint=_binding_fingerprint(binding))
 
 
 def daemon_space_available(installation, binding):

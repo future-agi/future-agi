@@ -459,7 +459,7 @@ merges env settings, installs dependencies or restores databases automatically.
 | `pause --until RFC3339` | Requires a future timestamp with explicit offset, or use `pause --indefinite`. Pauses future scheduled discovery/download/starts, not completion of an already-started safety action. Zero on success, 3 for a past/naive/invalid timestamp; invalid flag combinations exit 2. |
 | `resume` | Clear pause only; does not enable automation or clear any failed-target latch. Zero on success, 2 on invalid private state. |
 | `retry --target VERSION --manifest-hash HEX --yes` | Clear only the exact failed-target latch; retain failure/attempt evidence and the consumed window. Never apply or recover now. Zero on success, 3 without confirmation, 2 for wrong/malformed identity or incomplete attempt. |
-| `schedule init --docker-context NAME` | Identity enrollment only, not baseline attestation. Zero on success, 2 for missing tools/state, 3 for unsafe ownership/selection. |
+| `schedule init --docker-context NAME` | Identity enrollment only, not baseline attestation. Production may explicitly add --status-overlay (no path). Zero on success, 2 for missing tools/state, 3 for unsafe ownership/selection. |
 | `schedule render --backend cron` | Render only; systemd is the other backend. Zero on success, 2 without a valid registration or executable launcher. |
 | `reporting init --directory ABSOLUTE_PATH` | Explicit dedicated status-parent binding and initial unknown snapshot. Zero on success, 2 for I/O/private-state failures, 3 for unsafe, overlapping or already-bound paths. Does not edit env/Compose or recreate containers. |
 | `status` | Existing text remains default, including `--format text`. Read-only; 0 when observed, 2 when unavailable. |
@@ -540,8 +540,79 @@ checkout/env overlap, private-state overlap and rebinding. It never repairs
 foreign permissions. Opt in separately to the Standalone or Distributed host
 status Compose overlay; mount the **stable slot directory**, read-only, not the
 status-file inode. The initializer prints the chosen path/overlay but does not
-edit configuration or recreate anything. Production overlay enrollment requires
-additional integration qualification before scheduling that selection.
+edit configuration or recreate anything. `bin/install --host-status-help` (also
+available through `deploy/setup.sh --host-status-help`) describes the optional
+read-only mount and host-only directory preparation.
+
+#### Production status-overlay identity
+
+For a production stack already running with the status overlay, enroll explicitly:
+
+```bash
+./bin/update --production schedule init --docker-context my-install-context --status-overlay
+./bin/update --production reporting init --directory /absolute/dedicated/public-parent
+./bin/update --production status --format json
+```
+
+Keep the same absolute --env-file selection if it is not deploy/.env.production.
+The flag is host-only, accepts **no path**, and is valid only for production
+schedule init, not schedule render or any later command. It selects exactly:
+
+1. `docker-compose.distributed.yml`
+2. `deploy/docker-compose.production.yml`
+3. `deploy/docker-compose.host-status.distributed.yml`
+
+That order is recorded in compose_files and installation_fingerprint. Every
+running/stopped/one-off container must prove the same exact order in its Compose
+labels. Later run, download, status, check, apply and rollback derive the overlay
+only from this registration; neither labels nor ambient COMPOSE_FILE can enroll
+it. Without the flag, production keeps its original two-file identity. Without
+registration, an overlay stack is refused with an enrollment hint, never adopted.
+Standalone and non-production Distributed continue using their existing
+COMPOSE_FILE selection, not this flag.
+
+Missing, reordered, extra or changed registered files/fingerprints are typed
+refusals. A missing/unsafe overlay or one absent from the deployment inventory
+is refused. Enrollment checks identity, **not release trust**: verified release
+checks, downloads, applies and scheduled discovery additionally require this
+exact overlay entry in the signed manifest and verify deployment bytes through
+the existing deployment check. An older signed manifest that omits it is not
+sufficient. Status and rollback do not fetch a new manifest; their existing
+observation and receipt/recovery safeguards remain in force. Production scheduled
+work still only notifies/downloads; this flag never authorizes unattended apply.
+
+**Adding or removing the overlay requires explicit re-enrollment.** There is no
+in-place registration migration or force/reset flag. Disable automation, remove
+only this installation's scheduler entry using the rendered removal instructions,
+and wait for active work to finish. Resolve any journal or staged transaction
+before changing the Compose selection. Preserve the core update journal, receipts
+and env-commit evidence. Archive the exact selected private automation namespace
+(as a whole, including its registration, controls, state, facts and reporting
+binding) to a host-private location; do not delete individual binding fields,
+other selections, or the core .futureagi-updates directory. Keep the archive for
+operator reconciliation of failure latches/attempt history; enrollment is not
+permission to retry a failed release.
+
+Separately recreate the stack with the intended ordered files, then run schedule
+init with the same production/env/context selection and with --status-overlay
+when adding it, or without the flag when removing it. Ownership must already
+match; init never recreates the stack. For first opt-in, prepare the read-only
+mount using the existing two-file installation's reporting slot before archiving
+its registration. That old slot can remain mounted during the transition, but is
+stale/disposable, not evidence. The new registration assigns a **new random slot**:
+initialize reporting in a new empty dedicated public parent, deliberately update
+FI_HOST_UPDATE_STATUS_DIR and FI_HOST_UPDATE_STATUS_SLOT in the production env,
+and recreate with the same three-file order to mount the new slot. Do not reuse
+an old slot token or copy old facts/state to bypass identity checks. Requalify
+facts if needed, validate status and the app's read-only projection, review policy
+and failure history, then explicitly re-enable/reinstall scheduling. Removing
+the overlay likewise requires the two-file recreation and fresh enrollment;
+reporting can remain host-only without an app mount.
+
+These are daemon-free-tested host contracts, not production-image qualification.
+A real signed-release production rehearsal must still verify recreation, actual
+labels, slot permissions/read-only access, atomic-replacement visibility and the
+app's observation on each supported host filesystem/daemon combination.
 
 Manual terminal outcomes, controls and scheduled ticks use the same
 PublicStatusPublisher. They capture a private generation/operation ticket before

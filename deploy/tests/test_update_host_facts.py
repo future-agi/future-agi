@@ -186,6 +186,55 @@ class SelectionTests(pub.PublisherCase):
             facts.safe_path(self.env)
 
 
+class OverlayAdapterTests(pub.PublisherCase):
+    def test_fixed_inventory_missing_malformed_unsafe_and_nondirectory_refuse(self):
+        overlay = self.root / facts.STATUS_OVERLAY
+        overlay.parent.mkdir()
+        inventory = self.root / 'deploy/update/deployment-files.txt'
+        inventory.parent.mkdir()
+        for content in (None, '../escape\n', 'docker-compose.yml\n', facts.STATUS_OVERLAY+'\n'):
+            if content is not None:
+                inventory.write_text(content)
+            with self.assertRaises(GuardRefused):
+                facts.production_status_overlay(self.root)
+        overlay.mkdir()
+        with self.assertRaises(GuardRefused):
+            facts.production_status_overlay(self.root)
+        overlay.rmdir()
+        overlay.symlink_to(self.compose)
+        with self.assertRaises(GuardRefused):
+            facts.production_status_overlay(self.root)
+        overlay.unlink()
+        overlay.write_text('services: {}\n')
+        self.assertEqual(facts.production_status_overlay(self.root), overlay)
+        self.assertIsNone(facts.binding_status_overlay(self.binding))
+        self.assertIsNone(facts.registered_status_overlay(self.store))
+        from deploy.update import __main__ as cli
+        with self.assertRaises(GuardRefused):
+            cli._enroll(self.store, 'test-context', None, status_overlay=True)
+
+    def test_checked_discovery_refresh_and_no_candidate_or_unverified_result(self):
+        from deploy.update.discovery import DiscoveryResult
+        from dataclasses import replace
+        discovery = mock.Mock()
+        with mock.patch('deploy.update.runner.host_discovery', return_value=discovery), \
+                mock.patch.object(facts, 'check_status_deployment') as check:
+            adapter = facts.overlay_discovery(self.store, None, None, None, None)
+            discovery.refresh.return_value = DiscoveryResult(self.release)
+            self.assertIs(adapter.refresh('v1.2.3', channel='stable').candidate, self.release)
+            discovery.refresh.assert_called_once_with('v1.2.3', channel='stable')
+            check.assert_called_once()
+            check.reset_mock()
+            for result in (DiscoveryResult(), DiscoveryResult(replace(self.release,
+                           verification=replace(self.release.verification, verified=False)))):
+                discovery.discover.return_value = result
+                self.assertIs(adapter.discover(current='v1.0.0'), result)
+            check.assert_not_called()
+        with self.assertRaises(GuardRefused) as caught:
+            facts.check_status_deployment(self.root, {'deployment': {'files': {}}})
+        self.assertEqual(caught.exception.reason_code, ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+
+
 class CapacityTests(unittest.TestCase):
     def test_remote_vm_or_unknown_capacity_never_uses_client_disk_or_connects(self):
         inst = mock.Mock(environ={'DOCKER_CONTEXT': 'registered'})

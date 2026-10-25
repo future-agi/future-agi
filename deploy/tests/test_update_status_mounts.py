@@ -83,6 +83,10 @@ class StatusPreparationTests(unittest.TestCase):
                 self.assertIn("Directory preparation alone is NOT enrollment", result.stdout)
                 self.assertIn("config --quiet", result.stdout)
                 self.assertIn("stage, separately approved initialization, then apply", result.stdout)
+                self.assertIn("schedule init --docker-context NAME --status-overlay", result.stdout)
+                self.assertIn("--status-overlay takes NO path", result.stdout)
+                self.assertIn("Adding/removing the overlay requires", result.stdout)
+                self.assertIn("exactly these three ordered files", result.stdout)
                 self.assertFalse(self.source.exists())
 
     def test_fresh_directory_is_operator_owned_755_even_with_private_umask(self):

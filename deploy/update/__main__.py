@@ -29,7 +29,7 @@ from .apply import (FINISHED_STATUSES, Blocked, Interrupted, InterruptedRun, Upd
                     preview_recovery, recover_elsewhere, signals_as_interrupt, validate_journal_header,
                     validate_recovery)
 from .envfile import EnvFileError
-from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, VERSION_VARIABLES, InstallError, Installation
+from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, VERSION_VARIABLES, InstallError
 from .manifest import ManifestError
 from .plan import BLOCKED, build_plan, cd_prefix, command_prefix, install_command, plan_json, plan_text
 from .readiness import NotReady
@@ -40,7 +40,9 @@ from .trust import Verifier, VerificationError, fetch_manifest, remove_workdir
 from .contracts import ReasonCode, VerificationSnapshot
 from .discovery import DiscoveredRelease, DiscoveryResult
 from .download import Downloader
-from .host_facts import (EnrolledFacts, daemon_space_available, installation_binding,
+from .host_facts import (EnrolledFacts, HostInstallation as Installation, binding_status_overlay,
+                         check_status_deployment, daemon_space_available, installation_binding,
+                         overlay_discovery, production_status_overlay, registered_status_overlay,
                          safe_path, selected_store)
 from .orchestrator import GuardRefused, fingerprints, prepare_update, registered_installation, require
 from .processes import ProcessError, ProcessSupervisor
@@ -102,6 +104,8 @@ OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] 
     (("retry",), None, "--manifest-hash", {"metavar": "HEX", "help": "exact failed manifest SHA256"}),
     (("schedule",), None, "--docker-context", {"metavar": "NAME", "help": "explicit context to register, never set globally"}),
     (("schedule",), None, "--backend", {"choices": ("cron", "systemd"), "help": "render only; never install"}),
+    (("schedule",), None, "--status-overlay", {"action": "store_true",
+        "help": "production init only: enroll the fixed signed Distributed host-status overlay; no path"}),
     (("reporting",), None, "--directory", {"metavar": "ABSOLUTE_PATH", "help": "dedicated public parent directory"}),
 )
 # A command's own options when they are not given.
@@ -155,6 +159,8 @@ class _Parser(argparse.ArgumentParser):
                 required, forbidden = ('docker_context', 'backend') if namespace.action == 'init' else ('backend', 'docker_context')
                 if not present(required) or present(forbidden):
                     error('init requires only --docker-context; render requires only --backend')
+                if present('status_overlay') and (namespace.action != 'init' or not getattr(namespace, 'production', False)):
+                    error('--status-overlay requires --production schedule init; it takes no path')
             if command == 'reporting' and not present('directory'):
                 error('--directory is required')
             if command == 'status' and present('export_public') and present('format'):
@@ -627,7 +633,9 @@ def _pause_until(value):
     return result
 
 
-def _enroll(store, context, settings):
+def _enroll(store, context, settings, *, status_overlay=False):
+    require(not status_overlay or store.production, ReasonCode.UNSUPPORTED_INSTALLATION)
+    overlay = production_status_overlay(store.checkout) if status_overlay else None
     safe_path(store.checkout, directory=True)
     safe_path(store.env_target)
     launcher = LauncherConfig(Path(sys.executable).absolute(), Path.home().resolve(),
@@ -646,8 +654,10 @@ def _enroll(store, context, settings):
     if os.path.basename(compose[0]) == 'docker':
         compose = ComposeCommand([docker, '--context', context, *compose[1:]], getattr(compose, 'version', None))
     installation = Installation(store.checkout, production=store.production, env_file=store.env_target,
-        environ=supervisor.environment, runner=supervisor, docker=[docker, '--context', context], compose=compose)
+        environ=supervisor.environment, runner=supervisor, docker=[docker, '--context', context], compose=compose,
+        status_overlay=overlay)
     binding = installation_binding(installation, store, context)
+    binding_status_overlay(binding)
     for path in binding.compose_files:
         safe_path(path)
     store.register(Registration(1, binding, launcher, _now()))
@@ -656,13 +666,15 @@ def _enroll(store, context, settings):
 def _automation(args, root, env_file):
     store = selected_store(root, production=getattr(args, 'production', False), env_file=env_file)
     if args.command == 'run':
+        status_overlay = registered_status_overlay(store)
         reporting_failed = False
         try:
             publisher = _reporting(store)
         except Exception:
             publisher = None
             reporting_failed = True
-        result = HostRunner(store, publisher=publisher, facts=EnrolledFacts(store),
+        result = HostRunner(store, publisher=publisher, facts=EnrolledFacts(store), status_overlay=status_overlay,
+                            **({'discovery_factory': overlay_discovery} if status_overlay is not None else {}),
                             space_available=lambda install: daemon_space_available(install, store.read_registration().binding)).tick()
         warnings = list(result.warnings)
         if reporting_failed:
@@ -682,7 +694,7 @@ def _automation(args, root, env_file):
             if hasattr(args, 'env_file'):
                 require(Path(args.env_file).is_absolute(), ReasonCode.OWNERSHIP_UNCONFIRMED)
             safe_path(env_file or root / (PRODUCTION_ENV if store.production else '.env'))
-            _enroll(store, args.docker_context, settings)
+            _enroll(store, args.docker_context, settings, status_overlay=getattr(args, 'status_overlay', False))
             print('Registered; automation controls and scheduler installation unchanged.')
         else:
             assets = render_scheduler(store, settings.automation_policy, backend=args.backend)
@@ -805,6 +817,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "FUTURE_AGI_UPDATE_CHANNEL": option("channel"),
                 "FUTURE_AGI_UPDATE_BACKUP_COMMAND": option("backup_command"),
             }, verify=args.command in VERIFYING_COMMANDS)
+            store = None
             try:
                 store = selected_store(root, production=bool(option('production', False)),
                                        env_file=from_cwd(option('env_file')))
@@ -815,6 +828,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     raise
                 # Legacy unregistered operation remains usable, even with damaged reporting.
                 publication = None
+            # Identity failures must not be swallowed as nonfatal reporting failures.
+            status_overlay = registered_status_overlay(store) if store is not None else None
             # Where the operator ran bin/update (without --cwd: the checkout): the commands it prints, even
             # in a refusal to build the installation, start with `cd <checkout> && ` elsewhere. The release
             # options go in before any plan or stack check: the bin/update commands the installation prints
@@ -828,12 +843,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         docker_context=registration.binding.docker_context,
                         environment={'HOME': str(launcher.home), 'PATH': launcher.path,
                                      'USER': launcher.user, 'LOGNAME': launcher.user})
-                    installation = registered_installation(registration.binding, supervisor)
+                    installation = registered_installation(registration.binding, supervisor,
+                                                           status_overlay=binding_status_overlay(registration.binding))
                 else:
                     installation = Installation(root, production=bool(option("production", False)),
                                                 env_file=from_cwd(option("env_file")),
                                                 caller_cwd=Path(option("cwd")).resolve() if option("cwd") else None,
-                                                command_options=list(command_options))
+                                                command_options=list(command_options),
+                                                **({'status_overlay': status_overlay} if status_overlay is not None else {}))
             except (InstallError, EnvFileError):
                 # Read-only bootstrap diagnostics; never construct mutable state
                 # or hide ordinary preflight remedies behind an unrelated journal.
@@ -893,6 +910,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 verifier = Verifier(settings, docker=installation.docker)
             verification = verifier.verify(fetched)
+            if status_overlay is not None:
+                require(verification.verified, ReasonCode.SIGNATURE_REJECTED)
+                check_status_deployment(installation, fetched.data)
             if args.command == 'download':
                 discovered = _manual_discovery(fetched, verification, settings)
             elif publication is not None and publication.publisher is not None:

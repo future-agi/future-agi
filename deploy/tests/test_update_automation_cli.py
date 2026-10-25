@@ -19,6 +19,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from deploy.tests import test_update_public_status as pub  # noqa: E402
 from deploy.tests import test_update_runner as runners  # noqa: E402
+from deploy.tests import test_update_install_cli as installs  # noqa: E402
+from deploy.update import host_facts  # noqa: E402
 from deploy.update import __main__ as cli  # noqa: E402
 from deploy.update.contracts import validate_public_status  # noqa: E402
 from deploy.update.discovery import DiscoveredRelease, DiscoveryResult  # noqa: E402
@@ -45,6 +47,9 @@ class GrammarTests(unittest.TestCase):
         self.assertEqual(self.parse('schedule', 'init', '--docker-context', 'test').action, 'init')
         self.assertEqual(self.parse('--backend', 'cron', 'schedule', 'render').backend, 'cron')
         self.assertEqual(self.parse('reporting', 'init', '--directory', '/srv/public').directory, '/srv/public')
+        for words in (['--production', '--status-overlay', 'schedule', 'init', '--docker-context', 'test'],
+                      ['schedule', 'init', '--docker-context', 'test', '--production', '--status-overlay']):
+            self.assertTrue(self.parse(*words).status_overlay)
 
     def test_invalid_flag_matrix(self):
         cases = [('run', '--yes'), ('run', '--allow-no-backup'), ('run', '--stage'), ('run', '--force'),
@@ -55,7 +60,11 @@ class GrammarTests(unittest.TestCase):
                  ('schedule', 'render', '--backend', 'cron', '--docker-context', 'x'),
                  ('reporting', 'init'), ('status', '--export-public', '--format', 'json'),
                  ('apply', '--acknowledge-stale-stage', '--stage'),
-                 ('apply', '--acknowledge-stale-stage', '--dry-run')]
+                 ('apply', '--acknowledge-stale-stage', '--dry-run'),
+                 ('schedule', 'init', '--docker-context', 'test', '--status-overlay'),
+                 ('--production', 'schedule', 'render', '--backend', 'cron', '--status-overlay'),
+                 ('--production', 'schedule', 'init', '--docker-context', 'test', '--status-overlay', '/custom.yml'),
+                 *[(command, '--production', '--status-overlay') for command in cli.COMMANDS + ('run', 'download')]]
         for words in cases:
             with self.subTest(words=words), self.assertRaises(SystemExit) as caught:
                 self.parse(*words)
@@ -319,6 +328,251 @@ class ScheduleTests(CliCase):
         self.assertEqual(installation.docker_run.call_args.args, ('info', '--format', '{{.ID}}'))
         installation.compose_run.assert_not_called()
         self.assertFalse((store.path/'facts.json').exists(), 'identity registration must not attest state')
+
+
+class ProductionOverlayTests(unittest.TestCase):
+    """Real CLI, registration, ownership, plans and downloader; synthetic Docker/signatures."""
+    def setUp(self):
+        self.fixture = installs.FullStackProductionTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.root, self.engine = self.fixture.root, self.fixture.engine
+        env = self.fixture.env_file.read_text()
+        self.fixture.env_file.write_text(env + ''.join(name+'='+self.fixture.OLD+'\n'
+            for name in installs.VERSION_VARIABLES if name+'=' not in env))
+        self.overlay = self.root / host_facts.STATUS_OVERLAY
+        self.overlay.write_bytes((ROOT / host_facts.STATUS_OVERLAY).read_bytes())
+        inventory = self.root / 'deploy/update/deployment-files.txt'
+        inventory.parent.mkdir()
+        inventory.write_text(host_facts.STATUS_OVERLAY + '\n')
+        (self.root / 'bin').mkdir()
+        (self.root / 'bin/update').write_text('#!/bin/sh\nexit 0\n')
+        (self.root / 'bin/update').chmod(0o755)
+        self.store = host_facts.selected_store(self.root, production=True)
+        self.files = tuple(self.root / name for name in
+            (installs.DISTRIBUTED_FILE, installs.PRODUCTION_OVERLAY, host_facts.STATUS_OVERLAY))
+        self.select_labels(self.files)
+        self.constructed = []
+        for target, name, kwargs in (
+                (cli, 'Installation', {'side_effect': self.installation}),
+                (cli, 'ProcessSupervisor', {'side_effect': self.supervisor}),
+                (cli, '_now', {'return_value': pub.NOW}),
+                (shutil, 'which', {'return_value': '/fake/docker'}),
+                (cli, 'daemon_space_available', {'return_value': 10**12})):
+            patcher = mock.patch.object(target, name, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for path in self.fixture.manifests.values():
+            manifest = json.loads(path.read_bytes())
+            manifest['deployment']['files'][host_facts.STATUS_OVERLAY] = installs.hash_path(self.root, host_facts.STATUS_OVERLAY)
+            path.write_text(json.dumps(manifest))
+            path.with_name(manifest['signature']['bundle']).write_bytes(b'synthetic-signature')
+
+    def select_labels(self, files):
+        value = ','.join(str(p) for p in files)
+        self.engine.owner_labels['com.docker.compose.project.config_files'] = value
+        for record in self.engine.records:
+            record['Config']['Labels']['com.docker.compose.project.config_files'] = value
+
+    def docker(self, args, **kwargs):
+        args = list(args)
+        args[0] = 'docker'
+        if args[1:2] == ['--context']:
+            del args[1:3]
+        if args[1:2] == ['info']:
+            return installs.completed(stdout='test-daemon')
+        return self.engine(args, **kwargs)
+
+    def supervisor(self, policy, *, docker_context, environment):
+        owner = self
+        class Supervisor:
+            def __call__(self, args, **kwargs):
+                return owner.docker(args, **kwargs)
+        result = Supervisor()
+        result.docker_context = docker_context
+        result.environment = dict(environment, DOCKER_CONTEXT=docker_context)
+        return result
+
+    def installation(self, root, **kwargs):
+        kwargs.setdefault('runner', self.docker)
+        kwargs.setdefault('compose', ['docker', 'compose'])
+        result = host_facts.HostInstallation(root, **kwargs)
+        self.constructed.append(result)
+        return result
+
+    def call(self, *words):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(['--root', str(self.root), '--production', *words])
+        return code, out.getvalue(), err.getvalue()
+
+    def enroll(self, overlay=True):
+        code, out, err = self.call('schedule', 'init', '--docker-context', 'test-context',
+                                   *(['--status-overlay'] if overlay else []))
+        self.assertEqual(code, 0, out + err)
+        return self.store.read_registration()
+
+    def test_three_file_enrollment_round_trip_idempotent_and_readonly(self):
+        before = self.fixture.env_file.read_bytes(), self.engine.container_ids()
+        registration = self.enroll()
+        self.assertEqual(registration.binding.compose_files, self.files)
+        self.assertEqual(host_facts.registered_status_overlay(self.store), self.overlay)
+        self.assertEqual(self.enroll(), registration)
+        self.assertEqual(before, (self.fixture.env_file.read_bytes(), self.engine.container_ids()))
+        self.assertFalse(self.engine.up_calls())
+        self.assertFalse((self.store.path / 'facts.json').exists())
+        self.assertIsNone(self.store.read_control().enabled_override)
+
+    def test_two_file_production_enrollment_and_unenrolled_status_unchanged(self):
+        self.select_labels(self.files[:2])
+        self.assertEqual(self.call('status')[0], 0)
+        registration = self.enroll(False)
+        self.assertEqual(registration.binding.compose_files, self.files[:2])
+        self.assertIsNone(host_facts.registered_status_overlay(self.store))
+        self.assertEqual(self.call('check')[0], 0)
+        self.assertIsNone(self.constructed[-1].status_overlay)
+
+    def test_overlay_without_registration_refuses_with_enrollment_pointer(self):
+        for words in (('status',), ('check',), ('apply', '--stage'), ('rollback', '--yes')):
+            code, out, err = self.call(*words)
+            self.assertIn(code, (2, 3), out + err)
+            self.assertIn('schedule init --docker-context NAME --status-overlay', out + err)
+        self.assertFalse(self.engine.up_calls())
+        self.assertFalse((self.store.path / 'registration.json').exists())
+
+    def test_changed_selection_cannot_reinitialize_existing_registration(self):
+        registration = self.enroll()
+        self.select_labels(self.files[:2])
+        self.assertIn(self.call('schedule', 'init', '--docker-context', 'test-context')[0], (2, 3))
+        self.assertEqual(self.store.read_registration(), registration)
+        self.assertNotEqual(host_facts.installation_binding(
+            self.installation(self.root, production=True), self.store, 'test-context').installation_fingerprint,
+            registration.binding.installation_fingerprint)
+
+    def test_all_manual_commands_and_download_preserve_exact_file_set(self):
+        self.enroll()
+        before = self.fixture.env_file.read_bytes(), self.engine.container_ids()
+        for words in (('status',), ('check',), ('apply', '--dry-run', '--stage'), ('download',)):
+            with self.subTest(words=words):
+                code, out, err = self.call(*words)
+                self.assertEqual(code, 0, out + err)
+        # The existing status observer calls exited initialization jobs unknown;
+        # overlay selection must neither conceal that nor fabricate healthy status.
+        code, out, err = self.call('status', '--format', 'json')
+        self.assertEqual(code, 2, err)
+        self.assertEqual(json.loads(out)['reason_codes'], ['running_versions_unknown'])
+        self.assertEqual(before, (self.fixture.env_file.read_bytes(), self.engine.container_ids()))
+        self.assertFalse(self.engine.up_calls())
+        # Exercise real stage, staged resume and rollback through their ownership checks.
+        for words in (('apply', '--stage'), ('apply', '--acknowledge-stale-stage'), ('rollback', '--yes')):
+            code, out, err = self.call(*words)
+            self.assertEqual(code, 0, out + err)
+        for instance in self.constructed:
+            self.assertEqual(tuple(instance._ownership_files()), self.files)
+        for args in self.engine.calls:
+            if args[:2] == ['docker', 'compose'] and '-f' in args:
+                self.assertEqual(tuple(Path(args[i+1]) for i, word in enumerate(args) if word == '-f'), self.files)
+
+    def test_json_status_and_public_export_with_inactive_initialization_profile(self):
+        # An explicitly inactive init profile is not a required running replica.
+        self.engine.profiles['postgres-schema-bootstrap'] = ['init']
+        self.engine.records = [r for r in self.engine.records
+                               if self.engine.service(r) != 'postgres-schema-bootstrap']
+        self.enroll()
+        parent = self.root.parent / 'public'
+        code, out, err = self.call('reporting', 'init', '--directory', str(parent))
+        self.assertEqual(code, 0, err)
+        path = parent / self.store.read_registration().binding.slot_id / 'status.json'
+        before = path.read_bytes()
+        code, out, err = self.call('status', '--format', 'json')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)['versions']['runtime_state'], 'consistent')
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.call('status', '--export-public')[0], 0)
+        validate_public_status(json.loads(path.read_bytes()))
+        self.assertFalse(self.engine.up_calls())
+
+    def test_overlay_never_promotes_unverified_manifest(self):
+        self.enroll()
+        cli.Verifier.return_value.verify.return_value = installs.Verification(False)
+        code, out, err = self.call('check')
+        self.assertEqual((code, err), (3, 'bin/update: signature_rejected\n'))
+
+    def test_runner_receives_only_registered_overlay(self):
+        self.enroll()
+        with mock.patch.object(cli, 'HostRunner') as runner:
+            runner.return_value.tick.return_value = TickResult()
+            self.assertEqual(self.call('run')[0], 0)
+            self.assertEqual(runner.call_args.kwargs['status_overlay'], self.overlay)
+            self.assertIs(runner.call_args.kwargs['discovery_factory'], host_facts.overlay_discovery)
+            runner.return_value.tick.assert_called_once_with()
+
+    def test_real_notify_and_download_ticks_use_registered_overlay(self):
+        self.enroll()
+        manifest = json.loads(self.fixture.manifests[self.fixture.NEW].read_bytes())
+        raw = json.dumps(manifest).encode()
+        from deploy.update.manifest import manifest_hash
+        from deploy.update.contracts import VerificationSnapshot
+        release = DiscoveredRelease(raw, b'synthetic-signature', manifest_hash(manifest), 'a'*64,
+            VerificationSnapshot(True, 'keyless', 'signer', 'issuer', 'cosign', pub.NOW))
+        discovery = mock.Mock()
+        discovery.discover.return_value = DiscoveryResult(release, checked_at=pub.NOW)
+        discovery.refresh.return_value = discovery.discover.return_value
+        def runner(store, **kwargs):
+            return HostRunner(store, clock=Clock(lambda: pub.NOW, lambda: 0), **kwargs)
+        for mode in ('notify', 'download'):
+            (self.root / 'update.conf').write_text('FUTURE_AGI_UPDATE_ENABLED=true\nFUTURE_AGI_UPDATE_AUTOMATION_MODE='+mode+'\n')
+            with mock.patch.object(cli, 'HostRunner', side_effect=runner), \
+                    mock.patch('deploy.update.runner.ProcessSupervisor', side_effect=self.supervisor), \
+                    mock.patch('deploy.update.runner.host_discovery', return_value=discovery):
+                code, out, err = self.call('run')
+            self.assertEqual(code, 0, out + err)
+            self.assertEqual(json.loads(out)['disposition'], 'available' if mode == 'notify' else 'downloaded')
+        self.assertFalse(self.engine.up_calls())
+
+    def test_tampered_reordered_extra_or_short_registration_refuses_every_command(self):
+        self.enroll()
+        path = self.store.path / 'registration.json'
+        original = path.read_bytes()
+        value = json.loads(original)
+        cases = [list(reversed(value['binding']['compose_files'])), value['binding']['compose_files'] + [str(self.overlay)],
+                 value['binding']['compose_files'][:2], [str(self.root / 'other.yml')], []]
+        for files in cases:
+            value['binding']['compose_files'] = files
+            path.write_text(json.dumps(value))
+            for words in (('status',), ('check',), ('apply',), ('rollback', '--yes'), ('download',), ('run',)):
+                with self.subTest(files=files, words=words), mock.patch.object(cli, 'HostRunner') as runner:
+                    code, out, err = self.call(*words)
+                    self.assertIn(code, (2, 3), out + err)
+                    self.assertIn('configuration_changed' if files else 'control_invalid', err)
+                    runner.assert_not_called()
+        path.write_bytes(original)
+
+    def test_inventory_and_signed_deployment_bytes_fail_closed(self):
+        self.enroll()
+        manifest_path = self.fixture.manifests[self.fixture.NEW]
+        manifest = json.loads(manifest_path.read_bytes())
+        original = self.overlay.read_bytes()
+        self.overlay.write_bytes(original + b'\n# changed\n')
+        for command in ('check', 'download', 'apply'):
+            code, out, err = self.call(command)
+            self.assertEqual((code, err), (3, 'bin/update: deployment_files_mismatch\n'))
+        self.overlay.write_bytes(original)
+        del manifest['deployment']['files'][host_facts.STATUS_OVERLAY]
+        manifest_path.write_text(json.dumps(manifest))
+        self.assertEqual(self.call('check')[0], 3)
+        (self.root / 'deploy/update/deployment-files.txt').write_text('docker-compose.distributed.yml\n')
+        self.assertEqual(self.call('status')[0], 3)
+        self.assertEqual(self.call('run')[0], 3)
+
+    def test_registered_ownership_mismatch_fails_closed(self):
+        self.enroll()
+        self.select_labels(self.files[:2])
+        for words in (('status',), ('check',), ('apply', '--stage'), ('rollback', '--yes'), ('download',)):
+            code, out, err = self.call(*words)
+            self.assertIn(code, (2, 3), out + err)
+        self.assertFalse(self.engine.up_calls())
+        self.assertEqual(self.fixture.backups(), 0)
 
 
 class CliIntegrationTests(unittest.TestCase):

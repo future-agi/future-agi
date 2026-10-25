@@ -150,10 +150,27 @@ Standalone:
   docker compose -f docker-compose.yml -f deploy/docker-compose.host-status.standalone.yml config --quiet
 Distributed:
   docker compose -f docker-compose.distributed.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
-Production (explicit files, never ambient COMPOSE_FILE):
+Production (exactly these three ordered files, never ambient COMPOSE_FILE):
   docker compose --env-file deploy/.env.production -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
+  ./bin/update --production schedule init --docker-context NAME --status-overlay
+  ./bin/update --production reporting init --directory /absolute/dedicated/public-parent
 
-Preserve all previously selected overlays and the installation's explicit Docker
+Production enrollment requires containers already running with exactly that order.
+--status-overlay takes NO path and is valid only for --production schedule init.
+Later update commands derive it only from registration; labels never enroll it.
+Use the same absolute --env-file selection on every command if non-default.
+For first opt-in, prepare the mount using the existing two-file reporting slot.
+Adding/removing the overlay requires stopping scheduling, resolving active/staged
+work, archiving only the selected private automation namespace, separately
+recreating with the intended files, then fresh enrollment with/without the flag.
+A fresh registration gets a new slot: initialize a new empty public parent, update
+the production env source/slot and recreate with the same ordered files. Preserve
+core receipts/journals/env-commit evidence and reconcile old failure history before
+re-enabling. See deploy/update/README.md for the full re-enrollment procedure.
+Unknown/extra/reordered files, ownership mismatch and unsigned overlay bytes are
+refused; no migration, implicit adoption, scheduler installation or restart occurs.
+
+For non-production preserve selected overlays and the installation's explicit Docker
 context/project. Set the source/slot in the selected environment deliberately;
 exported shell values override env files. Verify them against host registration.
 For production retain stage, separately approved initialization, then apply.
