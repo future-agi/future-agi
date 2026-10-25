@@ -30,7 +30,7 @@ function ReportTime({ value }) {
 }
 ReportTime.propTypes = { value: PropTypes.string };
 
-function Field({ label, children }) {
+function Field({ label, children, testId }) {
   return (
     <Box
       sx={{
@@ -45,6 +45,7 @@ function Field({ label, children }) {
       </Typography>
       <Typography
         component="dd"
+        data-testid={testId}
         variant="body2"
         sx={{ m: 0, overflowWrap: "anywhere" }}
       >
@@ -56,6 +57,7 @@ function Field({ label, children }) {
 Field.propTypes = {
   label: PropTypes.string.isRequired,
   children: PropTypes.node,
+  testId: PropTypes.string,
 };
 
 function ReportSection({ title, children }) {
@@ -126,6 +128,7 @@ export default function HostUpdatesPage() {
 
   return (
     <Stack
+      data-testid="host-updates-page"
       spacing={2}
       sx={{
         width: "100%",
@@ -170,6 +173,7 @@ export default function HostUpdatesPage() {
       </Typography>
 
       <Box
+        data-testid="host-updates-summary"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -178,7 +182,7 @@ export default function HostUpdatesPage() {
         {query.isLoading && "Reading the host report…"}
         {!query.isLoading && !snapshot && (
           <>
-            <Typography variant="subtitle2">
+            <Typography variant="subtitle2" data-testid="host-updates-unavailable">
               {data?.availability === "unsupported"
                 ? "Reporting unsupported"
                 : "Reporting unavailable"}
@@ -224,7 +228,7 @@ export default function HostUpdatesPage() {
               <Field label="Selected release">
                 {snapshot.versions.selected_release || "Unknown"}
               </Field>
-              <Field label="Running release (last observed)">
+              <Field label="Running release (last observed)" testId="host-updates-installed-version">
                 {snapshot.versions.running_release || "Unknown"}
               </Field>
               <Field label="Runtime observations">
@@ -233,7 +237,7 @@ export default function HostUpdatesPage() {
               <Field label="Versions observed at">
                 <ReportTime value={snapshot.versions.observed_at} />
               </Field>
-              <Field label="Version freshness">
+              <Field label="Version freshness" testId="host-updates-version-freshness">
                 {LABELS.freshness[data.versions_freshness]}
               </Field>
               <Field label="Deployment">
@@ -284,7 +288,7 @@ export default function HostUpdatesPage() {
                   ? "Previously current at the last verified check; availability now unknown"
                   : LABELS.discovery[snapshot.discovery.state]}
               </Field>
-              <Field label="Verified candidate (last check)">
+              <Field label="Verified candidate (last check)" testId="host-updates-available-version">
                 {snapshot.discovery.candidate_version ||
                   "No verified candidate reported"}
               </Field>
@@ -297,7 +301,7 @@ export default function HostUpdatesPage() {
               <Field label="Last check attempt">
                 <ReportTime value={snapshot.discovery.last_attempt_at} />
               </Field>
-              <Field label="Check freshness">
+              <Field label="Check freshness" testId="host-updates-check-freshness">
                 {LABELS.freshness[data.discovery_freshness]}
               </Field>
               <Field label="Channel and policy">

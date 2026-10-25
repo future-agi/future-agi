@@ -62,7 +62,24 @@ describe("closed report states", () => {
     ({ response }) => {
       mocks.query.data = structuredClone(response.result);
       renderPage();
+      expect(screen.getByTestId("host-updates-page")).toBeInTheDocument();
+      expect(screen.getByTestId("host-updates-summary")).toHaveAttribute("role", "status");
       if (response.result.availability === "available") {
+        expect(screen.getByTestId("host-updates-installed-version")).toBe(
+          field("Running release (last observed)"),
+        );
+        expect(screen.getByTestId("host-updates-available-version")).toBe(
+          field("Verified candidate (last check)"),
+        );
+        expect(screen.getByTestId("host-updates-installed-version").textContent).toBe(
+          response.result.snapshot.versions.running_release || "Unknown",
+        );
+        expect(screen.getByTestId("host-updates-available-version").textContent).toBe(
+          response.result.snapshot.discovery.candidate_version || "No verified candidate reported",
+        );
+        expect(screen.getByTestId("host-updates-version-freshness")).toBe(field("Version freshness"));
+        expect(screen.getByTestId("host-updates-check-freshness")).toBe(field("Check freshness"));
+        expect(screen.queryByTestId("host-updates-unavailable")).not.toBeInTheDocument();
         expect(
           screen.getByRole("heading", { name: "Selected and running" }),
         ).toBeInTheDocument();
@@ -73,6 +90,11 @@ describe("closed report states", () => {
           LABELS.freshness[response.result.discovery_freshness],
         );
       } else {
+        expect(screen.getByTestId("host-updates-unavailable").textContent).toBe(
+          response.result.availability === "unsupported" ? "Reporting unsupported" : "Reporting unavailable",
+        );
+        expect(screen.queryByTestId("host-updates-installed-version")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("host-updates-available-version")).not.toBeInTheDocument();
         expect(
           screen.getByText(UNAVAILABLE_REASONS[response.result.reason_code]),
         ).toBeInTheDocument();
