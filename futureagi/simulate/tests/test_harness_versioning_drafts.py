@@ -2,7 +2,6 @@
 
 import json
 import uuid
-from contextlib import nullcontext
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -51,7 +50,11 @@ from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
-from simulate.tests.test_harness_versioning_record import _authoring, _save_drafts
+from simulate.tests.test_harness_versioning_record import (
+    _authoring,
+    _resealed_manifest,
+    _save_drafts,
+)
 from simulate.tests.test_harness_versioning_rollback import _built, _rows
 from simulate.tests.test_hosted_harness_conversation import _put_conversation_checkpoint
 
@@ -60,7 +63,8 @@ pytestmark = pytest.mark.django_db
 BASE = "/simulate/api/harness-environments"
 EXTRA = "refund_status"
 EXTRA_KEY = _key(EXTRA)
-# A chat world edit, and the bundle the chat resealed for it.
+# A chat world edit, and the bundle the chat resealed for it (``_publish`` stamps it
+# for the tree it publishes, as ALK's reseal does).
 WORLD_EDIT = "create table orders(id int, note text);"
 RESEALED = json.dumps({"files": [], "resealed": True})
 # The default's own bundle: a chat turn whose reseal failed still holds it.
@@ -104,12 +108,10 @@ def _publish(
     """A chat turn's save, as a real sandbox makes it: on the composed workspace, so it
     carries that composition's token, unless ``token`` says otherwise, and with the
     bundle the chat resealed for its scenarios, unless ``files`` names another."""
-    files.setdefault(
-        "environment-bundle/manifest.json",
-        json.dumps(
-            {"files": [], "scenarios": sorted(names), "world": files.get("schema.sql")}
-        ),
-    )
+    if files.get("environment-bundle/manifest.json", RESEALED) == RESEALED:
+        files["environment-bundle/manifest.json"] = _chat_bundle(
+            names, contract=contract, **files
+        )
     server_payload = {"_author_id": str(user.id)} if user is not None else {}
     if origin:
         server_payload["_origin"] = origin
@@ -141,6 +143,12 @@ def _publish(
         _finish(environment)
         environment.refresh_from_db()
     return conversation
+
+
+def _chat_bundle(names, *, contract=None, **files):
+    """The bundle a chat reseal makes for this tree, stamped with what it carried."""
+    tree = archives.read_archive(_authoring(list(names), contract=contract, **files))
+    return _resealed_manifest(tree, **json.loads(RESEALED))
 
 
 def _checkpoint(conversation, storage, body):
@@ -1139,13 +1147,7 @@ class TestPairLadder:
         self, user, workspace, storage
     ):
         environment = _built(user, workspace, "d-ladder-own")
-        resealed = json.dumps({"files": [], "resealed": True})
-        _publish(
-            environment,
-            storage,
-            sequence=10,
-            **{"environment-bundle/manifest.json": resealed},
-        )
+        _publish(environment, storage, sequence=10)
         kept = _draft(environment).documents["workspace_sealed"]
         assert kept["resealed"] is True
 
@@ -1155,7 +1157,10 @@ class TestPairLadder:
         assert metadata["default_pair_sealed"] is True
         assert metadata["sealed_bundle_object_key"] == kept["key"]
         pair = archives.read_archive(storage.objects[metadata["authoring_object_key"]])
-        assert pair["environment-bundle/manifest.json"] == resealed.encode()
+        assert (
+            pair["environment-bundle/manifest.json"]
+            == _chat_bundle((*NAMES[:2], EXTRA)).encode()
+        )
 
     def _certified(self, environment, storage, settings):
         """Save with bundle preparation on: runs certify the unsealed pair it makes."""
@@ -1194,7 +1199,7 @@ class TestPairLadder:
             storage,
             NAMES[:2],
             sequence=10,
-            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+            **{"world.sqlite": WORLD_EDIT},
         )
         kept = _draft(environment, "environment").documents["workspace_sealed"]
         assert kept["resealed"] is True
@@ -1207,7 +1212,10 @@ class TestPairLadder:
         assert metadata["default_pair_sealed"] is True
         assert metadata["sealed_bundle_object_key"] == kept["key"]
         pair = archives.read_archive(storage.objects[metadata["authoring_object_key"]])
-        assert pair["environment-bundle/manifest.json"] == RESEALED.encode()
+        assert (
+            pair["environment-bundle/manifest.json"]
+            == _chat_bundle(NAMES[:2], **{"world.sqlite": WORLD_EDIT}).encode()
+        )
 
     def test_a_scenario_edit_after_a_chat_world_edit_is_certified(
         self, user, workspace, storage, auth_client, settings
@@ -1218,7 +1226,7 @@ class TestPairLadder:
             storage,
             NAMES[:2],
             sequence=10,
-            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+            **{"world.sqlite": WORLD_EDIT},
         )
         _amend(auth_client, environment, NAMES[0], "tests", "edited")
 
@@ -1301,40 +1309,34 @@ class TestPairLadder:
         self._not_runnable(environment)
         self._certified(environment, storage, settings)
 
-    @pytest.mark.parametrize("readable", [True, False])
+    @pytest.mark.parametrize("discarded", [False, True])
     def test_an_earlier_turns_bundle_is_not_resealed_for_a_later_world_edit(
-        self, user, workspace, storage, settings, readable
+        self, user, workspace, storage, settings, discarded
     ):
-        environment = _built(user, workspace, f"d-ladder-two-turns-{readable}")
+        environment = _built(user, workspace, f"d-ladder-two-turns-{discarded}")
         conversation = _publish(
             environment,
             storage,
             NAMES[:2],
             sequence=10,
-            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+            **{"world.sqlite": WORLD_EDIT},
         )
-        first = _draft(environment, "environment")
-        sealed = dict(first.documents["workspace_sealed"])
-        # A record written before the manifest digest was kept, whose bundle can't be
-        # read: it may be the very bundle, so it is not taken as new.
-        sealed.pop("manifest_sha256")
-        HarnessEnvironmentVersion.no_workspace_objects.filter(id=first.id).update(
-            documents={**first.documents, "workspace_sealed": sealed}
-        )
+        if discarded:
+            assert drafts.discard_draft(environment, "environment", user=user)
         # The next turn's reseal failed: it still holds the first turn's bundle.
-        unreadable = patch.object(drafts, "_sealed_files", return_value=None)
-        with nullcontext() if readable else unreadable:
-            _publish(
-                environment,
-                storage,
-                NAMES[:2],
-                sequence=11,
-                conversation=conversation,
-                **{
-                    "schema.sql": "create table orders(id int, note text, at text);",
-                    "environment-bundle/manifest.json": RESEALED,
-                },
-            )
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=11,
+            conversation=conversation,
+            **{
+                "world.sqlite": "create table orders(id int, note text, at text);",
+                "environment-bundle/manifest.json": _chat_bundle(
+                    NAMES[:2], **{"world.sqlite": WORLD_EDIT}
+                ),
+            },
+        )
         kept = _draft(environment, "environment").documents["workspace_sealed"]
         assert kept["resealed"] is False
 
@@ -1359,7 +1361,7 @@ class TestPairLadder:
             environment,
             storage,
             sequence=10,
-            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+            **{"world.sqlite": WORLD_EDIT},
         )
         draft = _draft(environment)
 

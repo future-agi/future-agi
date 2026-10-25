@@ -8,6 +8,7 @@ default move; Discard sets one aside.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Mapping
@@ -35,7 +36,8 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.harness_versioning import DiscardReason, HashKind, VersionStatus
-from simulate.services.harness_versioning import archives
+from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_versioning import archives, hashing
 from simulate.services.harness_versioning.versions import (
     SCENARIO_COUNT_MAX,
     SEALED_MANIFEST,
@@ -350,17 +352,52 @@ def _sealed_files(key: str) -> dict[str, bytes] | None:
     return files if SEALED_MANIFEST in files else None
 
 
+# What a chat reseal carries from the authoring tree into its bundle; ALK stamps their
+# digest into the manifest as ``metadata.sealed_from``.
+RESEAL_INPUTS = frozenset({"contract.json", "sub_goals.json", "world.sqlite"})
+# The authoring world's own bookkeeping, which no v2 bundle carries.
+UNBUNDLED = frozenset({"manifest.json", "world.py", "state.json"})
+
+
+def sealed_from(files: Mapping[str, bytes]) -> str:
+    """The digest ALK stamps for the reseal inputs among ``files``."""
+    return canonical_digest(
+        {
+            path: archives.sha256_hex(data)
+            for path, data in files.items()
+            if (path in RESEAL_INPUTS or path.startswith("scenarios/"))
+            and not {"__pycache__", "outbound-spool", "telemetry"}
+            & set(path.split("/"))
+        }
+    )
+
+
+def _stamped(split: archives.SplitArchive) -> bool:
+    """Whether the bundle says it was sealed from this tree's reseal inputs."""
+    try:
+        manifest = json.loads(split.sealed[SEALED_MANIFEST])
+    except ValueError:
+        return False
+    metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
+    stamp = metadata.get("sealed_from") if isinstance(metadata, dict) else None
+    return isinstance(stamp, str) and stamp == sealed_from(
+        {**split.environment, **split.suite}
+    )
+
+
 def _resealed(
-    head: HostedHarnessJob, sealed: Mapping[str, bytes], hashes: tuple[str, str]
+    head: HostedHarnessJob, split: archives.SplitArchive, hashes: tuple[str, str]
 ) -> bool:
     """Whether the chat sealed this bundle anew for ``hashes``.
 
-    The workspace started from the default pair's bundle or a draft's; a reseal always
-    rewrites the manifest, so a bundle with one of theirs was not sealed for this edit.
+    Only a bundle stamped with this tree's reseal inputs can be. A draft's bundle
+    counts only as that draft recorded it for these hashes; any other must sit beside
+    the default pair's other bundled files, with a manifest the default's is not (a
+    reseal always rewrites it).
     """
-    # TODO: a bundle from a draft since discarded, or from a reseal that was never
-    # promoted, still reads as new; ALK could stamp what it sealed the bundle for.
-    manifest = archives.sha256_hex(sealed[SEALED_MANIFEST])
+    if not _stamped(split):
+        return False
+    manifest = archives.sha256_hex(split.sealed[SEALED_MANIFEST])
     for piece in DRAFT_PIECES:
         draft = fresh_draft(head, piece)
         kept = ((draft.documents or {}) if draft else {}).get("workspace_sealed") or {}
@@ -382,10 +419,20 @@ def _resealed(
     try:
         default = archives.split_authoring(
             archives.read_archive(archives.get_archive(key))
-        ).sealed
+        )
     except (S3Error, HostedHarnessError, ValueError):
         return False
-    held = default.get(SEALED_MANIFEST)
+    # A reseal refreshes its inputs; every other file the bundle holds stays as built.
+    # TODO: what a build derives from contract.json (compiled tool handlers, processes)
+    # is not refreshed either; a contract edit should not replay a resealed bundle.
+    if any(
+        split.environment.get(path) != default.environment.get(path)
+        for path in split.environment.keys() | default.environment.keys()
+        if path not in RESEAL_INPUTS | UNBUNDLED
+        and not hashing.is_environment_unhashed(path)
+    ):
+        return False
+    held = default.sealed.get(SEALED_MANIFEST)
     return held is None or archives.sha256_hex(held) != manifest
 
 
@@ -600,7 +647,7 @@ def record_draft(
             # The key is content-addressed: the same key is the default's own bundle.
             "resealed": sealed_key != kept
             and _resealed(
-                head, split.sealed, (prepared.environment_hash, prepared.suite_hash)
+                head, split, (prepared.environment_hash, prepared.suite_hash)
             ),
         }
 

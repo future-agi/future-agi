@@ -37,7 +37,11 @@ from simulate.tests.test_harness_versioning_backfill import (
     _legacy,
     _RealisticStorage,
 )
-from simulate.tests.test_harness_versioning_record import _authoring, _save_drafts
+from simulate.tests.test_harness_versioning_record import (
+    _authoring,
+    _resealed_manifest,
+    _save_drafts,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -90,16 +94,16 @@ def _suite_archive(documents):
         ).encode(),
         "schema.sql": b"create table orders(id int);",
         "scenarios.json": json.dumps(documents).encode(),
-        # A chat reseals the bundle for the scenarios it holds.
-        "environment-bundle/manifest.json": json.dumps(
-            {"files": [], "scenarios": [one.get("scenario_key") for one in documents]}
-        ).encode(),
         "runtime-validation.json": b'{"status": "passed"}',
     }
     for document in documents:
         folder = f"scenarios/{document['name']}"
         files[f"{folder}/scenario.json"] = json.dumps(document).encode()
         files[f"{folder}/ready.py"] = b"def ready(world):\n    return True\n"
+    # A chat reseals the bundle for the scenarios it holds.
+    files["environment-bundle/manifest.json"] = _resealed_manifest(
+        files, files=[], scenarios=[one.get("scenario_key") for one in documents]
+    ).encode()
     return archives.pack_archive(files)
 
 

@@ -19,7 +19,7 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
-from simulate.services.harness_versioning import archives
+from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import (
     record_authoring,
     record_authoring_quietly,
@@ -76,6 +76,11 @@ def _scenario(name, **fields):
         "tests": "t",
         **fields,
     }
+
+
+def _resealed_manifest(tree, **fields):
+    """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it."""
+    return json.dumps({**fields, "metadata": {"sealed_from": drafts.sealed_from(tree)}})
 
 
 def _authoring(names=NAMES[:2], *, contract=None, proofs=None, sealed=True, **extra):
@@ -789,10 +794,14 @@ class TestChatPromote:
             content="Add one",
             client_request_id=f"chat-{len(names)}-{sequence}",
         )
-        files = archives.read_archive(_chat_checkpoint(names, one_liner="chat"))
+        # The workspace holds the environment it was composed from.
+        files = {
+            **archives.split_authoring(archives.read_archive(_authoring())).environment,
+            **archives.read_archive(_chat_checkpoint(names, one_liner="chat")),
+        }
         # The bundle the chat resealed for its edit.
-        files["environment-bundle/manifest.json"] = json.dumps(
-            {"scenarios": names}
+        files["environment-bundle/manifest.json"] = _resealed_manifest(
+            files, scenarios=names
         ).encode()
         body = with_authoring_basis(
             archives.pack_archive(files), command.payload["_environment_revision"]

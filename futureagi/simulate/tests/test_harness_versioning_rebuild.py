@@ -17,7 +17,7 @@ from simulate.models import (
     HostedHarnessConversationMessage,
     HostedHarnessJob,
 )
-from simulate.services.harness_versioning import drafts, nudges, rebuild
+from simulate.services.harness_versioning import archives, drafts, nudges, rebuild
 from simulate.services.hosted_harness import HostedHarnessError, canonical_digest
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -40,7 +40,7 @@ from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
-from simulate.tests.test_harness_versioning_record import _authoring
+from simulate.tests.test_harness_versioning_record import _authoring, _resealed_manifest
 from simulate.tests.test_hosted_harness_conversation import (
     _headers,
     _put_conversation_checkpoint,
@@ -136,6 +136,23 @@ def _result(nudge, *, changed=True, passed=True, problems=(), notes="done", **ex
     )
 
 
+def _rebuilt(nudge, *, contract=REFUND, **files):
+    """The bundle the rebuild seals, stamped with what it carried."""
+    tree = archives.read_archive(_authoring(contract=contract, **files))
+    return _resealed_manifest(tree, rebuilt=str(nudge.id))
+
+
+def _saved_world(world):
+    """What save_world writes for ``world``: its manifest and a handler per tool."""
+    return {
+        "manifest.json": json.dumps(world),
+        **{
+            f"handlers/{name}.py": f"def {name}(world):\n    pass\n"
+            for name in world["tools"]
+        },
+    }
+
+
 def _turn(
     environment,
     nudge,
@@ -177,7 +194,7 @@ def _turn(
         files.setdefault("sub_goals.json", CHECKED)
     # The rebuild seals its own bundle.
     files.setdefault(
-        "environment-bundle/manifest.json", json.dumps({"rebuilt": str(nudge.id)})
+        "environment-bundle/manifest.json", _rebuilt(nudge, contract=contract, **files)
     )
     from simulate.services.hosted_harness_gateway import (
         with_authoring_basis,
@@ -732,9 +749,11 @@ class TestLanding:
         storage,
         scheduled,
         started,
+        settings,
         auth_client,
         django_capture_on_commit_callbacks,
     ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment, nudge, _a1, _a2 = _queued(
             user,
             workspace,
@@ -771,10 +790,12 @@ class TestLanding:
                 nudge,
                 storage,
                 contract=both,
-                **{"manifest.json": json.dumps(world)},
+                **_saved_world(world),
             )
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
+        # The resealed bundle holds the handlers as built: the new pair certifies.
+        assert environment.payload["metadata"]["default_pair_sealed"] is False
         e2 = environment.environment_version
         assert e2.includes_draft_edits is True
         assert e2.snapshot_diff["contract"]["tools"]["added"] == ["lookup_order"]
@@ -919,9 +940,11 @@ class TestLanding:
         storage,
         scheduled,
         started,
+        settings,
         auth_client,
         django_capture_on_commit_callbacks,
     ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
         environment, nudge, _a1, _a2 = _queued(
             user,
             workspace,
@@ -932,16 +955,18 @@ class TestLanding:
         )
 
         with django_capture_on_commit_callbacks(execute=True):
-            nudge = _turn(
-                environment, nudge, storage, **{"manifest.json": json.dumps(world)}
-            )
+            nudge = _turn(environment, nudge, storage, **_saved_world(world))
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
+        # A new handler is not in the resealed bundle, so that pair certifies.
+        sealed = environment.payload["metadata"]["default_pair_sealed"]
+        assert sealed is not bool(world["tools"])
 
     @pytest.mark.parametrize(
         ("base", "contract", "sub_goals", "state"),
         [
-            ([], REFUND, None, "failed"),
+            # Naming the tool is the model's to judge, not a gate: ALK only warns.
+            ([], REFUND, None, "applied"),
             ([], REFUND, CHECKED, "applied"),
             (
                 REFUND["tools"],
@@ -1592,8 +1617,8 @@ class TestGuestTurn:
                     **{
                         ".futureagi-nudge-result.json": _result(nudge),
                         "sub_goals.json": CHECKED,
-                        "environment-bundle/manifest.json": json.dumps(
-                            {"rebuilt": str(nudge.id)}
+                        "environment-bundle/manifest.json": _rebuilt(
+                            nudge, **{"sub_goals.json": CHECKED}
                         ),
                     },
                 ),
