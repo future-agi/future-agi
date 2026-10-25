@@ -392,9 +392,9 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
           </Button>
         ) : null}
         <Button
-          size="small" variant="outlined" disabled={selected.length < 2} onClick={compare}
+          size="small" variant="contained" color="primary" disabled={selected.length < 2} onClick={compare}
           startIcon={<Iconify icon="solar:transfer-horizontal-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+          sx={{ typography: "s2", fontWeight: 700 }}
         >
           Compare
         </Button>

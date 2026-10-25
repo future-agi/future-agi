@@ -19,13 +19,12 @@ import { useSimStore } from "../store";
 import useRunFitCheck from "../run/useRunFitCheck";
 import DeleteEnvironmentDialog from "./DeleteEnvironmentDialog";
 import { runSummaries } from "../_mock/comparison";
-import { previousRunOf, runStatsOf, sharedDeltaOf } from "../_mock/runCompare";
+import { runStatsOf } from "../_mock/runCompare";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { agentSourceOf, connectedAgentsFrom, envAgentKey } from "../_mock/agentRegistry";
 import { mainEnvOf, proofKindOf } from "../_mock/rsiModel";
 import { identityOf } from "../agents/agentProfile";
-import { QuietTag } from "./LandingBits";
 
 /*
   Every environment is filed under the agent type it tests — the agent
@@ -193,17 +192,15 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
             proof: proof ? { kind: proof.kind, label: proof.label, note: proof.note } : null,
           };
         })(),
-        /* The latest finished run: its scenario pass rate, and how it moved
-           against the run before it on the scenarios both scored. */
+        /* The latest finished run's scenario pass rate. How it moved against
+           the run before lives on the environment's Runs tab, not here. */
         lastRun: (() => {
           if (!envState || !runs.some((r) => r.finishedAt)) return null;
           try {
             const finished = runSummaries(env, envState).filter((r) => r.finishedAt && !r.synthetic);
             const latest = finished[finished.length - 1];
             if (!latest) return null;
-            const st = runStatsOf(latest);
-            const prev = previousRunOf(finished, latest);
-            return { rate: st.scenarioRate, delta: prev ? sharedDeltaOf(latest, prev) : null, ordinal: latest.ordinal, vs: prev?.ordinal };
+            return { rate: runStatsOf(latest).scenarioRate, ordinal: latest.ordinal };
           } catch { return null; }
         })(),
         /* Who owns the agent it tests — the person to ask about it. */
@@ -296,22 +293,26 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
         cell: ({ row }) => {
           const r = row.original;
           if (!r.agentName) return <Typography sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
+          /* Name on top, its role and proofs as one quiet line under it —
+             the same two-line rhythm as the Name column, no chips. */
+          const detail = [r.isMain && "Main", r.proof?.label].filter(Boolean);
+          const why = [
+            r.isMain && "Main — the agent's main environment; Fix runs here by default.",
+            r.proof?.note && `${r.proof.label} — ${r.proof.note}`,
+          ].filter(Boolean);
           return (
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0, width: "100%" }}>
+            <Box sx={{ minWidth: 0, width: "100%" }}>
               <Tooltip arrow title={r.agentSource || ""} enterDelay={400}>
-                <Typography noWrap sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{r.agentName}</Typography>
+                <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>{r.agentName}</Typography>
               </Tooltip>
-              {r.isMain && (
-                <Tooltip arrow title="The agent's main environment — Fix runs here by default.">
-                  <Box component="span" sx={{ display: "inline-flex" }}><QuietTag>Main</QuietTag></Box>
+              {detail.length > 0 && (
+                <Tooltip arrow title={why.length ? <Box sx={{ whiteSpace: "pre-line" }}>{why.join("\n")}</Box> : ""}>
+                  <Typography noWrap sx={{ typography: "s3", color: "text.disabled", cursor: "default", width: "fit-content", maxWidth: "100%" }}>
+                    {detail.join(" · ")}
+                  </Typography>
                 </Tooltip>
               )}
-              {r.proof && (
-                <Tooltip arrow title={r.proof.note || ""}>
-                  <Box component="span" sx={{ display: "inline-flex" }}><QuietTag>{r.proof.label}</QuietTag></Box>
-                </Tooltip>
-              )}
-            </Stack>
+            </Box>
           );
         },
       },
@@ -715,21 +716,10 @@ StatusPill.propTypes = { status: PropTypes.string, progress: PropTypes.object };
    when the move is inside the noise two runs of that size carry. */
 function LastRunCell({ last }) {
   if (!last || last.rate == null) return <Typography sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
-  const d = last.delta;
-  const moved = d && d.pts !== 0;
-  const tone = !moved || d.within ? "text.subtitle" : d.pts > 0 ? "#16A34A" : "#DC2626";
   return (
-    <Tooltip
-      arrow
-      title={d ? `Run ${last.ordinal} vs Run ${last.vs}: ${d.pts > 0 ? "+" : ""}${d.pts} pts on the ${d.shared} scenarios both scored (±${d.noise} is noise)` : `Run ${last.ordinal}`}
-    >
-      <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums", cursor: "default" }}>
-        <Box component="span" sx={{ fontWeight: 600 }}>{`${last.rate}%`}</Box>
-        {moved && (
-          <Box component="span" sx={{ color: tone, fontWeight: 600, ml: 0.75, fontSize: 12 }}>
-            {`${d.pts > 0 ? "▲" : "▼"}${Math.abs(d.pts)}`}
-          </Box>
-        )}
+    <Tooltip arrow title={`Run ${last.ordinal} · scenarios passed`}>
+      <Typography sx={{ typography: "s2", fontWeight: 600, fontVariantNumeric: "tabular-nums", cursor: "default" }}>
+        {`${last.rate}%`}
       </Typography>
     </Tooltip>
   );
