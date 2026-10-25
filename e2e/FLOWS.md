@@ -1809,6 +1809,28 @@
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
 
+### SET-E2E-002 — admin reads fresh host update reports and missing reporting stays unknown
+
+**Goal:** An organisation admin of a self-hosted install opens Settings > Updates and sees what the host updater reported (installed version, available release, freshness), and the backend serves only a sanitized read-only projection of that report.  
+**Spec:** `flows/settings/host-update-status.spec.ts:60`  
+**Tags:** —
+
+**User steps:**
+
+1. atomically publish a fresh status.json from the committed valid_status fixture with a minted available version
+2. open /dashboard/settings/updates as the actor
+3. read the page fields
+4. atomically replace the report with a second minted version and reload
+5. delete the report and reload
+
+**Backend state verified:**
+
+- GET /api/host-update-status/ returns 200 with the minted version and its keys are a subset of the closed public schema, with no path, env, command or secret strings
+- the page version and freshness equal the API values
+- an atomic replace on the host is seen by the container without restarting anything
+- with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
+- POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
 ## simulate
 
 ### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
