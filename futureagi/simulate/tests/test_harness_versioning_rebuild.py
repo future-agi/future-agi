@@ -978,7 +978,7 @@ class TestLanding:
         ],
         ids=["unchecked", "checked", "renamed", "removed"],
     )
-    def test_a_tool_the_rebuild_added_needs_a_sub_goal_checking_it(
+    def test_a_tool_the_rebuild_added_lands_whether_a_sub_goal_names_it(
         self,
         base,
         contract,
@@ -1017,11 +1017,6 @@ class TestLanding:
             )
 
         assert nudge.state == state, (nudge.error, nudge.summary)
-        if state == "failed":
-            assert nudge.error["code"] == "checks_failed"
-            assert [(one["item"], one["kind"]) for one in nudge.error["problems"]] == [
-                ("refund_order", "tool")
-            ]
 
     def test_changes_reported_but_never_saved_fail(
         self,
