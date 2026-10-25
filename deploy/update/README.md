@@ -376,7 +376,7 @@ FUTURE_AGI_UPDATE_POLICY=minor
 
 These keys control the scheduled runner. bin/update checks them every time it
 loads its settings, but nothing runs unattended until you install a timer and
-set `FUTURE_AGI_UPDATE_ENABLED=true`. With the defaults (`manual` and
+explicitly enable policy (with `enable --yes` or `FUTURE_AGI_UPDATE_ENABLED=true`). With the defaults (`manual` and
 disabled) a scheduled run does nothing. Do not confuse
 `FUTURE_AGI_UPDATE_AUTOMATION_MODE` with `FUTURE_AGI_UPDATE_MODE`: the backup
 hook receives the second one as the install type (Standalone, Distributed or
@@ -393,7 +393,7 @@ production).
 | `FUTURE_AGI_UPDATE_MAINTENANCE_DAYS` | `MON,TUE,WED,THU,FRI,SAT,SUN` | Days a window may start on, from `MON` to `SUN`, comma-separated, each at most once. |
 | `FUTURE_AGI_UPDATE_MIN_START_BUDGET_SECONDS` | `900` | A scheduled apply starts only if at least this much of the window is left: 60 to 7200. |
 | `FUTURE_AGI_UPDATE_BACKUP_MAX_AGE_SECONDS` | `3600` | Oldest backup a scheduled apply accepts: 60 to 86400. |
-| `FUTURE_AGI_UPDATE_STAGE_MAX_AGE_SECONDS` | `86400` | How old a staged update may be before a scheduled apply refuses to finish it: 300 to 604800. |
+| `FUTURE_AGI_UPDATE_STAGE_MAX_AGE_SECONDS` | `86400` | Validated policy age bound: 300 to 604800. Scheduled runs never adopt any manual stage. The current explicit manual finish guard uses a fixed 24-hour stage and one-hour backup freshness limit. |
 | `FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK` | `false` | Allow one automatic images-only fallback after a failed scheduled apply, and only for a release whose signed manifest certifies it. It never restores a database or reverses a migration. |
 | `FUTURE_AGI_UPDATE_PROBE_TIMEOUT_SECONDS` | `60` | Longest a single Docker or Compose status probe may take: 5 to 300. |
 | `FUTURE_AGI_UPDATE_PULL_TIMEOUT_SECONDS` | `1800` | Longest an image pull may take: 60 to 7200. |
@@ -410,6 +410,155 @@ The cosign container gets your `HTTP(S)_PROXY`/`NO_PROXY`, except a proxy on
 localhost (unreachable from a container) and any kind your Docker client
 config (`~/.docker/config.json` › `proxies`) already gives containers.
 Windows is supported through WSL only.
+
+## Host automation and reporting
+
+Run the source-checkout launcher, `./bin/update`, as the installation's original
+host user. Python runs isolated; the application never invokes this CLI, reads
+private automation state, runs a backup, or receives a Docker socket. Manual
+mode and disabled automation remain the defaults. The legacy backup-hook
+FUTURE_AGI_UPDATE_MODE still means installation type, not automation policy.
+
+### Explicit enrollment and scheduler rendering
+
+```bash
+./bin/update schedule init --docker-context my-install-context
+./bin/update schedule render --backend cron
+./bin/update schedule render --backend systemd
+./bin/update reporting init --directory /absolute/dedicated/public-parent
+./bin/update enable --yes
+./bin/update run
+```
+
+Use the same `--production` and `--env-file` selection on every command for a
+production install. Enrollment reads Compose ownership and the selected daemon
+ID, records the original UID, absolute interpreter, HOME, PATH, ordered Compose
+files/profiles and canonical env target, and creates private durable metadata.
+The checkout, env and Compose paths must be owned/safe, not writable by other
+users or symlinked. Re-initialization must match the existing binding; it never
+adopts a different daemon or relocates an install. A missing tool or unknown
+owner is an operator action, not permission to repair modes or change context.
+
+Scheduled work needs host **cosign v3+** on the registered PATH. It never pulls
+or starts a verifier helper container. The scheduler loads update.conf without
+ambient updater exports. It never sources that file as shell. Both renderers
+print reviewable assets and narrowly scoped removal instructions only. They
+write no unit, crontab or timer and run no systemctl or sudo. Review and install
+only the named entry under your normal OS authority. Enable changes policy
+controls only: it neither installs nor starts a timer. No command changes git,
+merges env settings, installs dependencies or restores databases automatically.
+
+### Commands and exits
+
+| Command | Effect and exit contract |
+| --- | --- |
+| `run` | Exactly one scheduled tick, then exit. Zero includes disabled, manual, paused, not-due and typed busy no-ops. Busy publishes nothing. Exits 2 for invalid/unavailable prerequisites, 3 for a safety refusal, 4 for a forward failure before rollout, 5 during rollout, 130 for interruption. Host-only JSON includes the actual code, transaction_started, rollout_started, forward_result and fallback_result; successful fallback never erases the forward failure. No confirmation, backup bypass, staging or force flag is accepted. |
+| `download` | Explicit action even when automation is disabled. Requires schedule registration and accepts the same manifest, bundle, policy and channel selectors as check/apply. Uses the shared planner and downloader, pulls only active product images under the engine lock, and writes a separate private download receipt. Never stages, backs up, initializes or changes live env/containers. Zero means verified cached images (or typed lock busy), 2 is unavailable/invalid input, 3 a refusal, 130 interruption. |
+| `enable --yes` | Persist enabled override only; 0 on success, 3 without confirmation, 2 on invalid private state. Does not change mode or pause. |
+| `disable` | Persist disabled override; 0 on success, 2 on invalid private state. Ambient enabled settings cannot undo it. |
+| `pause --until RFC3339` | Requires a future timestamp with explicit offset, or use `pause --indefinite`. Pauses future scheduled discovery/download/starts, not completion of an already-started safety action. Zero on success, 3 for a past/naive/invalid timestamp; invalid flag combinations exit 2. |
+| `resume` | Clear pause only; does not enable automation or clear any failed-target latch. Zero on success, 2 on invalid private state. |
+| `retry --target VERSION --manifest-hash HEX --yes` | Clear only the exact failed-target latch; retain failure/attempt evidence and the consumed window. Never apply or recover now. Zero on success, 3 without confirmation, 2 for wrong/malformed identity or incomplete attempt. |
+| `schedule init --docker-context NAME` | Identity enrollment only, not baseline attestation. Zero on success, 2 for missing tools/state, 3 for unsafe ownership/selection. |
+| `schedule render --backend cron` | Render only; systemd is the other backend. Zero on success, 2 without a valid registration or executable launcher. |
+| `reporting init --directory ABSOLUTE_PATH` | Explicit dedicated status-parent binding and initial unknown snapshot. Zero on success, 2 for I/O/private-state failures, 3 for unsafe, overlapping or already-bound paths. Does not edit env/Compose or recreate containers. |
+| `status` | Existing text remains default, including `--format text`. Read-only; 0 when observed, 2 when unavailable. |
+| `status --format json` | Independent **host_schema_version=1** JSON: checkout, env_file, production, versions, pending_transaction, last_run and reason_codes. Host paths are private. This is NOT PublicStatusV1 and must never be served to the app. Zero when observed, 2 for unknown observations. |
+| `status --export-public` | Export only to the previously registered slot, never a caller-supplied destination. Does not recover or update. Zero after observation; a reporting failure never changes an update outcome. Missing registration is refused. Cannot combine with --format. |
+| `apply --acknowledge-stale-stage` | Host-only acknowledgment for an actual staged resume. Never accepted by run, or together with --stage/--dry-run. Absent a stage it exits 3. Other apply exit codes are unchanged. |
+
+All commands reject flags belonging to another command (usage exit 2). A short
+metadata lock conflict is a typed zero no-op; retry the explicit control command
+if it was busy. Disabled/manual/paused ticks inspect local controls only. A
+registered due notify tick can check signatures and inspect the running stack;
+download also caches images. Automatic apply additionally requires a qualified
+unchanged-state baseline, certified v2 release, fresh attempt-bound backup proof,
+unchanged identity/config, eligible maintenance window and no failed-target
+latch or unfinished transaction. There is no automatic adoption or recovery.
+
+**Production scheduled runs notify and download only.** They never stage,
+initialize or apply. Production still requires explicit stage, then the
+release's explicit initialization jobs, then apply. A manual stage older than
+24 hours, a backup older than one hour, or a legacy stage lacking the new
+freshness/proof fields requires explicit --acknowledge-stale-stage. Current
+legacy backup hooks do not generate those proof fields; their stages require
+acknowledgment even when recently created. This is not a new backup or restore
+guarantee. Changed raw manifest/bundle, trust, installation or config bindings
+remain refusals even with acknowledgment. Restore the verified original
+configuration before finishing; a changed update.conf is also binding drift.
+
+### Qualified host facts and daemon image capacity
+
+Schedule registration does **not** assert that application state is safe to
+upgrade. A qualified host operator must separately enroll a private facts.json
+and exact predecessor.json, predecessor.bundle and compatibility.json evidence
+in the selected automation directory. These are regular single-link 0600 files
+in the existing host-owned 0700 private selection directory. Never copy them
+from public status. Missing, extra, malformed or unsafe evidence fails closed.
+
+The closed facts document has schema_version=1; installation_fingerprint,
+config_fingerprint, profile_fingerprint and deployment_fingerprint from the
+registered binding and the host fingerprints adapter; predecessor_sha256,
+bundle_sha256 and proof_sha256 of the exact accompanying bytes; state_epochs
+for every qualified persistence/protocol domain; persistence matching the
+builtin topology; and the explicit booleans unchanged_state_attested and
+no_pending_migrations_attested. Both assertions must be true based on independent
+operator qualification, not merely successful enrollment or matching image
+labels. Do not fabricate an attestation to silence an initialization refusal.
+Invalidate/requalify it after any state/schema, graph, env, profile or deployment
+change. The adapter verifies predecessor bytes with host cosign, reinspects all
+product/dependency replicas and completed initialization jobs, matches the
+private configuration/deployment baseline, and leaves target online verification,
+release-proof binding and backup proof validation to the existing guard.
+Synthetic test evidence is not qualification of a real release or installation.
+
+At the automatic-fallback boundary the engine reads the predecessor evidence
+through the same normalization it applies when it rolls back: the env file must
+still hash to exactly what the failed forward transaction left, only that
+transaction's recorded pre-update values are put back for the comparison, and
+the configuration, profile and deployment fingerprints must then equal the
+prepared update's. Any other edit, including an operator changing a version pin,
+is refused (`env_conflict` or `configuration_changed`) and the enrolled baseline
+check is never relaxed. A public receipt is never permission.
+
+Uncached pulls additionally require observed capacity on the **registered
+image filesystem**, never the checkout disk. The built-in read-only observer
+qualifies a directly connected native Linux dockerd Unix-socket peer in the
+same root/mount namespace using classic overlay2, and reads that image store's
+free bytes. Remote Docker, SSH contexts, macOS VM contexts, containerd snapshotters
+and other drivers have unknown capacity and refuse absent-image pulls. It does
+not SSH to a VM, start a helper container, change a context or guess from Docker
+system-df usage. Exact already-cached images can still be independently verified.
+Real native/VM-specific capacity qualification remains a deployment gate.
+
+### Dedicated app projection and freshness
+
+Enrollment assigns a random 128-bit public slot token, unrelated to private
+paths or the selection hash; identical re-enrollment retains it. Reporting
+creates a 0755 dedicated parent and per-install slot, with a 0644 status.json. It refuses unsafe ancestry, symlinks, preexisting foreign content,
+checkout/env overlap, private-state overlap and rebinding. It never repairs
+foreign permissions. Opt in separately to the Standalone or Distributed host
+status Compose overlay; mount the **stable slot directory**, read-only, not the
+status-file inode. The initializer prints the chosen path/overlay but does not
+edit configuration or recreate anything. Production overlay enrollment requires
+additional integration qualification before scheduling that selection.
+
+Manual terminal outcomes, controls and scheduled ticks use the same
+PublicStatusPublisher. They capture a private generation/operation ticket before
+slow work, then compare-and-swap; a late writer never retries stale output over
+a newer report. Public status is an allowlisted, disposable projection, never
+an authorization, backup, recovery, download or release-proof input. No env
+values, paths, raw exceptions, commands or secrets go into it. Atomic replacement
+and directory sync preserve old-or-new reads. Publication failure is nonfatal to
+the update outcome and does not imply an update failed or should be retried.
+
+Heartbeat time, version observation, verified discovery, download inspection and
+operation-progress timestamps are independent. A control change or idle tick
+does not refresh old observations. Failed discovery retains the last verified
+candidate and its original as-of time; a new check without reinspection can
+invalidate a previous downloaded claim. Discovery backoff and the independently
+due action/window opportunity are durable; missed timer wakes do not form a
+catch-up queue. A failed target remains quarantined until explicit retry.
 
 ## The release manifest
 

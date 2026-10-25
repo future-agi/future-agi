@@ -16,6 +16,11 @@ import json
 import os
 import re
 import sys
+import hashlib
+import pwd
+import uuid
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -32,10 +37,26 @@ from .receipt import JOURNAL, STATE_DIR, StateDir, StateError, secret_values
 from .settings import SettingsError, load_settings
 from .trust import Verifier, VerificationError, fetch_manifest, remove_workdir
 
+from .contracts import ReasonCode, VerificationSnapshot
+from .discovery import DiscoveredRelease, DiscoveryResult
+from .download import Downloader
+from .host_facts import (EnrolledFacts, daemon_space_available, installation_binding,
+                         safe_path, selected_store)
+from .orchestrator import GuardRefused, fingerprints, prepare_update, registered_installation, require
+from .processes import ProcessError, ProcessSupervisor
+from .public_status import PublicStatusPublisher, build_status, stamp
+from .receipt import StateBusy
+from .runner import HostRunner
+from .runner_state import LauncherConfig, Registration, StoreBusy, StoreError, TargetIdentity
+from .scheduler_assets import render_scheduler
+from .status import observe_status
+
 SUPPRESS = argparse.SUPPRESS
 COMMANDS = ("check", "apply", "rollback", "status")
+AUTOMATION_COMMANDS = ("run", "download", "enable", "disable", "pause", "resume", "retry", "schedule", "reporting")
+ALL_COMMANDS = COMMANDS + AUTOMATION_COMMANDS
 # The commands that verify a manifest's signature (load_settings checks the cosign settings for them only).
-VERIFYING_COMMANDS = ("check", "apply")
+VERIFYING_COMMANDS = ("check", "apply", "download")
 # The directory a verifying run fetches its manifest into, in the state directory (verify-<pid>).
 STALE_WORKDIR = re.compile(r"verify-([0-9]+)")
 
@@ -43,24 +64,24 @@ STALE_WORKDIR = re.compile(r"verify-([0-9]+)")
 # own options), its flag and its argparse keywords. Each one may come before
 # or after the command; one the command does not take is a usage error.
 OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] = (
-    (COMMANDS, "installation", "--production", {
+    (ALL_COMMANDS, "installation", "--production", {
         "action": "store_true",
         "help": "a production install (deploy/setup.sh): deploy/.env.production and the production overlay"}),
-    (COMMANDS, "installation", "--env-file", {
+    (ALL_COMMANDS, "installation", "--env-file", {
         "metavar": "PATH", "help": "production env file, if not deploy/.env.production"}),
-    (("check", "apply"), "release", "--manifest", {
+    (("check", "apply", "download"), "release", "--manifest", {
         "metavar": "PATH_OR_URL",
         "help": "release manifest (default: FUTURE_AGI_UPDATE_MANIFEST_URL, the latest GitHub release)"}),
-    (("check", "apply"), "release", "--bundle", {
+    (("check", "apply", "download"), "release", "--bundle", {
         "metavar": "PATH_OR_URL", "help": "its signature bundle (default: next to the manifest)"}),
-    (("check", "apply"), "release", "--policy", {
+    (("check", "apply", "download"), "release", "--policy", {
         "choices": ("patch", "minor", "major"),
         "help": "largest version jump to allow (default: FUTURE_AGI_UPDATE_POLICY or minor)"}),
-    (("check", "apply"), "release", "--channel", {
+    (("check", "apply", "download"), "release", "--channel", {
         "choices": ("stable", "beta"),
         "help": "release channel to follow (default: FUTURE_AGI_UPDATE_CHANNEL or stable). Releases publish "
                 "stable manifests only: beta needs --manifest naming a beta manifest"}),
-    (("check",), None, "--format", {
+    (("check", "status"), None, "--format", {
         "choices": ("text", "json"), "help": "how to print the plan (default: text)"}),
     (("apply",), None, "--backup-command", {
         "metavar": "COMMAND", "help": "backup to run first (default: FUTURE_AGI_UPDATE_BACKUP_COMMAND)"}),
@@ -72,7 +93,16 @@ OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] 
                 "finishes it (production: run the release's initialization jobs in between)"}),
     (("rollback",), None, "--receipt", {
         "metavar": "PATH", "help": "receipt of the update to undo (default: the last update)"}),
-    (("rollback",), None, "--yes", {"action": "store_true", "help": "confirm the rollback"}),
+    (("rollback", "enable", "retry"), None, "--yes", {"action": "store_true", "help": "confirm this explicit action"}),
+    (("apply",), None, "--acknowledge-stale-stage", {"action": "store_true", "help": "acknowledge an actual stale staged resume; not a new backup"}),
+    (("status",), None, "--export-public", {"action": "store_true", "help": "export to the registered public slot"}),
+    (("pause",), None, "--until", {"metavar": "RFC3339", "help": "pause until a future timestamp with UTC offset"}),
+    (("pause",), None, "--indefinite", {"action": "store_true", "help": "pause until explicit resume"}),
+    (("retry",), None, "--target", {"metavar": "VERSION", "help": "exact failed target"}),
+    (("retry",), None, "--manifest-hash", {"metavar": "HEX", "help": "exact failed manifest SHA256"}),
+    (("schedule",), None, "--docker-context", {"metavar": "NAME", "help": "explicit context to register, never set globally"}),
+    (("schedule",), None, "--backend", {"choices": ("cron", "systemd"), "help": "render only; never install"}),
+    (("reporting",), None, "--directory", {"metavar": "ABSOLUTE_PATH", "help": "dedicated public parent directory"}),
 )
 # A command's own options when they are not given.
 DEFAULTS = {"format": "text", "allow_no_backup": False, "dry_run": False, "stage": False, "receipt": None,
@@ -105,11 +135,32 @@ class _Parser(argparse.ArgumentParser):
             for takers, _, flag, _ in OPTIONS:
                 dest = _dest(flag)
                 if command not in takers and hasattr(namespace, dest):
+                    # Preserve legacy usage diagnostics byte-for-byte.
+                    named = tuple(c for c in takers if c in COMMANDS) if command in COMMANDS else takers
+                    named = named or takers
                     self.commands[command].error(
-                        f"argument {flag}: not allowed with {command} (only {' and '.join(takers)} "
-                        f"{'takes' if len(takers) == 1 else 'take'} it)")
+                        f"argument {flag}: not allowed with {command} (only {' and '.join(named)} "
+                        f"{'takes' if len(named) == 1 else 'take'} it)")
                 if command in takers and dest in DEFAULTS and not hasattr(namespace, dest):
-                    setattr(namespace, dest, DEFAULTS[dest])
+                    if command != 'status' or dest != 'format':
+                        setattr(namespace, dest, DEFAULTS[dest])
+            def present(name):
+                return hasattr(namespace, name)
+            error = self.commands[command].error
+            if command == 'pause' and present('until') == present('indefinite'):
+                error('choose exactly one of --until or --indefinite')
+            if command == 'retry' and not (present('target') and present('manifest_hash')):
+                error('--target and --manifest-hash are required')
+            if command == 'schedule':
+                required, forbidden = ('docker_context', 'backend') if namespace.action == 'init' else ('backend', 'docker_context')
+                if not present(required) or present(forbidden):
+                    error('init requires only --docker-context; render requires only --backend')
+            if command == 'reporting' and not present('directory'):
+                error('--directory is required')
+            if command == 'status' and present('export_public') and present('format'):
+                error('--export-public and --format are distinct operations')
+            if command == 'apply' and present('acknowledge_stale_stage') and (namespace.stage or namespace.dry_run):
+                error('--acknowledge-stale-stage requires a staged resume, not --stage or --dry-run')
         return namespace, extras
 
 
@@ -152,11 +203,22 @@ def build_parser() -> argparse.ArgumentParser:
         "apply": "back up, update and verify",
         "rollback": "go back to the versions before an update",
         "status": "installed versions and the last update",
+        "run": "one registered scheduled tick",
+        "download": "cache verified active product images only",
+        "enable": "enable policy only after confirmation",
+        "disable": "disable future scheduled work",
+        "pause": "pause future scheduled work",
+        "resume": "clear pause only",
+        "retry": "clear the exact failed-target latch after confirmation",
+        "schedule": "register identity or render scheduler assets",
+        "reporting": "bind a dedicated read-only public status slot",
     }
     parser.commands = {}
-    for command in COMMANDS:
+    for command in ALL_COMMANDS:
         parser.commands[command] = sub.add_parser(command, help=helps[command])
         _add_options(parser.commands[command], command)
+        if command in ('schedule', 'reporting'):
+            parser.commands[command].add_argument('action', choices=('init', 'render') if command == 'schedule' else ('init',))
     return parser
 
 
@@ -452,6 +514,237 @@ def _remove_stale_workdirs(state: StateDir) -> None:
             pass
 
 
+@dataclass(frozen=True)
+class ReportingRegistration:
+    schema_version: int
+    directory: Path
+    installation_fingerprint: str
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def _reporting(store):
+    try:
+        with store._directory() as directory:
+            record = store._read(directory, 'reporting.json', ReportingRegistration)
+    except FileNotFoundError:
+        return None
+    binding = store.read_registration().binding
+    require(record.schema_version == 1 and record.installation_fingerprint == binding.installation_fingerprint,
+            ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+    return PublicStatusPublisher(store, record.directory)
+
+
+def _reporting_init(store, path, settings):
+    parent = Path(path)
+    binding = store.read_registration().binding
+    require(parent.is_absolute() and '..' not in parent.parts and '.futureagi-updates' not in parent.parts,
+            ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+    require(parent != store.checkout and parent not in store.checkout.parents and store.checkout not in parent.parents
+            and parent != store.env_target and parent not in store.env_target.parents,
+            ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+    safe_path(parent if parent.exists() else parent.parent, directory=True)
+    with store._lock('reporting.lock') as directory:
+        old = _reporting(store)
+        require(old is None or old.parent == parent, ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+        if old is None and parent.exists():
+            entries = list(parent.iterdir())
+            slot = parent / binding.slot_id
+            require(not entries or entries == [slot] and not any(safe_path(slot, directory=True).iterdir()),
+                    ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+        publisher = old or PublicStatusPublisher(store, parent)
+        ticket, previous = publisher.capture()
+        snapshot = build_status(binding, settings.automation_policy, store.read_control(), store.read_state(),
+                                now=_now(), previous=previous)
+        publisher.publish(snapshot, expected=ticket)
+        store._write(directory, 'reporting.json', ReportingRegistration(1, parent, binding.installation_fingerprint))
+    print('Public status directory: ' + str(publisher.path))
+    print('Opt in to deploy/docker-compose.host-status.' + binding.topology + '.yml; mount this slot read-only.')
+
+
+class _Publication:
+    """Capture before slow work. Never retry a stale report or change an outcome."""
+    def __init__(self, store, settings, *, required=False):
+        self.store, self.settings = store, settings
+        self.publisher = None
+        self.previous = None
+        self.token = uuid.uuid4().hex
+        self.started = _now()
+        try:
+            self.publisher = _reporting(store)
+            if required:
+                require(self.publisher is not None, ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+            if self.publisher is not None:
+                self.ticket, self.previous = self.publisher.capture()
+        except Exception:
+            self.publisher = None
+            if required:
+                raise
+            self.warning()
+
+    @staticmethod
+    def warning():
+        try:
+            sys.stderr.write('bin/update: status_reporting_unavailable; inspect host reporting registration\n')
+        except (Exception, Interrupted, KeyboardInterrupt):
+            pass
+
+    def finish(self, *, installation=None, kind=None, code=0, discovery=None, download=None):
+        if self.publisher is None:
+            return
+        try:
+            current = _now()
+            observation = None if installation is None else observe_status(installation, StateDir(self.store.checkout), now=current)
+            operation = None if kind is None else {
+                'state': 'succeeded' if code == 0 else 'interrupted' if code == 130 else 'blocked' if code in (2, 3) else 'failed',
+                'kind': kind, 'stage': None, 'started_at': stamp(self.started), 'finished_at': stamp(current),
+                'reported_at': stamp(current), 'reason_codes': []}
+            state = self.store.read_state()
+            if discovery is not None:
+                # Presentation evidence for THIS manual check, not a scheduler
+                # deadline/backoff mutation or a renewed cached observation.
+                state = replace(state, last_attempt_at=self.started)
+            snapshot = build_status(self.publisher.binding, self.settings.automation_policy,
+                self.store.read_control(), state, now=current, previous=self.previous,
+                observation=observation, discovery=discovery, download=download, operation=operation)
+            self.publisher.publish(snapshot, expected=self.ticket, operation_token=self.token)
+        except (Exception, Interrupted, KeyboardInterrupt):
+            # Reporting is not part of an update's success/exit contract.
+            self.warning()
+
+
+def _pause_until(value):
+    require(isinstance(value, str) and re.fullmatch(
+        r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)', value) is not None,
+        ReasonCode.CONTROL_INVALID)
+    try:
+        result = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
+    except ValueError:
+        raise GuardRefused(ReasonCode.CONTROL_INVALID) from None
+    require(result > _now(), ReasonCode.CONTROL_INVALID)
+    return result
+
+
+def _enroll(store, context, settings):
+    safe_path(store.checkout, directory=True)
+    safe_path(store.env_target)
+    launcher = LauncherConfig(Path(sys.executable).absolute(), Path.home().resolve(),
+                              os.environ.get('PATH', os.defpath), pwd.getpwuid(os.geteuid()).pw_name)
+    require(os.access(launcher.python, os.X_OK) and os.access(store.checkout / 'bin/update', os.X_OK),
+            ReasonCode.SCHEDULER_UNREGISTERED)
+    supervisor = ProcessSupervisor(settings.automation_policy, docker_context=context,
+        environment={'HOME': str(launcher.home), 'PATH': launcher.path, 'USER': launcher.user, 'LOGNAME': launcher.user})
+    import shutil
+    from .install import ComposeCommand, resolve_compose_command
+    def which(name):
+        return shutil.which(name, path=launcher.path)
+    docker = which('docker')
+    require(docker is not None, ReasonCode.OWNERSHIP_UNCONFIRMED)
+    compose = resolve_compose_command(supervisor, which=which)
+    if os.path.basename(compose[0]) == 'docker':
+        compose = ComposeCommand([docker, '--context', context, *compose[1:]], getattr(compose, 'version', None))
+    installation = Installation(store.checkout, production=store.production, env_file=store.env_target,
+        environ=supervisor.environment, runner=supervisor, docker=[docker, '--context', context], compose=compose)
+    binding = installation_binding(installation, store, context)
+    for path in binding.compose_files:
+        safe_path(path)
+    store.register(Registration(1, binding, launcher, _now()))
+
+
+def _automation(args, root, env_file):
+    store = selected_store(root, production=getattr(args, 'production', False), env_file=env_file)
+    if args.command == 'run':
+        reporting_failed = False
+        try:
+            publisher = _reporting(store)
+        except Exception:
+            publisher = None
+            reporting_failed = True
+        result = HostRunner(store, publisher=publisher, facts=EnrolledFacts(store),
+                            space_available=lambda install: daemon_space_available(install, store.read_registration().binding)).tick()
+        warnings = list(result.warnings)
+        if reporting_failed:
+            warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+        # Explicit host-only fields, never a dataclass dump (receipt is private).
+        print(json.dumps({'code': result.code, 'disposition': result.disposition,
+            'reason_codes': [r.value for r in result.reason_codes], 'skip_reason': result.skip_reason,
+            'transaction_started': result.transaction_started, 'rollout_started': result.rollout_started,
+            'forward_result': result.forward_result, 'fallback_result': result.fallback_result,
+            'warnings': list(dict.fromkeys(r.value for r in warnings))}, sort_keys=True))
+        return result.code
+    settings = load_settings(root, environ={}, verify=False)
+    if args.command == 'schedule':
+        if args.action == 'init':
+            if hasattr(args, 'root'):
+                safe_path(Path(args.root), directory=True)
+            if hasattr(args, 'env_file'):
+                require(Path(args.env_file).is_absolute(), ReasonCode.OWNERSHIP_UNCONFIRMED)
+            safe_path(env_file or root / (PRODUCTION_ENV if store.production else '.env'))
+            _enroll(store, args.docker_context, settings)
+            print('Registered; automation controls and scheduler installation unchanged.')
+        else:
+            assets = render_scheduler(store, settings.automation_policy, backend=args.backend)
+            for name, text in assets.files.items():
+                print('# ' + name)
+                print(text, end='' if text.endswith('\n') else '\n')
+            print(assets.removal_instructions)
+        return 0
+    if args.command == 'reporting':
+        _reporting_init(store, args.directory, settings)
+        return 0
+    publication = _Publication(store, settings)
+    if args.command in ('enable', 'retry'):
+        require(args.yes, ReasonCode.CONTROL_INVALID)
+    if args.command == 'retry':
+        store.retry_target(TargetIdentity(args.target, args.manifest_hash))
+    else:
+        until = _pause_until(args.until) if args.command == 'pause' and hasattr(args, 'until') else None
+        store.change_control(args.command, _now(), until=until)
+    publication.finish()
+    print(args.command + ': recorded; no update or scheduler started.')
+    return 0
+
+
+def _host_status(installation, state):
+    observation = observe_status(installation, state)
+    # Independent host schema. These host-private paths MUST NOT go to the app.
+    result = {'host_schema_version': 1, 'checkout': str(installation.root),
+              'env_file': str(installation.env_file), 'production': installation.production,
+              'versions': observation.versions, 'pending_transaction': observation.pending_transaction,
+              'last_run': observation.last_run, 'reason_codes': [r.value for r in observation.reason_codes]}
+    print(json.dumps(result, sort_keys=True))
+    return 2 if observation.reason_codes else 0
+
+
+def _manual_discovery(fetched, verification, settings):
+    from .manifest import manifest_hash
+    from .trust import Verifier as TrustPolicy
+    if not verification.verified:
+        return DiscoveryResult(reason_codes=(ReasonCode.SIGNATURE_REJECTED,))
+    if getattr(fetched, 'newer_release', None) or fetched.bundle_path is None:
+        return DiscoveryResult(reason_codes=(ReasonCode.RELEASE_INCOMPLETE,))
+    release = DiscoveredRelease(fetched.raw, fetched.bundle_path.read_bytes(), manifest_hash(fetched.data),
+        TrustPolicy(settings).trust_fingerprint(fetched), VerificationSnapshot(verification.verified,
+        verification.method, verification.signer, verification.issuer, verification.tool, _now()))
+    return DiscoveryResult(release, checked_at=_now())
+
+
+def _manual_stage_binding(installation, fetched, settings):
+    from .manifest import manifest_hash
+    from .trust import Verifier as TrustPolicy
+    fresh = installation.fresh()
+    fresh.overlay_env({key: 'stage-binding-pin' for key in VERSION_VARIABLES})
+    config, profile, _ = fingerprints(fresh)
+    return {'manifest_hash': manifest_hash(fetched.data),
+            'manifest_sha256': hashlib.sha256(fetched.raw).hexdigest(),
+            'bundle_sha256': hashlib.sha256(fetched.bundle_path.read_bytes() if fetched.bundle_path else b'').hexdigest(),
+            'installation_fingerprint': manifest_hash({'root': str(installation.root), **installation.identity()}),
+            'config_fingerprint': config, 'profile_fingerprint': profile,
+            'trust_fingerprint': TrustPolicy(settings).trust_fingerprint(fetched)}
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _tolerant_output()
     parser = build_parser()
@@ -480,8 +773,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             command_options += [flag, located(value) if flag in ("--manifest", "--bundle") else value]
 
     out = sys.stderr
+    result_code = 0
+    publication = None
+    discovered = downloaded = None
+    busy = False
 
     def fail(message: str, code: int) -> int:
+        nonlocal result_code
+        result_code = code
         # What went to stdout so far comes first, even when both streams go to one file.
         try:
             sys.stdout.flush()
@@ -497,6 +796,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     before: Optional[List[Path]] = None
     try:
         with signals_as_interrupt():
+            if args.command in AUTOMATION_COMMANDS and args.command != 'download':
+                return _automation(args, root, from_cwd(option('env_file')))
             # status and rollback verify no signature: a cosign setting only check and apply use (offline
             # verification without a public key) must not stop them.
             settings = load_settings(root, {
@@ -504,16 +805,35 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "FUTURE_AGI_UPDATE_CHANNEL": option("channel"),
                 "FUTURE_AGI_UPDATE_BACKUP_COMMAND": option("backup_command"),
             }, verify=args.command in VERIFYING_COMMANDS)
+            try:
+                store = selected_store(root, production=bool(option('production', False)),
+                                       env_file=from_cwd(option('env_file')))
+                if args.command != 'status' or option('export_public'):
+                    publication = _Publication(store, settings, required=bool(option('export_public')))
+            except Exception:
+                if option('export_public') or args.command == 'download':
+                    raise
+                # Legacy unregistered operation remains usable, even with damaged reporting.
+                publication = None
             # Where the operator ran bin/update (without --cwd: the checkout): the commands it prints, even
             # in a refusal to build the installation, start with `cd <checkout> && ` elsewhere. The release
             # options go in before any plan or stack check: the bin/update commands the installation prints
             # itself (check_stack's `./bin/update --production check`, its own refusal to start without
             # --production) repeat them too.
             try:
-                installation = Installation(root, production=bool(option("production", False)),
-                                            env_file=from_cwd(option("env_file")),
-                                            caller_cwd=Path(option("cwd")).resolve() if option("cwd") else None,
-                                            command_options=list(command_options))
+                if args.command == 'download':
+                    registration = store.read_registration()
+                    launcher = registration.launcher
+                    supervisor = ProcessSupervisor(settings.automation_policy,
+                        docker_context=registration.binding.docker_context,
+                        environment={'HOME': str(launcher.home), 'PATH': launcher.path,
+                                     'USER': launcher.user, 'LOGNAME': launcher.user})
+                    installation = registered_installation(registration.binding, supervisor)
+                else:
+                    installation = Installation(root, production=bool(option("production", False)),
+                                                env_file=from_cwd(option("env_file")),
+                                                caller_cwd=Path(option("cwd")).resolve() if option("cwd") else None,
+                                                command_options=list(command_options))
             except (InstallError, EnvFileError):
                 # Read-only bootstrap diagnostics; never construct mutable state
                 # or hide ordinary preflight remedies behind an unrelated journal.
@@ -531,8 +851,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                 raise
             state = StateDir(root, secret_values(installation.env))
             if args.command == "status":
+                if option('export_public'):
+                    publication.finish(installation=installation)
+                    publication = None
+                    return 0
+                publication = None  # Ordinary status is strictly read-only.
+                if option('format') == 'json':
+                    return _host_status(installation, state)
                 problem = _status(installation, state)
                 return 0 if problem is None else fail(problem, 2)
+            if option('acknowledge_stale_stage'):
+                staged = Updater._unfinished_update(state.history(installation.identity()))
+                require(staged is not None and staged.get('status') == 'staged', ReasonCode.STALE_STAGE)
             updater = Updater(installation, settings, state, out=out, command_options=command_options)
             if args.command == "rollback":
                 before = _receipt_paths(state)
@@ -555,7 +885,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                 # Said before verification, which may fail; the plan's notes repeat it.
                 out.write(f"Note: {fetched.note}\n")
                 out.flush()
-            verification = Verifier(settings, docker=installation.docker).verify(fetched)
+            if args.command == 'download':
+                import shutil
+                verifier = Verifier(settings, runner=supervisor, probe=supervisor,
+                    which=lambda name: shutil.which(name, path=launcher.path),
+                    environ=supervisor.environment, host_only=True)
+            else:
+                verifier = Verifier(settings, docker=installation.docker)
+            verification = verifier.verify(fetched)
+            if args.command == 'download':
+                discovered = _manual_discovery(fetched, verification, settings)
+            elif publication is not None and publication.publisher is not None:
+                try:
+                    discovered = _manual_discovery(fetched, verification, settings)
+                except Exception:
+                    publication.warning()
+            stage_identity = {}
 
             def make_plan(history: Optional[List[Dict[str, Any]]],
                           journal_reason: Optional[str] = None) -> Dict[str, Any]:
@@ -576,19 +921,45 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for note in (fetched.note, details.get("note") if isinstance(details, dict) else None):
                     if isinstance(note, str) and note and note not in plan["notes"]:
                         plan["notes"].append(note)
+                if args.command == 'apply':
+                    staged = Updater._unfinished_update(list(history or [])) if plan.get('resume') else None
+                    actual_stage = staged is not None and staged.get('status') == 'staged'
+                    if option('acknowledge_stale_stage'):
+                        require(actual_stage, ReasonCode.STALE_STAGE)
+                    if option('stage') or actual_stage:
+                        stage_identity.update(_manual_stage_binding(installation, fetched, settings))
                 return plan
 
+            if args.command == 'download':
+                require(discovered.complete and discovered.candidate is not None,
+                        discovered.reason_codes[0] if discovered.reason_codes else ReasonCode.RELEASE_INCOMPLETE)
+                release = discovered.candidate
+                prepared = prepare_update(release, installation, registration.binding,
+                    lambda fresh, history: build_plan(fetched.data, verification, fresh, settings, history=list(history)),
+                    state.history(installation.identity()))
+                downloaded = Downloader(installation, state,
+                    space_available=lambda: daemon_space_available(installation.fresh(), registration.binding)).download(prepared)
+                print('Downloaded ' + release.version + '; live env and containers unchanged.')
+                return 0
             if args.command == "check":
                 history, notes, reason = _check_inputs(installation, state, command_options)
                 plan = make_plan(history, journal_reason=reason)
                 plan["notes"].extend(notes)
                 sys.stdout.write(plan_json(plan) if option("format") == "json" else plan_text(plan))
-                return 3 if plan["decision"] == BLOCKED else 0
+                result_code = 3 if plan["decision"] == BLOCKED else 0
+                return result_code
             before = _receipt_paths(state)
             updater.apply(make_plan, fetched.data, allow_no_backup=bool(option("allow_no_backup", False)),
                           backup_command=option("backup_command"), dry_run=bool(option("dry_run", False)),
-                          stage=bool(option("stage", False)))
+                          stage=bool(option("stage", False)),
+                          release_binding=None if option('dry_run') else stage_identity,
+                          acknowledge_stale_stage=bool(option('acknowledge_stale_stage')))
             return 0
+    except (StoreBusy, StateBusy):
+        busy = True
+        return 0
+    except (StoreError, ProcessError) as exc:
+        return fail(exc.reason_code.value, 2)
     except (Blocked, InterruptedRun, UpdateError) as exc:
         return fail(str(exc), exc.exit_code)
     except (KeyboardInterrupt, Interrupted):
@@ -601,6 +972,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         # disk, a docker binary that cannot be executed): an error, never a traceback.
         return fail(_os_error(exc), 2)
     finally:
+        if publication is not None and not busy:
+            try:
+                if state is None or state.lock_holder() is None:
+                    publication.finish(installation=installation, kind=args.command if args.command != 'status' else None,
+                                       code=result_code, discovery=discovered, download=downloaded)
+            except (Exception, Interrupted, KeyboardInterrupt):
+                pass
         if workdir is not None:
             remove_workdir(workdir)
 

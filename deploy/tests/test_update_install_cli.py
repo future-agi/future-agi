@@ -2180,7 +2180,7 @@ class MainTests(unittest.TestCase):
         args, kwargs = self.Updater.return_value.apply.call_args
         self.assertIs(args[1], self.fetched.data)
         self.assertEqual(kwargs, {"allow_no_backup": True, "backup_command": "/bin/bk --all", "dry_run": True,
-                                  "stage": False})
+                                  "stage": False, "release_binding": None, "acknowledge_stale_stage": False})
         settings = self.Updater.call_args[0][1]
         self.assertEqual(settings.get("FUTURE_AGI_UPDATE_BACKUP_COMMAND"), "/bin/bk --all")
         self.assertEqual(settings.sources["FUTURE_AGI_UPDATE_BACKUP_COMMAND"], "command line")
@@ -2189,7 +2189,7 @@ class MainTests(unittest.TestCase):
         self.main("apply")
         _, kwargs = self.Updater.return_value.apply.call_args
         self.assertEqual(kwargs, {"allow_no_backup": False, "backup_command": None, "dry_run": False,
-                                  "stage": False})
+                                  "stage": False, "release_binding": {}, "acknowledge_stale_stage": False})
 
     def test_apply_make_plan_builds_the_plan_with_the_given_receipt(self):
         self.main("apply", "--manifest", "m.json")
@@ -2991,7 +2991,7 @@ CLI_OPTIONS = (
     ("--bundle", ("check", "apply"), ["--bundle", "b.json"]),
     ("--policy", ("check", "apply"), ["--policy", "major"]),
     ("--channel", ("check", "apply"), ["--channel", "beta"]),
-    ("--format", ("check",), ["--format", "json"]),
+    ("--format", ("check", "status"), ["--format", "json"]),
     ("--backup-command", ("apply",), ["--backup-command", "/bin/backup"]),
     ("--allow-no-backup", ("apply",), ["--allow-no-backup"]),
     ("--dry-run", ("apply",), ["--dry-run"]),
@@ -4739,6 +4739,7 @@ class FullStackProductionTests(unittest.TestCase):
             mocked = patcher.start()
             self.addCleanup(patcher.stop)
             if name == "Verifier":
+                mocked.return_value.trust_fingerprint.return_value = 'e' * 64
                 mocked.return_value.verify.return_value = Verification(
                     True, method="keyless", signer="release-update-manifest.yml", tool="cosign",
                     issuer="https://token.actions.githubusercontent.com")
@@ -4846,8 +4847,13 @@ class FullStackProductionTests(unittest.TestCase):
         self.assertEqual(self.printed(out, r"update available: .*?\brun (\./bin/update .+?) \(finishes"), finish)
         self.assertIn(f"the update to {self.NEW} is staged", out)
 
-        # Step two (after the initialization jobs): the printed command restarts the stack; no second backup.
+        # A legacy hook has no new freshness/proof fields. Explicit acknowledgment is required.
+        before = self.env_file.read_bytes()
         code, out, err = self.paste(finish)
+        self.assertEqual((code, err), (3, 'bin/update: stale_stage\n'))
+        self.assertEqual(self.env_file.read_bytes(), before)
+        # Step two after initialization and host acknowledgment; no second backup.
+        code, out, err = self.paste(finish + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         self.assertEqual(self.engine.running(), self.running(self.NEW))
         self.assertEqual(self.backups(), 1)
@@ -4905,9 +4911,14 @@ class FullStackProductionTests(unittest.TestCase):
         self.assertEqual(code, 3, err)
         self.assertEqual((self.backups(), self.engine.up_calls()), (1, []))
 
-        code, out, err = self.paste(finish)
+        # Even acknowledgment cannot waive configuration identity drift.
+        code, out, err = self.paste(finish + ' --acknowledge-stale-stage')
+        self.assertEqual((code, err), (3, 'bin/update: immutable_release_changed\n'))
+        self.settings(manifest=self.NEW)
+        code, out, err = self.paste(finish + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         self.assertEqual(self.engine.running(), self.running(self.NEW))
+        self.settings(manifest=self.NEWER)
         code, out, err = self.paste("./bin/update --production check")
         self.assertEqual(code, 0, err)
         self.assertIn(f"Release       {self.NEWER}", out)
@@ -4921,7 +4932,7 @@ class FullStackProductionTests(unittest.TestCase):
         # image is gone first (pruned) and the finishing run has to pull.
         self.engine.images.pop(self.engine.tags.pop(f"futureagi/future-agi:{self.NEW}"))
         self.engine.publish(f"futureagi/future-agi:{self.NEW}", self.NEW, salt="moved")
-        code, out, err = self.paste("./bin/update --production apply")
+        code, out, err = self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(code, 4, err)
         self.assertIn(f"The update to {self.NEW} staged earlier is still pending", err)
         self.assertIn(f"rollback --receipt {shlex.quote(staged_path)} --yes", err)
@@ -4932,7 +4943,7 @@ class FullStackProductionTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn(f"the update to {self.NEW} is staged", out)
         self.engine.publish(f"futureagi/future-agi:{self.NEW}", self.NEW)
-        code, out, err = self.paste("./bin/update --production apply")
+        code, out, err = self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.receipts()[-1]["resumes"], staged_path)
         self.assertEqual(self.backups(), 1)
@@ -4948,7 +4959,7 @@ class FullStackProductionTests(unittest.TestCase):
         self.assertEqual(len(backend), 1, out)
         self.assertIn(f"running {self.OLD}  (FUTURE_AGI_VERSION={self.NEW})", backend[0])
 
-        code, out, err = self.paste("./bin/update --production apply")
+        code, out, err = self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.engine.running(), self.running(self.NEW))
         self.assertEqual(self.receipts()[-1]["status"], "succeeded")
@@ -4959,7 +4970,7 @@ class FullStackProductionTests(unittest.TestCase):
         self.stage()
         self.engine.killed_after = "backend"
         with self.assertRaises(SystemExit):
-            self.paste("./bin/update --production apply")
+            self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(StateDir(self.root).read_journal()["stage"], "rollout")
         self.assertEqual(self.engine.running()["backend"], self.NEW)
         self.assertEqual(self.engine.running()["frontend"], self.OLD)
@@ -5008,7 +5019,7 @@ class FullStackProductionTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("update available: run ./bin/update --production apply --stage", out)
         self.stage()
-        code, out, err = self.paste("./bin/update --production apply")
+        code, out, err = self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(code, 0, err)
         done = self.receipts()[-1]
         self.assertEqual(done["previous_values"], {"FUTURE_AGI_VERSION": self.OLD, "FRONTEND_VERSION": self.OLD})
@@ -5203,7 +5214,7 @@ class CliRound3FullStackTests(unittest.TestCase):
         self.stage()
         self.engine.killed_after = "backend"
         with self.assertRaises(SystemExit):
-            self.paste("./bin/update --production apply")
+            self.paste("./bin/update --production apply --acknowledge-stale-stage")
         self.assertEqual(StateDir(self.root).read_journal()["stage"], "rollout")
         containers, running = self.engine.container_ids(), self.engine.running()
         env_text, other_text, ups = self.env_file.read_text(), other_env.read_text(), len(self.engine.up_calls())
@@ -5580,7 +5591,7 @@ class CliRound4FullStackTests(unittest.TestCase):
         self.assertEqual(self.versions(), (self.NEWER, self.NEWER))
         self.assertEqual(self.receipts()[-1]["target_version"], self.NEWER)
         self.assert_pastable_here(err, option)
-        code, out, err = self.paste_in(self.printed(err, r"Then run `([^`]+)` to restart the stack"))
+        code, out, err = self.paste_in(self.printed(err, r"Then run `([^`]+)` to restart the stack") + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         self.assertEqual(self.engine.running(), self.running(self.NEWER))
 
@@ -5595,7 +5606,7 @@ class CliRound4FullStackTests(unittest.TestCase):
         staged = self.receipt_paths()[-1]
 
         # The finishing apply, pasted in that directory, restarts the stack on the release that was staged.
-        code, out, err = self.paste_in(self.printed(err, r"Then run `([^`]+)` to restart the stack"))
+        code, out, err = self.paste_in(self.printed(err, r"Then run `([^`]+)` to restart the stack") + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         self.assertEqual(self.engine.running(), self.running(self.NEWER))
         self.assertEqual(self.receipts()[-1]["resumes"], staged)
@@ -5610,7 +5621,7 @@ class CliRound4FullStackTests(unittest.TestCase):
         self.stage()
         self.engine.killed_after = "backend"
         with self.assertRaises(SystemExit):
-            self.paste("./bin/update --production apply")
+            self.paste("./bin/update --production apply --acknowledge-stale-stage")
         containers, running = self.engine.container_ids(), self.engine.running()
         env_text, ups = self.env_file.read_text(), len(self.engine.up_calls())
 
@@ -5657,7 +5668,7 @@ class CliRound4FullStackTests(unittest.TestCase):
         # check and apply plan with Installation.service_model() (`config --profiles`, then the probe); no
         # command runs `config --no-interpolate`, which Compose before v2.40.3 rejects for these compose files.
         steps = (("check", 0), ("apply --stage --dry-run", 0), ("apply --stage", 0), ("check", 0),
-                 ("apply --dry-run", 0), ("apply", 0), ("status", 0), ("rollback", 3), ("rollback --yes", 0))
+                 ("apply --dry-run", 0), ("apply --acknowledge-stale-stage", 0), ("status", 0), ("rollback", 3), ("rollback --yes", 0))
         for step, expected in steps:
             command = f"./bin/update --production {step}"
             with self.subTest(command=command):
@@ -6685,7 +6696,7 @@ class CliRound5FullStackTests(unittest.TestCase):
         first = self.printed(check, r"update available: run (.+?) \(the first of two steps")
         code, out, err = self.paste(first)
         self.assertEqual(code, 0, err)
-        code, out, err = self.paste(self.printed(err, r"Then run `([^`]+)` to restart the stack"))
+        code, out, err = self.paste(self.printed(err, r"Then run `([^`]+)` to restart the stack") + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         code, out, err = self.paste("./bin/update --production check")
         self.assertEqual(code, 0, err)
@@ -7242,8 +7253,8 @@ class IntegratorRound5CliTests(unittest.TestCase):
         self.assertNotIn("Interrupted", out)
         self.assertIn(f"Last run      apply to {self.NEW}: staged", out)
 
-        # The finishing apply, pasted, removes the journal and finishes the staged update.
-        code, out, err = self.paste(finish)
+        # The finishing apply, explicitly acknowledged, removes the completed journal and finishes the stage.
+        code, out, err = self.paste(finish + ' --acknowledge-stale-stage')
         self.assertEqual(code, 0, err)
         self.assertIn("Removed the journal of a bin/update apply", err)
         self.assertFalse(StateDir(self.root).journal_path.exists())
@@ -8137,10 +8148,10 @@ class CliRound7HelpTests(unittest.TestCase):
     def test_each_command_shows_its_options_under_their_headings(self):
         expected = {
             ("check",): {"options": ["-h", "--format"], "installation": self.INSTALLATION, "release": self.RELEASE},
-            ("apply",): {"options": ["-h", "--backup-command", "--allow-no-backup", "--dry-run", "--stage"],
+            ("apply",): {"options": ["-h", "--backup-command", "--allow-no-backup", "--dry-run", "--stage", "--acknowledge-stale-stage"],
                          "installation": self.INSTALLATION, "release": self.RELEASE},
             ("rollback",): {"options": ["-h", "--receipt", "--yes"], "installation": self.INSTALLATION},
-            ("status",): {"options": ["-h"], "installation": self.INSTALLATION},
+            ("status",): {"options": ["-h", "--format", "--export-public"], "installation": self.INSTALLATION},
             (): {"options": ["-h"], "installation": self.INSTALLATION},
         }
         for argv, sections in expected.items():
@@ -8884,7 +8895,7 @@ class CliCheckoutOwnershipTests(unittest.TestCase):
 
     def test_same_owner_can_stage_finish_and_rollback(self):
         self.stage()
-        for command, version in (("apply", self.NEW), ("rollback --yes", self.OLD)):
+        for command, version in (("apply --acknowledge-stale-stage", self.NEW), ("rollback --yes", self.OLD)):
             code, out, err = self.paste("./bin/update --production " + command)
             self.assertEqual(code, 0, out + err)
             self.assertEqual(self.versions(), (version, version))
