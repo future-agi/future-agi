@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
-	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
@@ -230,12 +229,48 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// body starts (call-order steps 18 and 19).
 	h.idempotencyFinish(rc, http.StatusOK, w.Header(), nil)
 	h.setAgentccHeadersForProvider(w, rc, servingProvider)
+
+	// Set up streaming guardrail checker if enabled.
+	var streamChecker *guardrails.StreamGuardrailChecker
+	if h.streamGuardrailCfg.Enabled && h.guardrailEngine != nil && h.guardrailEngine.PostCount() > 0 {
+		// The rules run under the policy the guardrail plugin runs them
+		// under: the organization's with the key's overrides on top
+		// (guardrails.RulePolicy), and the request's X-Guardrail-Policy only
+		// when its key has allow_policy_override
+		// (guardrails.PermittedRequestPolicy). So the checker blocks, and the
+		// stream is held, for exactly the rules the plugin would block.
+		streamChecker = guardrails.NewStreamChecker(
+			h.guardrailEngine, h.streamGuardrailCfg,
+			guardrails.RulePolicy(h.tenantStore, h.policyStore, rc.Metadata),
+			guardrails.PermittedRequestPolicy(rc.Metadata), rc.Request, rc.Metadata,
+		)
+	}
+
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream): the client gets its
+	// chunks, as they came, only then, and none of a blocked answer.
+	checkerBlocks := streamChecker.Blocks()
+	var held *heldStream
+	if chatStreamHolds(rc, streamChecker, checkerBlocks) {
+		if held = newHeldStream(w); held != nil {
+			sseWriter = streaming.NewSSEWriter(held)
+		}
+	}
 	sseWriter.WriteHeaders()
 
 	// Create a cancellable context for stream guardrail checks.
 	// Cancelling this ensures spawned guardrail goroutines are stopped on exit.
 	streamCtx, streamCancel := context.WithCancel(ctx)
 	defer streamCancel()
+	// checkerCtx is the context the streaming checker's checks run on. On a
+	// held stream it is one the request's end does not cancel (as
+	// checksContext gives the post-plugins), so each check runs to its end,
+	// within its own timeout, whether the request's deadline passes or the
+	// client goes away first.
+	checkerCtx := streamCtx
+	if held != nil {
+		checkerCtx = context.WithoutCancel(ctx)
+	}
 
 	// Track the last usage from stream chunks so we can populate rc.Response
 	// after the stream completes (providers send usage in the final chunk).
@@ -243,21 +278,6 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var streamID string
 	var streamCreated int64
 	var streamed streamedOutput
-
-	// Set up streaming guardrail checker if enabled.
-	var streamChecker *guardrails.StreamGuardrailChecker
-	if h.streamGuardrailCfg.Enabled && h.guardrailEngine != nil && h.guardrailEngine.PostCount() > 0 {
-		var keyPolicy *policy.Policy
-		if keyID := rc.Metadata["auth_key_id"]; keyID != "" && h.policyStore != nil {
-			keyPolicy = h.policyStore.Get(keyID)
-		}
-		// The request's X-Guardrail-Policy only when its key has
-		// allow_policy_override (guardrails.PermittedRequestPolicy).
-		streamChecker = guardrails.NewStreamChecker(
-			h.guardrailEngine, h.streamGuardrailCfg,
-			keyPolicy, guardrails.PermittedRequestPolicy(rc.Metadata), rc.Request, rc.Metadata,
-		)
-	}
 
 	// The answer the stream sends, assembled for the request log and for an
 	// output check that reads it at the stream's end, whether or not the log
@@ -269,6 +289,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		readers &^= models.AnswerReadByRules
 	}
 	capture := newStreamCapture(h.captureStreamContent || readers != 0)
+	if held != nil {
+		capture.holdAll()
+	}
+	// heldErr is the refusal of a held stream whose whole answer the checks
+	// could not read (refuseUnreadHeldChat), set by finalizeStream.
+	var heldErr *models.APIError
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging, otel, prometheus). Must be called
@@ -293,11 +319,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			Usage:   metered,
 		}
 		capture.applyTo(rc.Response)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		heldErr = refuseUnreadHeldChat(rc, held, capture)
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 		h.recordGenerationFor(rc)
 		if detach {
 			return nil, billedUsage(rc, metered)
@@ -335,12 +358,67 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 		}
 	}
+	// heldRefusal is the error a held stream ends with instead of its
+	// answer, once its post-plugins have run, or nil when the answer goes
+	// out: blockErr (the streaming checker's block), heldErr, or the error
+	// of an output check that withheld the answer.
+	heldRefusal := func(blockErr *models.APIError) *models.APIError {
+		switch {
+		case blockErr != nil:
+			return blockErr
+		case heldErr != nil:
+			return heldErr
+		}
+		return withheldAnswerError(rc)
+	}
+	// refuseHeld ends a held stream that is refused: none of its answer goes
+	// out (what it holds and the finish chunks finishHold keeps are
+	// dropped), only apiErr's error event.
+	refuseHeld := func(apiErr *models.APIError) {
+		held.discard()
+		hold.drain(nil)
+		sseWriter.WriteError(apiErr)
+	}
+	// checkHeldTail runs the streaming checker's final check on a held
+	// stream that the checker holds and that ends before the provider's
+	// stream does (an upstream error, the deadline, a client gone). The
+	// checker checks every check_interval characters, so its final check
+	// reads the text after its last check before any of it goes out. It
+	// returns the checker's block
+	// (markStreamBlocked, so it is called before finalizeStream runs the
+	// post-plugins), or nil when the checker passes the whole of what the
+	// stream read, or the stream is not held by the checker. A disclaimer is
+	// not added to a stream that failed.
+	checkHeldTail := func() *models.APIError {
+		if held == nil || !checkerBlocks {
+			return nil
+		}
+		if res := streamChecker.Finish(checkerCtx); res.Blocked {
+			return markStreamBlocked(rc, res.Message)
+		}
+		return nil
+	}
 	// failStream ends the stream with apiErr's error event and no [DONE]
-	// (an upstream error, the deadline, a block mid-stream). A held finish
-	// chunk goes out first, in its place in the stream, with the billed
-	// usage, so the post-plugins then run before the error event; with
-	// nothing held the error event goes out first.
+	// (an upstream error, the deadline). A held finish chunk goes out
+	// first, in its place in the stream, with the billed usage, so the
+	// post-plugins then run before the error event; with nothing held the
+	// error event goes out first. A held stream is checked first, the
+	// streaming checker's final check and then its post-plugins: what it
+	// holds goes out before the error event, or, when the checks refuse
+	// it, only their error event.
 	failStream := func(apiErr *models.APIError) {
+		if held != nil {
+			blockErr := checkHeldTail()
+			_, usage := finalizeStream(false)
+			if refusal := heldRefusal(blockErr); refusal != nil {
+				refuseHeld(refusal)
+				return
+			}
+			held.release()
+			writeHeld(usage)
+			sseWriter.WriteError(apiErr)
+			return
+		}
 		if !hold.pending() {
 			sseWriter.WriteError(apiErr)
 			finalizeStream(false)
@@ -349,6 +427,17 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		_, usage := finalizeStream(false)
 		writeHeld(usage)
 		sseWriter.WriteError(apiErr)
+	}
+	// stopStream ends the stream the streaming checker stopped mid-stream,
+	// with its error event (markStreamBlocked) and no [DONE]: as failStream
+	// does, except that a held stream sends none of its answer.
+	stopStream := func(apiErr *models.APIError) {
+		if held == nil {
+			failStream(apiErr)
+			return
+		}
+		finalizeStream(false)
+		refuseHeld(apiErr)
 	}
 
 	for {
@@ -372,8 +461,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			streamed.observe(chunk)
 
 			if streamChecker != nil {
-				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					failStream(markStreamBlocked(rc, res.Message))
+				if res := streamChecker.ProcessChunk(checkerCtx, chunk); res.Blocked {
+					stopStream(markStreamBlocked(rc, res.Message))
 					return
 				}
 			}
@@ -408,9 +497,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				answered := false
 				var blockErr *models.APIError
 				if streamChecker != nil {
-					if res := streamChecker.Finish(streamCtx); res.Blocked {
+					if res := streamChecker.Finish(checkerCtx); res.Blocked {
 						blockErr = markStreamBlocked(rc, res.Message)
-						if !hold.pending() {
+						if held == nil && !hold.pending() {
 							sseWriter.WriteError(blockErr)
 							blockErr = nil
 						}
@@ -427,6 +516,26 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 					}
 				}
 				metadataChunk, usage := finalizeStream(false)
+				if held != nil {
+					// The checks have read the whole answer. A refused one
+					// ends with only the guardrail's error event, then the
+					// usage chunk when the client asked for usage (C79), then
+					// [DONE]; a passing one goes out as it came.
+					if refusal := heldRefusal(blockErr); refusal != nil {
+						refuseHeld(refusal)
+						if metadataChunk != nil {
+							if err := sseWriter.WriteChunk(*metadataChunk); err != nil {
+								slog.Warn("error writing final stream metadata chunk",
+									"request_id", rc.RequestID,
+									"error", err,
+								)
+							}
+						}
+						sseWriter.WriteDone()
+						return
+					}
+					held.release()
+				}
 				writeHeld(usage)
 				if blockErr != nil {
 					sseWriter.WriteError(blockErr)
@@ -434,8 +543,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				if !answered {
 					// The output checks the post-plugins ran on the assembled
 					// answer (a static rule, or an org's check) refused it:
-					// the stream ends with that guardrail's error, after the
-					// text already sent.
+					// the stream ends with that guardrail's error. This
+					// stream was not held, so no check that refuses it was
+					// expected to block.
 					if apiErr := withheldAnswerError(rc); apiErr != nil {
 						sseWriter.WriteError(apiErr)
 					}
@@ -476,8 +586,8 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
-				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					failStream(markStreamBlocked(rc, res.Message))
+				if res := streamChecker.ProcessChunk(checkerCtx, chunk); res.Blocked {
+					stopStream(markStreamBlocked(rc, res.Message))
 					return
 				}
 			}
@@ -523,12 +633,65 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// chunk is then written, best effort, with the billed usage: a
 			// client still reading gets its finish_reason; for a client that
 			// is gone the write fails. The stream ends there, with neither
-			// [DONE] nor an error event.
+			// [DONE] nor an error event, unless it is held and the checks
+			// refuse it: then it is only their error event (written best
+			// effort too). A held stream gets the streaming checker's final
+			// check first (checkHeldTail).
+			blockErr := checkHeldTail()
 			_, usage := finalizeStream(true)
+			if held != nil {
+				if refusal := heldRefusal(blockErr); refusal != nil {
+					refuseHeld(refusal)
+					return
+				}
+				held.release()
+			}
 			writeHeld(usage)
 			return
 		}
 	}
+}
+
+// chatStreamHolds says whether a chat stream is held (heldStream): an
+// organization's check on the answer would block it, a rule in the config
+// file at the post stage would (and no streaming checker reads the stream
+// for the rules instead), or the streaming checker stops streams
+// (checkerBlocks, checker.Blocks()). In disclaimer mode the checker does
+// not block, and the stream is not held for its rules.
+func chatStreamHolds(rc *models.RequestContext, checker *guardrails.StreamGuardrailChecker, checkerBlocks bool) bool {
+	if rc.Flags.AnswerBlockers&models.AnswerReadByOrg != 0 || checkerBlocks {
+		return true
+	}
+	return checker == nil && rc.Flags.AnswerBlockers&models.AnswerReadByRules != 0
+}
+
+// refuseUnreadHeldChat is called right before the post-plugins of a held
+// chat stream. When the checks cannot read its whole answer (it went over
+// maxHeldStreamBytes, or the assembly dropped a choice), the guardrail
+// plugin refuses it if one of its checks would block (heldStream.
+// beforeChecks), and nil is returned; when only the streaming checker held
+// it, it is refused here, as the checker's own block is, and the refusal is
+// returned. nil when the checks can read it, or the stream is not held.
+func refuseUnreadHeldChat(rc *models.RequestContext, held *heldStream, capture *streamCapture) *models.APIError {
+	if held == nil || (!held.over && capture.complete()) {
+		return nil
+	}
+	if rc.Flags.AnswerBlockers != 0 {
+		held.beforeChecks(rc, capture.complete())
+		return nil
+	}
+	reason := answerPartlyRead
+	if held.over {
+		reason = answerOverHoldBound
+	}
+	apiErr := models.ErrGuardrailBlocked("answer_unavailable",
+		"Request blocked by guardrail: the streaming guardrail checks the model's answer, and "+reason)
+	rc.Flags.GuardrailTriggered = true
+	rc.Flags.AnswerRefused = true
+	rc.SetMetadata("guardrail_action", "blocked")
+	rc.SetMetadata("answer_unavailable", reason)
+	rc.AddError(apiErr)
+	return apiErr
 }
 
 // markStreamBlocked records that the streaming guardrail checker stopped the

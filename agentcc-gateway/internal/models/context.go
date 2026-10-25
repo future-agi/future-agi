@@ -232,6 +232,14 @@ type RequestFlags struct {
 	// it does not assemble for the request log) puts the answer itself on
 	// Response, so the checks read what the client gets.
 	AnswerReaders AnswerReaders
+	// AnswerBlockers is which of AnswerReaders would block the answer, set
+	// by the guardrail plugin with it: the config file's post-stage rules
+	// when one's action is block after the key's policy and
+	// X-Guardrail-Policy, and an organization's checks that read the answer
+	// when one is in block mode. A stream handler holds a stream that such
+	// a check reads until the check has passed, so a blocked answer never
+	// reaches the client.
+	AnswerBlockers AnswerReaders
 	// AnswerUnavailable is set by a handler when the gateway will not get,
 	// or could not read, the answer the client gets (Metadata
 	// "answer_unavailable" says why), so no output check can read it. The

@@ -520,14 +520,18 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	var usage anthropicfmt.StreamUsageScanner
 	// The text the stream sends, for an output check that reads the answer.
 	answer := newSSEAnswer(rc.Flags.AnswerReaders != 0, anthropicStreamDelta)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		answer.holdAll()
+	}
 	finalize := func(detach bool) {
 		applyAnthropicStreamUsage(rc, &usage)
 		answer.giveTo(rc)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		held.beforeChecks(rc, answer.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// If upstream returned an error status, read and forward. Still finalised:
@@ -543,6 +547,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 		return
 	}
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -579,7 +586,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 			}
 			finalize(false)
 			if readErr == io.EOF {
-				endWithheldStream(w, flusher, rc, anthropicfmt.StreamErrorEvent)
+				endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
+			} else {
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 			}
 			return
 		}
@@ -587,6 +596,7 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 			return
 		default:
 		}
@@ -838,6 +848,13 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	// translated SSE bytes. It assembles the text for an output check that
 	// reads the answer.
 	capture := newStreamCapture(rc.Flags.AnswerReaders != 0)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		capture.holdAll()
+	}
 	chunkCh, usageCh := teeStreamUsage(streamCtx, startedChunks, capture)
 	if alias := rc.Metadata["model_alias"]; alias != "" {
 		chunkCh = rewriteStreamModel(streamCtx, chunkCh, alias)
@@ -848,11 +865,8 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		applyCanonicalStreamUsage(rc, usageCh)
 		// After the usage: the tee has finished writing the capture.
 		giveChecksTheStreamedAnswer(rc, capture)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		held.beforeChecks(rc, capture.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// Translate the OpenAI chunk stream into Anthropic SSE events. If the
@@ -875,6 +889,9 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		eventCh, translatorErrCh = translator.StreamEventsFromCanonical(streamCtx, chunkCh)
 	}
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -893,6 +910,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 			return
 
 		case event, ok := <-eventCh:
@@ -913,7 +931,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// reason, so waiting for every channel keeps the HTTP body open.
 				streamCancel()
 				finalize(false)
-				endWithheldStream(w, flusher, rc, anthropicfmt.StreamErrorEvent)
+				endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 
@@ -931,6 +949,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
 				// Error event already emitted by the translator; just stop.
 				finalize(false)
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 
@@ -942,6 +961,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
 				finalize(false)
+				settleHeldStream(held, rc, anthropicfmt.StreamErrorEvent)
 				return
 			}
 		}
@@ -949,7 +969,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// Once every channel is drained, we're done.
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
 			finalize(false)
-			endWithheldStream(w, flusher, rc, anthropicfmt.StreamErrorEvent)
+			endStream(w, flusher, held, rc, anthropicfmt.StreamErrorEvent)
 			return
 		}
 	}

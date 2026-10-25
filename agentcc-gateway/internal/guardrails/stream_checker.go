@@ -16,7 +16,7 @@ import (
 // post-stage guardrails on accumulated text at configurable intervals.
 type StreamGuardrailChecker struct {
 	engine        *Engine
-	keyPolicy     *policy.Policy
+	rulePolicy    *policy.Policy // the policy the rules run under (RulePolicy)
 	requestPolicy policy.RequestPolicy
 	request       *models.ChatCompletionRequest
 	metadata      map[string]string
@@ -30,11 +30,14 @@ type StreamGuardrailChecker struct {
 	arguments *argumentsCache
 }
 
-// NewStreamChecker creates a new streaming guardrail checker.
+// NewStreamChecker creates a new streaming guardrail checker. rulePolicy is
+// the policy the config file's rules run under for the request, the one the
+// guardrail plugin runs them under: RulePolicy, the organization's policy
+// with the key's overrides on top.
 func NewStreamChecker(
 	engine *Engine,
 	cfg config.StreamingGuardrailConfig,
-	keyPolicy *policy.Policy,
+	rulePolicy *policy.Policy,
 	requestPolicy policy.RequestPolicy,
 	request *models.ChatCompletionRequest,
 	metadata map[string]string,
@@ -49,7 +52,7 @@ func NewStreamChecker(
 	}
 	return &StreamGuardrailChecker{
 		engine:        engine,
-		keyPolicy:     keyPolicy,
+		rulePolicy:    rulePolicy,
 		requestPolicy: requestPolicy,
 		request:       request,
 		metadata:      credentials.WithoutCredentials(metadata), // as the plugin's checks get it
@@ -102,6 +105,19 @@ func (sc *StreamGuardrailChecker) Finish(ctx context.Context) *StreamCheckResult
 	return sc.runCheck(ctx)
 }
 
+// Blocks reports whether the checker can stop the stream: its failure
+// action is "stop" (not "disclaimer"), and a rule it runs blocks under its
+// rule policy (the organization's with the key's on top, RulePolicy) and
+// the request's X-Guardrail-Policy. A stream handler holds a stream whose
+// checker blocks until the checker has passed the whole answer, so no text
+// of a blocked answer reaches the client.
+func (sc *StreamGuardrailChecker) Blocks() bool {
+	if sc == nil || sc.failureAction == "disclaimer" {
+		return false
+	}
+	return len(sc.engine.BlockingPost(sc.rulePolicy, sc.requestPolicy)) > 0
+}
+
 // AccumulatedText returns the full accumulated response text.
 func (sc *StreamGuardrailChecker) AccumulatedText() string {
 	return sc.accumulated.String()
@@ -133,7 +149,7 @@ func (sc *StreamGuardrailChecker) runCheck(ctx context.Context) *StreamCheckResu
 		Metadata: sc.metadata,
 	}
 
-	result := sc.engine.RunPost(withCache(ctx, sc.arguments), input, sc.keyPolicy, sc.requestPolicy)
+	result := sc.engine.RunPost(withCache(ctx, sc.arguments), input, sc.rulePolicy, sc.requestPolicy)
 	if !result.Blocked {
 		return &StreamCheckResult{}
 	}

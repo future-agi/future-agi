@@ -341,14 +341,18 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	var usage genaifmt.StreamUsageScanner
 	// The text the stream sends, for an output check that reads the answer.
 	answer := newSSEAnswer(rc.Flags.AnswerReaders != 0, genaiStreamDelta)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		answer.holdAll()
+	}
 	finalize := func(detach bool) {
 		applyGenAIStreamUsage(rc, &usage)
 		answer.giveTo(rc)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		held.beforeChecks(rc, answer.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// If upstream returned an error status, read and forward. Still finalised:
@@ -364,6 +368,9 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -400,7 +407,9 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 			}
 			finalize(false)
 			if readErr == io.EOF {
-				endWithheldStream(w, flusher, rc, genaifmt.StreamErrorEvent)
+				endStream(w, flusher, held, rc, genaifmt.StreamErrorEvent)
+			} else {
+				settleHeldStream(held, rc, genaifmt.StreamErrorEvent)
 			}
 			return
 		}
@@ -408,6 +417,7 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, genaifmt.StreamErrorEvent)
 			return
 		default:
 		}
@@ -656,17 +666,21 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	// Tee for usage from the final chunk. It assembles the text for an output
 	// check that reads the answer.
 	capture := newStreamCapture(rc.Flags.AnswerReaders != 0)
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		held = newHeldStream(w)
+		capture.holdAll()
+	}
 	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh, capture)
 
 	finalize := func(detach bool) {
 		applyCanonicalStreamUsage(rc, usageCh)
 		// After the usage: the tee has finished writing the capture.
 		giveChecksTheStreamedAnswer(rc, capture)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		held.beforeChecks(rc, capture.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 	}
 
 	// Translate OpenAI chunks into Gemini SSE events.
@@ -674,6 +688,9 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	// the drain so backpressure is handled naturally.
 	eventCh, translatorErrCh := translator.StreamEventsFromCanonical(ctx, chunkCh)
 
+	if held != nil {
+		w = held
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -693,6 +710,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 		select {
 		case <-ctx.Done():
 			finalize(true)
+			settleHeldStream(held, rc, genaifmt.StreamErrorEvent)
 			return
 
 		case event, ok := <-eventCh:
@@ -719,6 +737,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
 				finalize(false)
+				settleHeldStream(held, rc, genaifmt.StreamErrorEvent)
 				return
 			}
 
@@ -730,13 +749,14 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
 				finalize(false)
+				settleHeldStream(held, rc, genaifmt.StreamErrorEvent)
 				return
 			}
 		}
 
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
 			finalize(false)
-			endWithheldStream(w, flusher, rc, genaifmt.StreamErrorEvent)
+			endStream(w, flusher, held, rc, genaifmt.StreamErrorEvent)
 			return
 		}
 	}

@@ -31,6 +31,10 @@ type streamCapture struct {
 	choices   []*capturedChoice // in the order first seen
 	size      int               // bytes of text held, across choices
 	truncated bool
+	// limit is the bytes of text held at most: maxStreamCaptureBytes, or
+	// maxHeldStreamBytes for a held stream (holdAll), whose checks must read
+	// all of it. 0 means maxStreamCaptureBytes.
+	limit int
 }
 
 type capturedChoice struct {
@@ -68,7 +72,7 @@ func (c *streamCapture) observe(chunk models.StreamChunk) {
 			continue
 		}
 		if hasContent && !c.truncated {
-			if c.size+len(*choice.Delta.Content) > maxStreamCaptureBytes {
+			if c.size+len(*choice.Delta.Content) > c.maxBytes() {
 				c.truncated = true
 			} else {
 				cc.content.WriteString(*choice.Delta.Content)
@@ -95,6 +99,30 @@ func (c *streamCapture) choice(index int) *capturedChoice {
 	cc := &capturedChoice{index: index}
 	c.choices = append(c.choices, cc)
 	return cc
+}
+
+// maxBytes is the bytes of text the capture holds at most.
+func (c *streamCapture) maxBytes() int {
+	if c.limit > 0 {
+		return c.limit
+	}
+	return maxStreamCaptureBytes
+}
+
+// holdAll raises the capture's bound to what a held stream holds
+// (maxHeldStreamBytes): the checks on a held stream's answer read all of it,
+// or it is refused (heldStream.beforeChecks). Safe on nil.
+func (c *streamCapture) holdAll() {
+	if c != nil {
+		c.limit = maxHeldStreamBytes
+	}
+}
+
+// complete reports whether the capture holds every choice's whole text:
+// nothing was dropped past its bound or past maxStreamCaptureChoices. True
+// on nil, where nothing is assembled because nothing reads it.
+func (c *streamCapture) complete() bool {
+	return c == nil || !c.truncated
 }
 
 // hasText reports whether the stream sent any text.

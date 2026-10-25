@@ -137,8 +137,13 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	}
 
 	// 3. Say which output checks will read the answer, so the handler gives
-	// them the answer the client gets.
-	rc.Flags.AnswerReaders |= p.answerReaders(rc, reqPolicy)
+	// them the answer the client gets, and which of them would block it, so
+	// a stream handler holds a stream they read until they have passed.
+	readers := p.answerReaders(rc, reqPolicy)
+	rc.Flags.AnswerReaders |= readers
+	if readers != 0 {
+		rc.Flags.AnswerBlockers |= p.answerBlockers(rc, keyPolicy, reqPolicy)
+	}
 
 	// 4. Fail closed: a request whose answer the gateway will not get (a
 	// background response) is refused when a check on the answer would block
@@ -401,6 +406,26 @@ func (p *GuardrailPlugin) answerReaders(rc *models.RequestContext, reqPolicy pol
 		return false
 	})
 	return readers
+}
+
+// answerBlockers is which output checks would block this request's answer:
+// the config file's post-stage rules when one's action is block under the
+// key's and the request's policy (Engine.BlockingPost), and an
+// organization's enabled checks that read the answer when one is in block
+// mode, as blockingAnswerChecks names them.
+func (p *GuardrailPlugin) answerBlockers(rc *models.RequestContext, keyPolicy *policy.Policy, reqPolicy policy.RequestPolicy) models.AnswerReaders {
+	var blockers models.AnswerReaders
+	if len(p.engine.BlockingPost(keyPolicy, reqPolicy)) > 0 {
+		blockers |= models.AnswerReadByRules
+	}
+	p.eachOrgCheck(rc, StagePost, func(_ string, check *tenant.GuardrailCheck) bool {
+		if parseAction(check.Action) == ActionBlock {
+			blockers |= models.AnswerReadByOrg
+			return false
+		}
+		return true
+	})
+	return blockers
 }
 
 // eachOrgCheck calls f with each of the request's organization's enabled
@@ -858,22 +883,8 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 // resolvePolicy looks up the per-org, per-key, and per-request policy overrides.
 // Priority order (highest wins): per-request > per-key > per-org > global default.
 func (p *GuardrailPlugin) resolvePolicy(rc *models.RequestContext) (*policy.Policy, policy.RequestPolicy, *models.APIError) {
-	// 1. Look up per-org guardrail policy from tenant store.
-	var orgPolicy *policy.Policy
-	if orgID := rc.Metadata["org_id"]; orgID != "" && p.tenantStore != nil {
-		if orgCfg := p.tenantStore.Get(orgID); orgCfg != nil {
-			orgPolicy = orgCfg.GuardrailPolicy()
-		}
-	}
-
-	// 2. Look up per-key policy.
-	var keyPolicy *policy.Policy
-	if keyID := rc.Metadata["auth_key_id"]; keyID != "" && p.policyStore != nil {
-		keyPolicy = p.policyStore.Get(keyID)
-	}
-
-	// 3. Merge: org is base, key overrides take precedence.
-	merged := mergePolicy(orgPolicy, keyPolicy)
+	// 1-3. The per-org policy, with the per-key overrides on top.
+	merged := RulePolicy(p.tenantStore, p.policyStore, rc.Metadata)
 
 	// 4. Check per-request override header.
 	reqPolicyStr := rc.Metadata["x-guardrail-policy"]
@@ -897,6 +908,28 @@ func (p *GuardrailPlugin) resolvePolicy(rc *models.RequestContext) (*policy.Poli
 	}
 
 	return merged, rp, nil
+}
+
+// RulePolicy is the policy the config file's rules run under for the request
+// whose metadata is metadata: its organization's (OrgConfig.GuardrailPolicy,
+// where an org check named as a rule overrides that rule's action and
+// threshold) with its key's overrides on top. Nil when neither has one. The
+// guardrail plugin (resolvePolicy) and the streaming checker
+// (NewStreamChecker) both take it from here, so a rule that blocks for one
+// blocks for the other, and a stream handler holds a stream for exactly the
+// rules the plugin would block it for.
+func RulePolicy(tenants *tenant.Store, keys *policy.Store, metadata map[string]string) *policy.Policy {
+	var orgPolicy *policy.Policy
+	if orgID := metadata["org_id"]; orgID != "" && tenants != nil {
+		if orgCfg := tenants.Get(orgID); orgCfg != nil {
+			orgPolicy = orgCfg.GuardrailPolicy()
+		}
+	}
+	var keyPolicy *policy.Policy
+	if keyID := metadata["auth_key_id"]; keyID != "" && keys != nil {
+		keyPolicy = keys.Get(keyID)
+	}
+	return mergePolicy(orgPolicy, keyPolicy)
 }
 
 // PermittedRequestPolicy is the request's X-Guardrail-Policy when its key has

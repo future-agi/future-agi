@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/contracts/schematest"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -25,6 +26,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
+	cacheplugin "github.com/futureagi/agentcc-gateway/internal/plugins/cache"
 	loggingplugin "github.com/futureagi/agentcc-gateway/internal/plugins/logging"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -240,6 +242,9 @@ type postBlockSetup struct {
 	// config-file rule (staticRule) or an organization's check (orgChecks)
 	// of that name runs it.
 	checks map[string]guardrails.Guardrail
+	// cache, when set, is the response cache's store: the cache plugin runs
+	// with it.
+	cache *cache.Store
 }
 
 type postBlockGateway struct {
@@ -361,6 +366,9 @@ func newPostBlockGateway(t *testing.T, s postBlockSetup) *postBlockGateway {
 	}
 	if s.preAnswer {
 		plugins = append(plugins, leakShortCircuit{})
+	}
+	if s.cache != nil {
+		plugins = append(plugins, cacheplugin.NewFromStore(s.cache, time.Minute))
 	}
 	g.srv = New(cfg, "", registry, pipeline.NewEngine(plugins...), ks, grEngine, policies, nil, testModelDBPtr(), tenants, nil)
 	g.srv.ready.Store(true)
@@ -596,8 +604,9 @@ func TestPostBlockStream_CheckerStopsTheStream(t *testing.T) {
 	assertBlockLogged(t, g.entry(t), "")
 }
 
-// The streaming checker refuses the stream at its end, after the text went
-// out: the error event follows the text, and the log records the block.
+// The streaming checker refuses the stream at its end: the stream it held
+// carries none of the answer, only the checker's error event and [DONE], and
+// the log records the block.
 func TestPostBlockStream_CheckerBlocksAtTheEnd(t *testing.T) {
 	g := newPostBlockGateway(t, postBlockSetup{staticRule: leakageCheck,
 		streaming: &config.StreamingGuardrailConfig{Enabled: true, CheckInterval: 1 << 20, FailureAction: "stop"}})
@@ -606,17 +615,19 @@ func TestPostBlockStream_CheckerBlocksAtTheEnd(t *testing.T) {
 		t.Fatalf("status %d, want the stream's 200; body %s", code, body)
 	}
 	events, at := assertStreamEndsWithGuardrailError(t, body, "stream_blocked")
-	if leak := leakPosition(events); leak < 0 || leak > at {
-		t.Errorf("want the text before the error event (text at %d, error at %d); body %s", leak, at, body)
+	if leak := leakPosition(events); leak >= 0 {
+		t.Errorf("the stream sent the blocked answer (at %d, error at %d); body %s", leak, at, body)
+	}
+	if at != 0 || events[len(events)-1] != "[DONE]" || len(events) != 2 {
+		t.Errorf("want only the error event, then [DONE]; body %s", body)
 	}
 	assertBlockLogged(t, g.entry(t), "")
 }
 
 // With no streaming checker, the output checks run on the assembled answer
-// when the stream ends (the request log keeps bodies, so the gateway
-// assembles it). A block there, by a static rule or an org's check, ends the
-// stream with the guardrail's error event after the text that already went
-// out, and the log records the block.
+// when the stream ends. A block there, by a static rule or an org's check,
+// holds the stream: it carries none of the answer, only the guardrail's error
+// event and [DONE], and the log records the block.
 func TestPostBlockStream_EndOfStreamCheckAnswersTheGuardrailError(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -632,11 +643,11 @@ func TestPostBlockStream_EndOfStreamCheckAnswersTheGuardrailError(t *testing.T) 
 				t.Fatalf("status %d, want the stream's 200; body %s", code, body)
 			}
 			events, at := assertStreamEndsWithGuardrailError(t, body, "content_blocked")
-			if leak := leakPosition(events); leak < 0 || leak > at {
-				t.Errorf("want the text before the error event (text at %d, error at %d); body %s", leak, at, body)
+			if leak := leakPosition(events); leak >= 0 {
+				t.Errorf("the stream sent the blocked answer (at %d, error at %d); body %s", leak, at, body)
 			}
-			if last := events[len(events)-1]; last != "[DONE]" {
-				t.Errorf("the stream ends with %q, want [DONE]", last)
+			if last := events[len(events)-1]; last != "[DONE]" || at != 0 || len(events) != 2 {
+				t.Errorf("want only the error event, then [DONE]; body %s", body)
 			}
 			assertBlockLogged(t, g.entry(t), leakageCheck)
 		})

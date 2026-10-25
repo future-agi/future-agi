@@ -333,10 +333,11 @@ const OverviewTab = ({ guardrails, gatewayId, storedAsChecksMap }) => {
         <Typography variant="caption" color="text.secondary">
           After LLM checks read the text of the model&apos;s answer, not the
           prompt, on chat, completions, Anthropic Messages, Gemini and Responses
-          requests, streamed or not. On a stream they read the answer when the
-          stream ends, and a blocked stream ends with the guardrail&apos;s
-          error. A background Responses request is refused when an After LLM
-          check would block it.
+          requests, streamed or not. A stream that an After LLM check in block
+          mode reads is held until the check passes, so its answer starts once
+          it is complete; a blocked stream carries none of the answer and ends
+          with the guardrail&apos;s error. A background Responses request is
+          refused when an After LLM check would block it.
         </Typography>
       )}
 

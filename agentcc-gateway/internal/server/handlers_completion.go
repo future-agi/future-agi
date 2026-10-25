@@ -370,6 +370,14 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		return
 	}
 
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream), as on a chat stream.
+	var held *heldStream
+	if holdsTheStream(rc) {
+		if held = newHeldStream(w); held != nil {
+			sseWriter = streaming.NewSSEWriter(held)
+		}
+	}
 	sseWriter.WriteHeaders()
 
 	// Track last usage from stream chunks for post-plugin cost/credits tracking.
@@ -381,6 +389,9 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	// output check that reads it at the stream's end, whether or not the log
 	// keeps bodies.
 	capture := newStreamCapture(h.captureStreamContent || rc.Flags.AnswerReaders != 0)
+	if held != nil {
+		capture.holdAll()
+	}
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging). Must be called before every return.
@@ -393,11 +404,8 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			Usage:  lastUsage,
 		}
 		capture.applyTo(rc.Response)
-		pluginCtx := ctx
-		if detach {
-			pluginCtx = context.Background()
-		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		held.beforeChecks(rc, capture.complete())
+		h.engine.RunPostPlugins(checksContext(ctx, held, detach), rc)
 		return billedUsage(rc, lastUsage)
 	}
 
@@ -429,6 +437,25 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			}
 		}
 	}
+	// refuseHeld ends a held stream whose answer an output check refused,
+	// once the post-plugins have run: none of it goes out (what it holds and
+	// the finish chunks finishHold keeps are dropped), only the guardrail's
+	// error event. It reports whether it did; false for a stream that is not
+	// held, or whose answer passed and is released as it came.
+	refuseHeld := func() bool {
+		if held == nil {
+			return false
+		}
+		apiErr := withheldAnswerError(rc)
+		if apiErr == nil {
+			held.release()
+			return false
+		}
+		held.discard()
+		hold.drain(nil)
+		sseWriter.WriteError(apiErr)
+		return true
+	}
 
 	for {
 		select {
@@ -439,9 +466,14 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 				// request log assembles it when it keeps bodies) ends the
 				// stream with the guardrail's error event.
 				usage := finalizeStream(false)
-				writeHeld(usage)
-				if apiErr := withheldAnswerError(rc); apiErr != nil {
-					sseWriter.WriteError(apiErr)
+				// A held stream whose answer is refused carries only the
+				// guardrail's error event, then the usage chunk when the
+				// client asked for usage (C79), then [DONE].
+				if !refuseHeld() {
+					writeHeld(usage)
+					if apiErr := withheldAnswerError(rc); apiErr != nil {
+						sseWriter.WriteError(apiErr)
+					}
 				}
 				// A client that asked for usage, or for the gateway's
 				// metadata, gets it once, right before [DONE], with empty
@@ -511,7 +543,19 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 					apiErr = models.ErrInternal(err.Error())
 				}
 				// A held finish chunk goes out before the error event, in
-				// its place in the stream, with the billed usage.
+				// its place in the stream, with the billed usage. A held
+				// stream's post-plugins run first: what it holds goes out
+				// before the error event, or, when the checks refuse it,
+				// only their error event.
+				if held != nil {
+					usage := finalizeStream(false)
+					if refuseHeld() {
+						return
+					}
+					writeHeld(usage)
+					sseWriter.WriteError(apiErr)
+					return
+				}
 				if !hold.pending() {
 					sseWriter.WriteError(apiErr)
 					finalizeStream(false)
@@ -531,7 +575,11 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 				for range chunks {
 				}
 			}()
-			writeHeld(finalizeStream(true))
+			usage := finalizeStream(true)
+			if refuseHeld() {
+				return
+			}
+			writeHeld(usage)
 			return
 		}
 	}

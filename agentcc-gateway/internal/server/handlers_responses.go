@@ -329,6 +329,14 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 	}
 	defer stream.Close()
 
+	// A stream that a blocking check on the answer reads is held until the
+	// checks have passed the whole answer (heldStream).
+	var held *heldStream
+	if holdsTheStream(rc) {
+		if held = newHeldStream(w); held != nil {
+			w = held
+		}
+	}
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -345,6 +353,9 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 	// The text the stream sends, for an output check that reads the answer,
 	// and the usage its last event reports, which prices it.
 	answer := newSSEAnswer(rc.Flags.AnswerReaders != 0, responsesStreamDecoder())
+	if held != nil {
+		answer.holdAll()
+	}
 	var usage responsesStreamUsage
 
 	// Relay the SSE stream directly from the provider.
@@ -401,9 +412,12 @@ streamLoop:
 		}
 	}
 	answer.giveTo(rc)
-	h.engine.RunPostPlugins(ctx, rc)
+	held.beforeChecks(rc, answer.complete())
+	h.engine.RunPostPlugins(checksContext(ctx, held, false), rc)
 	if ended {
-		endWithheldStream(w, flusher, rc, responsesStreamErrorEvent)
+		endStream(w, flusher, held, rc, responsesStreamErrorEvent)
+	} else {
+		settleHeldStream(held, rc, responsesStreamErrorEvent)
 	}
 }
 

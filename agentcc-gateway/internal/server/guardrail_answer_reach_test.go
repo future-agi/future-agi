@@ -104,8 +104,8 @@ func TestAnswerCheckStream_EverySurfaceEndsWithTheGuardrailError(t *testing.T) {
 	}
 }
 
-// assertStreamEndsWithBlock: the stream sent its text, then exactly one
-// error event, the guardrail's, in the surface's own format.
+// assertStreamEndsWithBlock: the stream sent none of the answer, only
+// exactly one error event, the guardrail's, in the surface's own format.
 func assertStreamEndsWithBlock(t *testing.T, tc answerSurface, code int, body string) {
 	t.Helper()
 	if code != http.StatusOK {
@@ -125,8 +125,8 @@ func assertStreamEndsWithBlock(t *testing.T, tc answerSurface, code int, body st
 	if errs != 1 {
 		t.Fatalf("the stream carries %d error events, want 1; body %s", errs, body)
 	}
-	if leak < 0 || leak > errAt {
-		t.Errorf("want the text before the error event (text at %d, error at %d); body %s", leak, errAt, body)
+	if leak >= 0 {
+		t.Errorf("the stream sent the blocked answer (at %d, error at %d); body %s", leak, errAt, body)
 	}
 	data := frames[errAt].data
 	if tc.path == "/v1/responses" {

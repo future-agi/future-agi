@@ -202,17 +202,21 @@ describe("GuardrailManagementSection", () => {
     expect(stageOf("pii-detector")).toBe("Before LLM");
     expect(stageOf("data-leakage-prevention")).toBe("After LLM");
     expect(stageOf("hallucination-detection")).toBe("After LLM");
-    // A blocked stream ends with the guardrail's error.
+    // A stream that a blocking check on the answer reads is held until the
+    // check passes, and a blocked stream carries none of the answer.
     expect(
-      screen.getByText(/a blocked stream ends with the guardrail's error/),
+      screen.getByText(/is held until the check passes/),
     ).toBeInTheDocument();
-    // The note states what the gateway does when a stream ends.
-    expect(screen.queryByText(/withhold/)).toBeNull();
+    expect(
+      screen.getByText(/a blocked stream carries none of the answer/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/cannot hold back/)).toBeNull();
     // The gateway gives the checks the answer on every route that answers
     // with a chat-style answer: chat, completions, Anthropic Messages,
     // Gemini and Responses, passed through or translated, streamed or not,
-    // whether or not request bodies are logged. A stream is read when it
-    // ends, and a blocked one ends with the guardrail's error. A background
+    // whether or not request bodies are logged. A stream that a blocking
+    // check reads is held until the check passes, and a blocked one carries
+    // none of the answer and ends with the guardrail's error. A background
     // Responses request, whose answer never reaches the gateway, is refused
     // when such a check would block it. The note says so, and limits the
     // checks to no subset of these requests.
@@ -224,9 +228,11 @@ describe("GuardrailManagementSection", () => {
       /After LLM checks read the text of the model's answer, not the prompt/,
     );
     expect(note).toMatch(
-      /On a stream they read the answer when the stream ends/,
+      /A stream that an After LLM check in block mode reads is held until the check passes/,
     );
-    expect(note).toMatch(/a blocked stream ends with the guardrail's error/);
+    expect(note).toMatch(
+      /a blocked stream carries none of the answer and ends with the guardrail's error/,
+    );
     expect(note).toMatch(
       /A background Responses request is refused when an After LLM check would block it/,
     );

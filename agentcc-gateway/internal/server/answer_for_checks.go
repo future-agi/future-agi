@@ -33,7 +33,13 @@ const (
 // withhold: the guardrail plugin refuses it when a check on the answer would
 // block, rather than let it out unchecked.
 func markAnswerUnreadable(rc *models.RequestContext) {
-	rc.MarkAnswerUnavailable(answerUnreadable)
+	markAnswerUnreadableBecause(rc, answerUnreadable)
+}
+
+// markAnswerUnreadableBecause is markAnswerUnreadable with the reason the
+// guardrail plugin's refusal gives.
+func markAnswerUnreadableBecause(rc *models.RequestContext, reason string) {
+	rc.MarkAnswerUnavailable(reason)
 	if rc.Response == nil {
 		model := rc.ResolvedModel
 		if model == "" {
@@ -94,6 +100,7 @@ type sseAnswer struct {
 	decode  func(data []byte) (models.StreamChunk, bool)
 	line    []byte // the current line, until its newline arrives
 	skip    bool   // the current line passed maxSSELineBytes
+	skipped bool   // a line passed maxSSELineBytes, so it was not read
 }
 
 func newSSEAnswer(enabled bool, decode func(data []byte) (models.StreamChunk, bool)) *sseAnswer {
@@ -129,7 +136,7 @@ func (a *sseAnswer) hold(p []byte) {
 		return
 	}
 	if len(a.line)+len(p) > maxSSELineBytes {
-		a.line, a.skip = a.line[:0], true
+		a.line, a.skip, a.skipped = a.line[:0], true, true
 		return
 	}
 	a.line = append(a.line, p...)
@@ -143,6 +150,21 @@ func (a *sseAnswer) readLine(line []byte) {
 	if chunk, ok := a.decode(bytes.TrimPrefix(data, []byte(" "))); ok {
 		a.capture.observe(chunk)
 	}
+}
+
+// holdAll makes the assembly hold what a held stream may hold
+// (streamCapture.holdAll). Safe on nil.
+func (a *sseAnswer) holdAll() {
+	if a != nil {
+		a.capture.holdAll()
+	}
+}
+
+// complete reports whether the assembly holds the whole answer the stream
+// sent: no line was skipped and the capture is complete. True on nil, where
+// nothing is assembled because no check reads the answer.
+func (a *sseAnswer) complete() bool {
+	return a == nil || (!a.skipped && a.capture.complete())
 }
 
 // giveTo puts the assembled answer on rc.Response (giveChecksTheStreamedAnswer).

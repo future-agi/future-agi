@@ -495,11 +495,11 @@ func serveLeakThenUsageChunk(w http.ResponseWriter, r *http.Request) {
 }
 
 // (5) A stream a guardrail blocks keeps its one error event and its ending.
-// The final usage chunk follows the rule above: none unless the client
-// asked; when it asked, one, after the error event and right before [DONE].
-// When it did not ask, the held finish chunk goes out before the error
-// event, in its place in the stream, with the billed usage. A
-// stream the checker stops mid-way still ends at its error event.
+// A blocking check holds the stream, so none of the blocked answer goes out:
+// no chunk with choices, the finish chunk included. The final usage chunk
+// follows the rule above: none unless the client asked; when it asked, one,
+// after the error event and right before [DONE]. A stream the checker stops
+// mid-way still ends at its error event.
 func TestChatStreamUsage_GuardrailBlockKeepsItsErrorEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -534,12 +534,12 @@ func TestChatStreamUsage_GuardrailBlockKeepsItsErrorEvent(t *testing.T) {
 					t.Fatalf("the stream ends with [DONE]: %t, want %t; body %s", ended, tc.withDone, body)
 				}
 				at := emptyChoiceChunks(chunks)
-				switch {
-				case !asked && tc.withDone:
-					fin, finAt := usageOnTheFinishChunk(t, chunks, body)
-					if finAt > errAt || !usageIs(fin.Usage, 5, 9, 14) {
-						t.Errorf("the finish chunk at %d (error at %d) is %s, want it before the error with the usage 5/9/14", finAt, errAt, fin.raw)
+				for i, c := range chunks {
+					if !c.done && len(c.Choices) > 0 {
+						t.Errorf("chunk %d carries choices of the blocked answer: %s", i, c.raw)
 					}
+				}
+				switch {
 				case !asked || !tc.withDone:
 					if len(at) != 0 {
 						t.Errorf("chunks with empty choices at %v, want none; body %s", at, body)

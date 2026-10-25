@@ -367,10 +367,10 @@ func isStreamError(fr sseFrame) bool {
 	return json.Unmarshal([]byte(fr.data), &e) == nil && len(e.Error) > 0 && string(e.Error) != "null"
 }
 
-// With the text already sent, an output check that blocks the answer at the
-// end of a stream ends it with the guardrail's error event, in the surface's
-// own format, as a chat stream does, and the log records the block; on
-// /v1/completions the checks run before [DONE].
+// An output check that blocks the answer of a stream holds the stream: it
+// carries none of the answer, only the guardrail's error event, in the
+// surface's own format, as a chat stream does, and the log records the block.
+// /v1/completions sends [DONE] after the error event.
 func TestPostBlockStream_EverySurfaceEndsWithTheGuardrailError(t *testing.T) {
 	static := postBlockSetup{staticRule: answerBlockRule}
 	cases := []struct {
@@ -410,8 +410,8 @@ func TestPostBlockStream_EverySurfaceEndsWithTheGuardrailError(t *testing.T) {
 			if errors != 1 {
 				t.Fatalf("the stream carries %d error events, want 1; body %s", errors, body)
 			}
-			if leak < 0 || leak > errAt {
-				t.Errorf("want the text before the error event (text at %d, error at %d); body %s", leak, errAt, body)
+			if leak >= 0 {
+				t.Errorf("the stream sent the blocked answer (at %d, error at %d); body %s", leak, errAt, body)
 			}
 			errData := frames[errAt].data
 			if tc.path == "/v1/responses" {
