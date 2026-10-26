@@ -855,7 +855,10 @@ and the builder writes the binding.
 
 The builder retries within its turn budget; there is no fixed round limit. The
 approval is a builder question (`question_requested`, `{prompt, options}`,
-answered by a `user_response` replying to it).
+answered by a `user_response` replying to it). When the builder takes the reply it
+emits `question_answered` (`message_id` the question, `{reply_message_id}`): the
+reply is completed and `blocking_input` cleared at once, not at the turn's end, so a
+build that runs on after its approval does not show the question as open.
 
 **Outputs** in `/work/authoring/adaptation/`:
 

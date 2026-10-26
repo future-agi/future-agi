@@ -51023,7 +51023,7 @@
             "get": {
                 "operationId": "simulate_api_harness-environments_read",
                 "summary": "One environment: overview, contract, world, scenarios, evaluations, settings.",
-                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane.",
+                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane.\nDesigns and adaptations are read here too: the environments workspace is their page.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -130581,6 +130581,7 @@
                         "tool_result",
                         "question_requested",
                         "confirmation_requested",
+                        "question_answered",
                         "turn_interrupted",
                         "turn_completed",
                         "checkpoint_committed",

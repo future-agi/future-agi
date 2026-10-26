@@ -59119,6 +59119,7 @@ export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
 yet is null, so the client renders "building" rather than an empty pane.
+Designs and adaptations are read here too: the environments workspace is their page.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const simulateApiHarnessEnvironmentsRead = async (

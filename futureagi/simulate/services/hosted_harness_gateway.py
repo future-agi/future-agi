@@ -2472,6 +2472,7 @@ class HostedHarnessGateway:
             snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
+        self._delete_superseded_sandboxes(job.id, attempt.attempt_number)
         dispatch_runtime = dict(dispatch_payload["runtime"])
         dispatch_runtime["parallelism"] = capability.admitted_parallelism
         dispatch_runtime["cpu_units"] = capacity.cpu_units
@@ -4600,6 +4601,29 @@ class HostedHarnessGateway:
         if absent:
             lease.state = HostedHarnessConversationLease.State.EXPIRED
             lease.save(update_fields=["state", "updated_at"])
+
+    def _delete_superseded_sandboxes(self, job_id: Any, attempt_number: int) -> None:
+        """Delete the sandboxes of earlier attempts a new attempt replaced before their cleanup.
+
+        A launch killed after its sandbox exists (a worker restart) is retried as a new attempt,
+        which supersedes the old one; nothing else would ever delete the old sandbox.
+        """
+        stale = HostedHarnessAttempt.no_workspace_objects.filter(
+            job_id=job_id,
+            attempt_number__lt=attempt_number,
+            state=HostedHarnessAttempt.State.SUPERSEDED,
+            provider_ref__isnull=False,
+            cleanup_verified_at__isnull=True,
+        ).exclude(provider_ref="")
+        for attempt in stale:
+            try:
+                self._delete_and_record(attempt)
+            except Exception:  # noqa: BLE001 - the new attempt still launches; the leak is logged
+                logger.exception(
+                    "superseded sandbox cleanup failed attempt=%s provider_ref=%s",
+                    attempt.id,
+                    attempt.provider_ref,
+                )
 
     def _delete_and_record(
         self,

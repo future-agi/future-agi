@@ -1053,6 +1053,33 @@ def _project_event(
             **payload,
         }
         return
+    if kind == "question_answered":
+        # The builder took the reply in the middle of its turn. A design builds for an hour after
+        # its approval, so waiting for turn_completed would leave the question showing as open.
+        try:
+            reply_id = uuid.UUID(str(payload.get("reply_message_id")))
+        except ValueError:
+            raise HostedHarnessError(
+                "conversation_reply_id_invalid",
+                f"{kind} requires the reply's reply_message_id",
+                status_code=422,
+            ) from None
+        if not message_id:
+            raise HostedHarnessError(
+                "conversation_message_id_missing",
+                f"{kind} requires message_id",
+                status_code=422,
+            )
+        conversation.messages.filter(
+            id=reply_id,
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to=message_id,
+        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        open_question = (conversation.blocking_input or {}).get("message_id")
+        if str(open_question or "") == str(message_id):
+            conversation.blocking_input = None
+            conversation.state = HostedHarnessConversation.State.RESPONDING
+        return
     if kind == "turn_interrupted":
         control_id = payload.get("interrupt_message_id") or payload.get(
             "command_message_id"

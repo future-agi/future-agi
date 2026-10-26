@@ -19928,6 +19928,7 @@ export const HarnessConversationEventApiKind = {
   tool_result: "tool_result",
   question_requested: "question_requested",
   confirmation_requested: "confirmation_requested",
+  question_answered: "question_answered",
   turn_interrupted: "turn_interrupted",
   turn_completed: "turn_completed",
   checkpoint_committed: "checkpoint_committed",
