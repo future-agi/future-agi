@@ -1509,7 +1509,7 @@ with `Retry-After` (gRPC `UNAVAILABLE`), which OpenTelemetry exporters retry. A 
     keys = ["FI_INSERT_CONCURRENCY"]
     default = "`3` from a 512 MiB collector `GOMEMLIMIT` up, `2` from 384 MiB, else `1`"
     setups = ["S", "D", "H"]
-    text = "ClickHouse inserts of received spans that the trace collector runs at once. More drains bursts faster; each insert takes about two 8 to 16 MiB buffers out of the ingest budget's allowance."
+    text = "ClickHouse inserts of received spans that the trace collector runs at once, across batches and within a large one. More drains bursts faster; each insert takes about two 8 to 16 MiB buffers out of the ingest budget's allowance."
 
   [[part.section]]
   heading = "Databases and storage"

@@ -195,8 +195,8 @@ SDK ──OTLP/HTTP or gRPC──► fi-collector
                             ├─ wire lease, then read the body   (capped; read deadline)
                             ├─ scan the body, work lease        (limits; price of decode + rows)
                             ├─ decode, convert, park the rows   (the rows keep their lease)
-                            └─ flush: up to 3 inserts at once,  ─► ClickHouse 25.3
-                               each of a bounded size
+                            └─ flush: inserts of a bounded size, ─► ClickHouse 25.3
+                               up to 3 at once
 ```
 
 One budget bounds the memory that all OTLP requests (plain, gzip and gRPC)
@@ -286,7 +286,9 @@ wait and then get 503 / UNAVAILABLE instead of growing memory.
 
 Pending rows are stored by up to `FI_INSERT_CONCURRENCY` inserts at once:
 each wake-up of the flusher (row count, age, or a request waiting for the
-budget) swaps the pending batch out to one free inserter. A batch's leases
+budget) swaps the pending batch out to one free inserter, and a large
+batch's inserts (each of about the insert size) also go out at once, within
+the same cap. A batch's leases
 are released when its insert has ended and every batch swapped out before it
 has too, so a lease is never released while ClickHouse may still be reading
 its rows. Shutdown waits for the inserts under way, then stores what is

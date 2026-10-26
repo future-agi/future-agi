@@ -290,6 +290,9 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	s.work.busy = func() bool { return s.draining.Load() > 0 }
 	if writer != nil {
 		writer.SetMaxInsertBytes(int(limits.insertMax))
+		// limits.inserts span inserts in flight in all, from every drain and
+		// within one: a large batch's inserts run at once too.
+		writer.SetMaxConcurrentInserts(limits.inserts)
 	}
 	return s
 }

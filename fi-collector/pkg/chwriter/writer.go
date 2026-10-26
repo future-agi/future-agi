@@ -38,6 +38,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 // Config is what the operator supplies via YAML or env. Field tags map to
@@ -98,6 +100,9 @@ type Writer struct {
 	// maxInsertBytes, when positive, splits a span batch into inserts of
 	// about this many bytes (SetMaxInsertBytes).
 	maxInsertBytes int
+	// inserts, when set, caps the span inserts in flight across every Insert
+	// call, and lets one batch's inserts run at once (SetMaxConcurrentInserts).
+	inserts *semaphore.Weighted
 }
 
 // SetMaxInsertBytes makes Insert send a batch as several inserts of about n
@@ -106,6 +111,20 @@ type Writer struct {
 // batch's. 0, the default, sends each batch as one insert. Call it before the
 // writer is used.
 func (w *Writer) SetMaxInsertBytes(n int) { w.maxInsertBytes = max(n, 0) }
+
+// SetMaxConcurrentInserts lets up to n span inserts run at once, across all
+// Insert calls: a batch split by SetMaxInsertBytes sends its inserts without
+// waiting for the one before, while it encodes the next. Insert still returns
+// only when every insert of its batch has ended. Each caller then holds at
+// most one body it is encoding, and n bodies are in flight in all. 0 or 1,
+// the default, sends one insert at a time per Insert call. Call it before
+// the writer is used.
+func (w *Writer) SetMaxConcurrentInserts(n int) {
+	w.inserts = nil
+	if n > 1 {
+		w.inserts = semaphore.NewWeighted(int64(n))
+	}
+}
 
 // New constructs a Writer and validates the config. The file path of the
 // dead-letter sink is created (parent dir mkdir-p'd) but the file itself
@@ -229,6 +248,9 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	if len(rows) == 0 {
 		return nil
 	}
+	if w.inserts != nil {
+		return w.insertConcurrently(ctx, url, rows)
+	}
 	limit := w.maxInsertBytes
 	// Estimate ~512 B/row so we avoid 5+ buffer-grow re-allocs; with chunks,
 	// a chunk's worth.
@@ -269,6 +291,83 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 			start = i + 1
 		}
 	}
+	return firstErr
+}
+
+// insertConcurrently is insert with SetMaxConcurrentInserts: each insert of
+// the batch is sent as soon as it is encoded and a slot is free, while the
+// next is encoded. As in insert, once an insert gives up because ClickHouse
+// is unavailable, the rows not sent yet are dead-lettered at once; inserts
+// already in flight finish on their own (each dead-letters its own rows if it
+// fails). It returns only when every insert it started has ended.
+func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any) error {
+	limit := w.maxInsertBytes
+	size := len(rows) * 512
+	if limit > 0 {
+		size = min(size, limit+limit/8)
+	}
+	var (
+		wg          sync.WaitGroup
+		mu          sync.Mutex
+		firstErr    error
+		unavailable atomic.Bool
+	)
+	fail := func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	defer wg.Wait()
+	var buf bytes.Buffer
+	buf.Grow(size)
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	start := 0
+	for i, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			wg.Wait()
+			mu.Lock()
+			defer mu.Unlock()
+			return errors.Join(firstErr, fmt.Errorf("chwriter: encode: row %d: %w", i, err))
+		}
+		if i < len(rows)-1 && (limit <= 0 || buf.Len() < limit) {
+			continue
+		}
+		part := rows[start : i+1]
+		if unavailable.Load() || w.inserts.Acquire(ctx, 1) != nil {
+			// ClickHouse did not take an earlier insert of the batch after
+			// every retry, or the drain was cancelled: dead-letter what is
+			// left, this insert's rows included, so the drain ends.
+			wg.Wait()
+			mu.Lock()
+			defer mu.Unlock()
+			return errors.Join(firstErr, w.deadLetterUnsent(rows[start:]))
+		}
+		body := buf.Bytes()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer w.inserts.Release(1)
+			gaveUp, err := w.insertChunk(ctx, url, body, part)
+			if err != nil {
+				fail(err)
+			}
+			if gaveUp {
+				unavailable.Store(true)
+			}
+		}()
+		// A new buffer: the one just sent is in flight.
+		buf = bytes.Buffer{}
+		if i < len(rows)-1 {
+			buf.Grow(size)
+		}
+		start = i + 1
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
 	return firstErr
 }
 
