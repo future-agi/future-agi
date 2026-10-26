@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidActions are the supported Google GenAI endpoint actions.
@@ -69,6 +70,25 @@ func ExtractTextFromContents(reqBody []byte) string {
 }
 
 // ExtractTextFromResponse extracts text from a Google GenAI response body.
+// EmbedInputCharacters counts the characters of text an embedContent request
+// sends, the unit some embedding models are priced in. The response carries
+// no usage to price from.
+func EmbedInputCharacters(reqBody []byte) int {
+	var m struct {
+		Content struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(reqBody, &m); err != nil {
+		return 0
+	}
+	characters := 0
+	for _, part := range m.Content.Parts {
+		characters += utf8.RuneCountInString(extractTextFromPart(part))
+	}
+	return characters
+}
+
 func ExtractTextFromResponse(respBody []byte) string {
 	var m struct {
 		Candidates []struct {

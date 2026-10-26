@@ -1,7 +1,10 @@
 package streaming
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -229,3 +232,81 @@ func TestSSEWriter_MultipleChunksAndDone(t *testing.T) {
 		t.Errorf("expected 4 data lines, got %d", count)
 	}
 }
+
+// readEvents reads every event from a stream, and the error it ended with.
+func readEvents(t *testing.T, r io.Reader) ([]Event, error) {
+	t.Helper()
+	er := NewEventReader(r)
+	var events []Event
+	for {
+		ev, err := er.Next()
+		if len(ev.Raw) > 0 {
+			events = append(events, ev)
+		}
+		if err != nil {
+			return events, err
+		}
+	}
+}
+
+func TestEventReader_SplitsEventsAndKeepsEveryByte(t *testing.T) {
+	stream := ": keep-alive\n\n" +
+		"event: message_start\ndata: {\"type\":\"message_start\"}\n\n" +
+		"\n" + // a stray blank line belongs to the next event
+		"event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n"
+
+	events, err := readEvents(t, strings.NewReader(stream))
+	if err != io.EOF {
+		t.Fatalf("err = %v, want io.EOF", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3: %q", len(events), events)
+	}
+
+	var relayed bytes.Buffer
+	for _, ev := range events {
+		relayed.Write(ev.Raw)
+	}
+	if relayed.String() != stream {
+		t.Errorf("relayed bytes differ from the stream:\n got %q\nwant %q", relayed.String(), stream)
+	}
+
+	if events[1].Name != "message_start" || string(events[1].Data()) != `{"type":"message_start"}` {
+		t.Errorf("event 1 = %q / %q", events[1].Name, events[1].Data())
+	}
+	if events[2].Name != "message_stop" || string(events[2].Data()) != `{"type":"message_stop"}` {
+		t.Errorf("CRLF event = %q / %q", events[2].Name, events[2].Data())
+	}
+}
+
+func TestEventReader_JoinsDataLines(t *testing.T) {
+	events, _ := readEvents(t, strings.NewReader("data: {\"a\":\ndata:1}\n\ndata:\ndata: x\n\n"))
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	if got := string(events[0].Data()); got != "{\"a\":\n1}" {
+		t.Errorf("data = %q, want the two lines joined by a newline", got)
+	}
+	if got := string(events[1].Data()); got != "\nx" {
+		t.Errorf("data = %q, want an empty first line kept", got)
+	}
+}
+
+// A stream cut mid-event hands back what arrived, with the read error, so the
+// relay can forward it and then report the failure.
+func TestEventReader_ReturnsThePartialEventWithTheError(t *testing.T) {
+	cut := errors.New("connection reset")
+	r := io.MultiReader(strings.NewReader("data: one\n\ndata: tw"), &failingReader{err: cut})
+
+	events, err := readEvents(t, r)
+	if !errors.Is(err, cut) {
+		t.Fatalf("err = %v, want the read error", err)
+	}
+	if len(events) != 2 || string(events[1].Raw) != "data: tw" {
+		t.Fatalf("events = %q, want the whole event, then the partial one", events)
+	}
+}
+
+type failingReader struct{ err error }
+
+func (r *failingReader) Read([]byte) (int, error) { return 0, r.err }

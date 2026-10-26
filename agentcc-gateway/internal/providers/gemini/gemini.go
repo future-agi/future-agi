@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -326,6 +327,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, err := state.parseStreamData(data)
 			if err != nil {
+				var apiErr *models.APIError
+				if errors.As(err, &apiErr) {
+					errs <- apiErr
+					return
+				}
 				slog.Warn("gemini: error parsing stream data",
 					"error", err,
 					"provider", p.id,

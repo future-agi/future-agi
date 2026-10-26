@@ -227,6 +227,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Set up Video Generation store.
 	handlers.videoStore = video.NewMemoryStore()
+	// Shared through Redis when there is one, so the pod that sees a run
+	// finish can charge it whichever pod started it.
+	if redisClient != nil {
+		handlers.runCharges = &redisRunCharges{client: redisClient}
+	} else {
+		handlers.runCharges = newMemoryRunCharges()
+	}
 
 	// Set up async inference support.
 	asyncStore := async.NewStore()
