@@ -2241,7 +2241,7 @@
         },
         "ingestBudgetMiB": {
           "type": "integer",
-          "description": "[FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn, then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 419 with the default)."
+          "description": "[FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn (up to 2 s), then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 391 with the default)."
         },
         "maxBodyMiB": {
           "type": "integer",
