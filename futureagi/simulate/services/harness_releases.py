@@ -296,7 +296,14 @@ def list_releases(organization) -> list[dict[str, Any]]:
         .order_by("name", "created_at")
     )
     newest = {(one.organization_id, one.name): one for one in usable}
-    environments = list(newest.values())
+    # A design published as a prebuilt environment is the same content as the organization's
+    # own release; the prebuilt one is listed in its place.
+    published = {one.digest for one in newest.values() if one.organization_id is None}
+    environments = [
+        one
+        for one in newest.values()
+        if one.organization_id is None or one.digest not in published
+    ]
     suites: dict[Any, list[HarnessSuiteRelease]] = {}
     for suite in (
         _usable(HarnessSuiteRelease, organization)
