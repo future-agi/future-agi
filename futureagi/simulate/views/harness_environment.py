@@ -112,27 +112,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request):
-        # Adaptations and designs are followed as jobs: a composition is an adaptation's
-        # environment, and a design's are the releases it sealed.
-        return annotate_for_list(
-            scope_jobs(
-                HostedHarnessJob.no_workspace_objects.filter(
-                    organization=request_organization(request),
-                    environment__isnull=True,
-                    deleted=False,
-                )
-                .exclude(payload__metadata__has_key="adaptation")
-                .exclude(payload__metadata__has_key="design"),
-                request,
-            )
-        )
+    def _queryset(self, request, *, designs: bool = False):
+        # Adaptations are followed as jobs: a composition is an adaptation's environment. A
+        # design is listed (it is how a person finds one being built) but is never an
+        # environment the other actions take: its environment is the release it sealed.
+        jobs = HostedHarnessJob.no_workspace_objects.filter(
+            organization=request_organization(request),
+            environment__isnull=True,
+            deleted=False,
+        ).exclude(payload__metadata__has_key="adaptation")
+        if not designs:
+            jobs = jobs.exclude(payload__metadata__has_key="design")
+        return annotate_for_list(scope_jobs(jobs, request))
 
-    def _job(self, request, pk):
+    def _job(self, request, pk, *, designs: bool = False):
         identifier = _uuid_or_none(pk)
         if identifier is None:
             return None
-        return self._queryset(request).filter(id=identifier).first()
+        return self._queryset(request, designs=designs).filter(id=identifier).first()
 
     @validated_request(
         query_serializer=HarnessEnvironmentListQuerySerializer,
@@ -145,7 +142,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = self._queryset(request)
+        jobs = self._queryset(request, designs=True)
         agent_definition_id = request.validated_query_data.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
@@ -206,7 +203,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """
         from simulate.services.hosted_harness import delete_environment
 
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},

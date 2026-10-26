@@ -262,6 +262,14 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
 
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     metadata = job.payload.get("metadata", {})
+    renamed = str(job.name or "").strip()
+    if isinstance(metadata, dict) and renamed:
+        # A name set through the rename endpoint wins, as on the environments list.
+        metadata = {
+            **metadata,
+            "name": renamed,
+            **({"agent_name": renamed} if metadata.get("agent_name") else {}),
+        }
     if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
         return metadata
     if not job.run_test_id:
@@ -311,6 +319,16 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     ]
     if not stage_outputs:
         stage_outputs = list(job.stage_outputs or [])
+    if not stage_outputs and job.state == HostedHarnessJob.State.COMPLETED:
+        from simulate.services.harness_releases import composition_stage_outputs
+
+        # A composition authored nothing: its tabs describe its agent and released world,
+        # read from the releases once and kept (without touching updated_at).
+        stage_outputs = composition_stage_outputs(job)
+        if stage_outputs:
+            HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+                stage_outputs=stage_outputs
+            )
     # Scenarios — bounded to job.scenario_count.
     scenario_regs = list(
         HostedHarnessScenario.no_workspace_objects.filter(job=job)

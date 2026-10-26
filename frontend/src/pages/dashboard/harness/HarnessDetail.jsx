@@ -461,7 +461,11 @@ export default function HarnessDetail() {
 
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
-  const stageOutputs = current?.stage_outputs || [];
+  // A composition's `stores` output feeds the environment workspace's World section; its
+  // tables are already on this page's Environment tab.
+  const stageOutputs = (current?.stage_outputs || []).filter(
+    (output) => output.id !== "release-stores",
+  );
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
       ? !["contract", "environment", "scenarios"].includes(output.kind)

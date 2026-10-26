@@ -24,7 +24,10 @@ export default function MyEnvironmentsTab() {
   const { setTab } = useEnvironmentsTab();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const { data, isLoading, isPending, isError } = useMyEnvironments({ page, pageSize });
+  const { data, isLoading, isPending, isError } = useMyEnvironments({
+    page,
+    pageSize,
+  });
   const rows = data?.rows || [];
   const total = data?.total || 0;
   const loading = isLoading || isPending;
@@ -34,11 +37,17 @@ export default function MyEnvironmentsTab() {
   const deleteEnvironment = useDeleteEnvironment();
 
   const onOpen = (env) =>
-    navigate(paths.dashboard.simulate.environments.detail(env.id));
-  const onRun = (env) =>
     navigate(
-      `${paths.dashboard.simulate.environments.detail(env.id)}?tab=scenarios`,
+      env.design
+        ? paths.dashboard.simulate.harness.detail(env.id)
+        : paths.dashboard.simulate.environments.detail(env.id),
     );
+  const onRun = (env) =>
+    env.design
+      ? onOpen(env)
+      : navigate(
+          `${paths.dashboard.simulate.environments.detail(env.id)}?tab=scenarios`,
+        );
   const onDelete = (env) =>
     deleteEnvironment.mutate(env.id, {
       onError: (error) =>

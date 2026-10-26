@@ -310,6 +310,9 @@ def scenario_count(job: HostedHarnessJob) -> int:
 
 
 def _source_kind(job: HostedHarnessJob) -> str:
+    # A design has no source; its row opens the design's own page.
+    if ((job.payload or {}).get("metadata") or {}).get("design"):
+        return "design"
     source = (job.payload or {}).get("source") or {}
     return str(source.get("kind") or "") or "unknown"
 
