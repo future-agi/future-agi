@@ -125,7 +125,9 @@ export default function DesignForm({ template = null, onCancel = null }) {
         idempotency_key: idempotencyKey,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      navigate(paths.dashboard.simulate.harness.detail(created.job.job_id));
+      navigate(
+        paths.dashboard.simulate.environments.detail(created.job.job_id),
+      );
     } catch (requestError) {
       setError(errorMessage(requestError));
       setSubmitting(false);

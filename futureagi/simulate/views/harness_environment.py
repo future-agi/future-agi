@@ -112,24 +112,31 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request, *, designs: bool = False):
-        # Adaptations are followed as jobs: a composition is an adaptation's environment. A
-        # design is listed (it is how a person finds one being built) but is never an
-        # environment the other actions take: its environment is the release it sealed.
+    def _queryset(self, request, *, designs: bool = False, adaptations: bool = False):
+        # The environments workspace is the page of a design and of an adaptation as well.
+        # A design is listed, read and renamed like an environment; an adaptation is only
+        # read (the composition it produces is the environment that gets listed). Neither
+        # takes an environment action: neither has an agent to run or evaluate.
         jobs = HostedHarnessJob.no_workspace_objects.filter(
             organization=request_organization(request),
             environment__isnull=True,
             deleted=False,
-        ).exclude(payload__metadata__has_key="adaptation")
+        )
+        if not adaptations:
+            jobs = jobs.exclude(payload__metadata__has_key="adaptation")
         if not designs:
             jobs = jobs.exclude(payload__metadata__has_key="design")
         return annotate_for_list(scope_jobs(jobs, request))
 
-    def _job(self, request, pk, *, designs: bool = False):
+    def _job(self, request, pk, *, designs: bool = False, adaptations: bool = False):
         identifier = _uuid_or_none(pk)
         if identifier is None:
             return None
-        return self._queryset(request, designs=designs).filter(id=identifier).first()
+        return (
+            self._queryset(request, designs=designs, adaptations=adaptations)
+            .filter(id=identifier)
+            .first()
+        )
 
     @validated_request(
         query_serializer=HarnessEnvironmentListQuerySerializer,
@@ -156,8 +163,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
         Same shape whichever door built it. A section the pipeline has not reached
         yet is null, so the client renders "building" rather than an empty pane.
+        Designs and adaptations are read here too: the environments workspace is their page.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True, adaptations=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -177,7 +185,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         records how it was built, and editing that would make the provenance the
         contract tab shows a claim rather than a record.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},

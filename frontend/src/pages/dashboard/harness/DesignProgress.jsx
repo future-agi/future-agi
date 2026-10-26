@@ -52,7 +52,11 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
   const { data: releases = [] } = useHarnessReleases({
     enabled: Boolean(result),
   });
-  const sealed = releases.find((one) => one.id === result?.environment?.id);
+  // By digest: once published as a prebuilt environment, the system release is listed in
+  // place of the organization's copy, and both are the same content.
+  const sealed = releases.find(
+    (one) => one.digest === result?.environment?.digest,
+  );
   const [dialog, setDialog] = useState("");
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState("");
@@ -75,7 +79,7 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
         idempotency_key: idempotencyKey,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      navigate(paths.dashboard.simulate.harness.detail(next.job.job_id));
+      navigate(paths.dashboard.simulate.environments.detail(next.job.job_id));
     } catch (requestError) {
       setError(errorMessage(requestError));
       setContinuing(false);
@@ -85,9 +89,11 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
   return (
     <Box sx={{ mb: 2 }} aria-label="Design progress">
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        {design.template
-          ? `Customizing ${design.template.suite?.name || "a template"}`
-          : "Designing your environment"}
+        {completed
+          ? "Designed environment"
+          : design.template
+            ? `Customizing ${design.template.suite?.name || "a template"}`
+            : "Designing your environment"}
         {design.resume_from ? " (continued)" : ""}
       </Typography>
       <Stack spacing={0.75}>

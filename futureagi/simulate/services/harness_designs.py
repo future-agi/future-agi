@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import re
 import shlex
 import tarfile
@@ -41,11 +42,14 @@ from simulate.services.harness_releases import (
     _error,
     _release_archives,
     _visible,
+    design_world_outputs,
     register_release,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+logger = logging.getLogger(__name__)
 
 DESIGN_OUTPUT = "/work/authoring/design-output"
 DOCUMENTS_ROOT = "/work/documents"
@@ -459,6 +463,18 @@ def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarness
             failure = _design_failure(
                 "design_registration_failed", f"{type(exc).__name__}: {exc}"
             )
+    world: list[dict[str, Any]] = []
+    if design_result:
+        try:
+            world = design_world_outputs(
+                HarnessEnvironmentRelease.no_workspace_objects.select_related(
+                    "parent"
+                ).get(id=design_result["environment"]["id"])
+            )
+        except Exception:  # noqa: BLE001 - the world view is a convenience; the seal stands
+            logger.warning(
+                "design world view unavailable job=%s", job.id, exc_info=True
+            )
     now = timezone.now()
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
@@ -470,6 +486,13 @@ def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarness
             "design_result": design_result or None,
         }
         locked.payload = payload
+        if world:
+            # The workspace shows the sealed world beside what the session checkpointed.
+            locked.stage_outputs = [
+                output
+                for output in (locked.stage_outputs or [])
+                if output.get("kind") not in ("environment", "stores")
+            ] + world
         locked.state = (
             HostedHarnessJob.State.FAILED
             if failure
@@ -482,6 +505,7 @@ def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarness
         locked.save(
             update_fields=[
                 "payload",
+                "stage_outputs",
                 "state",
                 "current_stage",
                 "failure",
@@ -492,8 +516,11 @@ def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarness
         )
         # The builder has finished; nothing it asked is left to answer here. A parked
         # question is asked again by the design that continues this one.
+        # Its sandbox is gone too, so a turn cut off mid-reply no longer reads as running.
         HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
-            blocking_input=None, updated_at=now
+            blocking_input=None,
+            state=HostedHarnessConversation.State.COLD,
+            updated_at=now,
         )
     return locked
 

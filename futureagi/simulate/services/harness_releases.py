@@ -1445,6 +1445,67 @@ def _world_tables(world: bytes) -> list[dict[str, Any]]:
             connection.close()
 
 
+def _world_outputs(
+    chain: list[HarnessEnvironmentRelease],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A released environment's world as stage outputs (its tables with row counts and first
+    rows, and the workspace's `stores` view of them), and the tables themselves."""
+    environment = chain[-1]
+    rules = (environment.policy or {}).get("rules") or []
+    world: dict[str, Any] = {}
+    for release in reversed(chain):
+        files = archive_files(_download(release.object_key))
+        if f"{WORLD}/world.sqlite" in files:
+            world = files
+            break
+    tables = _world_tables(world[f"{WORLD}/world.sqlite"]) if world else []
+    counts = [{"name": table["name"], "rows": table["rows"]} for table in tables]
+    return [
+        {
+            "id": "release-environment",
+            "kind": "environment",
+            "title": "Environment",
+            "summary": environment.name,
+            "data": {
+                "kind": "world",
+                "project": environment.name,
+                "managed": True,
+                "release": {"digest": environment.digest, "name": environment.name},
+                "tables": tables,
+                # The workspace's World section reads the seeded tables from here.
+                "seed": {"tables": counts},
+                "rules": [
+                    {
+                        "id": rule["id"],
+                        "class": rule.get("class"),
+                        "text": rule.get("text"),
+                    }
+                    for rule in rules
+                ],
+            },
+        },
+        {
+            "id": "release-stores",
+            "kind": "stores",
+            "title": "Stores",
+            "summary": environment.name,
+            "data": [{"capability": "world", "engine": "postgres", "tables": counts}],
+        },
+    ], tables
+
+
+def design_world_outputs(
+    environment: HarnessEnvironmentRelease,
+) -> list[dict[str, Any]]:
+    """What a sealed design adds to its own stage outputs: the world it sealed. Its contract,
+    scenarios and sub-goals are already there from the session's checkpoints."""
+    chain = (
+        [environment.parent, environment] if environment.parent_id else [environment]
+    )
+    outputs, _tables = _world_outputs(chain)
+    return outputs
+
+
 def composition_stage_outputs(job: HostedHarnessJob) -> list[dict[str, Any]]:
     """What a composition's Contract and Environment tabs show (contract §7.3). A composition
     authored nothing, so it has no stage outputs of its own; these describe the agent it runs
@@ -1473,13 +1534,7 @@ def composition_stage_outputs(job: HostedHarnessJob) -> list[dict[str, Any]]:
     else:
         label = f"{definition.agent_name if definition else 'Your agent'} ({connector})"
     rules = (environment.policy or {}).get("rules") or []
-    world: dict[str, Any] = {}
-    for release in reversed(chain):
-        files = archive_files(_download(release.object_key))
-        if f"{WORLD}/world.sqlite" in files:
-            world = files
-            break
-    tables = _world_tables(world[f"{WORLD}/world.sqlite"]) if world else []
+    world, tables = _world_outputs(chain)
     return [
         {
             "id": "release-contract",
@@ -1509,49 +1564,5 @@ def composition_stage_outputs(job: HostedHarnessJob) -> list[dict[str, Any]]:
                 "data_schema": {table["name"]: table["types"] for table in tables},
             },
         },
-        {
-            "id": "release-environment",
-            "kind": "environment",
-            "title": "Environment",
-            "summary": environment.name,
-            "data": {
-                "kind": "world",
-                "project": environment.name,
-                "managed": True,
-                "release": {"digest": environment.digest, "name": environment.name},
-                "tables": tables,
-                # The workspace's World section reads the seeded tables from here.
-                "seed": {
-                    "tables": [
-                        {"name": table["name"], "rows": table["rows"]}
-                        for table in tables
-                    ]
-                },
-                "rules": [
-                    {
-                        "id": rule["id"],
-                        "class": rule.get("class"),
-                        "text": rule.get("text"),
-                    }
-                    for rule in rules
-                ],
-            },
-        },
-        {
-            "id": "release-stores",
-            "kind": "stores",
-            "title": "Stores",
-            "summary": environment.name,
-            # The environment workspace's World section: the world's tables and row counts.
-            "data": [
-                {
-                    "capability": "world",
-                    "engine": "postgres",
-                    "tables": [
-                        {"name": table["name"], "rows": table["rows"]}
-                        for table in tables
-                    ],
-                }
-            ],
-        },
+        *world,
     ]

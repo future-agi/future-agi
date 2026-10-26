@@ -37,11 +37,7 @@ export default function MyEnvironmentsTab() {
   const deleteEnvironment = useDeleteEnvironment();
 
   const onOpen = (env) =>
-    navigate(
-      env.design
-        ? paths.dashboard.simulate.harness.detail(env.id)
-        : paths.dashboard.simulate.environments.detail(env.id),
-    );
+    navigate(paths.dashboard.simulate.environments.detail(env.id));
   const onRun = (env) =>
     env.design
       ? onOpen(env)

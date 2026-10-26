@@ -173,7 +173,7 @@ export function UseReleaseDialog({ release, open, onClose }) {
         }),
       );
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      navigate(paths.dashboard.simulate.harness.detail(job.job.job_id));
+      navigate(paths.dashboard.simulate.environments.detail(job.job.job_id));
     } catch (requestError) {
       setError(errorMessage(requestError));
       setSubmitting(false);
