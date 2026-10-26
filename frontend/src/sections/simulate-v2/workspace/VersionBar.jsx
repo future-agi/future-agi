@@ -181,8 +181,15 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
               {!locked && patch && !viewAs && (
                 <Button
                   size="small"
+                  variant="outlined"
                   onClick={() => patch(saveEnvChangesPatch(env, envState))}
-                  sx={{ minWidth: 0 }}
+                  sx={{
+                    minWidth: 0,
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                    color: "text.primary",
+                    borderColor: "divider",
+                  }}
                 >
                   {`Save as environment ${cost?.label}`}
                 </Button>
@@ -194,8 +201,14 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
         <Button
           size="small"
           onClick={(e) => setHistoryAnchor(e.currentTarget)}
-          startIcon={<Iconify icon="solar:history-linear" width={14} />}
-          sx={{ color: "text.secondary", minWidth: 0 }}
+          variant="outlined"
+          startIcon={<Iconify icon="solar:history-linear" width={16} />}
+          sx={{
+            minWidth: 0,
+            flexShrink: 0,
+            color: "text.primary",
+            borderColor: "divider",
+          }}
         >
           History
         </Button>

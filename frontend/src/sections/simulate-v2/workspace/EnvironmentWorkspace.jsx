@@ -1591,6 +1591,7 @@ export default function EnvironmentWorkspace() {
                 title={
                   openGaps
                     ? [
+                        "Needs input",
                         gapTally.line,
                         agentCard?.status === "open"
                           ? `Agent ${agentCard.newest} changed`
@@ -1607,6 +1608,7 @@ export default function EnvironmentWorkspace() {
                   size="small"
                   variant="outlined"
                   onClick={() => setInbox({ open: true, focus: null })}
+                  aria-label="Needs input"
                   startIcon={<Iconify icon="solar:inbox-linear" width={16} />}
                   sx={{
                     whiteSpace: "nowrap",
@@ -1621,11 +1623,11 @@ export default function EnvironmentWorkspace() {
                 >
                   {openGaps > 0 && (
                     <>
-                      {wide && "Needs input"}
+                      {/* Icon and count only; the words are on hover. */}
                       <Box
                         component="span"
                         sx={{
-                          ml: wide ? 0.75 : 0,
+                          ml: 0,
                           px: 0.625,
                           minWidth: 18,
                           height: 18,
