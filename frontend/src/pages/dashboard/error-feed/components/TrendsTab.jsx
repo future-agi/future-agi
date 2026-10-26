@@ -14,6 +14,10 @@ import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
 
+const TRENDS_WINDOW_DAYS = 14;
+// The API's value for a metric with nothing to measure in the window.
+const NO_DATA = "—";
+
 // ── Events over time — dual-axis area + bars ────────────────────────────────
 function EventsLineChart({ eventsData }) {
   const chartRef = useRef(null);
@@ -189,7 +193,7 @@ function ScoreTrends({ scoreTrends }) {
   if (!scoreTrends?.length) {
     return (
       <Typography fontSize="11px" color="text.disabled" sx={{ py: 1 }}>
-        No eval scores recorded for this cluster yet.
+        No eval scores in the last {TRENDS_WINDOW_DAYS} days.
       </Typography>
     );
   }
@@ -533,25 +537,32 @@ function MetricCards({ metrics }) {
             >
               {m.value}
             </Typography>
-            <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
-              <Iconify icon={badgeIcon} width={12} sx={{ color: badgeColor }} />
-              <Typography
-                fontSize="11px"
-                fontWeight={600}
-                sx={{ color: badgeColor }}
-              >
-                {m.delta > 0 ? "+" : ""}
-                {typeof m.delta === "number"
-                  ? Math.abs(m.delta) < 1
-                    ? m.delta.toFixed(2)
-                    : m.delta
-                  : m.delta}
-                {m.unit}
-              </Typography>
-              <Typography fontSize="11px" color="text.disabled">
-                vs prev period
-              </Typography>
-            </Stack>
+            {/* "—" means nothing to measure in the window, so there is no delta. */}
+            {m.value !== NO_DATA && (
+              <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
+                <Iconify
+                  icon={badgeIcon}
+                  width={12}
+                  sx={{ color: badgeColor }}
+                />
+                <Typography
+                  fontSize="11px"
+                  fontWeight={600}
+                  sx={{ color: badgeColor }}
+                >
+                  {m.delta > 0 ? "+" : ""}
+                  {typeof m.delta === "number"
+                    ? Math.abs(m.delta) < 1
+                      ? m.delta.toFixed(2)
+                      : m.delta
+                    : m.delta}
+                  {m.unit}
+                </Typography>
+                <Typography fontSize="11px" color="text.disabled">
+                  vs prev period
+                </Typography>
+              </Stack>
+            )}
           </Box>
         );
       })}
@@ -563,7 +574,9 @@ MetricCards.propTypes = { metrics: PropTypes.array.isRequired };
 // ── Main TrendsTab ──────────────────────────────────────────────────────────
 export default function TrendsTab({ error }) {
   const clusterId = error?.cluster_id;
-  const { data, isLoading } = useErrorFeedTrends(clusterId);
+  const { data, isLoading } = useErrorFeedTrends(clusterId, {
+    days: TRENDS_WINDOW_DAYS,
+  });
 
   if (isLoading || !data) {
     return (
@@ -579,6 +592,11 @@ export default function TrendsTab({ error }) {
 
   return (
     <Stack gap={2}>
+      {/* Every card below is windowed; an issue quiet for longer shows nothing. */}
+      <Typography fontSize="11px" color="text.disabled">
+        Last {TRENDS_WINDOW_DAYS} days
+      </Typography>
+
       {/* Top metrics */}
       {data.metrics?.length > 0 && <MetricCards metrics={data.metrics} />}
 

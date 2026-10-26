@@ -25,6 +25,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 
 logger = structlog.get_logger(__name__)
 
@@ -90,8 +91,8 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
             deleted=True, deleted_at=now
         )
         eval_configs = CustomEvalConfig.objects.filter(project__in=projects)
-        EvalLogger.objects.filter(custom_eval_config__in=eval_configs).update(
-            deleted=True, deleted_at=now
+        soft_delete_eval_results(
+            EvalLogger.objects.filter(custom_eval_config__in=eval_configs)
         )
         eval_configs.update(deleted=True, deleted_at=now)
         projects.update(deleted=True, deleted_at=now)

@@ -4,7 +4,6 @@ import traceback
 import structlog
 from django.db import close_old_connections
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -27,6 +26,7 @@ from tracer.serializers.custom_eval_config import (
     GetCustomEvalTemplateSerializer,
     RunEvaluationSerializer,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.eval import evaluate_observation_span
 
 
@@ -266,13 +266,17 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # still goes through the router for EvalGroup (likely landing
             # on `default`) and remains a pre-existing N+1. We do NOT fix
             # that here — fixing the serializer is a separate refactor.
-            queryset = CustomEvalConfig.objects.db_manager(
-                DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
-            ).filter(
-                deleted=False,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            ).all()
+            queryset = (
+                CustomEvalConfig.objects.db_manager(
+                    DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
+                )
+                .filter(
+                    deleted=False,
+                    project__organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                )
+                .all()
+            )
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
@@ -374,10 +378,12 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # joined on the FK; substitute the PK ``__in`` form using the
             # collected CH span ids (EvalLogger.observation_span_id is the
             # underlying column the FK resolves to).
-            EvalLogger.objects.filter(
-                observation_span_id__in=span_ids,
-                custom_eval_config=custom_eval_config,
-            ).update(deleted=True, deleted_at=timezone.now())
+            soft_delete_eval_results(
+                EvalLogger.objects.filter(
+                    observation_span_id__in=span_ids,
+                    custom_eval_config=custom_eval_config,
+                )
+            )
 
             for span_id in span_ids:
                 evaluate_observation_span.delay(

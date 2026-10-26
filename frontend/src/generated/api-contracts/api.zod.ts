@@ -56130,10 +56130,10 @@ export const TracerFeedIssuesTracesListResponse = zod.object({
       total_traces: zod.number(),
       failing_traces: zod.number(),
       passing_traces: zod.number(),
-      avg_score: zod.number(),
+      avg_score: zod.number().nullable(),
       p50_latency: zod.number(),
       p95_latency: zod.number(),
-      avg_turns: zod.number(),
+      avg_turns: zod.number().nullable(),
     }),
     traces: zod.array(
       zod.object({
