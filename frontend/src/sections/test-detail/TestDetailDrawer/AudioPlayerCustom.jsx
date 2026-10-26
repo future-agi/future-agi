@@ -12,6 +12,7 @@ import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingSt
 import { getLoadingStateWithRespectiveStatus } from "../common";
 import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
+import { statusColors } from "src/utils/runStatus";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -92,8 +93,8 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
+  // The caller is info, as in the transcript and talk ratio.
+  const customerColor = statusColors(theme, "info").fg;
 
   const {
     assistantUrl: stereoAssistant,

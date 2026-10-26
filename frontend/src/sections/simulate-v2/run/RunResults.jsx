@@ -353,11 +353,15 @@ export default function RunResults({
   const [addingEvals, setAddingEvals] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const { envState, patch, addAgentVersion } = useEnvState(envId);
+  /* Calls in a voice environment open the voice drawer, whatever agent is
+     under test. */
+  const isVoiceRun =
+    env?.surface === "voice" || effectiveModality(env, envState) === "voice";
   /* The voice call drawer hides while one opened from it (an eval, a fix) is
      open. Other runs use SideDrawer, which registers itself — registering
      here too put this entry on top and hid that drawer behind itself. */
   const callCovered = useDrawerCovered(
-    !!openTask && effectiveModality(env, envState) === "voice",
+    !!openTask && isVoiceRun,
   );
   /* Same edit drawer the Evaluations tab uses — the variable mapping and any
      configurable fields live there. Opens when a column is edited from its
@@ -868,7 +872,7 @@ export default function RunResults({
   /* Open a scenario's trace, pinned to the span where it went wrong. */
   const openTrace = (t) => {
     if (!t) return;
-    if (effectiveModality(env, envState) === "voice") {
+    if (isVoiceRun) {
       setTraceTask(t);
       return;
     }
@@ -2267,7 +2271,7 @@ export default function RunResults({
            voice call — the real product component, fed a `data` shape by the
            adapter, not a bespoke rebuild. Every other surface keeps the
            existing call drawer. */
-        if (effectiveModality(env, envState) === "voice") {
+        if (isVoiceRun) {
           const traceIdx = traceTask
             ? shown.findIndex((t) => t.id === traceTask.id)
             : -1;

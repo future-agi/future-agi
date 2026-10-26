@@ -113,7 +113,11 @@ function buildTranscriptWithTools(steps, env, task) {
 
   steps.forEach((s, i) => {
     const role = speakerRole(s.role);
-    const turnDur = 3;
+    /* Speech pace (~2.6 words a second) and a short, varied pause before each
+       turn, so the transcript shows real turn lengths and silences. */
+    const words = String(s.text || "").split(/\s+/).filter(Boolean).length;
+    const turnDur = Math.round((0.6 + words / 2.6) * 10) / 10;
+    if (i > 0) cursor += 0.4 + ((i * 7) % 11) / 10;
 
     out.push({
       id: s.id || `${task?.id || "t"}-t${i}`,
@@ -158,26 +162,22 @@ function buildTranscriptWithTools(steps, env, task) {
 }
 
 /**
- * A stand-in recording for a simulated call.
+ * Stand-in recordings for a simulated call — one track per speaker.
  *
- * A sim call produced no audio, so the drawer's recording player would show
- * "No recording found". The demo wants the recording UI present, so we
- * synthesise a short, quiet, speech-cadence WAV once and hand the player a
- * blob URL — the same single-track waveform bar a real one-track call gets.
- * Built once and cached; the URL is stable across every call and re-render.
+ * A sim call produced no audio, so the drawer's player would show "No
+ * recording found". The demo wants the recording UI present, so each speaker
+ * gets a quiet, speech-cadence WAV that is loud only during that speaker's
+ * turns — the same two-row waveform (customer · assistant) a real call gets,
+ * lined up with the transcript. Cached per call.
  */
-let cachedRecordingUrl = null;
-function getMockRecordingUrl() {
-  if (cachedRecordingUrl) return cachedRecordingUrl;
-  if (typeof window === "undefined" || !window.URL?.createObjectURL) return undefined;
-
+const RECORDING_CACHE = new Map();
+function wavUrl(segments, total) {
   const sampleRate = 8000;
-  const seconds = 12;
-  const n = sampleRate * seconds;
+  const n = Math.max(1, Math.ceil(sampleRate * total));
   const buffer = new ArrayBuffer(44 + n * 2);
   const view = new DataView(buffer);
-  const writeStr = (off, s) => {
-    for (let i = 0; i < s.length; i += 1) view.setUint8(off + i, s.charCodeAt(i));
+  const writeStr = (off, str) => {
+    for (let i = 0; i < str.length; i += 1) view.setUint8(off + i, str.charCodeAt(i));
   };
   writeStr(0, "RIFF");
   view.setUint32(4, 36 + n * 2, true);
@@ -192,29 +192,44 @@ function getMockRecordingUrl() {
   view.setUint16(34, 16, true);
   writeStr(36, "data");
   view.setUint32(40, n * 2, true);
-
-  let off = 44;
+  let seg = 0;
   for (let i = 0; i < n; i += 1) {
     const t = i / sampleRate;
-    /* Alternating talk/pause blocks so the waveform reads as a conversation
-       rather than a flat tone; every 4th ~1.3s block is a silence. */
-    const speaking = Math.floor(t / 1.3) % 4 !== 3;
-    const env = speaking ? Math.abs(Math.sin(t * 6.3)) * (0.5 + 0.5 * Math.sin(t * 1.7)) : 0;
+    while (seg < segments.length && t > segments[seg][1]) seg += 1;
+    const on = seg < segments.length && t >= segments[seg][0];
+    /* Syllable-like bursts inside a turn; silence outside it. */
+    const env = on ? Math.abs(Math.sin(t * 6.3)) * (0.5 + 0.5 * Math.sin(t * 1.7)) : 0;
     const carrier =
       0.6 * Math.sin(2 * Math.PI * 180 * t) +
       0.3 * Math.sin(2 * Math.PI * 320 * t) +
       0.1 * Math.sin(2 * Math.PI * 90 * t);
-    const v = Math.max(-1, Math.min(1, env * carrier)) * 0.22; // quiet
-    view.setInt16(off, v * 32767, true);
-    off += 2;
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, env * carrier)) * 0.22 * 32767, true);
   }
-
+  return window.URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+}
+function speakerRecordings(transcript, key) {
+  if (typeof window === "undefined" || !window.URL?.createObjectURL) return null;
+  if (RECORDING_CACHE.has(key)) return RECORDING_CACHE.get(key);
+  const turns = (transcript || []).filter((t) => t.role !== "tool");
+  if (!turns.length) return null;
+  const total = Math.max(...turns.map((t) => t.end_time_seconds || 0)) + 0.5;
+  const of = (who) =>
+    turns
+      .filter((t) => (who === "assistant" ? t.role === "assistant" : t.role !== "assistant"))
+      .map((t) => [t.start_time_seconds, t.end_time_seconds]);
+  let recs = null;
   try {
-    cachedRecordingUrl = window.URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+    recs = { assistant: wavUrl(of("assistant"), total), customer: wavUrl(of("customer"), total) };
   } catch {
-    cachedRecordingUrl = undefined;
+    recs = null;
   }
-  return cachedRecordingUrl;
+  if (RECORDING_CACHE.size > 30) {
+    const [oldKey, old] = RECORDING_CACHE.entries().next().value;
+    Object.values(old || {}).forEach((u) => window.URL.revokeObjectURL(u));
+    RECORDING_CACHE.delete(oldKey);
+  }
+  RECORDING_CACHE.set(key, recs);
+  return recs;
 }
 
 export function taskToVoiceData(task, { env, voice = true, scenario = null, failedGoal = null } = {}) {
@@ -259,7 +274,6 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
     task?.expected ||
     (task?.title ? `Simulated ${voice ? "call" : "conversation"}: ${task.title}` : "");
 
-  const recordingUrl = voice ? getMockRecordingUrl() : undefined;
   const ended = endedReasonFor(task, { voice });
   /* The Graph / Checklist tabs: the scenario's path, the tool calls on it,
      and where a failed call left it (voiceFlow.js). */
@@ -296,11 +310,12 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
     transcript,
     eval_metrics,
 
-    /* Recording — a synthesised stand-in so the player renders the waveform
-       bar instead of an empty "No recording found" state. `combined` alone
-       routes to the single mixed-track player. */
-    recordings: recordingUrl ? { combined: recordingUrl } : undefined,
-    audio_url: recordingUrl,
+    /* Recording — synthesised per-speaker stand-ins, so the player draws the
+       customer and assistant rows instead of "No recording found". */
+    ...(() => {
+      const recs = voice ? speakerRecordings(transcript, task?.id || "call") : null;
+      return { recordings: recs || undefined, audio_url: recs?.assistant };
+    })(),
 
     /* Call Analytics inputs. */
     call_summary: summary,

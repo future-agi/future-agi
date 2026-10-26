@@ -8,6 +8,11 @@ import {
   IconButton,
   Tooltip,
   Switch,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SectionCard, EmptyState } from "../components/primitives";
@@ -25,7 +30,6 @@ import { useAppliedEvals } from "./evals/useAppliedEvals";
 import AddEvalsDrawer from "./evals/AddEvalsDrawer";
 import TwinEvalEditor from "./evals/TwinEvalEditor";
 import EditEvalDrawer from "./evals/EditEvalDrawer";
-import { canEditEval } from "./evals/canEditEval";
 import { worldToolsFor } from "../_mock/toolFit";
 import { runScopeOf } from "../_mock/runScope";
 import { evalCreditsPerRun, evalRailOf } from "../_mock/metering";
@@ -157,6 +161,9 @@ export default function EvalsStep({
     patch({ evalsSeeded: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsScenarios, suggested.length, appliedEvals.length]);
+
+  /* Removing an evaluation asks first; past scores stay either way. */
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   return (
     <Box sx={{ p: 2 }}>
@@ -408,30 +415,6 @@ export default function EvalsStep({
                     <Tooltip
                       arrow
                       title={
-                        canEditEval(e)
-                          ? "View mapping"
-                          : "An authored assertion — it has no mapping to view."
-                      }
-                    >
-                      <span>
-                        {/* Viewing is never gated: a mapping is read-only, and removing it is the only change. */}
-                        <IconButton
-                          size="small"
-                          disabled={!canEditEval(e)}
-                          onClick={() => setEditingId(e.id)}
-                          aria-label={`View mapping for ${e.name}`}
-                        >
-                          <Iconify
-                            icon="solar:eye-linear"
-                            width={16}
-                            sx={{ color: "text.tertiary" }}
-                          />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <Tooltip
-                      arrow
-                      title={
                         locked ? "Fork this environment to edit." : "Remove"
                       }
                     >
@@ -439,7 +422,7 @@ export default function EvalsStep({
                         <IconButton
                           size="small"
                           disabled={locked}
-                          onClick={() => remove(e.id)}
+                          onClick={() => setConfirmRemove(e)}
                           aria-label={`Remove ${e.name}`}
                         >
                           <Iconify
@@ -457,6 +440,50 @@ export default function EvalsStep({
           </Stack>
         )}
       </SectionCard>
+
+      <Dialog
+        open={!!confirmRemove}
+        onClose={() => setConfirmRemove(null)}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 480 } }}
+        fullWidth
+      >
+        <DialogTitle sx={{ typography: "m2", fontWeight: 600 }}>
+          {`Remove ${confirmRemove?.name || "this evaluation"}?`}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ typography: "s2" }}>
+            New runs won&apos;t be graded on it; past scores stay.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            size="small"
+            onClick={() => setConfirmRemove(null)}
+            sx={{ color: "text.secondary" }}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            onClick={() => {
+              remove(confirmRemove.id);
+              setConfirmRemove(null);
+            }}
+            sx={{
+              bgcolor: "status.danger.solid",
+              color: "common.white",
+              "&:hover": {
+                bgcolor: "status.danger.solid",
+                color: "common.white",
+              },
+            }}
+          >
+            Remove evaluation
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {atCap && !locked && (
         <Typography

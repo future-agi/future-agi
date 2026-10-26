@@ -76,6 +76,8 @@ export default function AppliedEvalsDrawer({
   const editing = appliedEvals.find((e) => e.id === editingId) || null;
   const [selected, setSelected] = useState(() => new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
+  /* A single removal asks too. */
+  const [confirmOne, setConfirmOne] = useState(null);
 
   const selectedEvals = useMemo(
     () => appliedEvals.filter((e) => selected.has(e.id)),
@@ -227,7 +229,7 @@ export default function AppliedEvalsDrawer({
                     selected={selected.has(e.id)}
                     onToggle={() => toggleOne(e.id)}
                     onEdit={() => setEditingId(e.id)}
-                    onDelete={() => remove(e.id)}
+                    onDelete={() => setConfirmOne(e)}
                     onRemoveMapping={(variable) =>
                       update(e.id, {
                         mapping: mappingWithout(e.mapping, variable),
@@ -281,6 +283,51 @@ export default function AppliedEvalsDrawer({
           onSave={(changes) => update(editing.id, changes)}
         />
       )}
+
+      {/* Single-delete confirm */}
+      <Dialog
+        open={!!confirmOne}
+        onClose={() => setConfirmOne(null)}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 480 } }}
+        fullWidth
+      >
+        <DialogTitle sx={{ typography: "m2", fontWeight: 600 }}>
+          {`Remove ${confirmOne?.name || "this evaluation"}?`}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ typography: "s2" }}>
+            New runs won&apos;t be graded on it; past scores stay.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            size="small"
+            onClick={() => setConfirmOne(null)}
+            sx={{ color: "text.secondary" }}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            onClick={() => {
+              remove(confirmOne.id);
+              setConfirmOne(null);
+            }}
+            sx={{
+              bgcolor: "status.danger.solid",
+              color: "common.white",
+              "&:hover": {
+                bgcolor: "status.danger.solid",
+                color: "common.white",
+              },
+            }}
+          >
+            Remove evaluation
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Bulk-delete confirm */}
       <Dialog
