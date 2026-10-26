@@ -202,7 +202,7 @@ test('SET-E2E-002: admin reads fresh host update reports and missing reporting s
 
     await test.step('5 API: mutations are 405 and anonymous access is 401', async () => {
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-        const response = await request.fetch(`${E2E.apiUrl}${STATUS_PATH}`, { method, headers, data: {} });
+        const response = await request.fetch(`${E2E.apiUrl}${STATUS_PATH}`, { method, headers });
         expect(response.status(), method).toBe(405);
       }
       const anonymous = await request.get(`${E2E.apiUrl}${STATUS_PATH}`);
