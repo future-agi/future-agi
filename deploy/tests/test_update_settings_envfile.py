@@ -2524,6 +2524,30 @@ class ExactEnvRecoveryTests(_EnvCase):
                 self.assertEqual(path.read_bytes(), raw)
                 self.assertFalse(list(self.dir.glob('.env.futureagi-update-*')))
 
+    def test_expected_preimage_binds_the_record_to_the_exact_bytes_that_were_approved(self):
+        import hashlib
+        path = self.write('A=1\nV=v1\n', mode=0o600)
+        approved = hashlib.sha256(path.read_bytes()).hexdigest()
+        bound = envfile.recovery_record(path, {'V': 'v2'}, expected_before_sha256=approved)
+        plain = envfile.recovery_record(path, {'V': 'v2'})
+        for record in (bound, plain):
+            record.pop('commit')  # random operation ids; everything else is the same inverse
+        self.assertEqual(bound, plain)
+        self.assertEqual(bound['before_sha256'], approved)
+        # An operator edit after the approval is refused (typed), never adopted as the baseline, and no byte moves.
+        path.write_bytes(path.read_bytes() + b'V=v9\n')
+        edited = path.read_bytes()
+        with self.assertRaises(envfile.EnvPreimageError) as caught:
+            envfile.recovery_record(path, {'V': 'v2'}, expected_before_sha256=approved)
+        self.assertIsInstance(caught.exception, EnvFileError)
+        self.assertNotIn('v9', str(caught.exception))
+        self.assertEqual(path.read_bytes(), edited)
+        self.assertFalse(list(self.dir.glob('.env.futureagi-update-*')))
+        # A byte-for-byte restore of the approved text is accepted again; comments count as bytes too.
+        path.write_bytes(b'A=1\nV=v1\n# comment\n')
+        with self.assertRaises(envfile.EnvPreimageError):
+            envfile.recovery_record(path, {'V': 'v2'}, expected_before_sha256=approved)
+
     def test_record_before_write_is_recoverable_without_mutating_bytes(self):
         path = self.write('V="\\$X"\nV=v1\n', mode=0o600)
         before = path.read_bytes()

@@ -534,6 +534,193 @@ class ApplyAndReportingTests(RunnerCase):
         self.assertEqual(selected_release(self.binding), 'v1.51.0')
 
 
+class RunnerConcurrencyTests(RunnerCase):
+    def test_control_between_tick_progress_and_terminal_preserves_failed_fallback_report(self):
+        sequences = []
+        def execute(engine, guard):
+            guard.report('before_backup')
+            sequences.append(self.publisher.capture()[0].generation)
+            for action, boundary in (('pause', 'after_backup'), ('disable', 'before_env_commit'),
+                                     ('enable', 'before_rollout'), ('resume', 'before_fallback')):
+                before_ticket, before = self.publisher.capture()
+                self.store.change_control(action, self.now)
+                control_ticket = self.publisher.publish_controls(policy=self.settings('apply').automation_policy,
+                                                                 now=self.now)
+                _, after = self.publisher.capture()
+                self.assertEqual((control_ticket.epoch, control_ticket.operation_token),
+                                 (before_ticket.epoch, before_ticket.operation_token))
+                for field in ('operation', 'safety', 'versions', 'discovery', 'download', 'last_run'):
+                    self.assertEqual(after[field], before[field])
+                sequences.append(control_ticket.generation)
+                guard.report(boundary)
+                sequences.append(self.publisher.capture()[0].generation)
+            return EngineResult(5, (), True, True, 'failed', 'succeeded')
+        self.executor.side_effect = execute
+        result = self.runner('apply').tick()
+        self.assertEqual((result.code, result.disposition, result.warnings), (5, 'failed', ()))
+        ticket, final = self.publisher.capture()
+        sequences.append(ticket.generation)
+        self.assertEqual(sequences, list(range(1, len(sequences) + 1)))
+        self.assertEqual(final['operation']['state'], 'failed')
+        self.assertEqual(final['last_run']['outcome'], 'failed_during_rollout')
+        self.assertEqual(final['last_run']['fallback_outcome'], 'succeeded')
+
+    def test_idle_ticks_cannot_fence_manual_apply_check_or_download(self):
+        self.publish()
+        for mode, action in (('notify', 'disable'), ('notify', 'pause'), ('manual', 'resume'), ('notify', 'resume')):
+            self.store.change_control('enable', NOW)
+            self.store.change_control('resume', NOW)
+            self.store.change_control(action, NOW)
+            self.save(next_check_at=NOW + timedelta(days=1))
+            for kind in ('apply', 'check', 'download'):
+                with self.subTest(mode=mode, action=action, kind=kind):
+                    owner, previous = self.publisher.capture()
+                    self.now += timedelta(minutes=5)
+                    self.monotonic += 300
+                    result = self.runner(mode).tick()
+                    self.assertIsNotNone(result.skip_reason)
+                    self.assertEqual(result.warnings, ())
+                    mid = self.publisher.capture()[1]
+                    for field in ('operation', 'safety', 'versions', 'discovery', 'download', 'last_run'):
+                        self.assertEqual(mid[field], previous[field])
+                    operation = dict(state='succeeded', kind=kind, stage=None, started_at=pub.stamp(NOW),
+                                     finished_at=pub.stamp(self.now), reported_at=pub.stamp(self.now), reason_codes=[])
+                    final = pub.build_status(self.binding, self.settings(mode).automation_policy,
+                                             self.store.read_control(), self.store.read_state(), now=self.now,
+                                             previous=previous, operation=operation)
+                    self.publisher.publish(final, expected=owner, operation_token='manual-' + kind)
+                    self.assertEqual(self.publisher.capture()[1]['operation']['kind'], kind)
+        self.discovery_factory.assert_not_called()
+        self.installation_factory.assert_not_called()
+
+    def test_live_manual_journal_is_busy_with_no_state_event_or_public_change(self):
+        runner = self.runner()
+        self.publish()
+        owner, previous = self.publisher.capture()
+        before = (self.publisher.path / 'status.json').read_bytes()
+        state = self.store.read_state()
+        events = self.store.read_events()
+        with runner.engine_state.lock():
+            runner.engine_state.write_journal({'stage': 'prepare', 'kind': 'apply'})
+            result = self.runner().tick()
+            self.assertEqual((result.code, result.disposition), (0, 'busy'))
+            self.assertEqual(self.store.read_state(), state)
+            self.assertEqual(self.store.read_events(), events)
+            self.assertEqual((self.publisher.path / 'status.json').read_bytes(), before)
+            runner.engine_state.clear_journal()
+        terminal = dict(state='succeeded', kind='apply', stage=None, started_at=pub.stamp(NOW),
+                        finished_at=pub.stamp(NOW), reported_at=pub.stamp(NOW), reason_codes=[])
+        self.publisher.publish(self.snapshot(previous=previous, operation=terminal), expected=owner,
+                               operation_token='manual')
+        self.save(next_check_at=NOW + timedelta(days=1))
+        for _ in range(3):
+            self.now += timedelta(minutes=5)
+            self.monotonic += 300
+            self.assertEqual(self.runner().tick().skip_reason, 'not_due')
+            final = self.publisher.capture()[1]
+            self.assertEqual(final['safety']['operator_action'], 'none')
+            self.assertEqual(final['operation']['state'], 'succeeded')
+        self.discovery_factory.assert_not_called()
+
+    def test_manual_lock_acquired_after_probe_before_journal_read_is_also_busy(self):
+        runner = self.runner()
+        state = self.store.read_state()
+        # Real contention at the read lock, after the entry probe observed free.
+        with runner.engine_state.lock(), \
+                mock.patch.object(runner.engine_state, 'lock_holder', return_value=None), \
+                mock.patch.object(runner.engine_state, 'read_journal') as journal:
+            self.assertEqual(runner.tick().disposition, 'busy')
+            journal.assert_not_called()
+        self.assertEqual(self.store.read_state(), state)
+        self.assertFalse(self.parent.exists())
+
+    def test_retry_state_write_between_read_and_save_is_merged_once(self):
+        from deploy.update.contracts import OperationEvent
+        original = self.store.save_state
+        calls = []
+        def race(state, *, expected_generation):
+            calls.append(expected_generation)
+            if len(calls) == 1:
+                self.store.append_event(OperationEvent('succeeded', 'check', None, NOW, 'concurrent', ()))
+            return original(state, expected_generation=expected_generation)
+        with mock.patch.object(self.store, 'save_state', side_effect=race):
+            result = self.runner().tick()
+        self.assertEqual((result.code, result.disposition, result.warnings), (0, 'available', ()))
+        self.assertEqual(calls[1], calls[0] + 1)
+        self.assertEqual(self.store.read_events()[0].event.operation_token, 'concurrent')
+        self.assertEqual(self.publisher.capture()[1]['safety']['operator_action'], 'none')
+
+    def test_retry_target_race_preserves_cleared_latch_and_window(self):
+        target = self.target()
+        self.save(failed_target_latch=target, last_window_occurrence='always:' + target.key)
+        original = self.store.save_state
+        raced = []
+        def retry(state, *, expected_generation):
+            if not raced:
+                raced.append(True)
+                self.store.retry_target(target)
+            return original(state, expected_generation=expected_generation)
+        with mock.patch.object(self.store, 'save_state', side_effect=retry):
+            self.runner()._save(last_tick_at=NOW)
+        state = self.store.read_state()
+        self.assertIsNone(state.failed_target_latch)
+        self.assertIsNone(state.last_window_occurrence)
+        self.assertEqual(state.last_tick_at, NOW)
+
+    def test_busy_progress_publication_skips_only_that_report(self):
+        runner = self.runner('apply')
+        def execute(engine, guard):
+            guard.report('before_backup')
+            owner = self.publisher.capture()[0]
+            with self.store._lock('public.lock'):
+                guard.report('after_backup')
+            self.assertFalse(runner.reporting_failed)
+            self.assertEqual(runner.ticket, owner)
+            guard.report('before_env_commit')
+            self.assertEqual(self.publisher.capture()[1]['operation']['stage'], 'env_selection')
+            return EngineResult(0, (), True, True, 'succeeded')
+        self.executor.side_effect = execute
+        result = runner.tick()
+        self.assertEqual((result.code, result.disposition), (0, 'applied'))
+        self.assertEqual(result.warnings, (ReasonCode.STATUS_REPORTING_UNAVAILABLE,))
+        self.assertEqual(self.publisher.capture()[1]['operation']['state'], 'succeeded')
+        self.assertEqual(self.publisher.capture()[1]['last_run']['outcome'], 'succeeded')
+
+    def test_busy_initial_capture_is_noop_and_idle_heartbeat_failure_is_not_sticky(self):
+        runner = self.runner()
+        state = self.store.read_state()
+        with self.store._lock('public.lock'):
+            self.assertEqual(runner.tick().disposition, 'busy')
+        self.assertFalse(runner.reporting_failed)
+        self.assertEqual(self.store.read_state(), state)
+        self.discovery_factory.assert_not_called()
+        self.store.change_control('disable', NOW)
+        with self.store._lock('public.lock'):
+            result = runner.tick()
+        self.assertEqual(result.skip_reason, 'disabled')
+        self.assertFalse(runner.reporting_failed)
+        self.assertEqual(runner.tick().warnings, ())
+        self.assertEqual(self.publisher.capture()[1]['automation']['state'], 'disabled')
+
+    def test_slow_facts_clock_timestamp_window_and_budget_are_sampled_after_provider(self):
+        for elapsed, open_window, budget in ((60, True, True), (61, True, False), (961, False, False)):
+            self.now, self.monotonic = NOW, 0
+            self.save(next_check_at=None, last_tick_at=None)
+            def facts(installation, boundary):
+                self.now += timedelta(seconds=elapsed)
+                self.monotonic += elapsed
+                return Observations(NOW)
+            runner = self.runner('apply', settings=self.settings('apply', MAINTENANCE_WINDOW='12:00-12:16'), facts=facts)
+            def execute(engine, guard):
+                observed, controls = guard.facts(self.installation, 'before_rollout')
+                self.assertEqual(observed.now, self.now)
+                self.assertEqual(controls.window_open, open_window)
+                self.assertEqual(controls.start_budget_available, budget)
+                return EngineResult(3, (ReasonCode.INSUFFICIENT_WINDOW,), False, False, 'failed')
+            self.executor.side_effect = execute
+            self.assertEqual(runner.tick().reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,))
+
+
 class RealLayoutTests(unittest.TestCase):
     """Real env, private state, receipts and public files; only Docker is fake.
 
@@ -599,6 +786,7 @@ class RealLayoutTests(unittest.TestCase):
                       window='always', rollout_change=None, publication_change=None):
         fixture = boundaries.ScheduledGuardTests()
         fixture.setUp()
+        self.fixture_in_use = fixture
         self.addCleanup(fixture.doCleanups)
         self.addCleanup(fixture.tearDown)
         settings = load_settings(fixture.root, {'FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW': window,
@@ -745,6 +933,61 @@ class RealLayoutTests(unittest.TestCase):
         self.assertEqual(result.reason_codes, (ReasonCode.BACKUP_EXPIRED,), result)
         self.assertEqual(fixture.env_write_count, 0)
         self.assertIsNone(fixture.state.read_journal())
+
+    # Review round 2 (F3): the maintenance budget is judged after a boundary's own (slow) observations.
+    def slow_final_observation(self, seconds, window='12:00-12:16'):
+        from collections import Counter
+        counts = Counter()
+
+        def facts_change(obs, boundary):
+            counts[boundary] += 1
+            if boundary == 'before_rollout' and counts[boundary] == 2:  # the final observation before rollout
+                self.fixture_in_use.now += timedelta(seconds=seconds)
+            return obs
+
+        return self.run_certified(window=window, facts_change=facts_change)
+
+    def test_slow_final_facts_that_cross_the_start_budget_refuse_before_compose_up(self):
+        fixture, _, result, _ = self.slow_final_observation(61)  # 960s at 12:00:00, 899s left afterwards
+        self.assertEqual(result.reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,), result)
+        self.assertFalse(result.rollout_started)
+        self.assertFalse(any(call[0] == 'up' for call in fixture.compose_calls()))
+        self.assertEqual(fixture.env_bytes(), fixture.original)
+        self.assertIsNone(fixture.state.read_journal())
+
+    def test_fast_final_facts_inside_the_start_budget_proceed(self):
+        fixture, _, result, _ = self.slow_final_observation(60)  # exactly the 900 seconds required remain
+        self.assertEqual(result.disposition, 'applied', result)
+        self.assertEqual(sum(call[0] == 'up' for call in fixture.compose_calls()), 1)
+        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')
+
+    def test_slow_facts_at_every_earlier_forward_boundary_also_refuse_without_mutation(self):
+        from collections import Counter
+        for boundary in ('before_backup', 'after_backup', 'before_env_commit'):
+            with self.subTest(boundary=boundary):
+                counts = Counter()
+
+                def facts_change(obs, name, boundary=boundary, counts=counts):
+                    counts[name] += 1
+                    if name == boundary and counts[name] == 2:
+                        self.fixture_in_use.now += timedelta(seconds=61)
+                    return obs
+
+                fixture, _, result, _ = self.run_certified(window='12:00-12:16', facts_change=facts_change)
+                self.assertEqual(result.reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,), result)
+                self.assertEqual(fixture.env_write_count, 0)
+                self.assertFalse(any(call[0] == 'up' for call in fixture.compose_calls()))
+
+    def test_fallback_whose_own_facts_outlast_the_window_still_proceeds(self):
+        def facts_change(obs, boundary):
+            fixture = self.fixture_in_use
+            if boundary == 'before_fallback' and fixture.guard.fallback is None:
+                fixture.now += timedelta(hours=2)  # the window closes while the fallback is being authorized
+            return obs
+
+        fixture, _, result, _ = self.run_certified(failure='forward', window='12:00-13:00', facts_change=facts_change)
+        self.assertEqual((result.code, result.fallback_result), (5, 'succeeded'), result)
+        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
 
     def test_uncertified_baseline_does_not_take_backup(self):
         fixture, _, result, _ = self.run_certified(facts_change=lambda obs, boundary: replace(obs, baseline_attested=False))

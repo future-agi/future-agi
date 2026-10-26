@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -233,6 +234,259 @@ class StageAndOverlayTests(UpdaterCase):
         self.assertEqual(saved['manifest_sha256'], binding['manifest_sha256'])
 
 
+class ManualRunsKeepTheirBehaviourTests(UpdaterCase):
+    """Review round 2: the env binding and the dependency certificate exist only for automatic runs."""
+
+    def test_manual_engine_has_no_approved_env_and_no_dependency_certificate(self):
+        updater = self.updater()
+        self.assertIsNone(updater._approved_env_sha256())
+        with mock.patch.object(self.inst, 'containers', side_effect=AssertionError('no inspection')):
+            updater._dependencies_unchanged()
+
+    def test_manual_apply_still_starts_whatever_a_dependency_tag_resolves_to(self):
+        self.inst.local_images['postgres:16'] = 'sha256:' + '9' * 64  # moved tag: a manual run is not refused
+        self.inst.metadata['sha256:' + '9' * 64] = {'repo_digests': ['postgres@sha256:' + '9' * 64], 'version': ''}
+        path = self.apply()
+        self.assertEqual(self.state.load_receipt(path)['status'], 'succeeded')
+        self.assertTrue(any(call[0] == 'up' for call in self.compose_calls()))
+
+
+class EnvDigestTests(unittest.TestCase):
+    """Review round 2: the digest the guard binds a transaction to is of the bytes the engine would write."""
+
+    def test_digest_of_the_selected_alias_and_typed_refusals_for_unreadable_or_retargeted_env(self):
+        import hashlib
+        import tempfile
+        from types import SimpleNamespace
+        from deploy.update.envfile import EnvCommitError
+        from deploy.update.orchestrator import GuardRefused, env_sha256
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / '.env'
+            path.write_bytes(b'FUTURE_AGI_VERSION=v1.0.0\n\xff')
+            self.assertEqual(env_sha256(SimpleNamespace(_env_path=lambda: path)), hashlib.sha256(path.read_bytes()).hexdigest())
+            def retargeted():
+                raise EnvCommitError('the selected env target changed')
+            for engine in (SimpleNamespace(_env_path=lambda: Path(directory) / 'missing.env'),
+                           SimpleNamespace(_env_path=lambda: Path(directory)),
+                           SimpleNamespace(_env_path=retargeted)):
+                with self.subTest(engine=engine), self.assertRaises(GuardRefused) as caught:
+                    env_sha256(engine)
+                self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+
+
+class OrchestratorHelperTests(unittest.TestCase):
+    """Review round 2 (coverage): the small host helpers the scheduled engine adapter is built from."""
+
+    def test_fingerprint_without_update_conf_differs_from_the_one_with_it(self):
+        import tempfile
+        from types import SimpleNamespace
+        from deploy.update.orchestrator import fingerprints
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            installation = SimpleNamespace(root=root, env={'A': '1'}, environ={}, _ownership_files=lambda: [],
+                                           config=lambda refresh=False: {'services': {}})
+            without = fingerprints(installation)
+            (root / 'update.conf').write_text('FUTURE_AGI_UPDATE_AUTOMATION_MODE=apply\n')
+            with_file = fingerprints(installation)
+        self.assertNotEqual(without[0], with_file[0])
+        self.assertEqual(without[1:], with_file[1:])
+
+    def test_malformed_manifest_or_missing_deployment_file_is_a_typed_mismatch(self):
+        import tempfile
+        from types import SimpleNamespace
+        from deploy.update.orchestrator import GuardRefused, check_deployment
+        with tempfile.TemporaryDirectory() as directory:
+            installation = SimpleNamespace(root=Path(directory).resolve())
+            for manifest in ({}, {'deployment': {}}, {'deployment': {'files': {}}}, {'deployment': {'files': None}},
+                             {'deployment': {'files': {'missing.yml': 'a' * 64}}}):
+                with self.subTest(manifest=manifest), self.assertRaises(GuardRefused) as caught:
+                    check_deployment(installation, manifest)
+                self.assertEqual(caught.exception.reason_code, ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+
+
+class SupervisedReadinessTests(unittest.TestCase):
+    """Review round 2 (coverage): readiness waits are bounded by the supervisor's deadline and the wait budget."""
+
+    def readiness(self, deadline_in=100.0, wait_timeout=50):
+        import time
+        from types import SimpleNamespace
+        from deploy.update.orchestrator import SupervisedReadiness
+        supervisor = SimpleNamespace(deadline=time.monotonic() + deadline_in,
+                                     policy=SimpleNamespace(wait_timeout_seconds=wait_timeout))
+        seen = {}
+
+        class Recorder:
+            def __init__(self, installation, out, *, probe, clock, sleep):
+                seen.update(probe=probe, clock=clock, sleep=sleep)
+
+            def wait_standalone(self, previous_ids=()):
+                seen['standalone'] = list(previous_ids)
+                return 'standalone-done'
+
+            def wait_api(self):
+                seen['api'] = True
+                return 'api-done'
+
+        return SupervisedReadiness('installation', supervisor, 'out'), seen, Recorder
+
+    def test_waits_delegate_to_the_core_readiness_with_bounded_clock_sleep_and_probe(self):
+        from deploy.update.readiness import NotReady
+        readiness, seen, recorder = self.readiness()
+        with mock.patch('deploy.update.readiness.Readiness', recorder), \
+                mock.patch('deploy.update.readiness.http_ok', return_value=True) as http_ok, \
+                mock.patch('time.sleep') as sleep:
+            self.assertEqual(readiness.wait_standalone(previous_ids=['a', 'b']), 'standalone-done')
+            self.assertEqual(readiness.wait_api(), 'api-done')
+            self.assertEqual(seen['standalone'], ['a', 'b'])
+            self.assertIsInstance(seen['clock'](), float)
+            seen['sleep'](1000)  # never longer than what is left of the budget
+            self.assertLessEqual(sleep.call_args.args[0], 50)
+            self.assertTrue(seen['probe']('http://127.0.0.1:1/'))
+            self.assertLessEqual(http_ok.call_args.kwargs['timeout'], 3.0)
+        readiness, seen, recorder = self.readiness(deadline_in=-1)
+        with mock.patch('deploy.update.readiness.Readiness', recorder):
+            readiness.wait_api()
+            with self.assertRaises(NotReady):
+                seen['clock']()
+
+
+class ExecuteGuardedStubTests(unittest.TestCase):
+    """Review round 2 (coverage): the adapter's outcome mapping, with a scripted engine and guard."""
+
+    def run_with(self, apply, *, attempt=True, finish=None, uncertain=False):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from deploy.update.orchestrator import _execute_guarded
+        store = SimpleNamespace(finish_attempt=finish or mock.Mock())
+        guard = SimpleNamespace(attempt=SimpleNamespace(attempt_id='a' * 32, outcome='', finished_at=None) if attempt else None,
+                                proof=None, first_mutation_at=None, fallback_reserved=False, store=store,
+                                clock=lambda: datetime(2026, 10, 24, tzinfo=timezone.utc), make_plan=mock.Mock(),
+                                prepared=SimpleNamespace(manifest={}), close=mock.Mock())
+        engine = SimpleNamespace(automation_guard=guard, automatic_fallback=False, active_record={},
+                                 installation=SimpleNamespace(runner=SimpleNamespace(uncertain=uncertain)),
+                                 apply=apply)
+        with mock.patch('deploy.update.orchestrator.replace', side_effect=lambda value, **changes: value):
+            return _execute_guarded(engine, guard), guard
+
+    def test_nothing_to_do_busy_and_unclassified_causes(self):
+        from deploy.update.receipt import StateBusy
+        result, guard = self.run_with(lambda *args, **kwargs: None, attempt=False)
+        self.assertEqual((result.code, result.forward_result), (0, 'current'))
+        guard.close.assert_called_once()
+        result, _ = self.run_with(mock.Mock(side_effect=StateBusy('busy')), attempt=False)
+        self.assertEqual((result.code, result.forward_result, result.transaction_started), (0, 'busy', False))
+
+        class Odd(Exception):
+            reason_code = 'not-a-reason'
+
+        result, _ = self.run_with(mock.Mock(side_effect=Odd()), attempt=False)
+        self.assertEqual((result.code, result.reason_codes), (2, (ReasonCode.PROCESS_FAILED,)))
+
+    def test_process_errors_keep_their_typed_reason(self):
+        from deploy.update.processes import ProcessError
+        error = ProcessError(ReasonCode.OPERATION_TIMEOUT, uncertain=True)
+        result, _ = self.run_with(mock.Mock(side_effect=error), attempt=False)
+        self.assertEqual((result.code, result.forward_result, result.reason_codes),
+                         (2, 'failed', (ReasonCode.OPERATION_TIMEOUT,)))
+        result, _ = self.run_with(mock.Mock(side_effect=ProcessError(ReasonCode.PROCESS_FAILED)), attempt=False)
+        self.assertEqual(result.reason_codes, (ReasonCode.PROCESS_FAILED,))
+
+    def test_a_terminal_state_that_cannot_be_persisted_leaves_recovery_required(self):
+        result, _ = self.run_with(lambda *args, **kwargs: None, finish=mock.Mock(side_effect=OSError('/private PASSWORD=x')))
+        self.assertEqual((result.code, result.reason_codes, result.forward_result),
+                         (2, (ReasonCode.RECOVERY_REQUIRED,), 'current'))
+        self.assertNotIn('PASSWORD', repr(result))
+        finish = mock.Mock()
+        result, guard = self.run_with(lambda *args, **kwargs: None, finish=finish)
+        finish.assert_called_once()
+        self.assertEqual((result.code, result.reason_codes), (0, ()))
+
+
+class OrchestratorHistoryTests(UpdaterCase):
+    def test_an_unfinished_partial_rollout_receipt_refuses_a_new_scheduled_start(self):
+        from deploy.update.orchestrator import GuardRefused
+        guard_case = ScheduledGuardTests('test_exact_pair_is_reverified_again_at_first_mutation_boundary')
+        guard_case.setUp()
+        self.addCleanup(guard_case.doCleanups)
+        self.addCleanup(guard_case.tearDown)
+        guard_case.craft_apply(status='failed_during_rollout', target='v1.52.0')
+        with self.assertRaises(GuardRefused) as caught:
+            guard_case.guard._pending(guard_case.engine)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.RECOVERY_REQUIRED)
+
+
+class DependencyImageCheckTests(unittest.TestCase):
+    """Review round 2: check_dependency_images against a stand-in for the Compose model and the local image store."""
+
+    LAYOUT = None
+
+    def setUp(self):
+        from deploy.update.compatibility import RuntimeImage, topology_profile
+        self.layout = topology_profile('standalone', ())
+        self.digest = {'postgres': 'sha256:' + 'a' * 64, 'clickhouse': 'sha256:' + 'b' * 64}
+        self.ids = {'postgres': 'sha256:' + '1' * 64, 'clickhouse': 'sha256:' + '2' * 64}
+        self.references = {'postgres': 'postgres:16', 'clickhouse': 'clickhouse/clickhouse-server:24.8'}
+        self.certified = {name: (RuntimeImage(self.references[name], self.digest[name], self.ids[name]),)
+                          for name in self.references}
+        self.services = {name: {'image': ref} for name, ref in self.references.items()}
+        self.local = {ref: {'id': self.ids[name], 'repo_digests': [
+            ref.rsplit(':', 1)[0] + '@' + self.digest[name]]} for name, ref in self.references.items()}
+        self.installation = mock.Mock()
+        self.installation.config.side_effect = lambda refresh=False: {'services': self.services}
+        self.installation.image.side_effect = lambda ref: self.local.get(ref)
+
+    def check(self):
+        from deploy.update.orchestrator import check_dependency_images
+        return check_dependency_images(self.installation, self.layout, self.certified)
+
+    def refused(self, reason):
+        from deploy.update.orchestrator import GuardRefused
+        with self.assertRaises(GuardRefused) as caught:
+            self.check()
+        self.assertEqual(caught.exception.reason_code, reason)
+
+    def test_matching_images_are_certified_per_service_and_the_model_is_refreshed(self):
+        self.assertEqual(self.check(), {name: frozenset({self.ids[name]}) for name in self.ids})
+        self.installation.config.assert_called_once_with(refresh=True)
+
+    def test_every_mismatch_is_a_typed_refusal(self):
+        from dataclasses import replace
+        cases = {
+            'moved tag (other id)': (lambda: self.local['postgres:16'].update(id='sha256:' + '9' * 64),
+                                     ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'other digest': (lambda: self.local['postgres:16'].update(repo_digests=['postgres@sha256:' + '9' * 64]),
+                             ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'no digests': (lambda: self.local['postgres:16'].update(repo_digests=[]), ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'digest of another repository': (lambda: self.local['postgres:16'].update(
+                repo_digests=['other/postgres@' + self.digest['postgres']]), ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'not on this host': (lambda: self.local.pop('clickhouse/clickhouse-server:24.8'),
+                                 ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'one of two replicas differs': (lambda: self.certified.update(postgres=(
+                self.certified['postgres'][0], replace(self.certified['postgres'][0], image_id='sha256:' + '8' * 64))),
+                ReasonCode.IMAGE_DIGEST_MISMATCH),
+            'service absent from the model': (lambda: self.services.pop('postgres'), ReasonCode.CONFIGURATION_CHANGED),
+            'service is built locally': (lambda: self.services['postgres'].update(build='.'),
+                                         ReasonCode.CONFIGURATION_CHANGED),
+            'service has no image': (lambda: self.services['postgres'].pop('image'), ReasonCode.CONFIGURATION_CHANGED),
+            'service entry is not a mapping': (lambda: self.services.update(postgres='postgres:16'),
+                                               ReasonCode.CONFIGURATION_CHANGED),
+            'unparseable reference': (lambda: self.services['postgres'].update(image='Not A Reference'),
+                                      ReasonCode.CONFIGURATION_CHANGED),
+            'no certified replicas': (lambda: self.certified.pop('postgres'), ReasonCode.RUNNING_VERSIONS_UNKNOWN),
+            'empty certified replicas': (lambda: self.certified.update(postgres=()),
+                                         ReasonCode.RUNNING_VERSIONS_UNKNOWN),
+        }
+        for label, (change, reason) in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                change()
+                self.refused(reason)
+
+    def test_the_check_never_pulls_starts_or_stops_anything(self):
+        self.check()
+        self.assertEqual([call[0] for call in self.installation.method_calls], ['config', 'image', 'image'])
+
+
 class ScheduledGuardTests(UpdaterCase):
     """Real guard/store/proof/engine with synthetic certification and fake Docker."""
     def setUp(self):
@@ -248,6 +502,7 @@ class ScheduledGuardTests(UpdaterCase):
         self.now = NOW
         prepared, self.obs, self.controls, _ = synthetic_context()
         self.build(current='v1.51.0')
+        self.model_dependencies()
         (self.root / 'update.conf').write_text('FUTURE_AGI_UPDATE_AUTOMATION_MODE=apply\n'
                                                'FUTURE_AGI_UPDATE_ENABLED=true\n'
                                                'FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK=true\n')
@@ -311,6 +566,28 @@ class ScheduledGuardTests(UpdaterCase):
         self.engine = Updater(self.inst, load_settings(self.root, environ={}), self.state,
                               out=self.out, readiness=self.ready, hook_runner=backup,
                               automation_guard=self.guard, guard_context=self.guard.context)
+
+    def model_dependencies(self):
+        """The fake Docker holds the certified dependency images, as the enrolled facts observe them on a real host.
+
+        Each dependency of the layout is tagged locally, has one distinct image id and runs it, so the running
+        replicas the facts report are exactly the images the Compose configuration resolves to.
+        """
+        import hashlib
+        from dataclasses import replace
+        from deploy.update.compatibility import RuntimeImage
+        dependencies = {}
+        self.inst.third_party = {}
+        for service, images in sorted(self.obs.dependency_images.items()):
+            certified = images[0]
+            image_id = 'sha256:' + hashlib.sha256(('dependency ' + service).encode()).hexdigest()
+            self.inst.third_party[service] = certified.image
+            self.inst.local_images[certified.image] = image_id
+            self.inst.metadata[image_id] = {'repo_digests': [certified.image.rsplit(':', 1)[0] + '@' + certified.digest],
+                                            'version': ''}
+            self.inst.running[service] = {'image': certified.image, 'image_id': image_id}
+            dependencies[service] = (RuntimeImage(certified.image, certified.digest, image_id),)
+        self.obs = replace(self.obs, dependency_images=dependencies)
 
     def run_guarded(self):
         import copy
@@ -756,3 +1033,523 @@ class ScheduledGuardTests(UpdaterCase):
         self.assertIsNotNone(self.state.read_journal())
         self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')
         self.assertEqual(self.state.receipts(), [])
+
+    # ------------------------------------------------------------------------------------------------------------
+    # Review round 2 (F1): an automatic transaction is bound to the exact env bytes the guard approved.
+
+    PIN_EDIT = '\nFUTURE_AGI_VERSION=v1.53.0\n'
+
+    def edit_after_facts(self, boundary, call, *, edit=PIN_EDIT):
+        """Make an operator pin edit land right after the `call`-th facts call of `boundary` returns."""
+        from collections import Counter
+        calls = Counter()
+        original = self.guard.facts
+
+        def facts(installation, name):
+            result = original(installation, name)
+            calls[name] += 1
+            if name == boundary and calls[name] == call:
+                with self.env_path.open('a') as handle:
+                    handle.write(edit)
+            return result
+
+        self.guard.facts = facts
+
+    def assert_operator_edit_survives(self, expected_selection='v1.53.0'):
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), expected_selection)
+        self.assertTrue(self.env_bytes().endswith(self.PIN_EDIT.encode()))
+        self.assertIsNone(self.state.read_journal())
+
+    def test_pin_edit_during_the_final_facts_call_is_refused_and_survives(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.edit_after_facts('before_env_commit', 2)  # the second call is the final observation
+        with self.assertRaises(GuardRefused) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assert_operator_edit_survives()
+        self.assertEqual(self.env_bytes(), self.original + self.PIN_EDIT.encode())
+        self.assertEqual(self.env_write_count, 0)
+        self.assertFalse(any(call[0] == 'up' for call in self.compose_calls()))
+        self.assertEqual(self.state.receipts(), [])
+        self.assertIsNone(self.guard.approved_env_sha256)
+
+    def test_any_env_edit_during_the_final_facts_call_is_refused_not_only_pins(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.edit_after_facts('before_env_commit', 2, edit='\n# a comment the operator added\n')
+        with self.assertRaises(GuardRefused) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertTrue(self.env_bytes().endswith(b'# a comment the operator added\n'))
+        self.assertEqual(self.env_write_count, 0)
+
+    def test_pin_edit_after_the_guard_returned_is_refused_by_the_transaction_itself(self):
+        # The window between the guard and the journal (ownership is rechecked there): the preimage the
+        # transaction is built from must be the one the guard approved, not whatever is on disk by then.
+        from deploy.update.orchestrator import GuardRefused
+        validate = self.guard.validate
+        state = {'approved': False, 'edited': False}
+
+        def watch(boundary, context):
+            validate(boundary, context)
+            state['approved'] = state['approved'] or boundary == 'before_env_commit'
+
+        def ownership():
+            if state['approved'] and not state['edited']:
+                state['edited'] = True
+                with self.env_path.open('a') as handle:
+                    handle.write(self.PIN_EDIT)
+
+        self.guard.validate = watch
+        self.inst.check_ownership = ownership
+        with self.assertRaises(GuardRefused) as caught:
+            self.run_guarded()
+        self.assertTrue(state['edited'])
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assert_operator_edit_survives()
+        self.assertEqual(self.env_write_count, 0)
+        self.assertFalse(any(call[0] == 'up' for call in self.compose_calls()))
+        self.assertEqual(self.state.receipts(), [])
+
+    def test_pin_edit_before_the_final_observation_is_still_a_configuration_change(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.edit_after_facts('before_env_commit', 1)  # lands before the final observation starts
+        with self.assertRaises(GuardRefused) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.CONFIGURATION_CHANGED)
+        self.assert_operator_edit_survives()
+        self.assertEqual(self.env_write_count, 0)
+
+    def test_env_that_cannot_be_read_when_the_final_observation_starts_fails_closed(self):
+        from deploy.update.envfile import EnvCommitError
+        from deploy.update.orchestrator import GuardRefused
+        validate = self.guard.validate
+
+        def flaky_first_read(boundary, context):
+            if boundary == 'before_env_commit':
+                original = self.engine._env_path
+                reads = []
+
+                def env_path():
+                    if not reads:
+                        reads.append(1)
+                        raise EnvCommitError('the selected env target changed')
+                    return original()
+
+                self.engine._env_path = env_path
+            validate(boundary, context)
+
+        self.guard.validate = flaky_first_read
+        with self.assertRaises(GuardRefused) as caught:
+            self.run_guarded()
+        # Nothing may be approved on bytes that were never read: the guard refuses instead of skipping the binding.
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertEqual(self.env_write_count, 0)
+        self.assertIsNone(self.guard.approved_env_sha256)
+
+    def test_without_an_edit_the_transaction_is_bound_to_the_approved_bytes_and_succeeds(self):
+        import hashlib
+        path = self.run_guarded()
+        approved = hashlib.sha256(self.original).hexdigest()
+        self.assertEqual(self.guard.approved_env_sha256, approved)
+        self.assertEqual(self.state.load_receipt(path)['status'], 'succeeded')
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')
+        self.assertEqual(self.env_write_count, 1)
+
+    def test_rollout_boundary_rechecks_the_approved_preimage(self):
+        from deploy.update.apply import UpdateError
+        validate = self.guard.validate
+
+        def tamper(boundary, context):
+            if boundary == 'before_rollout':
+                self.guard.approved_env_sha256 = 'f' * 64  # the transaction began from other bytes
+            validate(boundary, context)
+
+        self.guard.validate = tamper
+        with self.assertRaises(UpdateError) as caught:
+            self.run_guarded()
+        self.assertEqual(str(caught.exception), ReasonCode.RECOVERY_REQUIRED.value)
+        self.assertFalse(any(call[0] == 'up' for call in self.compose_calls()))
+        self.assertIsNotNone(self.state.read_journal())  # kept for the operator, never normalized away
+
+    def test_manual_runs_keep_the_unbound_recovery_record_call(self):
+        from deploy.update import envfile
+        with mock.patch.object(envfile, 'recovery_record', wraps=envfile.recovery_record) as record:
+            self.apply(updater=self.updater())
+        self.assertEqual(record.call_count, 1)
+        self.assertEqual(len(record.call_args.args), 2)
+        self.assertEqual(record.call_args.kwargs, {})
+
+    def test_fallback_pin_edit_during_the_final_facts_call_is_refused_and_survives(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.prepare_failed_rollout()
+        ups = sum(call[0] == 'up' for call in self.compose_calls())
+        self.edit_after_facts('before_env_commit', 1)
+        with self.assertRaises(GuardRefused) as caught:
+            self.guard.rollback_once(self.engine)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assert_operator_edit_survives()
+        self.assertEqual(sum(call[0] == 'up' for call in self.compose_calls()), ups)
+        self.assertEqual([r['status'] for r in self.receipts()], ['failed_during_rollout'])
+
+    def test_fallback_pin_edit_after_the_guard_returned_is_refused_by_the_transaction_itself(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.prepare_failed_rollout()
+        validate = self.guard.validate
+        state = {'approved': False, 'edited': False}
+
+        def watch(boundary, context):
+            validate(boundary, context)
+            state['approved'] = state['approved'] or boundary == 'before_env_commit'
+
+        def ownership():
+            if state['approved'] and not state['edited']:
+                state['edited'] = True
+                with self.env_path.open('a') as handle:
+                    handle.write(self.PIN_EDIT)
+
+        self.guard.validate = watch
+        self.inst.check_ownership = ownership
+        with self.assertRaises(GuardRefused) as caught:
+            self.guard.rollback_once(self.engine)
+        self.assertTrue(state['edited'])
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assert_operator_edit_survives()
+
+    def test_fallback_rollout_boundary_rechecks_the_forward_transactions_hash(self):
+        from deploy.update.apply import UpdateError
+        self.prepare_failed_rollout()
+        validate = self.guard.validate
+        ups = sum(call[0] == 'up' for call in self.compose_calls())
+
+        def tamper(boundary, context):
+            if boundary == 'before_rollout':
+                self.guard.approved_env_sha256 = 'f' * 64
+            validate(boundary, context)
+
+        self.guard.validate = tamper
+        with self.assertRaises(UpdateError):
+            self.guard.rollback_once(self.engine)
+        self.assertEqual(sum(call[0] == 'up' for call in self.compose_calls()), ups)
+
+    def test_fallback_authorization_rechecks_env_after_predecessor_facts(self):
+        from deploy.update.orchestrator import GuardRefused
+        self.edit_after_facts('before_fallback', 1)
+        with self.assertRaises(GuardRefused) as caught:
+            self.prepare_failed_rollout()
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertIsNone(self.guard.fallback)
+        self.assert_operator_edit_survives()
+
+    def test_fallback_authorization_rechecks_env_after_prior_image_inspection(self):
+        from deploy.update.orchestrator import GuardRefused
+
+        def arm():
+            image = self.inst.image
+            prior_id = self.guard.prior_images['app'][0].image_id
+
+            def inspect(reference):
+                result = image(reference)
+                if reference == prior_id:
+                    with self.env_path.open('a') as handle:
+                        handle.write(self.PIN_EDIT)
+                return result
+
+            self.inst.image = inspect
+
+        with self.assertRaises(GuardRefused) as caught:
+            self.prepare_failed_rollout(before_authorize=arm)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.ENV_CONFLICT)
+        self.assertIsNone(self.guard.fallback)
+        self.assert_operator_edit_survives()
+
+    def test_final_rollout_observation_preserves_forward_and_fallback_operator_edits(self):
+        from deploy.update.apply import UpdateError
+        from deploy.update.orchestrator import GuardRefused
+        for fallback in (False, True):
+            with self.subTest(fallback=fallback):
+                self.setUp()
+                if fallback:
+                    self.prepare_failed_rollout()
+                ups = sum(call[0] == 'up' for call in self.compose_calls())
+                self.edit_after_facts('before_rollout', 1 if fallback else 2)
+                with self.assertRaises(UpdateError) as caught:
+                    if fallback:
+                        self.guard.rollback_once(self.engine)
+                    else:
+                        self.run_guarded()
+                self.assertIsInstance(caught.exception.__cause__, GuardRefused)
+                self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.ENV_CONFLICT)
+                self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.53.0')
+                self.assertTrue(self.env_bytes().endswith(self.PIN_EDIT.encode()))
+                self.assertEqual(sum(call[0] == 'up' for call in self.compose_calls()), ups)
+                self.assertIsNotNone(self.state.read_journal())
+
+    def test_fallback_without_an_edit_is_bound_to_the_forward_hash_and_succeeds(self):
+        self.prepare_failed_rollout()
+        path = self.guard.rollback_once(self.engine)
+        self.assertEqual(self.state.load_receipt(path)['status'], 'rolled_back')
+        self.assertEqual(self.guard.approved_env_sha256, self.guard.fallback_env_sha256)
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
+
+    # ------------------------------------------------------------------------------------------------------------
+    # Review round 2 (F2): the dependency images Compose starts are the ones the facts certified.
+
+    def whole_stack_up(self, on_up=None):
+        """Model Compose's whole-stack `up`: every service runs the image its tag resolves to on this host NOW."""
+        original = self.inst.compose_run
+        self.up_calls = 0
+
+        def compose(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if args[0] == 'up':
+                self.up_calls += 1
+                for service, image in self.inst.third_party.items():
+                    self.inst.running[service] = {'image': image, 'image_id': self.inst.local_images[image]}
+                if on_up is not None:
+                    on_up(self.up_calls)
+            return result
+
+        self.inst.compose_run = compose
+
+    def move_tag(self, service='postgres', character='9'):
+        """A newer upstream build was pulled/retagged locally under the dependency's tag; returns its image id."""
+        reference = self.inst.third_party[service]
+        image_id = 'sha256:' + character * 64
+        self.inst.local_images[reference] = image_id
+        self.inst.metadata[image_id] = {'repo_digests': [reference.rsplit(':', 1)[0] + '@sha256:' + character * 64],
+                                        'version': 'a different upstream build'}
+        return image_id
+
+    def live_dependency_facts(self):
+        """Facts as the enrolled adapter reports them: what the dependency containers run right now."""
+        from dataclasses import replace
+        from deploy.update.compatibility import RuntimeImage
+
+        def facts(installation, boundary):
+            images = {}
+            for service in self.obs.dependency_images:
+                running = self.inst.running[service]
+                digest = self.inst.metadata[running['image_id']]['repo_digests'][0].split('@', 1)[1]
+                images[service] = (RuntimeImage(running['image'], digest, running['image_id']),)
+            return replace(self.obs, dependency_images=images), self.controls
+
+        self.guard.facts = facts
+
+    def running_snapshot(self):
+        import copy
+        return copy.deepcopy(self.inst.running)
+
+    def test_retagged_dependency_is_refused_before_up_and_nothing_is_touched(self):
+        from deploy.update.apply import FailedBeforeRollout
+        from deploy.update.orchestrator import GuardRefused
+        self.whole_stack_up()
+        self.move_tag('postgres')
+        running = self.running_snapshot()
+        with self.assertRaises(FailedBeforeRollout) as caught:
+            self.run_guarded()
+        cause = caught.exception.__cause__
+        self.assertIsInstance(cause, GuardRefused)
+        self.assertEqual(cause.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual(self.up_calls, 0)
+        self.assertFalse(any(call[0] == 'up' for call in self.compose_calls()))
+        self.assertEqual(self.running_snapshot(), running)
+        self.assertEqual(self.env_bytes(), self.original)
+        self.assertEqual([r['status'] for r in self.receipts()], ['failed_before_rollout'])
+        self.assertIsNone(self.state.read_journal())
+
+    def test_retagged_dependency_is_a_typed_pre_rollout_outcome_and_latches_the_target(self):
+        from deploy.update.orchestrator import execute_guarded
+        self.engine.settings = load_settings(self.root, {'FUTURE_AGI_UPDATE_BACKUP_COMMAND': BACKUP}, environ={})
+        self.whole_stack_up()
+        self.move_tag('clickhouse', '8')
+        outcome = execute_guarded(self.engine, self.guard)
+        self.assertEqual((outcome.code, outcome.reason_codes), (4, (ReasonCode.IMAGE_DIGEST_MISMATCH,)))
+        self.assertEqual((outcome.forward_result, outcome.fallback_result), ('failed', 'none'))
+        self.assertFalse(outcome.rollout_started)
+        self.assertEqual(self.up_calls, 0)
+        self.assertIsNotNone(self.store.read_state().failed_target_latch)
+
+    def test_same_image_id_without_the_certified_digest_is_refused_before_up(self):
+        from deploy.update.apply import FailedBeforeRollout
+        self.whole_stack_up()
+        certified = self.obs.dependency_images['postgres'][0]
+        self.inst.metadata[certified.image_id]['repo_digests'] = [certified.image.rsplit(':', 1)[0] + '@sha256:' + '4' * 64]
+        with self.assertRaises(FailedBeforeRollout) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual(self.up_calls, 0)
+
+    def test_dependency_tag_removed_and_pulled_again_cannot_bypass_certification(self):
+        # The engine pulls a third-party image that is not on the host; whatever the registry serves now is a
+        # new build, so the pull may not stand in for the certified image.
+        from deploy.update.apply import FailedBeforeRollout
+        self.whole_stack_up()
+        reference = self.inst.third_party['postgres']
+        self.inst.local_images.pop(reference)
+        self.inst.registry[reference] = self.move_tag('postgres', '6')
+        self.inst.local_images.pop(reference)  # move_tag put it back; only the registry may offer it
+        with self.assertRaises(FailedBeforeRollout) as caught:
+            self.run_guarded()
+        self.assertTrue(any(call[0] == 'pull' for call in self.compose_calls()))
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual(self.up_calls, 0)
+
+    def test_unchanged_dependencies_succeed_and_are_certified_once(self):
+        self.whole_stack_up()
+        running = self.running_snapshot()
+        path = self.run_guarded()
+        self.assertEqual(self.state.load_receipt(path)['status'], 'succeeded')
+        self.assertEqual(self.up_calls, 1)
+        for service in ('clickhouse', 'postgres'):
+            self.assertEqual(self.inst.running[service], running[service])
+            self.assertEqual(self.guard.dependency_image_ids[service], frozenset({running[service]['image_id']}))
+
+    def test_dependency_replaced_during_rollout_never_yields_a_succeeded_receipt(self):
+        from deploy.update.apply import FailedDuringRollout
+        self.live_dependency_facts()
+        replaced = {}
+
+        def replace_while_starting(call):
+            # Compose resolved the dependency's tag to another build between the pre-rollout check and `up`.
+            replaced['id'] = self.move_tag('postgres')
+            reference = self.inst.third_party['postgres']
+            self.inst.running['postgres'] = {'image': reference, 'image_id': replaced['id']}
+
+        self.whole_stack_up(replace_while_starting)
+        with self.assertRaises(FailedDuringRollout) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual([r['status'] for r in self.receipts()], ['failed_during_rollout'])
+        self.assertEqual(self.inst.running['postgres']['image_id'], replaced['id'])
+
+    def test_missing_dependency_after_rollout_never_yields_a_succeeded_receipt(self):
+        from deploy.update.apply import FailedDuringRollout
+        self.whole_stack_up(lambda call: self.inst.running.pop('postgres'))
+        with self.assertRaises(FailedDuringRollout) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual([r['status'] for r in self.receipts()], ['failed_during_rollout'])
+
+    def test_dependency_replaced_during_rollout_is_a_failed_rollout_with_no_automatic_fallback(self):
+        from deploy.update.orchestrator import execute_guarded
+        self.engine.settings = load_settings(self.root, {'FUTURE_AGI_UPDATE_BACKUP_COMMAND': BACKUP}, environ={})
+        self.live_dependency_facts()
+
+        def replace_while_starting(call):
+            image_id = self.move_tag('postgres')
+            self.inst.running['postgres'] = {'image': self.inst.third_party['postgres'], 'image_id': image_id}
+
+        self.whole_stack_up(replace_while_starting)
+        outcome = execute_guarded(self.engine, self.guard)
+        self.assertEqual((outcome.code, outcome.forward_result), (5, 'failed'))
+        self.assertEqual(outcome.reason_codes, (ReasonCode.IMAGE_DIGEST_MISMATCH,))
+        self.assertTrue(outcome.rollout_started)
+        # The fallback's own eligibility facts see the uncertified dependency: it is not attempted.
+        self.assertEqual(outcome.fallback_result, 'ineligible')
+        self.assertEqual(self.up_calls, 1)
+        self.assertNotIn('succeeded', [r['status'] for r in self.receipts()])
+        self.assertIsNotNone(self.store.read_state().failed_target_latch)
+
+    def test_retagged_dependency_is_refused_before_the_fallback_up(self):
+        from deploy.update.apply import FailedBeforeRollout
+        self.whole_stack_up()
+        self.prepare_failed_rollout()
+        ups = self.up_calls
+        self.move_tag('postgres')
+        with self.assertRaises(FailedBeforeRollout) as caught:
+            self.guard.rollback_once(self.engine)
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        self.assertEqual(self.up_calls, ups)
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')  # the failed forward pins, untouched
+
+    def test_dependency_replaced_during_the_fallback_rollout_is_not_a_rolled_back_receipt(self):
+        from deploy.update.apply import FailedDuringRollout
+        self.whole_stack_up()
+        self.prepare_failed_rollout()
+
+        def replace_while_starting(call):
+            image_id = self.move_tag('clickhouse')
+            self.inst.running['clickhouse'] = {'image': self.inst.third_party['clickhouse'], 'image_id': image_id}
+
+        self.whole_stack_up(replace_while_starting)
+        with self.assertRaises(FailedDuringRollout):
+            self.guard.rollback_once(self.engine)
+        self.assertNotIn('rolled_back', [r['status'] for r in self.receipts()])
+
+    # ------------------------------------------------------------------------------------------------------------
+    # Review round 2 (F3): the guard authorizes against a clock sampled after its own last facts call.
+
+    def windowed(self, window='12:00-12:16'):
+        from dataclasses import replace
+        from deploy.update.schedule import occurrence
+        settings = load_settings(self.root, {'FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW': window}, environ={})
+        self.engine.settings = settings
+        self.controls = replace(self.controls, policy=settings.automation_policy)
+        self.guard.window_occurrence = occurrence(settings.automation_policy.maintenance_window, self.now)
+
+    def slow_final_facts(self, seconds, boundary='before_rollout'):
+        """The provider returns stale 'window open / budget available' booleans after taking `seconds`."""
+        from collections import Counter
+        from datetime import timedelta
+        calls = Counter()
+
+        def facts(installation, name):
+            calls[name] += 1
+            if name == boundary and calls[name] == 2:
+                self.now += timedelta(seconds=seconds)
+            return self.obs, self.controls
+
+        self.guard.facts = facts
+
+    def test_slow_final_facts_that_cross_the_start_budget_refuse_before_up(self):
+        from deploy.update.apply import FailedBeforeRollout
+        self.windowed()
+        self.whole_stack_up()
+        self.slow_final_facts(61)  # 960s left at 12:00:00; 899 after the final observation: under the 900 required
+        with self.assertRaises(FailedBeforeRollout) as caught:
+            self.run_guarded()
+        self.assertEqual(caught.exception.__cause__.reason_code, ReasonCode.INSUFFICIENT_WINDOW)
+        self.assertEqual(self.up_calls, 0)
+        self.assertEqual(self.env_bytes(), self.original)
+
+    def test_slow_final_facts_that_stay_inside_the_budget_proceed(self):
+        self.windowed()
+        self.whole_stack_up()
+        self.slow_final_facts(60)  # exactly 900s remain: the minimum is met
+        path = self.run_guarded()
+        self.assertEqual(self.state.load_receipt(path)['status'], 'succeeded')
+        self.assertEqual(self.up_calls, 1)
+
+    def test_slow_final_facts_that_close_the_window_refuse_at_every_forward_boundary(self):
+        from deploy.update.orchestrator import GuardRefused
+        for boundary in ('before_backup', 'after_backup', 'before_env_commit'):
+            with self.subTest(boundary=boundary):
+                self.setUp()
+                self.windowed()
+                self.slow_final_facts(1000, boundary)
+                with self.assertRaises(GuardRefused) as caught:
+                    self.run_guarded()
+                self.assertIn(caught.exception.reason_code, (ReasonCode.INSUFFICIENT_WINDOW, ReasonCode.OUTSIDE_WINDOW))
+                self.assertEqual(self.env_write_count, 0)
+
+    def test_authorized_fallback_ignores_window_and_budget_booleans(self):
+        from dataclasses import replace
+        self.prepare_failed_rollout()
+        self.controls = replace(self.controls, window_open=False, start_budget_available=False)
+        path = self.guard.rollback_once(self.engine)
+        self.assertEqual(self.state.load_receipt(path)['status'], 'rolled_back')
+
+    def test_authorized_fallback_finishes_after_its_own_slow_facts_close_the_window(self):
+        self.windowed('12:00-13:00')
+        self.prepare_failed_rollout()
+        from datetime import timedelta
+        original = self.guard.facts
+
+        def facts(installation, boundary):
+            self.now += timedelta(hours=2)  # the window closed while the fallback was observing
+            return original(installation, boundary)
+
+        self.guard.facts = facts
+        path = self.guard.rollback_once(self.engine)
+        self.assertEqual(self.state.load_receipt(path)['status'], 'rolled_back')
+        self.assertEqual(self.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')

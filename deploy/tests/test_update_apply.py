@@ -5253,7 +5253,7 @@ class StateDirIntegrationTests(unittest.TestCase):
         with mock.patch.object(receipt_module.os, "pread", side_effect=OSError(errno.EIO, "I/O error")):
             self.assertEqual(StateDir._holder_text(0), "")
 
-    def test_lock_holder_reads_as_free_whenever_it_cannot_tell(self):
+    def test_lock_holder_refuses_unknown_lock_state_but_close_releases_failed_unlock(self):
         import fcntl
         self.state.ensure()
         self.state.lock_path.write_text("")
@@ -5264,11 +5264,13 @@ class StateDirIntegrationTests(unittest.TestCase):
                 raise OSError(errno.EBADF, "Bad file descriptor")
             return real_flock(fd, operation)
 
-        for flock in (mock.Mock(side_effect=OSError(errno.ENOLCK, "No locks available")), unlock_fails):
-            with self.subTest(flock=flock), mock.patch.object(fcntl, "flock", side_effect=flock):
-                self.assertIsNone(self.state.lock_holder())
-        with mock.patch.dict(sys.modules, {"fcntl": None}):  # no fcntl (Windows)
+        with mock.patch.object(fcntl, "flock", side_effect=OSError(errno.ENOLCK, "No locks available")), \
+                self.assertRaises(StateError):
+            self.state.lock_holder()
+        with mock.patch.object(fcntl, "flock", side_effect=unlock_fails):
             self.assertIsNone(self.state.lock_holder())
+        with mock.patch.dict(sys.modules, {"fcntl": None}), self.assertRaises(StateError):
+            self.state.lock_holder()
 
 
 class ReapIntegrationTests(unittest.TestCase):

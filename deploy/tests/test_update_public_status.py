@@ -233,8 +233,10 @@ class PublisherTests(PublisherCase):
         self.assertEqual(new['versions']['observed_at'], stamp(NOW))
         self.assertEqual(new['discovery']['checked_at'], stamp(NOW))
         self.assertEqual(new['automation']['last_tick_at'], stamp(now))
-        with self.assertRaises(StaleGeneration):
-            self.publisher.heartbeat(expected=ticket, now=now)
+        # Heartbeats merge into the newest snapshot; they never own/fence an operation.
+        newer = self.publisher.heartbeat(expected=ticket, now=now)
+        self.assertEqual(newer.generation, ticket.generation + 2)
+        self.assertEqual(newer.epoch, ticket.epoch)
 
     def test_empty_heartbeat_and_invalid_payload_write_nothing(self):
         with self.assertRaises(PublicationError):
@@ -381,6 +383,237 @@ class PublisherTests(PublisherCase):
         for ticket in (None, PublicationTicket(False), PublicationTicket(-1), PublicationTicket(0, None)):
             with self.assertRaises(PublicationError):
                 self.publisher.publish(self.snapshot(), expected=ticket)
+
+
+class PublicationConcurrencyTests(PublisherCase):
+    def operation(self, state='applying', stage='rollout'):
+        return dict(state=state, kind='apply', stage=stage, started_at=stamp(NOW),
+                    finished_at=None if state == 'applying' else stamp(NOW),
+                    reported_at=stamp(NOW), reason_codes=[])
+
+    def test_manual_terminal_report_survives_heartbeat_without_refreshing_observations(self):
+        owner = self.publish(self.snapshot(operation=self.operation()))
+        previous = self.publisher.capture()[1]
+        heartbeat = self.publisher.heartbeat(expected=owner, now=NOW + timedelta(minutes=5))
+        mid = self.publisher.capture()[1]
+        for field in ('operation', 'safety', 'versions', 'discovery', 'download', 'last_run'):
+            self.assertEqual(mid[field], previous[field])
+        terminal = self.snapshot(previous=previous, now=NOW + timedelta(minutes=6),
+                                 operation=self.operation('succeeded', None))
+        result = self.publisher.publish(terminal, expected=owner, operation_token=owner.operation_token)
+        self.assertEqual(result.generation, heartbeat.generation + 1)
+        self.assertEqual(self.publisher.capture()[1]['operation']['state'], 'succeeded')
+
+    def test_controls_keep_manual_ticket_and_newest_progress_safety_and_observations(self):
+        owner = self.publish(self.snapshot(operation=self.operation()))
+        before = self.publisher.capture()[1]
+        sequence = owner.generation
+        for action in ('pause', 'disable', 'enable', 'resume'):
+            with self.subTest(action=action):
+                self.store.change_control(action, NOW)
+                control = self.publisher.publish_controls(policy=self.policy, now=NOW)
+                newest = self.publisher.capture()[1]
+                self.assertEqual((control.epoch, control.operation_token), (owner.epoch, owner.operation_token))
+                self.assertEqual(control.generation, sequence + 1)
+                sequence = control.generation
+                for field in ('operation', 'safety', 'versions', 'discovery', 'download', 'last_run'):
+                    self.assertEqual(newest[field], before[field])
+        final = self.snapshot(previous=before, operation=self.operation('failed', None))
+        owner = self.publisher.publish(final, expected=owner, operation_token=owner.operation_token)
+        self.assertEqual(owner.generation, sequence + 1)
+        self.assertEqual(self.publisher.capture()[1]['operation']['state'], 'failed')
+
+    def test_operation_rebases_intervening_controls_not_its_old_automation_snapshot(self):
+        owner = self.publish()
+        stale = self.snapshot(operation=self.operation('succeeded', None))
+        self.store.change_control('pause', NOW)
+        self.publisher.publish_controls(policy=self.policy, now=NOW)
+        self.publisher.publish(stale, expected=owner, operation_token='manual')
+        newest = self.publisher.capture()[1]
+        self.assertEqual(newest['automation']['state'], 'paused')
+        self.assertEqual(newest['operation']['state'], 'succeeded')
+
+    def test_pause_expiry_during_manual_operation_is_recomputed_when_rebasing(self):
+        owner = self.publish()
+        self.store.change_control('pause', NOW, until=NOW + timedelta(minutes=1))
+        self.publisher.publish_controls(policy=self.policy, now=NOW)
+        final = self.snapshot(now=NOW + timedelta(minutes=2), operation=self.operation('succeeded', None))
+        self.publisher.publish(final, expected=owner, operation_token='manual')
+        self.assertEqual(self.publisher.capture()[1]['automation']['state'], 'enabled')
+        self.assertIsNone(self.publisher.capture()[1]['automation']['next_action_at'])
+
+    def test_controls_and_heartbeat_merge_newer_operation_instead_of_stale_capture(self):
+        old = self.publish()
+        newer = self.publish(self.snapshot(operation=self.operation('failed', None)))
+        before = self.publisher.capture()[1]
+        self.store.change_control('disable', NOW)
+        controls = self.publisher.publish_controls(policy=self.policy, now=NOW)
+        beat = self.publisher.heartbeat(expected=old, now=NOW + timedelta(minutes=5))
+        current, snapshot = self.publisher.capture()
+        self.assertEqual(current, beat)
+        self.assertEqual((newer.generation, controls.generation, beat.generation), (2, 3, 4))
+        self.assertEqual(snapshot['operation'], before['operation'])
+        self.assertEqual(snapshot['safety'], before['safety'])
+        self.assertEqual(snapshot['automation']['state'], 'disabled')
+        self.assertEqual(beat.epoch, newer.epoch)
+        with self.assertRaises(StaleGeneration) as caught:
+            self.publisher.publish(self.snapshot(), expected=old, operation_token='late-check')
+        self.assertEqual(caught.exception.reason_code, ReasonCode.STATUS_REPORTING_UNAVAILABLE)
+        self.assertEqual(self.publisher.capture()[0], beat)
+
+    def test_first_control_report_does_not_fence_a_manual_command_already_started(self):
+        owner, _ = self.publisher.capture()
+        control = self.publisher.publish_controls(policy=self.policy, now=NOW)
+        result = self.publisher.publish(self.snapshot(), expected=owner, operation_token='manual')
+        self.assertEqual((control.generation, result.generation), (1, 2))
+        self.assertEqual((control.epoch, result.epoch), (0, 1))
+
+    def test_busy_public_lock_is_typed_and_does_not_consume_owner_ticket(self):
+        from deploy.update.runner_state import StoreBusy
+        owner = self.publish()
+        for write in (lambda: self.publisher.publish(self.snapshot(), expected=owner),
+                      lambda: self.publisher.publish_controls(policy=self.policy, now=NOW),
+                      lambda: self.publisher.heartbeat(now=NOW)):
+            with self.store._lock('public.lock'), self.assertRaises(StoreBusy):
+                write()
+            self.assertEqual(self.publisher.capture()[0], owner)
+        final = self.publisher.publish(self.snapshot(), expected=owner, operation_token='manual')
+        self.assertEqual(final.generation, owner.generation + 1)
+
+    def test_resolved_recovery_drops_block_and_action_but_retains_failed_apply_history(self):
+        op = dict(self.operation('blocked', None), kind='check', reason_codes=['recovery_required'])
+        previous = self.snapshot(operation=op, reason_codes=(ReasonCode.RECOVERY_REQUIRED,))
+        for _ in range(3):
+            previous = self.snapshot(previous=previous, observation=None, discovery=None)
+            self.assertEqual(previous['operation']['state'], 'idle')
+            self.assertEqual(previous['safety']['operator_action'], 'none')
+        failed = self.snapshot(operation=self.operation('failed', None))
+        self.assertEqual(self.snapshot(previous=failed, discovery=None, observation=None)['operation'], failed['operation'])
+
+    def test_failed_operation_rebased_over_heartbeat_remains_blocked(self):
+        owner = self.publish()
+        self.publisher.heartbeat(now=NOW)
+        final = self.snapshot(reason_codes=(ReasonCode.BACKUP_REQUIRED,))
+        self.publisher.publish(final, expected=owner)
+        self.assertEqual(self.publisher.capture()[1]['automation']['state'], 'blocked')
+
+    def test_legacy_metadata_upgrades_and_invalid_epochs_are_rejected(self):
+        value = self.snapshot()
+        value['sequence'] = 7
+        legacy = {'generation': 7, 'operation_token': 'legacy', 'snapshot': value}
+        self.publisher.state.write_private('automation', self.publisher.key, legacy)
+        ticket, _ = self.publisher.capture()
+        self.assertEqual(ticket.epoch, 7)
+        result = self.publisher.publish(value, expected=PublicationTicket(7, 'legacy'), operation_token='new')
+        self.assertEqual((result.generation, result.epoch), (8, 8))
+        for epoch in (-1, True, 8, '7'):
+            self.publisher.state.write_private('automation', self.publisher.key, dict(legacy, operation_epoch=epoch))
+            with self.assertRaises(PublicationError):
+                self.publisher.capture()
+
+    def test_control_and_heartbeat_io_failures_are_sanitized(self):
+        self.publish()
+        with mock.patch.object(self.publisher, '_replace', side_effect=OSError('/secret CANARY')):
+            for write in (lambda: self.publisher.heartbeat(now=NOW),
+                          lambda: self.publisher.publish_controls(policy=self.policy, now=NOW)):
+                with self.assertRaises(PublicationError) as caught:
+                    write()
+                self.assertEqual(str(caught.exception), 'status_reporting_unavailable')
+
+
+class PublicationCrashTests(PublisherCase):
+    def test_killed_writer_temp_is_reclaimed_without_touching_any_other_entry(self):
+        self.publish()
+        pid = os.fork()
+        if pid == 0:
+            original = os.replace
+            def die(source, destination, **kwargs):
+                if destination == 'status.json':
+                    os._exit(9)
+                return original(source, destination, **kwargs)
+            with mock.patch('os.replace', side_effect=die):
+                self.publish()
+            os._exit(10)
+        _, status = os.waitpid(pid, 0)
+        self.assertEqual(os.WEXITSTATUS(status), 9)
+        leftovers = list(self.publisher.path.glob('.status-*.tmp'))
+        self.assertEqual(len(leftovers), 1)
+        self.assertEqual(leftovers[0].stat().st_mode & 0o777, 0o644)
+        target = self.root / 'target'
+        target.write_text('CANARY')
+        link = self.publisher.path / ('.status-' + 'a' * 32 + '.tmp')
+        link.symlink_to(target)
+        directory = self.publisher.path / ('.status-' + 'b' * 32 + '.tmp')
+        directory.mkdir()
+        unrelated = self.publisher.path / '.status-unrelated.tmp'
+        unrelated.write_text('keep')
+        for _ in range(3):
+            self.publish()
+        self.assertFalse(leftovers[0].exists())
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(directory.is_dir())
+        self.assertEqual(target.read_text(), 'CANARY')
+        self.assertEqual(unrelated.read_text(), 'keep')
+        self.assertEqual(self.publisher.capture()[0].generation,
+                         json.loads((self.publisher.path / 'status.json').read_bytes())['sequence'])
+
+    def test_unbound_parent_and_slot_mkdir_crashes_require_manual_remediation(self):
+        original = os.mkdir
+        for part in ('public', self.binding.slot_id):
+            with self.subTest(part=part):
+                if part == self.binding.slot_id:
+                    # Explicit test-owner remediation created the slot; remove only that slot.
+                    (self.publisher.path / 'status.json').unlink()
+                    self.publisher.path.rmdir()
+                def crash(name, *args, **kwargs):
+                    result = original(name, *args, **kwargs)
+                    if name == part:
+                        raise KeyboardInterrupt()
+                    return result
+                with mock.patch('os.mkdir', side_effect=crash), self.assertRaises(KeyboardInterrupt):
+                    self.publish()
+                damaged = self.parent if part == 'public' else self.publisher.path
+                self.assertEqual(damaged.stat().st_mode & 0o777, 0o700)
+                # No inode binding was committed before the interruption. Even
+                # empty residue cannot be distinguished from a foreign creation.
+                self.publisher = PublicStatusPublisher(self.store, self.parent)
+                with self.assertRaises(PublicationError):
+                    self.publish()
+                self.assertEqual(damaged.stat().st_mode & 0o777, 0o700)
+                # Only this fixture owner knows this empty directory is ours.
+                damaged.chmod(0o755)
+                self.publish()
+        alien = self.root / 'operator-private'
+        alien.mkdir(mode=0o700)
+        other = PublicStatusPublisher(self.store, alien)
+        with self.assertRaises(PublicationError):
+            other.publish(self.snapshot(), expected=other.capture()[0])
+        self.assertEqual(alien.stat().st_mode & 0o777, 0o700)
+
+    def test_crash_before_chmod_recovers_only_matching_owned_inode(self):
+        original = os.fchmod
+        def crash(fd, mode):
+            if mode == 0o755:
+                raise KeyboardInterrupt()
+            return original(fd, mode)
+        with mock.patch('os.fchmod', side_effect=crash), self.assertRaises(KeyboardInterrupt):
+            self.publish()
+        self.assertEqual(self.parent.stat().st_mode & 0o777, 0o700)
+        self.publish()
+        self.assertEqual(self.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_creation_race_never_adopts_another_creators_directory(self):
+        original = os.mkdir
+        def race(name, *args, **kwargs):
+            if name == 'public':
+                original(name, *args, **kwargs)
+                raise FileExistsError()
+            return original(name, *args, **kwargs)
+        with mock.patch('os.mkdir', side_effect=race), self.assertRaises(PublicationError):
+            self.publish()
+        with self.assertRaises(PublicationError):
+            self.publish()
+        self.assertEqual(self.parent.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == '__main__':

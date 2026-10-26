@@ -3,7 +3,7 @@
 Exit codes:
   0  done (or nothing to do)
   2  error: bad input, missing tool, unreadable state
-  3  blocked: the plan refuses the update (or a confirmation is missing)
+  3  blocked: the plan refuses the update, confirmation is missing, or a short metadata lock stays busy
   4  the update failed before anything was restarted; nothing changed
   5  the update failed while containers were being replaced
   130 interrupted
@@ -19,6 +19,7 @@ import sys
 import hashlib
 import pwd
 import uuid
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,10 +44,10 @@ from .download import Downloader
 from .host_facts import (EnrolledFacts, HostInstallation as Installation, binding_status_overlay,
                          check_status_deployment, daemon_space_available, installation_binding,
                          overlay_discovery, production_status_overlay, registered_status_overlay,
-                         safe_path, selected_store)
+                         safe_path, selected_store, valid_docker_context)
 from .orchestrator import GuardRefused, fingerprints, prepare_update, registered_installation, require
 from .processes import ProcessError, ProcessSupervisor
-from .public_status import PublicStatusPublisher, build_status, stamp
+from .public_status import PublicationConflict, PublicStatusPublisher, build_status, retry_busy as _retry_busy, stamp
 from .receipt import StateBusy
 from .runner import HostRunner
 from .runner_state import LauncherConfig, Registration, StoreBusy, StoreError, TargetIdentity
@@ -108,6 +109,12 @@ OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] 
         "help": "production init only: enroll the fixed signed Distributed host-status overlay; no path"}),
     (("reporting",), None, "--directory", {"metavar": "ABSOLUTE_PATH", "help": "dedicated public parent directory"}),
 )
+# The options (and hidden top-level ones) bin/update accepted before the automation commands existed. argparse
+# lets an unambiguous prefix stand for an option (`--sta`, `--ba`, `--man`), and scripts use them: a prefix that
+# named exactly one of these must keep naming it, whatever options the automation commands added since.
+LEGACY_FLAGS = frozenset((
+    "--production", "--env-file", "--manifest", "--bundle", "--policy", "--channel", "--format", "--backup-command",
+    "--allow-no-backup", "--dry-run", "--stage", "--receipt", "--yes", "--root", "--cwd", "--help"))
 # A command's own options when they are not given.
 DEFAULTS = {"format": "text", "allow_no_backup": False, "dry_run": False, "stage": False, "receipt": None,
             "yes": False}
@@ -127,13 +134,80 @@ def _a(kind: Any) -> str:
     return f"{article} {word}"
 
 
-class _Parser(argparse.ArgumentParser):
+class _Abbreviations:
+    """Command-aware abbreviation of long options (a mixin of the top-level and the command parsers).
+
+    Every option is registered on every parser (so a full flag the command does not take gets its usage
+    error), which would make the options the automation commands added ambiguous with the older ones. So:
+    in a command's parser an abbreviation only ever names an option THAT COMMAND TAKES, and an abbreviation
+    that still matches several of them names the one that predates the automation commands, if exactly one
+    does (`apply --a` is --allow-no-backup, not --acknowledge-stale-stage). The top-level parser discovers the
+    command without treating option values as commands, so both positions use the same matching rules.
+    Full flags are never affected; ambiguity among the command's older options still is a usage error.
+    """
+
+    command: Optional[str] = None
+
+    def _get_option_tuples(self, option_string):
+        matches = super()._get_option_tuples(option_string)
+        if self.command is not None:
+            takes = {flag for takers, _, flag, _ in OPTIONS if self.command in takers}
+            known = {flag for _, _, flag, _ in OPTIONS}
+            matches = [match for match in matches if match[1] in takes or match[1] not in known]
+        if len(matches) > 1:
+            older = [match for match in matches if match[1] in LEGACY_FLAGS]
+            if len(older) == 1:
+                return older
+        return matches
+
+
+class _CommandParser(_Abbreviations, argparse.ArgumentParser):
+    """One command's parser."""
+
+
+class _Parser(_Abbreviations, argparse.ArgumentParser):
     """The top-level parser: checks that the command takes every option given."""
 
     commands: Dict[str, argparse.ArgumentParser]
 
+    def _command_hint(self, words):
+        # All top-level flags take zero or one value. Try command-specific scans
+        # rather than searching for a bare command word (a manifest/path can be
+        # named "apply"). argparse still owns validation and diagnostics.
+        for candidate in dict.fromkeys(word for word in words if word in self.commands):
+            self.command = candidate
+            index, seen, subaction = 0, False, False
+            while index < len(words):
+                word = words[index]
+                if not word.startswith('-') or word == '-':
+                    if not seen and word == candidate:
+                        seen = True
+                    elif seen and candidate in ('schedule', 'reporting') and not subaction:
+                        subaction = True
+                    else:
+                        break
+                    index += 1
+                    continue
+                flag, equal, _ = word.partition('=')
+                action = self._option_string_actions.get(flag)
+                if action is None:
+                    matches = self._get_option_tuples(word)
+                    if len(matches) != 1:
+                        break
+                    action = matches[0][0]
+                index += 1 if equal or action.nargs == 0 else 2
+            else:
+                if seen:
+                    return candidate
+        return None
+
     def parse_known_args(self, args=None, namespace=None):
-        namespace, extras = super().parse_known_args(args, namespace)
+        words = list(sys.argv[1:] if args is None else args)
+        self.command = self._command_hint(words)
+        try:
+            namespace, extras = super().parse_known_args(words, namespace)
+        finally:
+            self.command = None
         command = getattr(namespace, "command", None)
         if command in self.commands:
             for takers, _, flag, _ in OPTIONS:
@@ -202,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_options(parser, None)
     parser.add_argument("--root", default=SUPPRESS, help=SUPPRESS)
     parser.add_argument("--cwd", default=SUPPRESS, help=SUPPRESS)
-    sub = parser.add_subparsers(dest="command", metavar="COMMAND", parser_class=argparse.ArgumentParser)
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND", parser_class=_CommandParser)
     sub.required = True
     helps = {
         "check": "show what an update would do (changes nothing)",
@@ -222,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.commands = {}
     for command in ALL_COMMANDS:
         parser.commands[command] = sub.add_parser(command, help=helps[command])
+        parser.commands[command].command = command
         _add_options(parser.commands[command], command)
         if command in ('schedule', 'reporting'):
             parser.commands[command].add_argument('action', choices=('init', 'render') if command == 'schedule' else ('init',))
@@ -531,6 +606,21 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+@contextmanager
+def _short_lock(store, name):
+    with ExitStack() as stack:
+        directory = _retry_busy(lambda: stack.enter_context(store._lock(name)))
+        yield directory
+
+
+class _ReportBusy(StoreBusy):
+    """The primary mutation landed, but its optional public report did not."""
+    def __init__(self, recorded):
+        super().__init__()
+        self.message = (recorded + ' recorded; public report busy; nothing recorded in public slot; '
+                        'retry status --export-public')
+
+
 def _reporting(store):
     try:
         with store._directory() as directory:
@@ -552,7 +642,7 @@ def _reporting_init(store, path, settings):
             and parent != store.env_target and parent not in store.env_target.parents,
             ReasonCode.STATUS_REPORTING_UNAVAILABLE)
     safe_path(parent if parent.exists() else parent.parent, directory=True)
-    with store._lock('reporting.lock') as directory:
+    with _short_lock(store, 'reporting.lock') as directory:
         old = _reporting(store)
         require(old is None or old.parent == parent, ReasonCode.STATUS_REPORTING_UNAVAILABLE)
         if old is None and parent.exists():
@@ -561,19 +651,23 @@ def _reporting_init(store, path, settings):
             require(not entries or entries == [slot] and not any(safe_path(slot, directory=True).iterdir()),
                     ReasonCode.STATUS_REPORTING_UNAVAILABLE)
         publisher = old or PublicStatusPublisher(store, parent)
-        ticket, previous = publisher.capture()
-        snapshot = build_status(binding, settings.automation_policy, store.read_control(), store.read_state(),
-                                now=_now(), previous=previous)
-        publisher.publish(snapshot, expected=ticket)
+        # Capture before recording anything: a busy public lock is a refusal,
+        # not a falsely successful initialization. Register before publishing,
+        # so interruption at either write can be retried with the same parent.
+        _retry_busy(publisher.capture)
         store._write(directory, 'reporting.json', ReportingRegistration(1, parent, binding.installation_fingerprint))
+        try:
+            _retry_busy(lambda: publisher.publish_controls(policy=settings.automation_policy, now=_now()))
+        except StoreBusy:
+            raise _ReportBusy('reporting registration') from None
     print('Public status directory: ' + str(publisher.path))
     print('Opt in to deploy/docker-compose.host-status.' + binding.topology + '.yml; mount this slot read-only.')
 
 
 class _Publication:
     """Capture before slow work. Never retry a stale report or change an outcome."""
-    def __init__(self, store, settings, *, required=False):
-        self.store, self.settings = store, settings
+    def __init__(self, store, settings, *, required=False, controls=False):
+        self.store, self.settings, self.required = store, settings, required
         self.publisher = None
         self.previous = None
         self.token = uuid.uuid4().hex
@@ -582,31 +676,59 @@ class _Publication:
             self.publisher = _reporting(store)
             if required:
                 require(self.publisher is not None, ReasonCode.STATUS_REPORTING_UNAVAILABLE)
-            if self.publisher is not None:
-                self.ticket, self.previous = self.publisher.capture()
-        except Exception:
+            if self.publisher is not None and not controls:
+                self.ticket, self.previous = _retry_busy(self.publisher.capture)
+        except Exception as exc:
             self.publisher = None
             if required:
                 raise
-            self.warning()
+            self.warning(exc, registration=True)
 
     @staticmethod
-    def warning():
+    def warning(error=None, *, registration=False):
+        if isinstance(error, PublicationConflict):
+            message = 'status_reporting_unavailable; newer operation report retained (publication conflict)'
+        elif isinstance(error, StoreBusy):
+            message = 'status_reporting_unavailable; public report busy; nothing recorded in public slot'
+        elif registration:
+            message = 'status_reporting_unavailable; inspect host reporting registration and public slot'
+        else:
+            message = 'status_reporting_unavailable; public report not recorded; inspect host status'
         try:
-            sys.stderr.write('bin/update: status_reporting_unavailable; inspect host reporting registration\n')
+            sys.stderr.write('bin/update: ' + message + '\n')
         except (Exception, Interrupted, KeyboardInterrupt):
             pass
 
-    def finish(self, *, installation=None, kind=None, code=0, discovery=None, download=None):
+    def controls(self):
+        if self.publisher is not None:
+            try:
+                _retry_busy(lambda: self.publisher.publish_controls(policy=self.settings.automation_policy, now=_now()))
+            except StoreBusy:
+                raise _ReportBusy('control') from None
+            except Exception as exc:
+                self.warning(exc)
+
+    def finish(self, *, installation=None, kind=None, code=0, discovery=None, download=None, receipt=None):
         if self.publisher is None:
             return
         try:
             current = _now()
-            observation = None if installation is None else observe_status(installation, StateDir(self.store.checkout), now=current)
+            engine_state = StateDir(self.store.checkout)
+            observation = None if installation is None else observe_status(installation, engine_state, now=current)
+            outcome = 'succeeded' if code == 0 else 'interrupted' if code == 130 else 'blocked' if code in (2, 3) else 'failed'
+            stage = None
+            if code == 0 and kind in ('apply', 'rollback'):
+                if receipt is None:
+                    kind = 'check'  # A dry run, up-to-date apply or unconfirmed rollback did no transaction.
+                else:
+                    record = engine_state.load_receipt(receipt)
+                    outcome = {'succeeded': 'succeeded', 'rolled_back': 'rolled_back', 'staged': 'staged'}.get(
+                        record.get('status'), 'unknown')
+                    if outcome == 'staged' and self.publisher.binding.production:
+                        outcome, stage = 'awaiting_initialization', 'production_initialization'
             operation = None if kind is None else {
-                'state': 'succeeded' if code == 0 else 'interrupted' if code == 130 else 'blocked' if code in (2, 3) else 'failed',
-                'kind': kind, 'stage': None, 'started_at': stamp(self.started), 'finished_at': stamp(current),
-                'reported_at': stamp(current), 'reason_codes': []}
+                'state': outcome, 'kind': kind, 'stage': stage, 'started_at': stamp(self.started),
+                'finished_at': stamp(current), 'reported_at': stamp(current), 'reason_codes': []}
             state = self.store.read_state()
             if discovery is not None:
                 # Presentation evidence for THIS manual check, not a scheduler
@@ -615,10 +737,16 @@ class _Publication:
             snapshot = build_status(self.publisher.binding, self.settings.automation_policy,
                 self.store.read_control(), state, now=current, previous=self.previous,
                 observation=observation, discovery=discovery, download=download, operation=operation)
-            self.publisher.publish(snapshot, expected=self.ticket, operation_token=self.token)
-        except (Exception, Interrupted, KeyboardInterrupt):
+            if outcome == 'awaiting_initialization':
+                snapshot['safety']['operator_action'] = 'initialize_then_apply'
+            self.ticket = _retry_busy(lambda: self.publisher.publish(
+                snapshot, expected=self.ticket, operation_token=self.token, observation_only=kind is None))
+            self.previous = snapshot
+        except (Exception, Interrupted, KeyboardInterrupt) as exc:
+            if self.required:
+                raise
             # Reporting is not part of an update's success/exit contract.
-            self.warning()
+            self.warning(exc)
 
 
 def _pause_until(value):
@@ -627,13 +755,16 @@ def _pause_until(value):
         ReasonCode.CONTROL_INVALID)
     try:
         result = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
-    except ValueError:
+    except (ValueError, OverflowError):
+        # OverflowError: a representable local time whose UTC form is outside datetime's range (9999-12-31 at -23:59).
         raise GuardRefused(ReasonCode.CONTROL_INVALID) from None
     require(result > _now(), ReasonCode.CONTROL_INVALID)
     return result
 
 
 def _enroll(store, context, settings, *, status_overlay=False):
+    # Before anything builds the supervisor: it rejects an empty/odd context with an untyped ValueError.
+    require(valid_docker_context(context), ReasonCode.OWNERSHIP_UNCONFIRMED)
     require(not status_overlay or store.production, ReasonCode.UNSUPPORTED_INSTALLATION)
     overlay = production_status_overlay(store.checkout) if status_overlay else None
     safe_path(store.checkout, directory=True)
@@ -660,7 +791,8 @@ def _enroll(store, context, settings, *, status_overlay=False):
     binding_status_overlay(binding)
     for path in binding.compose_files:
         safe_path(path)
-    store.register(Registration(1, binding, launcher, _now()))
+    registration = Registration(1, binding, launcher, _now())
+    _retry_busy(lambda: store.register(registration))
 
 
 def _automation(args, root, env_file):
@@ -689,6 +821,8 @@ def _automation(args, root, env_file):
     settings = load_settings(root, environ={}, verify=False)
     if args.command == 'schedule':
         if args.action == 'init':
+            # Plain input validation first: a bad spelling is a refusal whatever the filesystem looks like.
+            require(valid_docker_context(args.docker_context), ReasonCode.OWNERSHIP_UNCONFIRMED)
             if hasattr(args, 'root'):
                 safe_path(Path(args.root), directory=True)
             if hasattr(args, 'env_file'):
@@ -704,18 +838,24 @@ def _automation(args, root, env_file):
             print(assets.removal_instructions)
         return 0
     if args.command == 'reporting':
-        _reporting_init(store, args.directory, settings)
+        try:
+            _reporting_init(store, args.directory, settings)
+        except (Exception, Interrupted, KeyboardInterrupt):
+            sys.stderr.write('bin/update: reporting init incomplete; retry with the same directory after resolving '
+                             'the refusal; do not remove foreign content or rebind\n')
+            raise
         return 0
-    publication = _Publication(store, settings)
+    publication = _Publication(store, settings, controls=True)
     if args.command in ('enable', 'retry'):
         require(args.yes, ReasonCode.CONTROL_INVALID)
     if args.command == 'retry':
-        store.retry_target(TargetIdentity(args.target, args.manifest_hash))
+        target = TargetIdentity(args.target, args.manifest_hash)
+        _retry_busy(lambda: store.retry_target(target))
     else:
         until = _pause_until(args.until) if args.command == 'pause' and hasattr(args, 'until') else None
-        store.change_control(args.command, _now(), until=until)
-    publication.finish()
+        _retry_busy(lambda: store.change_control(args.command, _now(), until=until))
     print(args.command + ': recorded; no update or scheduler started.')
+    publication.controls()
     return 0
 
 
@@ -787,7 +927,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     out = sys.stderr
     result_code = 0
     publication = None
-    discovered = downloaded = None
+    discovered = downloaded = receipt = None
     busy = False
 
     def fail(message: str, code: int) -> int:
@@ -869,8 +1009,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             state = StateDir(root, secret_values(installation.env))
             if args.command == "status":
                 if option('export_public'):
-                    publication.finish(installation=installation)
-                    publication = None
+                    exporting, publication = publication, None
+                    exporting.finish(installation=installation)
                     return 0
                 publication = None  # Ordinary status is strictly read-only.
                 if option('format') == 'json':
@@ -883,7 +1023,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             updater = Updater(installation, settings, state, out=out, command_options=command_options)
             if args.command == "rollback":
                 before = _receipt_paths(state)
-                updater.rollback(from_cwd(option("receipt")), yes=bool(option("yes", False)))
+                receipt = updater.rollback(from_cwd(option("receipt")), yes=bool(option("yes", False)))
                 return 0
 
             if option("manifest"):
@@ -969,15 +1109,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                 result_code = 3 if plan["decision"] == BLOCKED else 0
                 return result_code
             before = _receipt_paths(state)
-            updater.apply(make_plan, fetched.data, allow_no_backup=bool(option("allow_no_backup", False)),
+            receipt = updater.apply(make_plan, fetched.data, allow_no_backup=bool(option("allow_no_backup", False)),
                           backup_command=option("backup_command"), dry_run=bool(option("dry_run", False)),
                           stage=bool(option("stage", False)),
                           release_binding=None if option('dry_run') else stage_identity,
                           acknowledge_stale_stage=bool(option('acknowledge_stale_stage')))
             return 0
-    except (StoreBusy, StateBusy):
+    except StoreBusy as exc:
         busy = True
-        return 0
+        if args.command == 'run':
+            return 0
+        return fail(exc.message if isinstance(exc, _ReportBusy) else 'busy; nothing recorded; retry the command', 3)
+    except StateBusy:
+        busy = True
+        return 0  # Existing engine-lock busy contract (not a short metadata lock).
+    except PublicationConflict as exc:
+        _Publication.warning(exc)
+        result_code = 2
+        return result_code
     except (StoreError, ProcessError) as exc:
         return fail(exc.reason_code.value, 2)
     except (Blocked, InterruptedRun, UpdateError) as exc:
@@ -995,8 +1144,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if publication is not None and not busy:
             try:
                 if state is None or state.lock_holder() is None:
-                    publication.finish(installation=installation, kind=args.command if args.command != 'status' else None,
-                                       code=result_code, discovery=discovered, download=downloaded)
+                    kind = 'check' if args.command == 'apply' and option('dry_run') else args.command
+                    publication.finish(installation=installation, kind=kind if kind != 'status' else None,
+                                       code=result_code, discovery=discovered, download=downloaded, receipt=receipt)
             except (Exception, Interrupted, KeyboardInterrupt):
                 pass
         if workdir is not None:

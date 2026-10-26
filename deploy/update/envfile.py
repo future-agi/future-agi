@@ -58,6 +58,10 @@ class EnvCommitError(EnvFileError):
     """Keep the journal and retained entries; automatic restoration is unsafe."""
 
 
+class EnvPreimageError(EnvFileError):
+    """The env file is not the exact preimage the caller approved: nothing was prepared or written."""
+
+
 class _Definition(NamedTuple):
     key: str
     value: str  # as Compose reads it
@@ -379,7 +383,8 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogateescape")).hexdigest()
 
 
-def recovery_record(path: Path, changes: Mapping[str, Optional[str]]) -> dict:
+def recovery_record(path: Path, changes: Mapping[str, Optional[str]], *,
+                    expected_before_sha256: Optional[str] = None) -> dict:
     """A minimal inverse of this write, to fsync in the private journal first.
 
     Only replaced tokens, removed definitions and appended bytes are saved,
@@ -387,10 +392,18 @@ def recovery_record(path: Path, changes: Mapping[str, Optional[str]]) -> dict:
     even non-UTF-8 bytes exact. Offsets address the *written* text. Hashes of
     both complete files make recovery idempotent and reject concurrent edits.
     This record belongs only in the journal, never a public receipt.
+
+    expected_before_sha256 (automatic runs): the sha256 of the exact env bytes
+    an automation guard approved. Any other bytes, such as an operator edit
+    that landed after the approval, are refused (EnvPreimageError) instead of
+    being adopted as this transaction's baseline. Manual runs pass nothing.
     """
 
     target = Path(os.path.realpath(path))
     text = _read_text(target, path)
+    if expected_before_sha256 is not None and _hash(text) != expected_before_sha256:
+        raise EnvPreimageError(f"cannot prepare a write to {path}: the env file is not the one that was approved; "
+                               "no bytes were written")
     rendered = render_changes(text, changes)
     edits: List[Tuple[int, int, str]] = []
     _render(text, changes, edits)

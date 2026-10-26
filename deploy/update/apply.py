@@ -107,6 +107,11 @@ class FailedDuringRollout(UpdateError):
     exit_code = 5
 
 
+class DependencyImageChanged(UpdateError):
+    """An automatic rollout left a dependency container on an image nobody certified."""
+    reason_code = ReasonCode.IMAGE_DIGEST_MISMATCH
+
+
 class Interrupted(BaseException):
     """SIGTERM or SIGHUP arrived; handled like Ctrl-C."""
 
@@ -936,6 +941,35 @@ class Updater:
         # it with (an inactive profile's pin).
         return not on_release(container.get("image") or "", label, want, by_tag=not verified.get(component))
 
+    def _approved_env_sha256(self) -> Optional[str]:
+        """The sha256 of the exact env bytes the automation guard approved (None: a manual run, or a guard without one)."""
+
+        if self.automation_guard is None:
+            return None
+        return getattr(self.automation_guard, "approved_env_sha256", None)
+
+    def _dependencies_unchanged(self) -> None:
+        """Automatic runs only: after the restart every dependency container still runs the image id the guard certified.
+
+        The whole-stack `up` starts whatever a dependency's tag resolves to on this host, and `_stale` covers the
+        Future AGI services only. The guard certified, immediately before the rollout, the image ids that the
+        Compose configuration resolves to and the running replicas had; a dependency container on another id was
+        replaced during this rollout, so the run never reports success (a failed rollout, as `_stale` raises).
+        """
+
+        certified = getattr(self.automation_guard, "dependency_image_ids", None) if self.automation_guard else None
+        if certified is None:
+            return
+        observed = {name: [] for name in certified}
+        for container in self.installation.containers():
+            if not container.get("oneoff") and container["service"] in observed:
+                observed[container["service"]].append(container.get("image_id"))
+        replaced = sorted(name for name, ids in observed.items()
+                          if not ids or any(image_id not in certified[name] for image_id in ids))
+        if replaced:
+            raise DependencyImageChanged(
+                f"dependency containers are missing or run an uncertified image: {', '.join(replaced)}")
+
     def _execute(self, record: Dict[str, Any], expected_tags: Mapping[str, str],
                  verify_image: Callable[[Dict[str, Any], Dict[str, Any]], Optional[str]],
                  pull: Callable[[Dict[str, Any]], bool], app_ids: Iterable[str] = (), *,
@@ -970,8 +1004,19 @@ class Updater:
         if self.automation_guard is not None:
             record['automation'] = self._automation_metadata()
         installation.check_ownership()
-        record.update(stage=stage, status="running", journal_version=2,
-                      env_recovery=envfile.recovery_record(self._env_path(), record["env_changes"]))
+        approved = self._approved_env_sha256()
+        if approved is None:
+            env_recovery = envfile.recovery_record(self._env_path(), record["env_changes"])
+        else:
+            # Automatic runs: the baseline of this transaction is exactly the env the guard approved. An operator
+            # edit that landed after that approval is a typed conflict, never adopted (nothing is journaled).
+            from .orchestrator import GuardRefused
+            try:
+                env_recovery = envfile.recovery_record(self._env_path(), record["env_changes"],
+                                                       expected_before_sha256=approved)
+            except envfile.EnvPreimageError:
+                raise GuardRefused(ReasonCode.ENV_CONFLICT) from None
+        record.update(stage=stage, status="running", journal_version=2, env_recovery=env_recovery)
         # The minimal lexical inverse and both hashes are durable before any
         # env bytes change, including a kill during write/rename/fsync itself.
         self.state.write_journal(record)
@@ -1057,6 +1102,7 @@ class Updater:
                         self._stale(config, services, image_ids, expected_tags, changed)
                     else:
                         self._stale(config, services, image_ids, strays, set(strays))
+                    self._dependencies_unchanged()
         except envfile.EnvCommitError as exc:
             # Exchange may already have captured an operator entry. Never swap
             # back, write a completion receipt, or let tags alone authorize retry.

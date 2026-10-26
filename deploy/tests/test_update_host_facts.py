@@ -235,6 +235,30 @@ class OverlayAdapterTests(pub.PublisherCase):
         self.assertEqual(caught.exception.reason_code, ReasonCode.DEPLOYMENT_FILES_MISMATCH)
 
 
+class DockerContextSpellingTests(unittest.TestCase):
+    """Review round 2: one spelling rule for the registered context, applied before a supervisor exists."""
+
+    def test_accepts_ordinary_context_names(self):
+        for name in ('default', 'colima-fagi-update', 'desktop-linux', 'my.ctx_1', 'ünï', 'a' * 200):
+            with self.subTest(name=name):
+                self.assertTrue(facts.valid_docker_context(name))
+
+    def test_rejects_empty_whitespace_control_and_non_text(self):
+        for name in ('', ' ', 'a b', 'a\tb', 'a\nb', 'a\rb', 'a\x00b', '\x1b[0m', '\x7f', 'c1\x85', 'nbsp\xa0',
+                     'em\u2003space', 'line\u2028sep', 'bell\x07', None, 7, b'ctx', ['ctx']):
+            with self.subTest(name=name):
+                self.assertFalse(facts.valid_docker_context(name))
+
+    def test_installation_binding_applies_the_same_rule_before_touching_docker(self):
+        installation = mock.Mock()
+        for name in ('', 'a b', '\x85'):
+            with self.subTest(name=name), self.assertRaises(GuardRefused) as caught:
+                facts.installation_binding(installation, mock.Mock(), name)
+            self.assertEqual(caught.exception.reason_code, ReasonCode.OWNERSHIP_UNCONFIRMED)
+        installation.check_ownership.assert_not_called()
+        installation.docker_run.assert_not_called()
+
+
 class CapacityTests(unittest.TestCase):
     def test_remote_vm_or_unknown_capacity_never_uses_client_disk_or_connects(self):
         inst = mock.Mock(environ={'DOCKER_CONTEXT': 'registered'})

@@ -150,9 +150,19 @@ def overlay_discovery(store, settings, registration, supervisor, clock):
     return CheckedDiscovery()
 
 
+def valid_docker_context(context):
+    """The one spelling rule for a registered Docker context: non-empty, printable, no whitespace or control chars.
+
+    Enrollment applies it before it builds the process supervisor (which rejects an empty context with an
+    untyped error), and installation_binding applies it again to what it binds.
+    """
+    return isinstance(context, str) and bool(context) and all(
+        ord(c) >= 33 and ord(c) != 127 and c.isprintable() for c in context)
+
+
 def installation_binding(installation, store, context):
     """Fresh read-only ownership and daemon identity; deterministic re-init."""
-    require(context and all(ord(c) >= 33 and ord(c) != 127 for c in context), ReasonCode.OWNERSHIP_UNCONFIRMED)
+    require(valid_docker_context(context), ReasonCode.OWNERSHIP_UNCONFIRMED)
     installation.check_ownership()
     daemon = installation.docker_run('info', '--format', '{{.ID}}').stdout.strip()
     require(bool(daemon), ReasonCode.OWNERSHIP_UNCONFIRMED)

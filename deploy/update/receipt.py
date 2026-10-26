@@ -267,29 +267,38 @@ class StateDir:
         except OSError:
             return ""
 
-    def lock_holder(self) -> Optional[str]:
-        """Who holds the lock ('pid N'), or None when no bin/update does.
+    def lock_holder(self, *, automation: bool = False) -> Optional[str]:
+        """Noncreating, nonblocking probe; unsafe evidence is never 'unheld'.
 
-        Never blocks and never takes the lock from a holder; creates nothing.
-        A lock file that cannot be opened or locked (another user's, or a file
-        system without locks) reads as not held: lock() reports it properly.
+        Ordinary callers accept owner-owned, non-shared regular legacy locks.
+        Scheduled callers additionally require the private directory and 0600
+        lock used by lock(automation=True). No PID text is read before fstat.
         """
+        try:
+            if automation:
+                with self.private_directory() as directory:
+                    return self._probe_lock(LOCK, directory=directory, private=True)
+            return self._probe_lock(str(self.lock_path))
+        except FileNotFoundError:
+            return None
+        except (OSError, ImportError) as exc:
+            raise StateError('cannot safely probe update lock') from exc
 
+    def _probe_lock(self, path, *, directory=None, private=False):
+        import fcntl
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=directory)
         try:
-            import fcntl
-        except ImportError:
-            return None
-        try:
-            fd = os.open(str(self.lock_path), os.O_RDONLY)
-        except OSError:  # no state directory or no lock file yet, or not ours to read
-            return None
-        try:
+            info = os.fstat(fd)
+            mode = stat.S_IMODE(info.st_mode)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                    or mode & 0o7022 or private and mode != 0o600):
+                raise StateError('untrusted update lock')
             try:
                 fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 return self._holder_text(fd) or "lock held"
-            except OSError:
-                return None
+            # Closing releases the shared probe even if explicit unlock fails.
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError:

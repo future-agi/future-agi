@@ -28,9 +28,9 @@ from .orchestrator import (GuardRefused, ScheduledGuard, check_deployment, execu
                            guarded_updater, prepare_update, registered_installation, require)
 from .plan import build_plan, unfinished
 from .processes import ProcessSupervisor
-from .public_status import build_status, stamp
+from .public_status import build_status, retry_busy, stamp
 from .receipt import StateBusy, StateDir
-from .runner_state import Observation, StoreBusy, StoreError, TargetIdentity
+from .runner_state import Observation, StaleGeneration, StoreBusy, StoreError, TargetIdentity
 from .schedule import Clock, check_due, next_open, occurrence, start_gate, validate_clock
 from .settings import load_settings
 from .status import observe_status
@@ -121,7 +121,13 @@ class HostRunner:
 
     def _save(self, **changes):
         old = self.store.read_state()
-        return self.store.save_state(replace(old, **changes), expected_generation=old.generation)
+        try:
+            return self.store.save_state(replace(old, **changes), expected_generation=old.generation)
+        except StaleGeneration:
+            # runner.lock owns these fields; merge once over a concurrent retry
+            # or event append, preserving every unrelated field and counter.
+            old = self.store.read_state()
+            return self.store.save_state(replace(old, **changes), expected_generation=old.generation)
 
     def _config_identity(self):
         try:
@@ -136,6 +142,11 @@ class HostRunner:
         require(control.effective(self.policy, self._now()) == 'enabled', ReasonCode.CONTROL_INVALID)
 
     def _facts(self, installation, boundary):
+        # The provider is slow (verifier, several daemon reads): it runs FIRST, and the clock, the controls and
+        # every window/start-budget fact below are sampled only after it returns. A boundary then authorizes
+        # against a time no earlier than its own observations, so a slow final observation can consume the
+        # required start budget (it refuses) instead of leaving a stale "budget available" fact behind.
+        facts = None if self.facts_provider is None else self.facts_provider(installation, boundary)
         now = self._now()
         control = self.store.read_control()
         state = self.store.read_state()
@@ -145,8 +156,7 @@ class HostRunner:
         # Express the occurrence as a forward eligibility fact, not an exception:
         # fallback guards also call us at before_recovery/env_commit/rollout and
         # must finish an already-authorized safety action after window closure.
-        facts = (Observations(now) if self.facts_provider is None
-                 else self.facts_provider(installation, boundary))
+        facts = Observations(now) if facts is None else facts
         require(isinstance(facts, Observations), ReasonCode.CONTROL_INVALID)
         enabled = self.policy.enabled if control.enabled_override is None else control.enabled_override
         controls = Controls(policy=self.policy, enabled=enabled,
@@ -174,7 +184,7 @@ class HostRunner:
                 and start_gate(self.policy, now, consumed=state.last_window_occurrence) is None)
 
     def tick(self) -> TickResult:
-        """No sleeps, no catch-up queue, no recovery/resume of an old attempt."""
+        """One attempt, no catch-up/recovery; only terminal reporting retries briefly."""
         self.observation = self.discovered = self.download = self.target = None
         self.ticket = self.previous = None
         self.warnings = []
@@ -217,6 +227,10 @@ class HostRunner:
         return TickResult(3 if isinstance(exc, GuardRefused) else 2, disposition, (reason,))
 
     def _tick_locked(self):
+        # A manual command owns update.lock, not runner.lock. Its live journal
+        # is progress, not crash evidence; do not save state or publish over it.
+        if self.engine_state.lock_holder(automation=True) is not None:
+            return TickResult(disposition='busy')
         self.control = self.store.read_control()
         effective = self.control.effective(self.policy, self._now())
         # No registration, Installation, verifier, cache, daemon or hook required
@@ -224,13 +238,19 @@ class HostRunner:
         if effective != 'enabled':
             return TickResult(skip_reason=effective)
         self.registration = self.store.read_registration()
-        self._capture_publication()  # Fence slow checks against later manual/control reports.
+        self._capture_publication()  # Fence slow checks against later operation reports.
+        if self.publisher is not None and self.ticket is None and not self.reporting_failed:
+            return TickResult(disposition='busy')  # Capture lock busy: no unfenced slow operation.
         state = self.store.read_state()
         validate_clock(self.sample, observed=(state.last_tick_at, state.last_attempt_at,
                                               state.last_successful_check_at,
                                               *(o.observed_at for o in state.last_good_observations)))
+        # A probe alone has a journal-creation race. Take the nonblocking engine
+        # lock for this local read, then release it BEFORE discovery/network I/O.
+        with self.engine_state.lock(automation=True):
+            pending = self.store.read_state().active_attempt_id is not None or self.engine_state.read_journal() is not None
         state = self._save(last_tick_at=self._now())
-        if state.active_attempt_id is not None or self.engine_state.read_journal() is not None:
+        if pending:
             return TickResult(3, 'recovery_required', (ReasonCode.RECOVERY_REQUIRED,))
         due = check_due(self._now(), state.next_check_at, state.retry_not_before)
         action_due = self._action_due(state, self._now())
@@ -277,12 +297,17 @@ class HostRunner:
             raise
         self._controls()
         installation = self.installation_factory(self.registration.binding, supervisor, status_overlay=self.status_overlay)
-        self.observation = observe_status(installation, self.engine_state, now=self._now())
-        require(not self.observation.pending_transaction, ReasonCode.RECOVERY_REQUIRED)
-        history = self.engine_state.history(installation.identity())
-        latest = history[-1] if history else None
-        require(not latest or latest.get('status') != 'staged', ReasonCode.MANUAL_STAGE_PRESENT)
-        require(not unfinished(history), ReasonCode.RECOVERY_REQUIRED)
+        # A manual command may have started during discovery. A failed lock
+        # acquisition returns busy without events/publication; completed discovery
+        # accounting stays recorded. Hold the lock through the consistent journal
+        # and history observation so a live journal cannot appear between reads.
+        with self.engine_state.lock(automation=True):
+            self.observation = observe_status(installation, self.engine_state, now=self._now())
+            require(not self.observation.pending_transaction, ReasonCode.RECOVERY_REQUIRED)
+            history = self.engine_state.history(installation.identity())
+            latest = history[-1] if history else None
+            require(not latest or latest.get('status') != 'staged', ReasonCode.MANUAL_STAGE_PRESENT)
+            require(not unfinished(history), ReasonCode.RECOVERY_REQUIRED)
         if self.policy.mode == 'notify':
             return TickResult(disposition='available' if parse_version(release.version) > parse_version(current) else 'current',
                               target_version=release.version)
@@ -369,15 +394,23 @@ class HostRunner:
         if self.publisher is not None and self.ticket is None and not self.reporting_failed:
             try:
                 self.ticket, self.previous = self.publisher.capture()
+            except StoreBusy:
+                self.warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
             except Exception:
                 self.reporting_failed = True
                 self.warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
 
-    def _publish(self, result):
-        self._capture_publication()
+    def _publish(self, result, *, terminal=False):
         if self.publisher is None or self.reporting_failed:
             return
         try:
+            if result.skip_reason is not None and self.discovered is None and self.observation is None:
+                self.publisher.publish_controls(policy=self.policy, now=self.sample.wall,
+                                                last_tick_at=self.sample.wall)
+                return
+            self._capture_publication()
+            if self.ticket is None or self.reporting_failed:
+                return
             registration = self.registration or self.store.read_registration()
             state = self.store.read_state()
             control = self.store.read_control()
@@ -385,12 +418,20 @@ class HostRunner:
                                     previous=self.previous, observation=self.observation, discovery=self.discovered,
                                     download=self.download, operation=self.operation, last_run=self.last_run,
                                     reason_codes=result.reason_codes, safety=self.safety)
-            self.ticket = self.publisher.publish(snapshot, expected=self.ticket, operation_token=self.token)
+            def publish():
+                return self.publisher.publish(snapshot, expected=self.ticket, operation_token=self.token)
+            # Progress can skip once; a terminal report has no later callback.
+            # StoreBusy consumes nothing, so retry only this write with the SAME
+            # ticket. Never recapture on conflict or replay engine mutation.
+            self.ticket = retry_busy(publish) if terminal else publish()
             snapshot['sequence'] = self.ticket.generation
             self.previous = snapshot
+        except StoreBusy:
+            # No private intent was written. A skipped progress report or an
+            # exhausted terminal retry is a warning, never an engine failure.
+            self.warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
         except Exception:
-            # In particular, do NOT reload/retry on CAS conflict: a newer manual
-            # operation/control report wins, even if our tick subsequently ends.
+            # A newer OPERATION report wins. Never recapture to defeat its CAS.
             self.reporting_failed = True
             self.warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
 
@@ -442,7 +483,7 @@ class HostRunner:
         except (Exception, Interrupted, KeyboardInterrupt):
             self.warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
         try:
-            self._publish(result)
+            self._publish(result, terminal=True)
         except (Interrupted, KeyboardInterrupt):
             # A terminal engine outcome is already durable. An interruption of
             # reporting cannot turn success into failure (nor retry a failure).

@@ -76,7 +76,10 @@ class ProcessSupervisor:
                     raise ProcessError(ReasonCode.OWNERSHIP_UNCONFIRMED)
             else:
                 args[1:1] = ['--context', self.docker_context]
-            if 'context' in args[3:]:
+            if 'context' in args[3:] and args[3:] != ['context', 'inspect', self.docker_context]:
+                # The ONE context subcommand allowed is the read-only inspection of the registered context itself
+                # (host_facts.daemon_space_available needs it to qualify a native local daemon): exactly this
+                # argv, no other name, flag or extra word. Never use/create/update/rm/ls/export/import.
                 raise ProcessError(ReasonCode.OWNERSHIP_UNCONFIRMED)
         return args
 

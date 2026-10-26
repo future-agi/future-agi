@@ -203,7 +203,7 @@ update. Only the most recent update can be rolled back.
 | ---- | ------- | ---------- |
 | 0 | Done, or nothing to do | |
 | 2 | Bad input, unreadable files or state, or a missing tool (Docker, Compose v2, Python 3.9+) | Read the message |
-| 3 | Refused before anything changed: the plan blocks the update (including a signature that could not be verified, e.g. no usable cosign), no backup is configured, a production update is not staged, a readiness setting is invalid, or `rollback` needs `--yes` | Do what the message says; `check` lists every plan reason |
+| 3 | Refused before an update starts: the plan blocks the update (including a signature that could not be verified, e.g. no usable cosign), no backup is configured, a production update is not staged, a readiness setting is invalid, or `rollback` needs `--yes`. Explicit metadata operations also use 3 for persistent short-lock contention | Do what the message says; `check` lists every plan reason. A control or reporting command explicitly notes any primary change already recorded before public-report contention |
 | 4 | Failed before anything restarted | Nothing restarted. Usually the previous versions are configured and running again; if the run was finishing a stopped or staged update, that update is still pending and the message gives the command to finish it and the one to roll it back |
 | 5 | Failed while containers were being replaced | The env file selects the new release. Inspect the stack with the command the message prints (`docker compose ps -a`, `logs`; production adds its `--env-file` and `-f` files), then run `apply` again to finish, or `rollback --receipt PATH --yes` |
 | 130 | Interrupted (Ctrl-C, `SIGTERM`, `SIGHUP`) | Same as 4 or 5, depending on how far it got; the message says whether anything changed. Under `nohup`, `SIGHUP` stays ignored |
@@ -456,25 +456,48 @@ merges env settings, installs dependencies or restores databases automatically.
 | `download` | Explicit action even when automation is disabled. Requires schedule registration and accepts the same manifest, bundle, policy and channel selectors as check/apply. Uses the shared planner and downloader, pulls only active product images under the engine lock, and writes a separate private download receipt. Never stages, backs up, initializes or changes live env/containers. Zero means verified cached images (or typed lock busy), 2 is unavailable/invalid input, 3 a refusal, 130 interruption. |
 | `enable --yes` | Persist enabled override only; 0 on success, 3 without confirmation, 2 on invalid private state. Does not change mode or pause. |
 | `disable` | Persist disabled override; 0 on success, 2 on invalid private state. Ambient enabled settings cannot undo it. |
-| `pause --until RFC3339` | Requires a future timestamp with explicit offset, or use `pause --indefinite`. Pauses future scheduled discovery/download/starts, not completion of an already-started safety action. Zero on success, 3 for a past/naive/invalid timestamp; invalid flag combinations exit 2. |
+| `pause --until RFC3339` | Requires a future timestamp with explicit offset, or use `pause --indefinite`. Pauses future scheduled discovery/download/starts, not completion of an already-started safety action. Zero on success, 3 for a past/naive/invalid timestamp, including one whose UTC form falls outside the supported years 1 to 9999 (for example `9999-12-31T23:59:59-23:59`); invalid flag combinations exit 2. |
 | `resume` | Clear pause only; does not enable automation or clear any failed-target latch. Zero on success, 2 on invalid private state. |
 | `retry --target VERSION --manifest-hash HEX --yes` | Clear only the exact failed-target latch; retain failure/attempt evidence and the consumed window. Never apply or recover now. Zero on success, 3 without confirmation, 2 for wrong/malformed identity or incomplete attempt. |
-| `schedule init --docker-context NAME` | Identity enrollment only, not baseline attestation. Production may explicitly add --status-overlay (no path). Zero on success, 2 for missing tools/state, 3 for unsafe ownership/selection. |
+| `schedule init --docker-context NAME` | Identity enrollment only, not baseline attestation. NAME must be non-empty and printable, without whitespace or control characters; anything else is refused with 3 (`ownership_unconfirmed`) before any Docker or supervisor work. Production may explicitly add --status-overlay (no path). Zero on success, 2 for missing tools/state, 3 for unsafe ownership/selection. |
 | `schedule render --backend cron` | Render only; systemd is the other backend. Zero on success, 2 without a valid registration or executable launcher. |
-| `reporting init --directory ABSOLUTE_PATH` | Explicit dedicated status-parent binding and initial unknown snapshot. Zero on success, 2 for I/O/private-state failures, 3 for unsafe, overlapping or already-bound paths. Does not edit env/Compose or recreate containers. |
+| `reporting init --directory ABSOLUTE_PATH` | Explicit dedicated status-parent binding and initial unknown snapshot. Zero on success, 2 for I/O/private-state failures, 3 for unsafe, overlapping or already-bound paths or persistent short-lock contention. Registration is durable before first publication; after interruption resolve the refusal and rerun with the same directory. Existing registration is not rebound. Does not edit env/Compose or recreate containers. |
 | `status` | Existing text remains default, including `--format text`. Read-only; 0 when observed, 2 when unavailable. |
 | `status --format json` | Independent **host_schema_version=1** JSON: checkout, env_file, production, versions, pending_transaction, last_run and reason_codes. Host paths are private. This is NOT PublicStatusV1 and must never be served to the app. Zero when observed, 2 for unknown observations. |
-| `status --export-public` | Export only to the previously registered slot, never a caller-supplied destination. Does not recover or update. Zero after observation; a reporting failure never changes an update outcome. Missing registration is refused. Cannot combine with --format. |
+| `status --export-public` | Export only to the previously registered slot, never a caller-supplied destination. Does not recover or update. Zero only after publication; 2 for publication failure or an intervening-report conflict, 3 for missing registration or persistent short-lock contention. Cannot combine with --format. Optional reports attached to manual updates still never change the engine's exit code. |
 | `apply --acknowledge-stale-stage` | Host-only acknowledgment for an actual staged resume. Never accepted by run, or together with --stage/--dry-run. Absent a stage it exits 3. Other apply exit codes are unchanged. |
 
-All commands reject flags belonging to another command (usage exit 2). A short
-metadata lock conflict is a typed zero no-op; retry the explicit control command
-if it was busy. Disabled/manual/paused ticks inspect local controls only. A
+All commands reject flags belonging to another command (usage exit 2). Explicit
+operator commands retry busy short metadata locks briefly (at most five attempts,
+200 ms total waiting). If the control, state, registration or public lock stays
+busy, they exit **3**, with `busy; nothing recorded; retry the command` on stderr;
+never assume a silent success stopped automation. This applies to enable, disable,
+pause, resume, retry, schedule init, reporting init and explicit public export.
+If a control or reporting registration was already committed before its public
+report encounters contention, exit 3 instead explicitly says it **was recorded**
+and that nothing was recorded **in the public slot**; use `status --export-public`
+to refresh the report. It does not undo a recorded disable or replay a mutation.
+Other optional reporting failures warn without changing a recorded control's
+success. Scheduled `run` busy remains a zero no-op, as does `download`'s existing
+engine-lock busy outcome. Manual engine-lock and transaction semantics are unchanged.
+
+Disabled, manual and paused ticks inspect local controls only. A
 registered due notify tick can check signatures and inspect the running stack;
 download also caches images. Automatic apply additionally requires a qualified
 unchanged-state baseline, certified v2 release, fresh attempt-bound backup proof,
 unchanged identity/config, eligible maintenance window and no failed-target
 latch or unfinished transaction. There is no automatic adoption or recovery.
+
+Long options may still be abbreviated to an unambiguous prefix, as before the
+automation commands existed (`--sta` is --stage, `--ba` is --backup-command,
+`--man` is --manifest), before or after the command. Abbreviation is
+command-aware: an option the command does not take never takes part in matching
+its prefixes, and when several options the command takes still match, the one
+that predates the automation commands wins (`apply --a` is --allow-no-backup).
+Full spellings are never affected. A prefix ambiguous between two older options
+that the selected command takes still is ambiguous. For example, --b is ambiguous
+for apply but names --bundle for check; --ba names --backend for schedule render.
+Option values named after commands are still values, not command selectors.
 
 **Production scheduled runs notify and download only.** They never stage,
 initialize or apply. Production still requires explicit stage, then the
@@ -521,6 +544,39 @@ prepared update's. Any other edit, including an operator changing a version pin,
 is refused (`env_conflict` or `configuration_changed`) and the enrolled baseline
 check is never relaxed. A public receipt is never permission.
 
+The guard approves bytes and images, not a moment. Its last observation before
+the first mutation starts from the sha256 of the exact env bytes it approved and
+must still see those bytes when its (possibly slow) facts return. The engine then
+builds the transaction's recovery record from exactly those bytes and the same
+hash is compared again before rollout, so an operator edit of a version pin, or of
+anything else, made while the guard was observing is refused as `env_conflict`,
+never adopted as the baseline and never overwritten; it leaves the operator's
+bytes untouched, journals nothing and starts no container. The automatic fallback
+is bound the same way to the bytes the failed forward transaction left, including
+at the end of its own observation. Manual apply and rollback are unchanged.
+
+The maintenance window and the minimum start budget are judged at a clock sample
+taken after each boundary's own observations (verifier, daemon reads, online
+verification, backup-proof IO). An observation that consumes the remaining start
+budget refuses (`insufficient_window` or `outside_window`) before any rollout,
+instead of leaving an earlier "budget available" fact behind. An already
+authorized safety fallback is the one exception: it may finish after the window
+closes.
+
+A whole-stack Compose start brings up whatever each dependency's image tag
+resolves to on the host, which can differ from the image the running dependency
+container uses (a pulled or retagged postgres, for example). Immediately before
+an automatic rollout, and before its automatic fallback, the guard resolves the
+image the Compose configuration will start for every dependency service of the
+topology, inspects it locally and requires its image id and signed digest to equal
+the certified running replicas; any difference is refused as
+`image_digest_mismatch` before any container is touched (nothing is pulled to
+repair it). After the rollout every dependency container must still run those
+image ids: if one does not, the run is a failed rollout, never `succeeded`, and
+the automatic fallback is not attempted because its own eligibility facts see the
+uncertified dependency. The operator reviews the stack. Manual apply and rollback
+do not inspect dependency images.
+
 Uncached pulls additionally require observed capacity on the **registered
 image filesystem**, never the checkout disk. The built-in read-only observer
 qualifies a directly connected native Linux dockerd Unix-socket peer in the
@@ -529,7 +585,12 @@ free bytes. Remote Docker, SSH contexts, macOS VM contexts, containerd snapshott
 and other drivers have unknown capacity and refuse absent-image pulls. It does
 not SSH to a VM, start a helper container, change a context or guess from Docker
 system-df usage. Exact already-cached images can still be independently verified.
-Real native/VM-specific capacity qualification remains a deployment gate.
+The bounded child runner that executes every scheduled Docker command always pins
+the registered context and refuses `docker context` commands, with exactly one
+exception: the read-only inspection of the registered context itself, the
+observer's single probe. Use, create, update, remove, list, export, import,
+another name, extra words and every routing override stay refused. Real
+native/VM-specific capacity qualification remains a deployment gate.
 
 ### Dedicated app projection and freshness
 
@@ -542,7 +603,18 @@ status Compose overlay; mount the **stable slot directory**, read-only, not the
 status-file inode. The initializer prints the chosen path/overlay but does not
 edit configuration or recreate anything. `bin/install --host-status-help` (also
 available through `deploy/setup.sh --host-status-help`) describes the optional
-read-only mount and host-only directory preparation.
+read-only mount and host-only directory preparation. The private reporting binding
+is written before the first public snapshot. If either write is interrupted, keep
+the binding and rerun reporting init with the **same** directory after resolving
+the refusal; the error prints this remedy. Never remove foreign content or change
+a binding to get past a refusal. A registered slot with no status file is safe to
+republish. Re-initialization preserves the latest operation and observation fields.
+
+The app checks the enrolled slot token and independently known runtime topology.
+It **does not infer the host's production identity from ENV_TYPE**: that variable
+also selects application behavior on ordinary self-hosted installs. The public
+production boolean remains host-reported data (and standalone with production
+true remains invalid), not an app-side enrollment fact.
 
 #### Production status-overlay identity
 
@@ -615,13 +687,64 @@ labels, slot permissions/read-only access, atomic-replacement visibility and the
 app's observation on each supported host filesystem/daemon combination.
 
 Manual terminal outcomes, controls and scheduled ticks use the same
-PublicStatusPublisher. They capture a private generation/operation ticket before
-slow work, then compare-and-swap; a late writer never retries stale output over
-a newer report. Public status is an allowlisted, disposable projection, never
-an authorization, backup, recovery, download or release-proof input. No env
-values, paths, raw exceptions, commands or secrets go into it. Atomic replacement
-and directory sync preserve old-or-new reads. Publication failure is nonfatal to
-the update outcome and does not imply an update failed or should be retried.
+PublicStatusPublisher. An operation captures its private operation ticket **before
+slow work**, then compares and swaps against newer operations, retaining each
+returned ticket. Control changes and idle heartbeats merge into the newest private
+snapshot under the short public lock; they advance the public sequence but do not
+take ownership of, replace or invalidate the operation report. A manual terminal
+report therefore still lands after a pause or heartbeat. A genuinely newer
+operation fences the old writer: no recapture or replay over the newer report.
+The fixed warning is `status_reporting_unavailable; newer operation report retained (publication conflict)`,
+not a suggestion to repair registration. Busy reports retry briefly with the same
+ticket and warn about public-report contention; real registration or slot failures
+at setup instead say `status_reporting_unavailable; inspect host reporting registration and public slot`.
+Other report-building failures say `status_reporting_unavailable; public report not recorded; inspect host status`.
+Scheduled progress may skip a contended report; the terminal report retries only
+`StoreBusy`, with the same opaque ticket, at most five attempts within a 200 ms
+retry budget and waits of at most 50 ms. Conflicts, disk errors and interruptions
+are not retried. Exhaustion emits `status_reporting_unavailable`: delivery is not
+guaranteed, and neither the engine result nor engine mutation is retried.
+
+`status --export-public` is observation-only: it never takes an operation epoch
+or changes the existing operation or safety fields, even during a live backup.
+It uses the captured public generation under the publication lock, so **any**
+intervening report (including another export, control or heartbeat) refuses the
+export with exit 2 rather than overwriting newer observations. Rerun the command
+to collect fresh observations; the older export never recaptures and replays.
+
+Scheduled lock probes create nothing, never follow a lock symlink and never
+block on FIFOs. Unsafe type, owner, link or private-mode evidence is a typed
+refusal, not an unlocked checkout. A genuine live engine lock means busy/exit 0
+without public replacement. After discovery the runner takes the nonblocking
+engine lock for its journal/history observation, so a manual run starting during
+discovery cannot become a false recovery warning. Already completed discovery
+accounting is retained; no engine lock is held during discovery.
+
+A publisher can repair a 0700 public parent/slot only when its private provenance
+matches that directory's exact parent and directory inode, or the current call
+observed creation and durably bound the inode before chmod. A crash between mkdir
+and that binding is deliberately **not** auto-repaired; a pre-mkdir intent and an
+empty directory do not prove ownership. On this refusal, inspect the path and
+private provenance on the host. Only after independently confirming the directory
+is the intended dedicated public directory may its owner explicitly set it to
+0755 and retry the same reporting binding. Do not chmod, remove or replace foreign
+directories or their contents to bypass the refusal. Known inode-bound
+interruptions before chmod remain automatically recoverable.
+
+Public outcomes follow the returned engine receipt, not merely exit 0.
+`apply --dry-run` and an up-to-date apply report a check, not an applied update.
+A returned staged receipt reports `staged`, or `awaiting_initialization` with
+`initialize_then_apply` on production. Only a completed apply receipt reports
+apply succeeded; a completed rollback reports rolled_back. Read-only checks retain
+precedence rules that preserve a live or failed apply. No new engine journal stage
+or Docker command is introduced by reporting.
+
+Public status is an allowlisted, disposable projection, never an authorization,
+backup, recovery, download or release-proof input. No env values, paths, raw
+exceptions, commands or secrets go into it. Atomic replacement and directory sync
+preserve old-or-new reads. Optional publication failure is nonfatal to the manual
+update outcome and does not imply an update failed or should be retried. An
+explicit export is itself a reporting operation and returns nonzero on failure.
 
 Heartbeat time, version observation, verified discovery, download inspection and
 operation-progress timestamps are independent. A control change or idle tick

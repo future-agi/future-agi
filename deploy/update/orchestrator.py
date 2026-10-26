@@ -14,14 +14,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Tuple
 
-from .apply import Blocked, Updater
+from .apply import Blocked, Updater, _digest_set
 from .backup_proof import BackupExpectation, read_backup_proof
 from .compatibility import (Attempt, Controls, Observations, evaluate_automatic_apply,
                             evaluate_automatic_rollback, plain, topology_profile)
 from .contracts import InstallationBinding, PreparedUpdate, ReasonCode
+from .envfile import EnvFileError
 from .install import ComposeCommand, Installation, resolve_compose_command
-from .manifest import hash_path, manifest_hash
+from .manifest import ManifestError, hash_path, manifest_hash, parse_image_ref
 from .runner_state import RunnerStateStore, TargetIdentity
+from .schedule import occurrence, start_gate
 
 
 class GuardRefused(Blocked):
@@ -81,6 +83,44 @@ def check_binding(installation: Installation, binding: InstallationBinding):
     installation.check_ownership()
     daemon = installation.docker_run('info', '--format', '{{.ID}}').stdout.strip()
     require(bool(daemon) and daemon == binding.daemon_identity, ReasonCode.OWNERSHIP_UNCONFIRMED)
+
+
+def env_sha256(engine):
+    """sha256 of the env bytes this engine would write (its selected alias), or a typed ENV_CONFLICT refusal."""
+    try:
+        return hashlib.sha256(engine._env_path().read_bytes()).hexdigest()
+    except (OSError, EnvFileError):
+        raise GuardRefused(ReasonCode.ENV_CONFLICT) from None
+
+
+def check_dependency_images(installation, layout, certified):
+    """Bind the dependency images Compose will start to the ones the facts certified; returns service -> image ids.
+
+    The whole-stack `compose up` starts whatever each dependency's tag resolves to on this host *now* (a mutable
+    tag an operator pulled or retagged would be started in place of the certified image, even with --pull never).
+    So, immediately before an automatic rollout, resolve the reference Compose will start for every dependency of
+    the topology, inspect it locally and require its image id AND signed digest to equal every certified running
+    replica. Nothing is pulled, started or stopped here; any difference is refused before a container is touched.
+    """
+    services = installation.config(refresh=True).get('services') or {}
+    expected = {}
+    for name in layout.dependencies:
+        replicas = certified.get(name)
+        require(isinstance(replicas, (tuple, list)) and bool(replicas), ReasonCode.RUNNING_VERSIONS_UNKNOWN)
+        service = services.get(name)
+        reference = service.get('image') if isinstance(service, Mapping) else None
+        require(isinstance(reference, str) and bool(reference) and not service.get('build'),
+                ReasonCode.CONFIGURATION_CHANGED)
+        try:
+            image_name = parse_image_ref(reference).name
+        except ManifestError:
+            raise GuardRefused(ReasonCode.CONFIGURATION_CHANGED) from None
+        local = installation.image(reference)
+        require(local is not None and all(
+            local.get('id') == image.image_id and (image_name, image.digest) in _digest_set(local.get('repo_digests') or [])
+            for image in replicas), ReasonCode.IMAGE_DIGEST_MISMATCH)
+        expected[name] = frozenset(image.image_id for image in replicas)
+    return expected
 
 
 def registered_installation(binding, supervisor, *, status_overlay=None):
@@ -156,6 +196,13 @@ class ScheduledGuard:
     receipt, failed target, signed exact pair and compatibility at each boundary.
     make_plan(fresh_installation, history) rebuilds the core plan. close() must run
     in finally to close the private backup directory descriptor.
+
+    A transaction is bound to what the guard approved, not to a moment: the exact
+    env bytes (approved_env_sha256, which the engine uses as the preimage of its
+    recovery record and which before_rollout rechecks), the window and start budget
+    re-derived at the guard's own clock sample taken after its last facts call, and,
+    immediately before a rollout, the dependency images Compose will start
+    (dependency_image_ids, verified again by the engine after the rollout).
     """
     def __init__(self, prepared: PreparedUpdate, *, discovery, store: RunnerStateStore,
                  facts: Callable, make_plan: Callable, control_generation: int,
@@ -177,6 +224,12 @@ class ScheduledGuard:
         self.fallback_consumed = False
         self.metadata = {}
         self.backup_environment = {}
+        # The exact env bytes (sha256) the latest successful before_env_commit approved: the engine binds its
+        # transaction to them (see Updater._approved_env_sha256), and before_rollout rechecks them.
+        self.approved_env_sha256 = None
+        self.fallback_env_sha256 = None
+        # service -> image ids certified immediately before the latest rollout (see check_dependency_images).
+        self.dependency_image_ids = None
 
     def context(self, engine):
         return EngineContext(self.prepared.binding, self.prepared, self.control_generation,
@@ -215,6 +268,10 @@ class ScheduledGuard:
                     ReasonCode.ENV_CONFLICT)
             require(hashlib.sha256(engine._env_path().read_bytes()).hexdigest()
                     == record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
+            # The recorded found_values describe only the bytes the guard approved: a transaction that began from
+            # any other bytes (an edit adopted as its baseline) must not be normalized back into the baseline.
+            require(self.approved_env_sha256 is not None
+                    and record['env_recovery']['before_sha256'] == self.approved_env_sha256, ReasonCode.ENV_CONFLICT)
             fresh.overlay_env(record['found_values'])
         if engine.automatic_fallback:
             # Never hide operator pin edits while normalizing the known engine
@@ -232,6 +289,33 @@ class ScheduledGuard:
                                                  self.prepared.profile_fingerprint,
                                                  self.prepared.deployment_fingerprint))
         return fresh
+
+    def _controls_at(self, controls, now):
+        """The window and start-budget facts, re-derived at `now` (the guard's own clock, sampled after its facts).
+
+        The provider's booleans were computed before this sample, so they may only restrict. A schedule-less
+        policy (injected controls) has nothing to re-evaluate. Fallback never calls this: an already-authorized
+        safety fallback may finish after the window closes.
+        """
+        window = controls.policy.maintenance_window
+        if window is None:
+            return controls
+        return replace(controls,
+                       window_open=controls.window_open and occurrence(window, now) == self.window_occurrence,
+                       start_budget_available=controls.start_budget_available
+                       and start_gate(controls.policy, now) is None)
+
+    def _expected_env(self, engine, boundary, seen):
+        """The exact env sha256 this boundary approves, or None where fingerprints alone bind it.
+
+        before_env_commit (forward): the bytes read before its final observation (`seen`). before_rollout: what
+        the engine's own write left. Fallback boundaries: what the failed forward transaction left.
+        """
+        if boundary == 'before_rollout':
+            return engine.active_record['env_recovery']['after_sha256']
+        if engine.automatic_fallback:
+            return self.fallback_env_sha256
+        return seen if boundary == 'before_env_commit' else None
 
     def _pending(self, engine):
         if engine.automatic_fallback:
@@ -255,6 +339,11 @@ class ScheduledGuard:
         require(target != state.failed_target_latch, ReasonCode.FAILED_TARGET_LATCHED)
         require(state.active_attempt_id is None or (self.attempt is not None
                 and state.active_attempt_id == self.attempt.attempt_id), ReasonCode.RECOVERY_REQUIRED)
+
+    def _certify_dependencies(self, engine, obs):
+        """Automatic rollout only: the dependency images Compose will start are the ones the facts certified."""
+        layout = topology_profile(self.prepared.binding.topology, self.prepared.binding.profiles)
+        return check_dependency_images(engine.installation.fresh(), layout, obs.dependency_images)
 
     def _reserve_backup(self, engine, obs, controls):
         require(self.attempt is None, ReasonCode.RECOVERY_REQUIRED)
@@ -314,6 +403,10 @@ class ScheduledGuard:
         control = self.store.read_control()
         if not engine.automatic_fallback:
             require(control.generation == self.control_generation, ReasonCode.CONTROL_INVALID)
+        if boundary == 'before_env_commit':
+            self.approved_env_sha256 = None
+        elif boundary == 'before_rollout':
+            self.dependency_image_ids = None
         self._journal(engine, boundary)
         self._pending(engine)
         fresh = self._fresh(engine, boundary)
@@ -331,6 +424,8 @@ class ScheduledGuard:
                       trust_fingerprint=self.prepared.trust_fingerprint,
                       attempt_id=self.attempt.attempt_id if self.attempt else '',
                       reserved_at=self.attempt.reserved_at if self.attempt else None)
+        if not engine.automatic_fallback:
+            controls = self._controls_at(controls, obs.now)
         if engine.automatic_fallback:
             obs = replace(obs, boundary='before_fallback')
             result = evaluate_automatic_rollback(self.fallback, obs, controls)
@@ -342,6 +437,11 @@ class ScheduledGuard:
                     for service, images in self.fallback.prior_images.items()), ReasonCode.ROLLBACK_INELIGIBLE)
             self._journal(engine, boundary)
             self._pending(engine)
+            # The facts above may have been slow: the env must still be exactly what the forward transaction left
+            # (not only when this boundary began), or an edit made meanwhile would be overwritten by the rollback.
+            expected_env = self._expected_env(engine, boundary, None)
+            dependencies = self._certify_dependencies(engine, obs) if boundary == 'before_rollout' else None
+            require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
             if boundary == 'before_fallback':
                 require(not self.fallback_reserved, ReasonCode.ROLLBACK_INELIGIBLE)
                 key = self.attempt.attempt_id
@@ -349,6 +449,10 @@ class ScheduledGuard:
                 engine.state.write_private('fallback', key, {'schema_version': 1, 'attempt_id': key,
                     'run_id': self.metadata['run_id'], 'eligibility_fingerprint': result.fingerprint})
                 self.fallback_reserved = True
+            if boundary == 'before_rollout':
+                self.dependency_image_ids = dependencies
+            if boundary == 'before_env_commit':
+                self.approved_env_sha256 = expected_env
             return
         # Rebuild from current disk/daemon, not Installation.config's old cache.
         plan = self.make_plan(fresh, engine._history())
@@ -375,22 +479,39 @@ class ScheduledGuard:
         # Slow online verification, plan building and proof IO cannot make an
         # earlier control/window/config observation authorize a later mutation.
         require(self.store.read_control().generation == self.control_generation, ReasonCode.CONTROL_INVALID)
+        # The env bytes this final observation window starts from. Whatever the (possibly slow) facts call below
+        # sees must still be exactly these bytes when it returns: the guard approves bytes, not a moment.
+        try:
+            seen_env = env_sha256(engine)
+        except GuardRefused:
+            seen_env = None  # the fresh model below reports the precise cause (retargeted alias, unreadable env)
         final_fresh = self._fresh(engine, boundary)
         final_obs, final_controls = self.facts(final_fresh, boundary)
         require(final_controls.policy == engine.settings.automation_policy, ReasonCode.CONFIGURATION_CHANGED)
+        dependencies = self._certify_dependencies(engine, final_obs) if boundary == 'before_rollout' else None
+        # Re-sampled AFTER the last facts call and dependency inspection; the window and start-budget facts are re-derived,
+        # so no boolean computed earlier (before a slow observation) can authorize this boundary.
         final_obs = replace(final_obs, now=self.clock(), boundary=obs.boundary,
                             online_verified=True, owner_confirmed=True, no_pending_transaction=True,
                             installation_fingerprint=obs.installation_fingerprint,
                             config_fingerprint=obs.config_fingerprint, profile_fingerprint=obs.profile_fingerprint,
                             trust_fingerprint=obs.trust_fingerprint, attempt_id=obs.attempt_id,
                             reserved_at=obs.reserved_at)
+        final_controls = self._controls_at(final_controls, final_obs.now)
         final_result = evaluate_automatic_apply(self.prepared, final_obs, final_controls, proof)
         require(final_result.allowed, final_result.reason_codes[0] if final_result.reason_codes
                 else ReasonCode.UNCERTIFIED_RELEASE)
         self._journal(engine, boundary)
         self._pending(engine)
         require(self.store.read_control().generation == self.control_generation, ReasonCode.CONTROL_INVALID)
+        expected_env = self._expected_env(engine, boundary, seen_env)
+        require(expected_env is not None or boundary != 'before_env_commit', ReasonCode.ENV_CONFLICT)
+        if expected_env is not None:
+            require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
+        if boundary == 'before_rollout':
+            self.dependency_image_ids = dependencies
         if boundary == 'before_env_commit':
+            self.approved_env_sha256 = expected_env
             self.first_mutation_at = final_obs.now
             self.metadata['run_id'] = engine.active_record['run_id']
             self.metadata['first_mutation_at'] = final_obs.now.isoformat()
@@ -422,8 +543,8 @@ class ScheduledGuard:
         # found_values are put back for the comparison. Nothing else is excused.
         fresh = engine.installation.fresh()
         check_binding(fresh, self.prepared.binding)
-        require(hashlib.sha256(engine._env_path().read_bytes()).hexdigest()
-                == engine.active_record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
+        expected_env = engine.active_record['env_recovery']['after_sha256']
+        require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
         fresh.overlay_env(receipt['found_values'])
         require(fingerprints(fresh) == (self.prepared.config_fingerprint, self.prepared.profile_fingerprint,
                                         self.prepared.deployment_fingerprint), ReasonCode.CONFIGURATION_CHANGED)
@@ -439,7 +560,9 @@ class ScheduledGuard:
                 require(info is not None and info.get('id') == image.image_id
                         and (parse_image_ref(image.image).name, image.digest)
                         in _digest_set(info.get('repo_digests') or []), ReasonCode.ROLLBACK_INELIGIBLE)
-        self.fallback_env_sha256 = engine.active_record['env_recovery']['after_sha256']
+        # Neither slow predecessor facts nor local image inspection may authorize overwriting a later operator edit.
+        require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
+        self.fallback_env_sha256 = expected_env
         self.fallback_receipt = Path(receipt_path)
         self.fallback = Attempt(self.prepared, self.attempt.attempt_id, self.attempt.reserved_at,
                                self.proof.raw, self.first_mutation_at,

@@ -10,19 +10,40 @@ import copy
 import hashlib
 import json
 import os
+import re
 import stat
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from .contracts import ACTIVE_OPERATION_STATES, ReasonCode, validate_public_status
 from .receipt import StateDir
-from .runner_state import StaleGeneration, StoreError
+from .runner_state import StaleGeneration, StoreBusy, StoreError
 from .schedule import utc
 
 MAX_SEQUENCE = 2**53 - 1
+
+
+def retry_busy(action, *, monotonic=None, sleep=None):
+    """Retry only an unacquired short metadata lock, never engine mutation.
+
+    A deadline AND attempt bound cover slow I/O and even a frozen test clock.
+    Keep the same opaque ticket; conflicts and disk errors are not retryable.
+    """
+    monotonic, sleep = monotonic or time.monotonic, sleep or time.sleep
+    deadline = monotonic() + 0.2
+    for attempt in range(5):
+        try:
+            return action()
+        except StoreBusy:
+            remaining = deadline - monotonic()
+            if attempt == 4 or remaining <= 0:
+                raise
+            sleep(min(0.05, remaining))
 
 
 def stamp(value):
@@ -138,6 +159,12 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
     if last_run is not None:
         run = _last_run(last_run)
     recovery = ReasonCode.RECOVERY_REQUIRED.value in reasons or ReasonCode.OPERATION_INTERRUPTED.value in reasons
+    # A prior blocked recovery check is not fresh evidence of an unfinished
+    # transaction. Keep failed apply history, but drop a resolved recovery block.
+    if not recovery and operation is None and op['state'] == 'blocked' and any(
+            value in op['reason_codes'] for value in ('recovery_required', 'operation_interrupted')):
+        op = {'state': 'idle', 'kind': None, 'stage': None, 'started_at': None,
+              'finished_at': None, 'reported_at': None, 'reason_codes': []}
     snapshot = {
         'schema_version': 1, 'sequence': 0, 'generated_at': stamp(now), 'installation': identity,
         'versions': versions, 'policy': {'channel': policy.channel, 'version_policy': policy.version_policy,
@@ -155,7 +182,10 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
     if safety is not None:
         snapshot['safety'] = _pick(safety, 'backup_required backup_state readiness automatic_rollback operator_action')
     elif previous is not None and not reasons and operation is None:
+        action = snapshot['safety']['operator_action']
         snapshot['safety'] = copy.deepcopy(previous['safety'])
+        if snapshot['safety']['operator_action'] == 'review_recovery':
+            snapshot['safety']['operator_action'] = action
         snapshot['safety']['automatic_rollback'] = 'ineligible' if policy.automatic_rollback else 'disabled'
     validate_public_status(snapshot, expected_installation=identity, now=now, previous=previous)
     return snapshot
@@ -165,6 +195,17 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
 class PublicationTicket:
     generation: int = 0
     operation_token: str = ''  # Private, never part of status.json.
+    operation_epoch: Optional[int] = None  # None supports the original two-field tickets.
+
+    @property
+    def epoch(self):
+        return self.generation if self.operation_epoch is None else self.operation_epoch
+
+
+class PublicationConflict(StaleGeneration):
+    """A newer operation won; not a registration or host-control failure."""
+    def __init__(self):
+        super().__init__(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
 
 
 class PublicationError(StoreError):
@@ -178,12 +219,15 @@ def _require(ok):
 
 
 class PublicStatusPublisher:
-    """Per-install generation AND operation-token CAS, serialized by public.lock.
+    """Monotonic sequence plus operation-epoch/token CAS under public.lock.
 
-    Private intent is committed before public replacement. A failed publication
-    consumes its generation; reload a ticket instead of replaying an old write.
-    The previous sanitized snapshot is private and can survive a missing mount.
-    All callers, including manual/control adapters, must use this same publisher.
+    Only operation-bearing publish() advances the epoch. Controls, heartbeats
+    and observation-only exports never take ownership of an operation.
+    An operation captures once before slow work and retains each returned ticket.
+    Busy locks consume nothing; skip that report, not the owner's later reports.
+    A conflict fences an older operation permanently: never recapture and replay.
+    Private intent precedes public replacement, so an I/O failure can consume an
+    epoch. The private sanitized snapshot survives a missing public mount.
     """
     def __init__(self, store, public_parent: Path):
         self.store = store
@@ -199,13 +243,17 @@ class PublicStatusPublisher:
         value = self.state.read_private('automation', self.key)
         if value is None:
             return PublicationTicket(), None
-        _require(type(value) is dict and set(value) == {'generation', 'operation_token', 'snapshot'})
+        _require(type(value) is dict and set(value) in (
+            {'generation', 'operation_token', 'snapshot'},
+            {'generation', 'operation_epoch', 'operation_token', 'snapshot'}))
         generation, token, snapshot = value['generation'], value['operation_token'], value['snapshot']
+        epoch = value.get('operation_epoch', generation)  # Original reports were all operation-bearing.
         _require(type(generation) is int and 1 <= generation <= MAX_SEQUENCE
+                 and type(epoch) is int and 0 <= epoch <= generation
                  and type(token) is str and len(token) <= 128)
         validate_public_status(snapshot, expected_installation=installation_identity(self.binding))
         _require(snapshot['sequence'] == generation)
-        return PublicationTicket(generation, token), snapshot
+        return PublicationTicket(generation, token, epoch), snapshot
 
     def capture(self):
         """Return (ticket, private presentation snapshot); never read public JSON."""
@@ -222,24 +270,38 @@ class PublicStatusPublisher:
             parts = self.path.parts[1:]
             for index, part in enumerate(parts):
                 dedicated = index >= len(parts) - 2
-                created = False
+                intent_key = hashlib.sha256(('public-directory:' + str(Path('/', *parts[:index + 1]))).encode()).hexdigest()
+                parent_info = os.fstat(fd)
+                parent_identity = [parent_info.st_dev, parent_info.st_ino]
+                created_identity = None
                 if dedicated:
                     try:
-                        os.mkdir(part, 0o700, dir_fd=fd)
-                        created = True
+                        os.stat(part, dir_fd=fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        try:
+                            os.mkdir(part, 0o700, dir_fd=fd)
+                        except FileExistsError:
+                            # Another creator won. Never claim its directory.
+                            raise PublicationError() from None
+                        created = os.stat(part, dir_fd=fd, follow_symlinks=False)
+                        created_identity = [created.st_dev, created.st_ino]
                         os.fsync(fd)
-                    except FileExistsError:
-                        pass
                 parent_fd = fd
                 fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
                 fds.append(fd)
                 info = os.fstat(fd)
                 _require(info.st_uid in (0, os.geteuid()) and not info.st_mode & 0o022)
-                if created:
-                    # Scheduler launchers intentionally use umask 077. Set the
-                    # public mode only on directories WE exclusively created;
-                    # never repair/chown an existing operator-owned mount.
-                    _require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700)
+                if dedicated and stat.S_IMODE(info.st_mode) == 0o700:
+                    intent = self.state.read_private('automation', intent_key)
+                    identity = [info.st_dev, info.st_ino]
+                    _require(info.st_uid == os.geteuid() and (created_identity == identity
+                             or type(intent) is dict and set(intent) == {'parent', 'directory'}
+                             and intent['parent'] == parent_identity and intent['directory'] == identity))
+                    # Bind durably before chmod. A crash before this binding is
+                    # ambiguous, even if an old pre-mkdir intent exists and the
+                    # directory is empty: refuse and require manual remediation.
+                    self.state.write_private('automation', intent_key,
+                                             {'parent': parent_identity, 'directory': identity})
                     os.fchmod(fd, 0o755)
                     os.fsync(fd)
                     os.fsync(parent_fd)
@@ -264,10 +326,19 @@ class PublicStatusPublisher:
         finally:
             os.close(fd)
 
+    @staticmethod
+    def _clean_temps(directory):
+        for name in os.listdir(directory):
+            if re.fullmatch(r'\.status-[0-9a-f]{32}\.tmp', name):
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid():
+                    os.unlink(name, dir_fd=directory)  # Unlink only; never open a target.
+
     def _replace(self, snapshot):
         raw = (json.dumps(snapshot, separators=(',', ':'), sort_keys=True) + '\n').encode('utf-8')
         with self._directory() as directory:
             self._existing(directory)
+            self._clean_temps(directory)
             name = '.status-' + uuid.uuid4().hex + '.tmp'
             fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
                          0o600, dir_fd=directory)
@@ -287,41 +358,110 @@ class PublicStatusPublisher:
                 except FileNotFoundError:
                     pass
 
-    def publish(self, snapshot, *, expected: PublicationTicket, operation_token: str = ''):
-        """Return the new ticket; failures are warnings at the runner boundary."""
+    def _commit(self, snapshot, ticket, previous, *, epoch, token):
+        """Called only under public.lock, including cleanup and atomic replacement."""
+        _require(ticket.generation < MAX_SEQUENCE)
+        snapshot['sequence'] = ticket.generation + 1
+        validate_public_status(snapshot, expected_installation=installation_identity(self.binding), previous=previous)
+        self.state.write_private('automation', self.key, {'generation': snapshot['sequence'],
+                                 'operation_epoch': epoch, 'operation_token': token, 'snapshot': snapshot})
+        self._replace(snapshot)
+        return PublicationTicket(snapshot['sequence'], token, epoch)
+
+    def publish(self, snapshot, *, expected: PublicationTicket, operation_token: str = '', observation_only=False):
+        """Fence operations by epoch, exports by generation; neither replays stale evidence.
+
+        Observation-only exports never own an epoch or change operation/safety.
+        They refuse ANY intervening report, including another export, rather
+        than overwriting newer observations. The caller must observe again.
+        """
         _require(isinstance(expected, PublicationTicket) and type(expected.generation) is int
                  and 0 <= expected.generation <= MAX_SEQUENCE and type(expected.operation_token) is str
-                 and len(expected.operation_token) <= 128 and type(operation_token) is str
+                 and len(expected.operation_token) <= 128 and type(expected.epoch) is int
+                 and 0 <= expected.epoch <= expected.generation and type(operation_token) is str
                  and len(operation_token) <= 128)
         snapshot = copy.deepcopy(snapshot)
         validate_public_status(snapshot, expected_installation=installation_identity(self.binding))
         try:
             with self.store._lock('public.lock'):
                 ticket, previous = self._read()
-                if ticket != expected:
-                    raise StaleGeneration()
-                _require(ticket.generation < MAX_SEQUENCE)
-                snapshot['sequence'] = ticket.generation + 1
-                validate_public_status(snapshot, expected_installation=installation_identity(self.binding), previous=previous)
-                # Persist sequence first, so failure/crash can never roll CAS back.
-                self.state.write_private('automation', self.key, {'generation': snapshot['sequence'],
-                                         'operation_token': operation_token, 'snapshot': snapshot})
-                self._replace(snapshot)
-                return PublicationTicket(snapshot['sequence'], operation_token)
-        except StaleGeneration:
+                if (ticket.epoch, ticket.operation_token) != (expected.epoch, expected.operation_token):
+                    raise PublicationConflict()
+                _require(expected.generation <= ticket.generation)
+                if observation_only:
+                    if ticket.generation != expected.generation:
+                        raise PublicationConflict()
+                    if previous is not None:
+                        for field in ('operation', 'safety'):
+                            snapshot[field] = copy.deepcopy(previous[field])
+                    return self._commit(snapshot, ticket, previous, epoch=ticket.epoch, token=ticket.operation_token)
+                if ticket.generation != expected.generation:
+                    # Only control/heartbeat writes can have intervened. Rebase
+                    # their fields, never their old operation or observations.
+                    blocked = snapshot['automation']['state'] == 'blocked'
+                    snapshot['policy'] = copy.deepcopy(previous['policy'])
+                    snapshot['automation'] = copy.deepcopy(previous['automation'])
+                    snapshot['generated_at'] = max(snapshot['generated_at'], previous['generated_at'])
+                    automation = snapshot['automation']
+                    until = automation['paused_until']
+                    paused = automation['pause_indefinite'] or until is not None and until > snapshot['generated_at']
+                    effective = ('disabled' if not automation['enabled'] else 'paused' if paused
+                                 else 'manual' if automation['mode'] == 'manual' else 'blocked' if blocked else 'enabled')
+                    automation['state'] = effective
+                    if effective == 'enabled':
+                        state = self.store.read_state()
+                        automation['next_check_at'] = stamp(state.retry_not_before or state.next_check_at)
+                        if previous['automation']['state'] == 'paused':
+                            automation['next_action_at'] = None
+                    else:
+                        automation['next_check_at'] = automation['next_action_at'] = until if effective == 'paused' else None
+                return self._commit(snapshot, ticket, previous, epoch=ticket.epoch + 1, token=operation_token)
+        except (StaleGeneration, StoreBusy):
             raise
         except Exception:
             raise PublicationError() from None
 
-    def heartbeat(self, *, expected, now: datetime, last_tick_at=None):
-        """Only heartbeat fields change. In particular progress/as-of stay old."""
-        ticket, snapshot = self.capture()
-        if ticket != expected:
-            raise StaleGeneration()
-        _require(snapshot is not None)
-        snapshot['generated_at'] = stamp(now)
-        if last_tick_at is not None:
-            snapshot['automation']['last_tick_at'] = stamp(last_tick_at)
-        # An expiring pause changes effective controls; use build_status instead
-        # of heartbeat for control changes. Validation refuses inconsistent state.
-        return self.publish(snapshot, expected=ticket, operation_token=ticket.operation_token)
+    def publish_controls(self, *, policy, now: datetime, last_tick_at=None):
+        """RMW the newest private report; no ticket and no operation token needed.
+
+        Read durable control/state under public.lock, not an earlier CLI capture.
+        Preserve operation, safety and every observation/as-of timestamp exactly.
+        This also supplies scheduler heartbeats, including pause expiry.
+        """
+        try:
+            with self.store._lock('public.lock'):
+                ticket, previous = self._read()
+                projected = build_status(self.binding, policy, self.store.read_control(), self.store.read_state(),
+                                         now=now, previous=previous)
+                if previous is None:
+                    snapshot = projected
+                else:
+                    snapshot = copy.deepcopy(previous)
+                    snapshot.update(generated_at=projected['generated_at'], policy=projected['policy'],
+                                    automation=projected['automation'])
+                if last_tick_at is not None:
+                    snapshot['automation']['last_tick_at'] = stamp(last_tick_at)
+                return self._commit(snapshot, ticket, previous, epoch=ticket.epoch, token=ticket.operation_token)
+        except StoreBusy:
+            raise
+        except Exception:
+            raise PublicationError() from None
+
+    def heartbeat(self, *, now: datetime, last_tick_at=None, expected=None):
+        """RMW only heartbeat fields. ``expected`` is accepted but never fences.
+
+        Use publish_controls for effective controls (including pause expiry).
+        """
+        try:
+            with self.store._lock('public.lock'):
+                ticket, previous = self._read()
+                _require(previous is not None)
+                snapshot = copy.deepcopy(previous)
+                snapshot['generated_at'] = stamp(now)
+                if last_tick_at is not None:
+                    snapshot['automation']['last_tick_at'] = stamp(last_tick_at)
+                return self._commit(snapshot, ticket, previous, epoch=ticket.epoch, token=ticket.operation_token)
+        except StoreBusy:
+            raise
+        except Exception:
+            raise PublicationError() from None
