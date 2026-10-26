@@ -1076,6 +1076,14 @@ environment's `metadata.provenance`.
 `/work/authoring/cost.json` and billed as authoring when the attempt is cleaned
 up, like any authoring job.
 
+
+**Publishing a design as a prebuilt environment.** A design's releases belong to its
+organization. To offer one to every organization, an operator runs
+`register_harness_release --from-design <job id>`, which takes the archives the design
+registered, recomputes both digests, checks every file and registers them again as system
+releases. A design never publishes itself. The release list (§7.6) shows only the newest
+release of each name per owner; an older one stays usable by the compositions bound to it.
+
 ## 8. Pinned later
 
 | Item | Where | Step |

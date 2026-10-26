@@ -30,6 +30,7 @@ from django.utils import timezone
 
 from simulate.models import (
     HarnessDesignDocument,
+    HarnessEnvironmentRelease,
     HarnessSuiteRelease,
     HostedHarnessConversation,
     HostedHarnessJob,
@@ -503,3 +504,28 @@ def unpack_output(body: bytes) -> tempfile.TemporaryDirectory[str]:
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         archive.extractall(scratch.name, filter="data")
     return scratch
+
+
+def publish_design(job: HostedHarnessJob) -> tuple[Any, Any]:
+    """Register a completed design's sealed releases again as system releases, so every
+    organization sees it as a prebuilt environment. An operator decides this (the
+    `register_harness_release --from-design` command); a design itself never publishes beyond
+    its organization. The archives are the ones the design registered, so both digests and
+    every file are checked again on the way."""
+    result = (job.payload or {}).get("metadata", {}).get("design_result") or {}
+    if job.state != HostedHarnessJob.State.COMPLETED or not result:
+        raise _error(
+            "design_not_sealed", "only a completed design can be published", 409
+        )
+    environment = HarnessEnvironmentRelease.no_workspace_objects.get(
+        id=result["environment"]["id"]
+    )
+    suite = HarnessSuiteRelease.no_workspace_objects.get(id=result["suite"]["id"])
+    with tempfile.TemporaryDirectory(prefix="design-publish-") as scratch:
+        root = Path(scratch)
+        for name, record in (("environment", environment), ("suite", suite)):
+            with tarfile.open(
+                fileobj=io.BytesIO(_download(record.object_key)), mode="r:gz"
+            ) as tar:
+                tar.extractall(root / name, filter="data")
+        return register_release(root / "environment", root / "suite", organization=None)

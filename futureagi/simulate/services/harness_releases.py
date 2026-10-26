@@ -287,12 +287,16 @@ def _suite_summary(suite: HarnessSuiteRelease) -> dict[str, Any]:
 
 def list_releases(organization) -> list[dict[str, Any]]:
     """The environment releases `organization` may compose (contract §7.6): system releases and
-    its own, each with the suites it may use."""
-    environments = list(
+    its own, each with the suites it may use. Re-registering a changed environment under the
+    same name supersedes the older release: only the newest of each name per owner is listed,
+    while the older ones stay usable by the compositions already bound to them."""
+    usable = list(
         _usable(HarnessEnvironmentRelease, organization)
         .select_related("parent")
         .order_by("name", "created_at")
     )
+    newest = {(one.organization_id, one.name): one for one in usable}
+    environments = list(newest.values())
     suites: dict[Any, list[HarnessSuiteRelease]] = {}
     for suite in (
         _usable(HarnessSuiteRelease, organization)
@@ -300,7 +304,8 @@ def list_releases(organization) -> list[dict[str, Any]]:
         .order_by("name", "created_at")
     ):
         suites.setdefault(suite.environment_id, []).append(suite)
-    named = {environment.digest: environment.name for environment in environments}
+    # A design may name a template that has since been superseded.
+    named = {environment.digest: environment.name for environment in usable}
     results = []
     for environment in environments:
         rules = (environment.policy or {}).get("rules") or []
