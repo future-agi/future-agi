@@ -53,14 +53,16 @@ describe("ConnectedAgentsView", () => {
       .getAllByRole("columnheader")
       .map((h) => h.textContent.trim());
     expect(headers).toEqual([
+      "",
       "Agent name",
       "Modality",
       "Source",
       "Versions",
       "Used in",
-      "Created at",
+      "Last updated",
+      "Connected on",
     ]);
-    ["Owner", "Production", "Last updated", "Connected"].forEach((h) =>
+    ["Owner", "Production", "Created at", "Connected"].forEach((h) =>
       expect(screen.queryByRole("columnheader", { name: h })).toBeNull(),
     );
   });
@@ -81,8 +83,8 @@ describe("ConnectedAgentsView", () => {
     expect(screen.getByText("7 environments")).toBeInTheDocument();
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
     expect(
-      screen.getByText("Inbound phone support for an online storefront"),
-    ).toBeInTheDocument();
+      screen.queryByText("Inbound phone support for an online storefront"),
+    ).toBeNull();
   });
 
   it("puts the old page's modality icon next to voice and chat", async () => {
@@ -126,6 +128,7 @@ describe("ConnectedAgentsView", () => {
     await screen.findByText("Voice agent 37");
     expect(axios.get).toHaveBeenLastCalledWith("/simulate/agent-definitions/", {
       params: { page: 2, limit: 25 },
+      paramsSerializer: expect.any(Object),
     });
   });
 
@@ -171,7 +174,7 @@ describe("ConnectedAgentsView", () => {
     await waitFor(
       () =>
         expect(
-          screen.getByText("No agents match your search"),
+          screen.getByText("No agents match your search or filters"),
         ).toBeInTheDocument(),
       { timeout: 2000 },
     );

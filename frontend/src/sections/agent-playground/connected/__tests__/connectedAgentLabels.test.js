@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  deleteResultMessage,
   modalityIcon,
   humanize,
   modalityLabel,
@@ -131,5 +132,25 @@ describe("versionsParts", () => {
       version: "",
       rest: "—",
     });
+  });
+});
+
+describe("deleteResultMessage", () => {
+  it("says how many were deleted", () => {
+    expect(deleteResultMessage({ deleted: 1, skipped: 0 })).toBe(
+      "1 agent deleted.",
+    );
+    expect(deleteResultMessage({ deleted: 3, skipped: 0 })).toBe(
+      "3 agents deleted.",
+    );
+  });
+
+  it("names the ones skipped for still being in an environment", () => {
+    expect(deleteResultMessage({ deleted: 2, skipped: 1 })).toBe(
+      "2 agents deleted. 1 agent skipped: still used in an environment.",
+    );
+    expect(deleteResultMessage({ deleted: 0, skipped: 2 })).toBe(
+      "2 agents skipped: still used in environments.",
+    );
   });
 });

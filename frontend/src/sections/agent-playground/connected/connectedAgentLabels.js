@@ -13,7 +13,31 @@ const SOURCE_LABELS = {
   livekit: "LiveKit",
   vapi: "Vapi",
   retell: "Retell",
+  bland: "Bland.ai",
+  eleven_labs: "ElevenLabs",
 };
+
+const enumField = (value, label, labels) => ({
+  value,
+  label,
+  type: "enum",
+  operators: ["is"],
+  choices: Object.keys(labels),
+  choiceLabels: labels,
+});
+
+export const CONNECTED_AGENT_FILTER_FIELDS = [
+  enumField("agent_type", "Type", { voice: "Voice", text: "Chat" }),
+  enumField("source", "Source", SOURCE_LABELS),
+  enumField("environments", "Environments", {
+    with: "In an environment",
+    without: "No environment yet",
+  }),
+  enumField("observe", "Observe project", {
+    linked: "Linked",
+    not_linked: "Not linked",
+  }),
+];
 
 export const humanize = (value) =>
   String(value)
@@ -46,6 +70,21 @@ export const usedInLabel = ({ environments, environmentCount }) => {
     return { text: environments?.[0]?.name || "1 environment", empty: false };
   }
   return { text: `${environmentCount} environments`, empty: false };
+};
+
+const agentsCount = (count) => `${count} agent${count === 1 ? "" : "s"}`;
+
+export const deleteResultMessage = ({ deleted, skipped }) => {
+  const parts = [];
+  if (deleted) parts.push(`${agentsCount(deleted)} deleted.`);
+  if (skipped) {
+    parts.push(
+      `${agentsCount(skipped)} skipped: still used in ${
+        skipped === 1 ? "an environment" : "environments"
+      }.`,
+    );
+  }
+  return parts.join(" ");
 };
 
 export const versionsParts = ({ latestLabel, versionCount }) => {
