@@ -6,6 +6,8 @@ on:
       - ".github/workflows/worker-release-checks.yml"
       - "scripts/verify-platform-image-tags.py"
       - "scripts/test_verify_platform_image_tags.py"
+      - "scripts/omega-worker-preflight.py"
+      - "scripts/test_omega_worker_preflight.py"
 permissions:
   contents: read
 jobs:

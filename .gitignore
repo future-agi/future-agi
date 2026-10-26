@@ -257,3 +257,5 @@ docker-compose.override.yml
 
 # Local ALK wheel, copied to the build context for the dev simulation-runner image
 agent_learning_kit-*.whl
+# Private worker packages and generated Docker contexts (at any depth).
+.artifacts/

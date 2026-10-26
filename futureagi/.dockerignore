@@ -176,3 +176,5 @@ model_serving/
 model_cache/
 embedding_cache/
 checkpoints/
+# Private runtime tarballs must never enter a backend image build context.
+**/.artifacts/

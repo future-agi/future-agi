@@ -21,20 +21,64 @@ Moved here from the separate `future-agi/omega-error-feed-worker` repo
 ```sh
 NODE_AUTH_TOKEN="$(gh auth token)" node futureagi/ee/workers/error-feed-node/fetch-runtime.mjs
 node futureagi/ee/workers/error-feed-node/prepare-image.mjs
-docker build -t omega-error-feed:local .artifacts/node-worker
-docker run --rm omega-error-feed:local worker/worker.mjs --healthcheck
-docker run --rm -i --network none omega-error-feed:local --input-type=module < futureagi/ee/workers/error-feed-node/kafka-codec-smoke.mjs
+docker build -t omega-error-feed:local futureagi/ee/.artifacts/node-worker
+bash scripts/verify-omega-worker-image.sh omega-error-feed:local
 ```
 
-`fetch-runtime.mjs` needs a GitHub token with `packages:read` on the private
+`fetch-runtime.mjs` needs a GitHub token with `read:packages` on the private
 `@future-agi/omega-runtime` package (published from the separate `omega`
 repo); it checks the tarball against its reviewed SHA-256 pin. Tarballs and
-the build context are generated under ignored `.artifacts/` at the monorepo
-root (`resolve(worker, '../../.artifacts/node-worker')`, i.e.
-`futureagi/ee/.artifacts/node-worker`). Only that allowlisted context is sent
+the build context are generated under ignored
+`futureagi/ee/.artifacts/node-worker`. Only that allowlisted context is sent
 to Docker; never build this worker from the repository root. The final image
 contains compiled runtime packages and worker code, not source checkout,
 .git, experiment traces or credentials.
+
+The verification script compares the shipped files byte for byte with
+`image-files.mjs`, runs the healthcheck, imports both daemons without network
+access, checks the Kafka codec, then runs all worker test files inside the image.
+Tests are mounted read-only and resolve the runtime and telemetry dependencies
+installed in the image. Running `node --test` directly in the source checkout
+does not install or resolve the private runtime.
+
+## CI and release prerequisites
+
+Give `future-agi/future-agi` Actions read access to `@future-agi/omega-runtime`
+in the package's **Manage Actions access** settings, or configure the repository
+secret `OMEGA_PACKAGES_READ_TOKEN` with `read:packages`. The workflow's
+`packages: read` permission alone does not grant cross-repository package access.
+Same-repository PRs, pushes and manual CI runs fail if the runtime cannot be
+fetched. Fork PRs run the public subset, explicitly excluding four test files;
+the full image check must pass on a trusted branch before merge.
+
+The release requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` to read the
+existing private `futureagi/omega-error-feed-worker` repository and publish to
+it. The dispatch guard rejects an existing version tag; authentication failures
+are never treated as a missing tag. Rerunning an interrupted release can pull an
+existing image only if its revision matches the release commit, and it must pass
+the same verification before repairing aliases. The version tag is never rebuilt
+or pushed again. New publications use the locally built image that passed all
+verification checks.
+
+Before merging this migration, land the companion deployment change in
+`tests/test-release-digest-bump.py` that accepts the worker repository and
+checks its digest. That test supports both the old release-job output and the
+new catalog resolution, so it can land first. Package access must also be
+confirmed by a successful full worker CI run.
+
+## Worker source reconciliation
+
+The imported worker matches standalone `main` at `d02c3ec` (`dev` is an ancestor),
+plus these approved changes ported with their original authorship:
+
+- [#40](https://github.com/future-agi/omega-error-feed-worker/pull/40), `5e1b6e5`: simulation v3 behavior cohorts and validated singleton recovery.
+- [#41](https://github.com/future-agi/omega-error-feed-worker/pull/41), `59602d3`: rank candidate issues from unassigned findings.
+- [#43](https://github.com/future-agi/omega-error-feed-worker/pull/43), `52003f6`: compress oversized checkpoints for every policy.
+
+Simulation v3 remains opt-in; companion [platform PR #3535](https://github.com/future-agi/future-agi/pull/3535) enables that policy.
+The unmerged, changes-requested retry and investigation branches are separate
+work. Archive the standalone repository only after the first monorepo worker
+release is confirmed running in both US and EU.
 
 ## EE tree and runtime-source decision (TH-8393)
 

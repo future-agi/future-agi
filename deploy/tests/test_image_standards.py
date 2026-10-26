@@ -1615,7 +1615,10 @@ class Workflows(unittest.TestCase):
         self.assertEqual(jobs["approve"]["needs"], "guard")
         # What the guard checked may have changed while the review waited.
         self.assertEqual(
-            jobs["approve"]["steps"][-1]["run"], jobs["guard"]["steps"][0]["run"]
+            jobs["approve"]["steps"][-1]["run"],
+            next(
+                step["run"] for step in jobs["guard"]["steps"] if step.get("id") == "v"
+            ),
         )
         self.assertEqual(jobs["approve"]["env"], jobs["guard"]["env"])
 
@@ -1673,7 +1676,9 @@ class Workflows(unittest.TestCase):
     @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
     def test_every_release_component_can_run_alone(self):
         jobs = yaml_jobs(WORKFLOWS / "release-images.yml")
-        guard = jobs["guard"]["steps"][0]["run"]
+        guard = next(
+            step["run"] for step in jobs["guard"]["steps"] if step.get("id") == "v"
+        )
         (names,) = re.findall(r'^all="([a-z -]+)"$', guard, re.MULTILINE)
         components = names.split()
 
@@ -1709,8 +1714,7 @@ class Workflows(unittest.TestCase):
         for job, component in component_of.items():
             with self.subTest(job=job):
                 self.assertEqual(selected_by(jobs[job]["if"]), {component})
-        # "bump" has no quoted-component gate: bump-deployment runs off the
-        # release event/success chain (below), not a contains(components, "x") check.
+        self.assertEqual(selected_by(jobs["bump-deployment"]["if"]), {"bump"})
         self.assertEqual(legs | set(component_of.values()) | {"bump"}, set(components))
         # A job that follows builds this run may not have asked for: a skipped
         # one does not stop it, a failed one does.
@@ -1730,13 +1734,20 @@ class Workflows(unittest.TestCase):
         # does not wait on another image's build to finish.
         # A tag push pins only what it built: a failed build stops the bump.
         bump = " ".join(jobs["bump-deployment"]["if"].split())
-        for built in ("dispatch-ee", "simulation-runner"):
+        for built in (
+            "dispatch-ee",
+            "simulation-runner",
+            "release-worker",
+            "build",
+            "backend",
+            "code-executor",
+        ):
             with self.subTest(job="bump-deployment", built=built):
                 self.assertIn(f"needs.{built}.result == 'success'", bump)
-        # The worker's digest is looked up by published tag in bump-deployment
-        # (alongside backend/collector), not threaded through as a job output --
-        # same reason there is no needs.backend.result check here either.
-        self.assertNotIn("needs.release-worker", bump)
+        # A tag release waits for all builds. A standalone bump retry resolves
+        # every digest from the registry and allows skipped component jobs.
+        self.assertIn("github.event_name == 'workflow_dispatch'", bump)
+        self.assertNotIn("needs.release-worker.outputs", str(jobs["bump-deployment"]))
         # The runner's base: the backend this run built, else the registry's.
         (digest,) = [
             s for s in jobs["resolve-sdk"]["steps"] if s.get("id") == "backend"
@@ -1747,12 +1758,101 @@ class Workflows(unittest.TestCase):
             " && !contains(needs.guard.outputs.components, '\"backend\"')",
         )
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    @unittest.skipUnless(shutil.which("jq"), "jq unavailable")
+    def test_worker_publish_retry_does_not_push_the_version_again(self):
+        steps = yaml_jobs(WORKFLOWS / "release-images.yml")["release-worker"]["steps"]
+        publish = next(step["run"] for step in steps if step.get("id") == "publish")
+        digest = "sha256:" + "a" * 64
+        stub = r"""docker() {
+          printf '%s\n' "$*" >> "$CALLS"
+          case "$1" in
+            buildx) printf '{"digest":"%s"}\n' "$DIGEST" ;;
+          esac
+        }
+        """
+        for exists in ["true", "false"]:
+            with self.subTest(exists=exists), tempfile.TemporaryDirectory() as tmp:
+                calls, output = Path(tmp) / "calls", Path(tmp) / "output"
+                result = subprocess.run(
+                    ["bash", "-c", stub + publish],
+                    env={
+                        **os.environ,
+                        "IMAGE": "futureagi/omega-error-feed-worker",
+                        "VERSION": "v1.2.3",
+                        "IMAGE_EXISTS": exists,
+                        "DIGEST": digest,
+                        "CALLS": str(calls),
+                        "GITHUB_OUTPUT": str(output),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                pushes = [
+                    line
+                    for line in calls.read_text().splitlines()
+                    if line.startswith("push ")
+                ]
+                tags = (["v1.2.3"] if exists == "false" else []) + ["v1.2", "latest"]
+                self.assertEqual(
+                    pushes,
+                    [f"push futureagi/omega-error-feed-worker:{tag}" for tag in tags],
+                )
+                self.assertEqual(output.read_text(), f"digest={digest}\n")
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    def test_worker_reuse_requires_the_exact_release_commit(self):
+        steps = yaml_jobs(WORKFLOWS / "release-images.yml")["release-worker"]["steps"]
+        reuse = next(
+            step["run"]
+            for step in steps
+            if step.get("name", "").startswith("Reuse an existing")
+        )
+        stub = r"""docker() {
+          case "$1" in
+            pull) return 0 ;;
+            inspect) printf '%s\n' "$EXISTING_REVISION" ;;
+            *) return 91 ;;
+          esac
+        }
+        """
+        for revision in ["a" * 40, "b" * 40, ""]:
+            with self.subTest(revision=revision):
+                result = subprocess.run(
+                    ["bash", "-c", stub + reuse],
+                    env={
+                        **os.environ,
+                        "IMAGE": "futureagi/omega-error-feed-worker",
+                        "VERSION": "v1.2.3",
+                        "GITHUB_SHA": "a" * 40,
+                        "EXISTING_REVISION": revision,
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode == 0, revision == "a" * 40)
+
     def _release_guard(
-        self, event, ref, version="", components="", *, hub="404", tags="v9.9.9"
+        self,
+        event,
+        ref,
+        version="",
+        components="",
+        *,
+        hub="404",
+        tags="v9.9.9",
+        worker_status=0,
     ):
         """Run the guard with `git ls-remote` and Docker Hub stubbed: (exit code,
         selected components, stdout, the Docker Hub URLs it asked for)."""
-        script = yaml_jobs(WORKFLOWS / "release-images.yml")["guard"]["steps"][0]["run"]
+        script = next(
+            step["run"]
+            for step in yaml_jobs(WORKFLOWS / "release-images.yml")["guard"]["steps"]
+            if step.get("id") == "v"
+        )
         with tempfile.TemporaryDirectory() as tmp:
             stubs = Path(tmp) / "bin"
             stubs.mkdir()
@@ -1763,6 +1863,14 @@ class Workflows(unittest.TestCase):
                 'for last in "$@"; do :; done\n'
                 f'echo "$last" >> "{tmp}/urls"\n'
                 f"printf '%s' '{hub}'\n" + ("exit 7\n" if hub == "000" else "")
+            )
+            (stubs / "python3").write_text(
+                "#!/bin/sh\n"
+                '[ "$1" = scripts/omega-worker-preflight.py ] || exit 92\n'
+                '[ "$VERSION" = v9.9.9 ] || exit 93\n'
+                '[ "$DOCKERHUB_USERNAME" = worker-account ] || exit 94\n'
+                '[ "$DOCKERHUB_TOKEN" = worker-credential ] || exit 95\n'
+                f"exit {worker_status}\n"
             )
             for stub in stubs.iterdir():
                 stub.chmod(0o755)
@@ -1780,6 +1888,8 @@ class Workflows(unittest.TestCase):
                     "GITHUB_REPOSITORY": "future-agi/future-agi",
                     "REQUESTED_VERSION": version,
                     "REQUESTED_COMPONENTS": components,
+                    "DOCKERHUB_USERNAME": "worker-account",
+                    "DOCKERHUB_TOKEN": "worker-credential",
                 },
                 capture_output=True,
                 text=True,
@@ -1835,6 +1945,7 @@ class Workflows(unittest.TestCase):
             "backend": "from the tag v9.9.9",
             "standalone": "from the tag v9.9.9",
             "simulation-runner": "from the tag v9.9.9",
+            "worker": "from the tag v9.9.9",
             "helm-chart": "from the tag v9.9.9",
         }
         for components, message in refused.items():
@@ -1845,6 +1956,22 @@ class Workflows(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn(message, out)
                 self.assertEqual(urls, [])
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
+    @unittest.skipUnless(shutil.which("jq"), "jq unavailable")
+    def test_worker_guard_uses_authenticated_preflight(self):
+        for status in [0, 1]:
+            with self.subTest(status=status):
+                code, selected, _, urls = self._release_guard(
+                    "workflow_dispatch",
+                    "refs/tags/v9.9.9",
+                    "v9.9.9",
+                    "worker",
+                    worker_status=status,
+                )
+                self.assertEqual(code, status)
+                self.assertEqual(selected, ["worker"] if status == 0 else None)
+                self.assertEqual(urls, [])  # No anonymous private-tag lookup.
 
     @unittest.skipUnless(HAVE_YAML, "PyYAML unavailable")
     @unittest.skipUnless(shutil.which("jq"), "jq unavailable")
