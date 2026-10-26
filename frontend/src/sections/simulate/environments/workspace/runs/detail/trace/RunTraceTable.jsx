@@ -24,7 +24,7 @@ import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import {
-  listMatchingScenarioKeys,
+  listMatchingCalls,
   uniqueScenarioKeys,
 } from "src/api/simulate-environments/rerunScenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -77,6 +77,7 @@ export default function RunTraceTable({
   activePage = null,
   evalActions = null,
   onRerunScenarios = null,
+  onRerunEvals = null,
   runTrials = 1,
   rerunDisabledReason = null,
   onTickableChange,
@@ -212,7 +213,7 @@ export default function RunTraceTable({
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
   const selection = useSelection(count);
-  const canRerun = !!onRerunScenarios;
+  const canRerun = !!onRerunScenarios || !!onRerunEvals;
   // Each ticked call's scenario, kept as pages load: a call ticked on another
   // page is no longer in `tasks`, but still counts toward the re-run.
   const keyByIdRef = useRef(new Map());
@@ -292,10 +293,23 @@ export default function RunTraceTable({
           pageSelectable: pageIds.length > 0,
         }
       : null;
-  const resolveScenarioKeys = () =>
+  const resolveSelection = () =>
     allMatching
-      ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
-      : Promise.resolve(tickedKeys);
+      ? listMatchingCalls(executionId, serverFilters, selection.idList)
+      : Promise.resolve({
+          callIds: selection.idList,
+          scenarioKeys: tickedKeys,
+        });
+  // Re-grading stays on this run, so the ticks go once it is accepted; a
+  // refusal leaves them in place to try again.
+  const rerunEvals = async (callIds) => {
+    try {
+      await onRerunEvals(callIds);
+      selection.clear();
+    } catch {
+      // The caller reports the refusal.
+    }
+  };
   const banner = !hasSelection ? null : allMatching ? (
     <>
       <span>
@@ -629,11 +643,12 @@ export default function RunTraceTable({
           allMatching={allMatching}
           runTrials={runTrials}
           disabledReason={rerunDisabledReason}
-          resolveScenarioKeys={resolveScenarioKeys}
+          resolveSelection={resolveSelection}
           // The selection stays until the new run opens (the run page starts
           // fresh there), so a refused start leaves the ticks in place to try
           // again.
           onRerun={onRerunScenarios}
+          onRerunEvals={onRerunEvals ? rerunEvals : null}
           onClear={selection.clear}
         />
       )}
@@ -832,6 +847,7 @@ RunTraceTable.propTypes = {
   // Given, calls can be ticked and re-run as a new simulation: called with the
   // scenario keys and the trials picked.
   onRerunScenarios: PropTypes.func,
+  onRerunEvals: PropTypes.func,
   runTrials: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
   // Told whether the run has any call that can be ticked for a re-run.

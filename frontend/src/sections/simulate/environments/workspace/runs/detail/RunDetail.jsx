@@ -15,9 +15,12 @@ import {
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
+import { rerunCallEvals } from "src/api/simulate-environments/rerunScenarios";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   callDetailKeyPrefix,
   runAnalyticsKey,
+  runResultsKey,
 } from "src/api/simulate-environments/runEvals";
 
 import SectionCard from "../../../components/SectionCard";
@@ -85,6 +88,7 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [regrading, setRegrading] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
     callsShown: tab === "tasks",
@@ -143,6 +147,30 @@ export default function RunDetail({
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
+
+  // Grades the ticked calls again on this run. The run turns "evaluating", so
+  // refetching it starts the table's polling until the new scores land.
+  const rerunEvals = async (callIds) => {
+    setRegrading(true);
+    try {
+      await rerunCallEvals(executionId, callIds);
+      enqueueSnackbar(
+        callIds.length === 1
+          ? "Re-running evals on 1 call"
+          : `Re-running evals on ${callIds.length.toLocaleString()} calls`,
+        { variant: "success" },
+      );
+      queryClient.invalidateQueries({ queryKey: ["run-test-executions"] });
+      queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
+    } catch (error) {
+      enqueueSnackbar(errorMessage(error), {
+        variant: "error",
+      });
+      throw error;
+    } finally {
+      setRegrading(false);
+    }
+  };
 
   const back = () =>
     navigate(
@@ -385,6 +413,8 @@ export default function RunDetail({
               // Ticked calls re-run as a new simulation, through the same start
               // as any run: it opens the new run.
               onRerunScenarios={onStartRun}
+              // Ticked calls are graded again in place, on this run.
+              onRerunEvals={rerunEvals}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
@@ -392,7 +422,9 @@ export default function RunDetail({
                   ? "Wait for this run to finish before re-running calls"
                   : runStarting
                     ? "Starting the run…"
-                    : null
+                    : regrading
+                      ? "Re-running evals…"
+                      : null
               }
             />
           )}
