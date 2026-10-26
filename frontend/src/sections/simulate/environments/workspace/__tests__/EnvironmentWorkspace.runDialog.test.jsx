@@ -184,10 +184,17 @@ describe("EnvironmentWorkspace run start", () => {
     axios.get.mockReset();
     axios.post.mockReset();
     axios.get.mockImplementation((url) => {
-      if (/\/harness-environments\/[^/]+\/$/.test(url)) {
-        return Promise.reject(
-          Object.assign(new Error("Not found"), { statusCode: 404 }),
-        );
+      const detail = url.match(/\/harness-environments\/([^/]+)\/$/);
+      if (detail) {
+        // The detail loads before the page offers Run.
+        const id = detail[1];
+        return Promise.resolve({
+          data: {
+            id,
+            overview: { id, name: "Done Environment" },
+            contract: null,
+          },
+        });
       }
       if (url.endsWith("/scenarios/")) {
         return Promise.resolve({

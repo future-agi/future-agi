@@ -39,7 +39,6 @@ from simulate.models import (
     CallLogEntry,
     ChatMessageModel,
     HostedHarnessJob,
-    HostedHarnessReceipt,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -145,11 +144,15 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
+from simulate.services.harness_environment import receipt_outcome_counts
 from simulate.services.harness_evals import (
+    effective_simulation_mapping,
     is_harness_run_test,
     is_regrading_a_finished_harness_run,
+    runnable_eval_config_ids,
 )
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
     RegradeDispatchFailed,
@@ -2610,9 +2613,7 @@ class TestExecutionDetailView(APIView):
             # The live-only view. The list builds a fresh column order; the map
             # is only what grouping is handed, an argument it accepts and never
             # reads. Filters deliberately resolve against every config instead.
-            eval_configs = [
-                config for config in all_eval_configs if not config.deleted
-            ]
+            eval_configs = [config for config in all_eval_configs if not config.deleted]
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
@@ -5258,11 +5259,10 @@ class GetEvalConfigStructureView(APIView):
                     final_config[key]["default"] = eval_config_config.get(key, "")
 
             # Build final_mapping from eval_config
+            mapping = effective_simulation_mapping(template, eval_config.mapping or {})
             final_mapping = {}
             for key in template.config.get("required_keys", []):
-                final_mapping[key] = (
-                    eval_config.mapping.get(key, "") if eval_config.mapping else ""
-                )
+                final_mapping[key] = mapping.get(key, "")
 
             eval_data = {
                 "id": str(eval_config.id),
@@ -5424,11 +5424,19 @@ class UpdateEvalConfigView(APIView):
                     id__in=call_execution_ids
                 )
                 call_executions_list = []
+                stamped_at = timezone.now()
                 for call_execution in call_executions_to_update:
                     # Provider-agnostic eval flags live in call_metadata
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = True
                     call_execution.call_metadata["eval_completed"] = False
+                    # The placeholder's scoring clock starts at this dispatch,
+                    # not at the call's own, possibly old, completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        eval_config_ids_str,
+                        now=stamped_at,
+                    )
 
                     # Initialize eval_outputs for the updated eval config
                     if not call_execution.eval_outputs:
@@ -5715,28 +5723,7 @@ class RunTestExecutionsView(APIView):
                     test_execution_id__in=execution_ids
                 ).only("id", "test_execution_id")
             }
-            outcome_counts = {}
-            if hosted_jobs:
-                # A receipt belongs to a call through its execution, or, for a
-                # scenario-level receipt, through the scenario registration.
-                # Receipts of soft-deleted calls stay in the table and must
-                # not be counted.
-                receipt_of_deleted_call = models.Q(
-                    execution__call_execution__deleted=True
-                ) | models.Q(
-                    execution__isnull=True, scenario__call_execution__deleted=True
-                )
-                for row in (
-                    HostedHarnessReceipt.no_workspace_objects.filter(
-                        job_id__in=hosted_jobs.values()
-                    )
-                    .exclude(receipt_of_deleted_call)
-                    .values("job_id", "status")
-                    .annotate(count=Count("id"))
-                ):
-                    outcome_counts.setdefault(row["job_id"], {})[row["status"]] = row[
-                        "count"
-                    ]
+            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -7247,6 +7234,12 @@ class CallExecutionRerunView(APIView):
             has_pending_calls = False
             has_pending_evals = False
             pre_rerun_status = test_execution.status
+            # An eval-only child grades every runnable config of the run.
+            rerun_eval_ids = (
+                runnable_eval_config_ids(test_execution.run_test_id)
+                if rerun_type == "eval_only"
+                else []
+            )
 
             for call_execution in call_executions:
                 try:
@@ -7262,6 +7255,13 @@ class CallExecutionRerunView(APIView):
                         )
                         call_execution.call_metadata["eval_started"] = False
                         call_execution.call_metadata["eval_completed"] = False
+                        # Its scoring clock starts here, not at the call's old
+                        # completion, so the coordinator's wait is not a timeout.
+                        stamp_eval_queued(
+                            call_execution.call_metadata,
+                            rerun_eval_ids,
+                            now=timezone.now(),
+                        )
                         call_execution.save()
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
@@ -7617,6 +7617,8 @@ class TestExecutionRerunView(APIView):
         call_ids_to_delete_transcripts = []
 
         # First pass: prepare all objects in memory
+        rerun_eval_ids = {}
+        stamped_at = timezone.now()
         for call_execution in call_executions:
             try:
                 if rerun_type == "eval_only":
@@ -7632,10 +7634,23 @@ class TestExecutionRerunView(APIView):
                         )
                     )
                     # Prepare call execution updates
+                    if call_execution.test_execution_id not in rerun_eval_ids:
+                        rerun_eval_ids[call_execution.test_execution_id] = (
+                            runnable_eval_config_ids(
+                                call_execution.test_execution.run_test_id
+                            )
+                        )
                     call_execution.eval_outputs = {}
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = False
                     call_execution.call_metadata["eval_completed"] = False
+                    # The rerun child grades every runnable config; its scoring
+                    # clock starts here, not at the call's old completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        rerun_eval_ids[call_execution.test_execution_id],
+                        now=stamped_at,
+                    )
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: Capture transcript data before we delete them

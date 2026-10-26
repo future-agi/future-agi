@@ -2,11 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,9 +18,28 @@ type ResolveResult struct {
 	OrgID       string
 	WorkspaceID string
 	UserID      string
-	KeyType     string // "system", "user", "mcp"
-	mu          sync.RWMutex
-	Projects    map[string]string // project_name → project_id
+	KeyType     string // "system", "user", "mcp", "ingest"
+	// SimulationAgent is the agent an "ingest" key names; its ID is empty for
+	// every other key and for an ingest key made for no agent. It is set once
+	// before the result is cached and never changed.
+	SimulationAgent SimulationAgent
+	// columnsMissing marks an ingest key read without the agent column, so
+	// routing cannot know its agent.
+	columnsMissing bool
+	mu             sync.RWMutex
+	Projects       map[string]string // project_name → project_id
+	// finding is why routing refused this key's agent. It is kept under mu
+	// for as long as this result is cached, so a refused agent costs no
+	// database statement per request; a new result starts without one.
+	finding *routeFinding
+}
+
+// SimulationAgent is what key validation reads about the agent of a sandbox
+// key. A key whose agent row is gone has Deleted set and no OrgID.
+type SimulationAgent struct {
+	ID      string
+	OrgID   string
+	Deleted bool
 }
 
 // GetProject returns the project ID for a given name, thread-safe.
@@ -80,18 +101,29 @@ func (r *ResolveResult) MissingProjectsInWorkspace(workspaceID string, names []s
 	return r.MissingProjects(names), true
 }
 
-// ProjectIDsInWorkspace snapshots the project IDs that were resolved through
-// this authentication result. The server uses it as an in-memory sidecar
-// proof before handing canonical rows to the optional property writer.
+// ProjectIDsInWorkspace snapshots the ids of the visible projects that were
+// resolved through this authentication result. The server uses it as an
+// in-memory sidecar proof before handing canonical rows to the optional
+// property writer. A project under a reserved hidden name is left out.
 func (r *ResolveResult) ProjectIDsInWorkspace(workspaceID string) (map[string]struct{}, bool) {
+	return r.projectIDsInWorkspace(workspaceID, false)
+}
+
+// HiddenProjectIDsInWorkspace snapshots the ids of the projects resolved under
+// a reserved hidden name, which never feed the catalog or the notifier.
+func (r *ResolveResult) HiddenProjectIDsInWorkspace(workspaceID string) (map[string]struct{}, bool) {
+	return r.projectIDsInWorkspace(workspaceID, true)
+}
+
+func (r *ResolveResult) projectIDsInWorkspace(workspaceID string, hidden bool) (map[string]struct{}, bool) {
 	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
 		return nil, false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make(map[string]struct{}, len(r.Projects))
-	for _, id := range r.Projects {
-		if id != "" {
+	for name, id := range r.Projects {
+		if id != "" && isReservedProjectName(name) == hidden {
 			result[id] = struct{}{}
 		}
 	}
@@ -130,6 +162,9 @@ func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
 type PGResolver struct {
 	read  *pgxpool.Pool
 	write *pgxpool.Pool
+	// columns picks the key statement; nil behaves as "not checked yet", which
+	// reads keys without the agent column.
+	columns *routingColumns
 }
 
 // NewPGResolver opens read and write connection pools.
@@ -178,20 +213,58 @@ func (r *PGResolver) Close() {
 	r.read.Close()
 }
 
-// ValidateKey checks an API key pair and returns the associated org context.
-// Returns nil, nil if the key is not found (invalid credentials).
-func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
-	const q = `
+const validateKeyQuery = `
 		SELECT k.organization_id, k.workspace_id, k.user_id, k.type
 		FROM accounts_orgapikey k
 		WHERE k.api_key = $1 AND k.secret_key = $2
 		  AND k.enabled = true AND k.deleted = false
 		LIMIT 1`
 
+// validateKeyWithAgentQuery also reads the agent of a sandbox key. The join is
+// a left join so that a key whose agent row was deleted still validates and is
+// told apart from an invalid key.
+const validateKeyWithAgentQuery = `
+		SELECT k.organization_id, k.workspace_id, k.user_id, k.type,
+		       k.simulation_agent_id, a.organization_id, a.deleted
+		FROM accounts_orgapikey k
+		LEFT JOIN simulate_agent_definition a
+		  ON a.id = k.simulation_agent_id AND k.type = 'ingest'
+		WHERE k.api_key = $1 AND k.secret_key = $2
+		  AND k.enabled = true AND k.deleted = false
+		LIMIT 1`
+
+// ValidateKey checks an API key pair and returns the associated org context.
+// Returns nil, nil if the key is not found (invalid credentials).
+func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) (*ResolveResult, error) {
+	withAgent := r.columns.state() == columnsPresent
+	res, err := r.validateKey(ctx, apiKey, secretKey, withAgent)
+	if withAgent && isUndefinedColumn(err) {
+		// A migration was rolled back since the last check: do not fail every
+		// uncached key until the next one.
+		r.columns.set(columnsMissing)
+		return r.validateKey(ctx, apiKey, secretKey, false)
+	}
+	return res, err
+}
+
+func isUndefinedColumn(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42703"
+}
+
+func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, withAgent bool) (*ResolveResult, error) {
 	var orgID, keyType string
 	var workspaceID, userID *string
+	var agentID, agentOrgID *string
+	var agentDeleted *bool
 
-	err := r.read.QueryRow(ctx, q, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+	var err error
+	if withAgent {
+		err = r.read.QueryRow(ctx, validateKeyWithAgentQuery, apiKey, secretKey).Scan(
+			&orgID, &workspaceID, &userID, &keyType, &agentID, &agentOrgID, &agentDeleted)
+	} else {
+		err = r.read.QueryRow(ctx, validateKeyQuery, apiKey, secretKey).Scan(&orgID, &workspaceID, &userID, &keyType)
+	}
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil // invalid key
@@ -215,6 +288,18 @@ func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) 
 	}
 	if userID != nil {
 		res.UserID = *userID
+	}
+	if keyType == keyTypeIngest {
+		if !withAgent {
+			res.columnsMissing = true
+		} else if agentID != nil && *agentID != "" {
+			res.SimulationAgent = SimulationAgent{ID: *agentID}
+			if agentOrgID != nil {
+				res.SimulationAgent.OrgID = *agentOrgID
+			}
+			// No agent row (hard-deleted) reads as deleted.
+			res.SimulationAgent.Deleted = agentOrgID == nil || agentDeleted == nil || *agentDeleted
+		}
 	}
 	return res, nil
 }

@@ -13,6 +13,7 @@ class SdkConfig(AppConfig):
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
             eval_task,  # noqa: F401
+            feed_alert,  # noqa: F401
             external_eval_config,  # noqa: F401
             imagine_analysis,  # noqa: F401
             monitor,  # noqa: F401

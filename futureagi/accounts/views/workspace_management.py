@@ -69,6 +69,7 @@ from accounts.services.workspace_membership import (
 from accounts.utils import (
     generate_password,
     persist_pending_org_invite,
+    refresh_pending_invite_expiration,
     resolve_org,
     resolve_org_role,
 )
@@ -1343,9 +1344,11 @@ class ResendInviteAPIView(APIView):
             if current_workspace and current_workspace.organization != organization:
                 current_workspace = None
 
-            # Generate new password and send email
-            from accounts.utils import generate_password
+            # Refresh the matching OrganizationInvite's expiry too, so this
+            # path behaves the same as InviteResendAPIView (#2437).
+            refresh_pending_invite_expiration(organization, target_user.email)
 
+            # Generate new password and send email
             new_password = generate_password()
             target_user.set_password(new_password)
             target_user.save()

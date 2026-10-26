@@ -46,7 +46,7 @@ from simulate.serializers.response.run_test import SimulateEvalConfigResponseSer
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
-    environment_row,
+    environment_rows,
     eval_modality,
 )
 from simulate.services.harness_provider import (
@@ -591,9 +591,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        jobs = self._queryset(request)
+        agent_definition_id = request.validated_query_data.get("agent_definition_id")
+        if agent_definition_id is not None:
+            jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
-        page = paginator.paginate_queryset(self._queryset(request), request, view=self)
-        return paginator.get_paginated_response([environment_row(job) for job in page])
+        page = paginator.paginate_queryset(jobs, request, view=self)
+        return paginator.get_paginated_response(environment_rows(page))
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):
@@ -776,11 +780,15 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         queued or stamped.
 
         A call is queued for grading unless it already holds a verdict for
-        this eval, its own evaluations have not finished, or it was queued
+        this eval, its own evaluations are still being graded (and the
+        scoring clock does not yet count them as stuck), or it was queued
         for this eval within the last ten minutes; the rest are stamped and
         scheduled for dispatch, one grading job each, after this transaction
-        commits. The answer is the five counts, not the environment detail --
-        the client refetches that itself.
+        commits. Each queued call reads as pending until its verdict lands,
+        and a completed run goes back to ``evaluating`` until every call is
+        scored again; a failed run stays failed. The answer is the five
+        counts, not the environment detail -- the client refetches that
+        itself.
 
         The bind can return an eval config whose ``mapping`` is empty: one
         of the harness's own result columns, bound by ingestion under the

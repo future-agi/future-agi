@@ -13,13 +13,13 @@ import AgentDiffersTag from "../../run/AgentDiffersTag";
 import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
 import { COMPARE_COPY } from "../../workspace.constants";
 
-// The dashed placeholder a not-yet-backed cell shows.
+// The dashed cell a run with no value for a column shows.
 const DASH = "-";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
-// eval columns render live values; the columns with no backend field yet show a
-// plain dashed cell. With `onToggleSelect`, each row leads with a checkbox
-// for picking runs to compare.
+// eval columns render live values; Tokens and Cost have no field on the runs
+// list and show a plain dashed cell. With `onToggleSelect`, each row leads with
+// a checkbox for picking runs to compare.
 export default function SummaryTable({ rows, evals, onOpenRun, selectedIds = [], canSelect, onToggleSelect }) {
   return (
     // The card no longer clips (the graph tooltip must escape it), so clip the
@@ -51,8 +51,6 @@ export default function SummaryTable({ rows, evals, onOpenRun, selectedIds = [],
             <TableCell align="right">Duration</TableCell>
             <TableCell align="right">Tokens</TableCell>
             <TableCell align="right">Cost</TableCell>
-            <TableCell align="right">Said not done</TableCell>
-            <TableCell align="right">Mean return</TableCell>
             {evals.map((e) => (
               <TableCell key={e.id} align="right">{e.name}</TableCell>
             ))}
@@ -163,8 +161,6 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
 
       <NumCell value={`${row.passRate}%`} bold />
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />
-      <NumCell value={DASH} muted />
-      <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />
       {evals.map((e) => {

@@ -47,6 +47,11 @@ type Handlers struct {
 	maxBodySize    int64
 	defaultTimeout time.Duration
 
+	// maxTimeout is the ceiling resolveTimeout clamps to, the same one
+	// middleware.Timeout puts on the request context. Zero means no clamp,
+	// for a Handlers built without it.
+	maxTimeout time.Duration
+
 	// captureStreamContent reassembles streamed completions so post-plugins
 	// see the text. Set when a sink is configured to record bodies.
 	captureStreamContent bool
@@ -208,13 +213,14 @@ func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.Reque
 func (h *Handlers) SetCaptureStreamContent(v bool) { h.captureStreamContent = v }
 
 // NewHandlers creates a Handlers instance.
-func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
+func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout, maxTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
 	h := &Handlers{
 		registry:           registry,
 		engine:             engine,
 		healthMonitor:      healthMonitor,
 		maxBodySize:        maxBodySize,
 		defaultTimeout:     defaultTimeout,
+		maxTimeout:         maxTimeout,
 		guardrailEngine:    guardrailEngine,
 		policyStore:        policyStore,
 		streamGuardrailCfg: streamGuardrailCfg,
@@ -839,10 +845,80 @@ func (h *Handlers) orgModelTimeout(rc *models.RequestContext) (time.Duration, bo
 	return d, true
 }
 
+// appliedTimeoutMs narrows the resolved timeout to the one that really bounded
+// the call. The provider holds its own client timeout, which covers the whole
+// exchange including a streamed body, so the shorter of the two is what the
+// caller gets. Reporting the resolved value alone advertises a limit nothing
+// enforces, which is how a per-model timeout above a provider's own came to
+// look like it had been applied.
+//
+// resolved is already formatted; it is returned unchanged when the provider
+// states no timeout. Callers that retry pass the instance that served the response.
+func appliedTimeoutMs(provider providers.Provider, resolved string) string {
+	ms, err := strconv.ParseInt(resolved, 10, 64)
+	if err != nil || ms <= 0 {
+		return resolved
+	}
+	reporter, ok := provider.(providers.ClientTimeoutReporter)
+	if !ok {
+		return resolved
+	}
+	ceiling := reporter.ClientTimeout()
+	if ceiling <= 0 || ceiling.Milliseconds() >= ms {
+		return resolved
+	}
+	return strconv.FormatInt(ceiling.Milliseconds(), 10)
+}
+
+// orgInstanceServed reports whether the org's own provider instance served the
+// request, rather than the operator's base provider.
+//
+// Two of the three resolve paths leave a marker. The third,
+// applyOrgProviderOverride, leaves none — but it runs exactly when
+// shouldApplyOrgProviderOverride allows it, so asking that same question here
+// keeps one answer in one place. The case it rules out is an internal key: it
+// keeps the base provider even when its org has an instance of its own.
+func orgInstanceServed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_provider"] == "true" ||
+		rc.Metadata["org_provider_model_match"] != "" ||
+		shouldApplyOrgProviderOverride(rc)
+}
+
+// servingProvider resolves the instance for handlers without chat retries.
+// Chat response writers retain the successful instance instead, since retries
+// can switch between base and org providers with the same ID.
+func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provider, bool) {
+	if rc.Provider == "" {
+		return nil, false
+	}
+	if h.orgProviderCache != nil && orgInstanceServed(rc) {
+		if orgID := rc.Metadata["org_id"]; orgID != "" {
+			if p := h.orgProviderCache.Get(orgID, rc.Provider); p != nil {
+				return p, true
+			}
+		}
+	}
+	if h.registry == nil {
+		return nil, false
+	}
+	return h.registry.GetProvider(rc.Provider)
+}
+
 // resolveTimeout returns the effective timeout for a request.
 // Priority: request header > the org's model timeout > config.yaml model
-// timeout > server default.
+// timeout > server default, and never above server.max_request_timeout.
+// The clamp is what keeps the answer honest: the request context carries that
+// same maximum, so a larger value here would be a number nothing enforces.
 func (h *Handlers) resolveTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
+	d := h.resolveRequestedTimeout(rc, r)
+	if h.maxTimeout > 0 {
+		return min(d, h.maxTimeout)
+	}
+	return d
+}
+
+// resolveRequestedTimeout is resolveTimeout before the clamp.
+func (h *Handlers) resolveRequestedTimeout(rc *models.RequestContext, r *http.Request) time.Duration {
 	// 1. Request header override.
 	if d, ok := middleware.RequestTimeoutHeader(r); ok {
 		return d
@@ -1317,6 +1393,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
+	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
@@ -1341,6 +1418,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
+				servingProvider = fbProvider
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1363,7 +1441,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1372,6 +1450,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
+	var servingProvider providers.Provider
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
@@ -1400,6 +1479,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 			if err != nil {
 				return err
 			}
+			servingProvider = p
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1407,11 +1487,16 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 		if err != nil {
 			// Provider failover exhausted — try model fallback chain.
+			// A chain is configured under the name the caller asked for, so it
+			// is looked up by rc.Model. originalModel is the model to send
+			// upstream, which a target's model_override has already rewritten
+			// — indexing the chain with that found nothing and failed the
+			// request instead of falling back.
 			var modelChain []string
 			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
+				modelChain = rc.OrgModelFallbacks[rc.Model]
 			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
+				modelChain = mf.GetChain(rc.Model)
 			}
 
 			for _, fbModel := range modelChain {
@@ -1426,6 +1511,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
+					servingProvider = fbProvider
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1460,7 +1546,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1476,6 +1562,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
 	var firstChunk *models.StreamChunk
+	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
 	defer func() {
 		if upstreamStreamCancel != nil {
@@ -1505,6 +1592,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
 		}
 		upstreamStreamCancel = attemptCancel
+		servingProvider = callProvider
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
@@ -1520,11 +1608,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				return firstErr
 			}
 
+			// A chain is configured under the name the caller asked for, so it
+			// is looked up by rc.Model. originalModel is the model to send
+			// upstream, which a target's model_override has already rewritten
+			// — indexing the chain with that found nothing and failed the
+			// request instead of falling back.
 			var modelChain []string
 			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
+				modelChain = rc.OrgModelFallbacks[rc.Model]
 			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
+				modelChain = mf.GetChain(rc.Model)
 			}
 
 			for _, fbModel := range modelChain {
@@ -1610,7 +1703,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	// Set Prism headers after pre-plugins have run but before the streaming body starts.
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	sseWriter.WriteHeaders()
 
 	// Create a cancellable context for stream guardrail checks.
@@ -1866,6 +1959,13 @@ func cancelAndDrainStream(cancel context.CancelFunc, chunks <-chan models.Stream
 }
 
 func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestContext) {
+	provider, _ := h.servingProvider(rc)
+	h.setAgentccHeadersForProvider(w, rc, provider)
+}
+
+// Chat retries can switch between base and org instances with the same ID.
+// Pass the successful instance rather than reconstructing it from routing metadata.
+func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	w.Header().Set("x-agentcc-provider", rc.Provider)
 	if rc.ResolvedModel != "" {
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)
@@ -1892,7 +1992,7 @@ func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestCo
 		w.Header().Set("x-agentcc-routing-strategy", strategy)
 	}
 	if timeout, ok := rc.Metadata["timeout_ms"]; ok {
-		w.Header().Set("x-agentcc-timeout-ms", timeout)
+		w.Header().Set("x-agentcc-timeout-ms", appliedTimeoutMs(provider, timeout))
 	}
 
 	// Advanced routing headers.

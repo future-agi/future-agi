@@ -495,9 +495,10 @@ describe("TraceTable — eval cells without a score", () => {
     return screen.findByRole("tooltip");
   };
 
-  it("shows N/A for a finished call with no result", async () => {
+  it("shows a dash for a finished call with no result: the eval doesn't apply", async () => {
     renderCell({ evalResults: [] });
-    expect(await hoverText("N/A")).toHaveTextContent(
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(await hoverText("-")).toHaveTextContent(
       "Not applicable to this scenario",
     );
   });
@@ -527,18 +528,40 @@ describe("TraceTable — eval cells without a score", () => {
     },
   );
 
-  it("explains a failed eval with its reason", async () => {
+  it("marks a failed eval Failed and explains it with its reason", async () => {
     renderCell({
       evalResults: [
-        { id: "e1", score: null, status: "failed", reason: "Timed out" },
+        { id: "e1", score: null, status: "failed", reason: "Model quota hit" },
       ],
     });
-    expect(await hoverText("-")).toHaveTextContent(
-      "Evaluation failed: Timed out",
+    expect(await hoverText("Failed")).toHaveTextContent(
+      "Evaluation failed: Model quota hit",
     );
   });
 
-  it("explains a skipped eval with its reason", async () => {
+  it("marks a failed eval with no reason Failed, with a generic tip", async () => {
+    renderCell({ evalResults: [{ id: "e1", score: null, status: "failed" }] });
+    expect(await hoverText("Failed")).toHaveTextContent("Evaluation failed");
+  });
+
+  it("marks a timed-out eval Timed out and shows the server's reason", async () => {
+    renderCell({
+      evalResults: [
+        {
+          id: "e1",
+          score: null,
+          status: "timed_out",
+          reason: "Scoring timed out: no progress for 10 minutes.",
+        },
+      ],
+    });
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(await hoverText("Timed out")).toHaveTextContent(
+      "Scoring timed out: no progress for 10 minutes.",
+    );
+  });
+
+  it("marks a skipped eval Not scored, with its reason", async () => {
     renderCell({
       evalResults: [
         {
@@ -549,8 +572,8 @@ describe("TraceTable — eval cells without a score", () => {
         },
       ],
     });
-    expect(await hoverText("-")).toHaveTextContent(
-      "Skipped: No transcript data available",
+    expect(await hoverText("Not scored")).toHaveTextContent(
+      "No transcript data available",
     );
   });
 
@@ -563,16 +586,19 @@ describe("TraceTable — eval cells without a score", () => {
     renderCell({
       evalResults: [{ id: "e1", score: null, status: "error", reason: "Boom" }],
     });
-    expect(await hoverText("-")).toHaveTextContent("Evaluation failed: Boom");
+    expect(await hoverText("Failed")).toHaveTextContent(
+      "Evaluation failed: Boom",
+    );
   });
 
-  it("shows N/A for a completed result with neither a score nor a label", () => {
+  it("shows a dash for a scored result with neither a score nor a label", () => {
     renderCell({
       evalResults: [
-        { id: "e1", score: null, label: null, status: "completed" },
+        { id: "e1", score: null, label: null, status: "succeeded" },
       ],
     });
-    expect(within(evalCell()).getByText("N/A")).toBeInTheDocument();
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(within(evalCell()).getByText("-")).toBeInTheDocument();
   });
 
   it("shows a label-only result as its label, with no tooltip", () => {
@@ -625,6 +651,96 @@ describe("TraceTable — metric cells while the call runs", () => {
       expect(cell.querySelector(".MuiSkeleton-root")).toBeNull();
       expect(cell).toHaveTextContent("-");
     });
+  });
+});
+
+describe("TraceTable — CSAT cell from the call's CSAT status", () => {
+  const renderCsat = (overrides) =>
+    render(
+      <TraceTable
+        groups={[
+          {
+            label: "A",
+            count: 1,
+            rows: [
+              {
+                ...row("c1"),
+                csat: null,
+                executionStatus: "completed",
+                ...overrides,
+              },
+            ],
+            agg: {},
+          },
+        ]}
+        evals={[]}
+        onOpen={vi.fn()}
+        activeCallId="c1"
+      />,
+    );
+  // The call row's cell under the CSAT header, whatever columns are on.
+  const csatCell = () => {
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
+    return document.querySelector('tr[aria-selected="true"]').children[
+      heads.indexOf("CSAT")
+    ];
+  };
+  const hoverCsat = async (text) => {
+    fireEvent.mouseOver(within(csatCell()).getByText(text));
+    return screen.findByRole("tooltip");
+  };
+
+  it("loads while CSAT is pending on a finished call", () => {
+    renderCsat({ csatStatus: "pending" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).not.toBeNull();
+  });
+
+  it("shows the score once CSAT succeeded", () => {
+    renderCsat({ csatStatus: "succeeded", csat: 7.5 });
+    expect(csatCell()).toHaveTextContent("7.5");
+  });
+
+  it("marks timed-out CSAT and shows its reason", async () => {
+    renderCsat({
+      csatStatus: "timed_out",
+      csatReason: "CSAT timed out: no result within 10 minutes.",
+    });
+    expect(await hoverCsat("Timed out")).toHaveTextContent(
+      "CSAT timed out: no result within 10 minutes.",
+    );
+  });
+
+  it("marks failed CSAT and shows its reason", async () => {
+    renderCsat({
+      csatStatus: "failed",
+      csatReason: "CSAT could not be scored.",
+    });
+    expect(await hoverCsat("Failed")).toHaveTextContent(
+      "CSAT could not be scored.",
+    );
+  });
+
+  it("marks skipped CSAT Not scored, with its reason", async () => {
+    renderCsat({
+      csatStatus: "skipped",
+      csatReason: "Nothing to score: the call has no transcript or recording.",
+    });
+    expect(await hoverCsat("Not scored")).toHaveTextContent(
+      "Nothing to score: the call has no transcript or recording.",
+    );
+  });
+
+  it("shows a plain dash when CSAT doesn't apply", () => {
+    renderCsat({ csatStatus: "not_applicable" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).toBeNull();
+    expect(csatCell()).toHaveTextContent("-");
+  });
+
+  it("falls back to the call's own status when there is no CSAT status", () => {
+    renderCsat({ executionStatus: "ongoing" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).not.toBeNull();
   });
 });
 

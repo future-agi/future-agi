@@ -3,12 +3,40 @@ package cost
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
+)
+
+const (
+	// CostSourceUnpriced is written to Metadata["cost_source"] when the request
+	// used something billable (tokens, seconds of audio, characters of text) but
+	// the model database has no price for the model. The request is recorded
+	// without a cost. Budgets price requests from their own table, so this flag
+	// says nothing about whether a budget counted the request.
+	CostSourceUnpriced = "unpriced"
+
+	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
+	// model names cannot grow it without limit.
+	maxUnpricedWarnings = 1024
+)
+
+// Where an operator sets a missing price, by the unit the endpoint is billed
+// in. The budget plugin does not read the model database: it prices chat
+// tokens from cost_tracking.custom_pricing, so every hint names that key too,
+// or an operator who sets one of the two would think the gap is closed.
+const (
+	tokenPriceHint     = "set model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)"
+	audioPriceHint     = "set model_database.overrides.<model>.pricing.input_per_second (USD per second of audio)"
+	characterPriceHint = "set model_database.overrides.<model>.pricing.input_per_character (USD per character of text)"
+	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
 )
 
 // Plugin is a post-response pipeline plugin that calculates per-request cost.
@@ -17,6 +45,9 @@ type Plugin struct {
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
+
+	unpricedWarned      sync.Map     // model → struct{}: models already warned about
+	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
 // New creates a new cost tracking plugin.
@@ -78,16 +109,32 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	var cost float64
 	var ok bool
+	// billed is how much the request used, in the unit its endpoint is priced
+	// by: tokens, seconds of audio, or characters of text. A positive amount
+	// with no price is what goes unpriced.
+	var billed float64
+	priceHint := tokenPriceHint
 
 	switch rc.EndpointType {
 	case "embedding":
 		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
+			billed = float64(rc.EmbeddingResponse.Usage.PromptTokens)
 			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
 		}
 	case "image":
 		// Image cost varies by provider; skip for now.
-	case "speech", "transcription":
-		// Audio cost varies by provider; skip for now.
+	case "transcription", "translation", "transcription_relay":
+		priceHint = audioPriceHint
+		if seconds, err := strconv.ParseFloat(rc.Metadata["audio_seconds"], 64); err == nil {
+			billed = seconds
+			cost, ok = db.AudioCost(model, seconds)
+		}
+	case "speech", "speech_stream", "speech_relay":
+		priceHint = characterPriceHint
+		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
+			billed = float64(characters)
+			cost, ok = db.CharacterCost(model, characters)
+		}
 	case "rerank":
 		// Rerank billing varies by provider; skip for now.
 	default: // "chat" or empty
@@ -95,6 +142,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			return pipeline.ResultContinue()
 		}
 		usage := rc.Response.Usage
+		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && model == rc.ResolvedModel && rc.Model != "" {
 			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
@@ -112,9 +160,34 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			}
 		}
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
+	} else if billed > 0 {
+		// The request used something billable but there is no price for this
+		// model. Leaving this silent made the request look free in the request
+		// log and analytics. Mark the request so they can surface it, and tell
+		// the operator once per model.
+		rc.Metadata["cost_source"] = CostSourceUnpriced
+		p.warnUnpriced(rc, model, priceHint)
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// warnUnpriced logs, once per model, that traffic is being recorded without a
+// cost. priceHint names the model-database price to set for the endpoint.
+func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string) {
+	if p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+		return
+	}
+	p.unpricedWarnedCount.Add(1)
+	slog.Warn("cost: no pricing for model; its requests are recorded without a cost",
+		"model", model,
+		"provider", rc.Provider,
+		"request_id", rc.RequestID,
+		"hint", priceHint+budgetPriceHint,
+	)
 }
 
 // tryOrgPricing checks per-org custom pricing for the model.

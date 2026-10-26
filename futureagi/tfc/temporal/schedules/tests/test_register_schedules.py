@@ -96,6 +96,46 @@ class TestBuildScheduleReadsRegistry:
         # No registry entry → both fields stay None; workflow uses DEFAULT_RETRY_POLICY.
         assert run_input.max_retries is None
         assert run_input.retry_delay is None
+        assert run_input.time_limit is None
+        assert run_input.schedule_to_start_timeout is None
+
+    def test_known_activity_propagates_timeouts(self):
+        """A scheduled run must stop at the activity's own limit; without it
+        the workflow's 12 h fallback lets one hung pass block every later
+        firing under overlap SKIP."""
+
+        @temporal_activity(
+            name="fixture_scheduled_timed_activity",
+            time_limit=120,
+            schedule_to_start_timeout=600,
+        )
+        def _scheduled_timed_no_op():
+            return None
+
+        @temporal_activity(name="fixture_scheduled_default_limit_activity")
+        def _scheduled_default_no_op():
+            return None
+
+        timed = _build_schedule_for_config(
+            ScheduleConfig(
+                schedule_id="fixture-timed",
+                activity_name="fixture_scheduled_timed_activity",
+                interval_seconds=300,
+            )
+        ).action.args[0]
+        default = _build_schedule_for_config(
+            ScheduleConfig(
+                schedule_id="fixture-default-limit",
+                activity_name="fixture_scheduled_default_limit_activity",
+                interval_seconds=300,
+            )
+        ).action.args[0]
+
+        assert timed.time_limit == 120
+        assert timed.schedule_to_start_timeout == 600
+        # The decorator's own default, not the workflow's 12 h.
+        assert default.time_limit == 3600
+        assert default.schedule_to_start_timeout is None
 
     def test_jitter_is_passed_to_temporal_schedule_spec(self):
         config = ScheduleConfig(

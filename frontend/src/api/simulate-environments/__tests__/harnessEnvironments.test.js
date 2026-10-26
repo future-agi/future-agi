@@ -28,6 +28,17 @@ describe("listHarnessEnvironments", () => {
     axios.get.mockClear();
   });
 
+  it("filters to one agent's environments when asked", async () => {
+    await listHarnessEnvironments({
+      page: 1,
+      limit: 100,
+      agentDefinitionId: "a1",
+    });
+    expect(axios.get).toHaveBeenCalledWith(BASE, {
+      params: { page: 1, limit: 100, agent_definition_id: "a1" },
+    });
+  });
+
   it("GETs the environments list with the paging params", async () => {
     await listHarnessEnvironments({ page: 2, limit: 50 });
     expect(axios.get).toHaveBeenCalledWith(BASE, {

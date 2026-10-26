@@ -15,6 +15,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentVersion,
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
@@ -25,6 +26,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
     append_alk_sim_scenarios,
@@ -32,6 +34,16 @@ from simulate.services.alk_simulate_ingestion import (
     create_alk_sim_test_execution,
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
+    resolved_agent_version,
+)
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
+)
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
 )
 from simulate.services.canonical_json import (  # noqa: F401 - re-exported
     _json_value,
@@ -466,6 +478,7 @@ def create_selected_harness_run(
             "default_pair_sealed",
             "conversation_checkpoints",
             "draft_saves",
+            "observability_refusal",
         ):
             child_metadata.pop(key, None)
         child_metadata.update(
@@ -906,10 +919,13 @@ def replays_default_pair(
 
 
 def _unpinned_agent_version(environment: HostedHarnessJob) -> Any:
-    """The run test's agent version, else its agent's latest without a credential
-    set of its own: those are made for one environment."""
+    """The run test's agent version, else the environment's own for an agent made
+    with environments, else its agent's active version, else its latest; with
+    versioning on, never one with a credential set of its own: those are made for
+    one environment."""
     from simulate.models import HarnessAgentVersionRuntime
     from simulate.services.harness_agent_versions import environment_owned
+    from simulate.services.harness_versioning.versions import versioning_enabled
 
     run_test = environment.run_test
     if run_test.agent_version is not None or run_test.agent_definition is None:
@@ -917,13 +933,19 @@ def _unpinned_agent_version(environment: HostedHarnessJob) -> Any:
     if environment_owned(run_test.agent_definition_id):
         # Its versions belong to the environments sharing it: run this one's default.
         return environment.agent_version
+    if not versioning_enabled():
+        return resolved_agent_version(run_test)
     held = HarnessAgentVersionRuntime.no_workspace_objects.exclude(
         preflight_status=HarnessAgentVersionRuntime.PreflightStatus.LEGACY
     ).values("agent_version_id")
+    # TODO: when another environment holds the active version, this falls to the
+    # latest unheld one instead of the active.
+    unheld = run_test.agent_definition.versions.exclude(id__in=held)
     return (
-        run_test.agent_definition.versions.exclude(id__in=held)
+        unheld.filter(status=AgentVersion.StatusChoices.ACTIVE)
         .order_by("-version_number")
         .first()
+        or unheld.order_by("-version_number").first()
     )
 
 
@@ -1943,6 +1965,8 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
+        stored = _store_authored_agent(locked, agent_definition, payload)
+        _turn_on_observability(locked, agent_definition, payload, stored)
         from simulate.services.harness_agent_versions import fill_agent_pin
 
         if fill_agent_pin(locked):
@@ -2173,6 +2197,139 @@ def _copy_target_facts(
     return prompt, changed
 
 
+def _store_authored_agent(
+    job: HostedHarnessJob, agent_definition, payload: dict[str, Any]
+) -> tuple[str | None, uuid.UUID | None]:
+    sent = payload.get("agent")
+    source_kind = str((job.payload.get("source") or {}).get("kind") or "")
+    if (
+        sent is None
+        or payload.get("agent_definition_id")
+        or source_kind not in ("github", "archive")
+    ):
+        return None, None
+    agent_version_id = None
+    try:
+        with transaction.atomic():
+            from simulate.services.harness_agent_versions import agent_pin_candidate
+
+            # An unpinned environment stores on the version it is about to be pinned to.
+            pinned = job.agent_version or agent_pin_candidate(job)
+            version = (
+                pinned
+                if pinned is not None
+                and pinned.agent_definition_id == agent_definition.id
+                else agent_definition.latest_version
+            )
+            if version is None:
+                version = agent_definition.create_version(
+                    description="",
+                    commit_message="hosted harness authored agent",
+                    status="active",
+                )
+                AgentVersion.no_workspace_objects.filter(id=version.id).update(
+                    configuration_snapshot={
+                        **version.configuration_snapshot,
+                        "description": "",
+                    }
+                )
+            agent_version_id = version.id
+            if not (
+                isinstance(sent, dict)
+                and isinstance(sent.get("agent"), dict)
+                and isinstance(sent.get("sdk_version"), str)
+            ):
+                raise AgentStoreError("agent_invalid")
+            outcome = store_agent(
+                agent_version_id=version.id,
+                agent=sent["agent"],
+                sdk_version=sent["sdk_version"],
+            )
+        return outcome, agent_version_id
+    except Exception as exc:
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+        )
+        return None, None
+
+
+def _turn_on_observability(
+    job: HostedHarnessJob,
+    agent_definition,
+    payload: dict[str, Any],
+    stored: tuple[str | None, uuid.UUID | None],
+) -> None:
+    """Turn observability on for the agent just stored, when the Environment asked for it.
+
+    A refusal never fails the provision: the reason is logged and kept on the job.
+    """
+    if (job.payload.get("metadata") or {}).get("observability_enabled") is not True:
+        return
+    details: dict[str, Any] = {}
+    failure: Exception | None = None
+    if payload.get("agent_definition_id"):
+        code = "bound"
+    elif stored[0] != "stored":
+        code = "agent_not_stored"
+    else:
+        # The try sits outside the savepoint so its rollback runs before the handler.
+        try:
+            with transaction.atomic():
+                row = set_agent_observability(
+                    agent_definition=agent_definition,
+                    enabled=True,
+                    user_id=None,
+                    organization=job.organization,
+                    workspace=job.workspace,
+                )
+                if row is not None:
+                    versions = AgentVersion.no_workspace_objects.filter(id=stored[1])
+                    snapshot = dict(
+                        versions.values_list("configuration_snapshot", flat=True).get()
+                        or {}
+                    )
+                    snapshot["observability_enabled"] = True
+                    versions.update(configuration_snapshot=snapshot)
+            return
+        except ObservabilityRefused as exc:
+            code = ",".join(entry.code for entry in exc.missing)
+            details = refusal_body(exc)["details"]
+        except Exception as exc:  # noqa: BLE001 - the provision must go on
+            code = type(exc).__name__
+            failure = exc
+    logger.warning(
+        "harness_observability_not_enabled",
+        job_id=str(job.id),
+        agent_definition_id=str(agent_definition.id),
+        code=code,
+        **({"exc_info": failure} if failure is not None else {}),
+    )
+    _save_observability_refusal(job, code, details)
+
+
+def _save_observability_refusal(
+    job: HostedHarnessJob, code: str, details: dict[str, Any]
+) -> None:
+    try:
+        with transaction.atomic():
+            payload = dict(job.payload)
+            metadata = dict(payload.get("metadata") or {})
+            metadata["observability_refusal"] = {"code": code, "details": details}
+            payload["metadata"] = metadata
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+    except Exception as exc:  # noqa: BLE001 - the provision must go on
+        logger.error(
+            "harness_observability_refusal_not_saved",
+            job_id=str(job.id),
+            code=type(exc).__name__,
+            exc_info=True,
+        )
+
+
 def _select_platform_evals(
     job: HostedHarnessJob,
     run_test,
@@ -2288,7 +2445,9 @@ def begin_scenarios(
         scenario_ids=list(dict.fromkeys(item.scenario_id for item in registrations)),
         # A shared agent's latest version may be another environment's.
         agent_version=(
-            job.agent_version if agent_definition_owner(job) == "environment" else None
+            job.agent_version
+            if agent_definition_owner(job) == "environment"
+            else job.agent_version or _unpinned_agent_version(job)
         ),
     )
     try:
@@ -2457,21 +2616,48 @@ def record_cleanup(
 
             schedule_reconcile(job.id)
             schedule_deferred_activations(job.id)
+        if job.state == HostedHarnessJob.State.COMPLETED:
+            built_job_id, built_attempt_id = str(job.id), str(attempt.id)
+            transaction.on_commit(
+                lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
+            )
         if job.test_execution_id:
             execution_status = {
                 HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
                 HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
                 HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
             }[job.state]
-            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-                status=execution_status,
-                completed_at=now,
-                error_reason=(
-                    (attempt.terminal_failure or {}).get("message")
-                    if job.state == HostedHarnessJob.State.FAILED
-                    else None
-                ),
-            )
+            if execution_status == TestExecution.ExecutionStatus.COMPLETED:
+                # Transport finished, scoring may not have: only a run still in
+                # transport is moved, and only the settle decides it is done.
+                in_transport = TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id, status__in=TRANSPORT_RUN_STATUSES
+                )
+                if CallExecution.no_workspace_objects.filter(
+                    test_execution_id=job.test_execution_id,
+                    status=CallExecution.CallStatus.COMPLETED,
+                ).exists():
+                    in_transport.update(
+                        status=TestExecution.ExecutionStatus.EVALUATING,
+                        error_reason=None,
+                    )
+                    settle_run_after_commit(job.test_execution_id)
+                else:
+                    in_transport.update(
+                        status=execution_status, completed_at=now, error_reason=None
+                    )
+            else:
+                TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id
+                ).update(
+                    status=execution_status,
+                    completed_at=now,
+                    error_reason=(
+                        (attempt.terminal_failure or {}).get("message")
+                        if job.state == HostedHarnessJob.State.FAILED
+                        else None
+                    ),
+                )
             remaining_status = (
                 CallExecution.CallStatus.CANCELLED
                 if job.state == HostedHarnessJob.State.CANCELED
@@ -2486,6 +2672,27 @@ def record_cleanup(
                 ),
             ).update(status=remaining_status, completed_at=now)
         return job
+
+
+def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
+    """Tell the builder session that built this environment to check it against the agent."""
+    from simulate.models import HostedHarnessConversationMessage
+    from simulate.services.hosted_harness_conversation import send_to_harness
+    from simulate.services.hosted_harness_ingress import _public_base_url
+
+    try:
+        if not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job_id=job_id, client_request_id=f"build-{attempt_id}"
+        ).exists():
+            return
+        send_to_harness(
+            HostedHarnessJob.no_workspace_objects.get(id=job_id),
+            content="The environment is validated and sealed. Check it against the agent.",
+            client_request_id=f"check-{attempt_id}",
+            endpoint_base_url=_public_base_url(None),
+        )
+    except Exception:
+        logger.exception("builder_check_request_failed", job_id=job_id)
 
 
 def update_execution_counts(job: HostedHarnessJob) -> None:

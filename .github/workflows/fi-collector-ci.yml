@@ -101,8 +101,8 @@ jobs:
         run: |
           set -o pipefail
           go test -race -count=1 -p 1 -timeout 8m -json \
-            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack)' \
-            ./cmd/fi-observed-catalog-backfill ./pkg/server \
+            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack|TestValidateKey|TestRoutingColumnCheckSeesBothColumns|TestRoutingColumnStateIsSharedThroughNew|TestEnsureSimulationProject)' \
+            ./cmd/fi-observed-catalog-backfill ./pkg/server ./pkg/auth \
             | tee "$RUNNER_TEMP/observed-integration.jsonl"
       - name: Require executed integration proofs, not skipped tests
         run: |
@@ -124,6 +124,11 @@ jobs:
               "TestBackfillCLIThroughKafkaWithResume",
               "TestObservedCatalogHTTPToLocalStack",
               "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
+              "TestValidateKeyReadsTheAgentOfAnIngestKey",
+              "TestValidateKeyFallsBackWhenTheColumnDisappears",
+              "TestRoutingColumnCheckSeesBothColumns",
+              "TestRoutingColumnStateIsSharedThroughNew",
+              "TestEnsureSimulationProject",
           }
           evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
           events = [json.loads(line) for line in evidence.read_text().splitlines()]

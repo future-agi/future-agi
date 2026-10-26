@@ -237,6 +237,11 @@ func DeriveHotKeys(
 	// cost.total wins; else input+output when either side present. An explicit
 	// user 0 is respected (CostUserSet gates the token-pricing fallback later).
 	//
+	// Only when no Django cost key is present, a sender's billed cost
+	// (gen_ai.usage.*_cost, e.g. OpenRouter Broadcast) is read with the same
+	// rule: total, else input+output. It is user-provided too, so it also wins
+	// over token pricing, and an explicit 0 (a free model) stays 0.
+	//
 	// Three precise deviations from Django here, all a consequence of
 	// firstNumber returning ok=false on an unparseable string instead of
 	// Django's int()/float() coercion (which raised and was caught to 0):
@@ -256,18 +261,30 @@ func DeriveHotKeys(
 	//     never derived this — Django-backfilled rows have TotalTokens 0/NULL
 	//     in cases where a live (fi-collector-written) row for the same
 	//     shape has the derived sum.
-	if v, ok := firstNumber(attrsString, attrsNumber, costTotalKeys); ok {
-		hk.Cost = v
-		hk.CostUserSet = true
-	} else {
-		in, okIn := firstNumber(attrsString, attrsNumber, costInputKeys)
-		out, okOut := firstNumber(attrsString, attrsNumber, costOutputKeys)
-		if okIn || okOut {
-			hk.Cost = in + out
-			hk.CostUserSet = true
-		}
+	if v, ok := userCost(attrsString, attrsNumber, costTotalKeys, costInputKeys, costOutputKeys); ok {
+		hk.Cost, hk.CostUserSet = v, true
+	} else if v, ok := userCost(attrsString, attrsNumber, senderCostTotalKeys, senderCostInputKeys, senderCostOutputKeys); ok {
+		hk.Cost, hk.CostUserSet = v, true
 	}
 	return hk
+}
+
+// userCost applies the cost rule to one set of keys: the first total key
+// present wins; else input + output when either side is present.
+func userCost(
+	attrsString map[string]string,
+	attrsNumber map[string]float64,
+	totalKeys, inputKeys, outputKeys []string,
+) (float64, bool) {
+	if v, ok := firstNumber(attrsString, attrsNumber, totalKeys); ok {
+		return v, true
+	}
+	in, okIn := firstNumber(attrsString, attrsNumber, inputKeys)
+	out, okOut := firstNumber(attrsString, attrsNumber, outputKeys)
+	if okIn || okOut {
+		return in + out, true
+	}
+	return 0, false
 }
 
 // Attribute alias tables — mirror (priority order preserved; providerKeys
@@ -293,15 +310,23 @@ var (
 		"llm.vendor",           // OpenLLMetry
 		"llm.provider",         // legacy fi-collector
 	}
+	// The token lists end with keys Django's AttributeRegistry doesn't have.
+	// They come last, so a span carrying a Django key resolves exactly as
+	// before.
 	inputTokenKeys = []string{
 		"llm.token_count.prompt",    // FI / OpenInference
 		"gen_ai.usage.input_tokens", // OTel GenAI
 		"llm.usage.prompt_tokens",   // OpenLLMetry
+		// Deprecated OTel GenAI name, renamed to gen_ai.usage.input_tokens.
+		// OpenRouter Broadcast's webhook example and older OpenLLMetry still
+		// send it; Django's otel_genai / openllmetry adapters read it.
+		"gen_ai.usage.prompt_tokens",
 	}
 	outputTokenKeys = []string{
 		"llm.token_count.completion",
 		"gen_ai.usage.output_tokens",
 		"llm.usage.completion_tokens",
+		"gen_ai.usage.completion_tokens", // deprecated OTel GenAI name, as above
 	}
 	totalTokenKeys = []string{
 		"llm.token_count.total",
@@ -311,6 +336,13 @@ var (
 	costTotalKeys  = []string{"gen_ai.cost.total", "llm.cost.total"}
 	costInputKeys  = []string{"gen_ai.cost.input", "llm.cost.prompt"}
 	costOutputKeys = []string{"gen_ai.cost.output", "llm.cost.completion"}
+	// The cost the sender charged, in USD (OpenRouter Broadcast). Not a Django
+	// alias; DeriveHotKeys reads these only when no key above is present.
+	// OpenRouter's total includes its fees, so it can exceed input + output,
+	// and the total-first rule keeps it.
+	senderCostTotalKeys  = []string{"gen_ai.usage.total_cost"}
+	senderCostInputKeys  = []string{"gen_ai.usage.input_cost"}
+	senderCostOutputKeys = []string{"gen_ai.usage.output_cost"}
 )
 
 // firstString returns the value of the first alias present in attrsString.

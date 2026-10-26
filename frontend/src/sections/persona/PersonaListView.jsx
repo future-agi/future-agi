@@ -84,6 +84,7 @@ const PersonaListView = ({
   onCreatePersona,
   personaCreateEditType = null,
   lockedFilters = null,
+  toolbarActions = null,
 }) => {
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
@@ -589,7 +590,7 @@ const PersonaListView = ({
           </Button>
         </Box>
 
-        <Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           {!isSelectable && selectedItems.length > 0 ? (
             <PersonasBulkActionsBar
               selectedCount={selectedItems.length}
@@ -598,26 +599,29 @@ const PersonaListView = ({
               onCancel={handleCancelSelection}
             />
           ) : (
-            <Button
-              variant="contained"
-              color="primary"
-              disabled={!canCreate}
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
-              onClick={() => {
-                if (onCreatePersona) {
-                  onCreatePersona();
-                  return;
-                }
-                setEditDrawer({
-                  mode: "create",
-                  persona: null,
-                  personaCreateEditType: null,
-                });
-              }}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
-            >
-              Create persona
-            </Button>
+            <>
+              {toolbarActions}
+              <Button
+                variant="contained"
+                color="primary"
+                disabled={!canCreate}
+                startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+                onClick={() => {
+                  if (onCreatePersona) {
+                    onCreatePersona();
+                    return;
+                  }
+                  setEditDrawer({
+                    mode: "create",
+                    persona: null,
+                    personaCreateEditType: null,
+                  });
+                }}
+                sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              >
+                Create persona
+              </Button>
+            </>
           )}
         </Box>
       </Box>
@@ -797,6 +801,8 @@ PersonaListView.propTypes = {
   onToggleSelect: PropTypes.func,
   onCreatePersona: PropTypes.func,
   personaCreateEditType: PropTypes.string,
+  // Extra buttons shown just before Create persona (hidden while rows are selected).
+  toolbarActions: PropTypes.node,
 };
 
 export default PersonaListView;

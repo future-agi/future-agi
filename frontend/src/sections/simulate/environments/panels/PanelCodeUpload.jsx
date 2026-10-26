@@ -14,6 +14,7 @@ import Field from "../components/Field";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
 import ScenarioCount from "./ScenarioCount";
+import ObservabilityChoice from "./ObservabilityChoice";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
@@ -29,6 +30,7 @@ const initial = {
   egress: "",
   secretFiles: [],
   scenarioCount: DEFAULT_SCENARIOS,
+  observabilityEnabled: false,
   summary: null, // { fileCount, totalBytes, excluded } from the upload response
   archiveArtifactId: null,
   uploading: false,
@@ -115,6 +117,7 @@ export default function PanelCodeUpload() {
     egress,
     secretFiles,
     scenarioCount,
+    observabilityEnabled,
     summary,
     archiveArtifactId,
     uploading,
@@ -144,6 +147,7 @@ export default function PanelCodeUpload() {
     egress: egress.trim() || null,
     secretFiles,
     scenarioCount: Number(scenarioCount) || undefined,
+    observabilityEnabled,
   });
 
   const onDrop = async (list) => {
@@ -283,6 +287,7 @@ export default function PanelCodeUpload() {
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
+      <ObservabilityChoice checked={observabilityEnabled} onChange={set("observabilityEnabled")} />
       <ParallelismField
         value={build.parallelism}
         input={build.parallelismInput}

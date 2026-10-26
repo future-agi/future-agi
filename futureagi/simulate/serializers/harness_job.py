@@ -11,7 +11,6 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
-from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.services.harness_credentials import agent_version_secret_ref
 from tfc.utils.serializer_fields import JsonValueField
 
@@ -76,6 +75,13 @@ def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
     if not_text:
         problems.append(f"values must be strings: {', '.join(not_text)}")
     return problems
+
+
+class RunVersionLabelSerializer(serializers.Serializer):
+    """A pinned version as a run shows it: its id and label such as "v3"."""
+
+    id = serializers.UUIDField(read_only=True)
+    label = serializers.CharField(read_only=True, allow_null=True)
 
 
 class SecretReferenceSerializer(serializers.Serializer):
@@ -481,7 +487,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     platform_run_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
-    metadata = serializers.DictField(default=dict)
+    metadata = serializers.DictField(
+        child=JsonValueField(allow_null=True), default=dict
+    )
     credential_values = serializers.DictField(
         child=serializers.CharField(
             max_length=CREDENTIAL_VALUE_MAX_CHARS, trim_whitespace=False
@@ -524,6 +532,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "build_agent_version_id",
             "parallelism_clamped",
             "parallelism_warnings",
+            "observability_refusal",
             "requested_agent_definition_id",
         }
         if reserved.intersection(value):
@@ -957,7 +966,7 @@ class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
     source = serializers.DictField()
-    metadata = serializers.DictField()
+    metadata = serializers.DictField(child=JsonValueField(allow_null=True))
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)

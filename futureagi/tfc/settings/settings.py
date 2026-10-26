@@ -1004,13 +1004,11 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
-# calls go through AgentCC, so no model vendor's credential is listed here.
+# and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
-    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
-    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
@@ -1293,6 +1291,13 @@ default_next_url = f"{APP_BASE_URL}/dashboard/develop"
 get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
 default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+SLACK_OAUTH_AUTHORIZE_URL = os.getenv("SLACK_OAUTH_AUTHORIZE_URL", "")
+SLACK_API_URL = os.getenv("SLACK_API_URL", "")
+SLACK_REDIRECT_URI = os.getenv(
+    "SLACK_REDIRECT_URI", f"{BASE_URL.rstrip('/')}/integrations/slack/callback/"
+)
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 
@@ -1419,7 +1424,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # ~160 MB at the default) while its consumer is behind or stopped; XADD trims
 # unread events beyond it. A positive integer, as fi-collector requires.
 from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
-from tfc.utils.env import env_int  # noqa: E402
+from tfc.utils.env import env_datetime, env_int  # noqa: E402
 
 _usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
 USAGE_EVENTS_ENABLED = (
@@ -1428,6 +1433,13 @@ USAGE_EVENTS_ENABLED = (
     else usage_event_consumer_available()
 )
 USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Orgs created at or after this instant see only Environments in Simulate. Set it
+# to the start of the deploy that introduces the restriction, in UTC, the same
+# value in every region. Unset restricts no org (self-hosted installs).
+RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+)
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
 # rabbitmq. With one web process the layer lives in memory and needs no broker;

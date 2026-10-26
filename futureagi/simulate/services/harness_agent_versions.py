@@ -2044,6 +2044,23 @@ def discard_agent_version(version: AgentVersion, *, by_environment: Any = None) 
 # --- agent pin ----------------------------------------------------------------------
 
 
+def agent_pin_candidate(locked: HostedHarnessJob) -> AgentVersion | None:
+    """The version ``fill_agent_pin`` would pin an unpinned environment to, or None."""
+    from simulate.services.harness_versioning.backfill import (
+        agent_candidate,
+        default_models,
+    )
+    from simulate.services.harness_versioning.versions import versioning_enabled
+
+    if locked.environment_id is not None or locked.agent_version_id is not None:
+        return None
+    if not versioning_enabled() and locked.environment_version_id is None:
+        return None
+    # A candidate holding another environment's credential set is passed over.
+    version, _ = agent_candidate(default_models(), locked)
+    return version
+
+
 def fill_agent_pin(locked: HostedHarnessJob) -> bool:
     """Pin an environment built without one to its agent version, with a legacy side
     row like the backfill's. Call under the environment's lock; the caller saves.
@@ -2053,18 +2070,7 @@ def fill_agent_pin(locked: HostedHarnessJob) -> bool:
     instead, and without one the environment stays unpinned. A legacy row may be
     another environment's too; each reads its own facts from its payload.
     """
-    from simulate.services.harness_versioning.backfill import (
-        agent_candidate,
-        default_models,
-    )
-    from simulate.services.harness_versioning.versions import versioning_enabled
-
-    if locked.environment_id is not None or locked.agent_version_id is not None:
-        return False
-    if not versioning_enabled() and locked.environment_version_id is None:
-        return False
-    # A candidate holding another environment's credential set is passed over.
-    version, _ = agent_candidate(default_models(), locked)
+    version = agent_pin_candidate(locked)
     if version is None:
         return False
     legacy_side_row(locked, version, Trigger.CREATION)

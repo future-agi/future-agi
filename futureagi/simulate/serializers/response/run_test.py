@@ -15,6 +15,7 @@ stays in RunTestSerializer in simulate.serializers.run_test.
 from rest_framework import serializers
 
 from simulate.models import RunTest
+from simulate.serializers.harness_job import RunVersionLabelSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.serializers.filters import filter_list_field, json_object_field
 
@@ -130,13 +131,6 @@ class AddEvalConfigResponseSerializer(serializers.Serializer):
     errors = serializers.ListField(
         child=serializers.CharField(), read_only=True, required=False
     )
-
-
-class RunVersionLabelSerializer(serializers.Serializer):
-    """A pinned version as a run shows it: its id and label such as "v3"."""
-
-    id = serializers.UUIDField(read_only=True)
-    label = serializers.CharField(read_only=True, allow_null=True)
 
 
 class TestExecutionItemResponseSerializer(serializers.Serializer):

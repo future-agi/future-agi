@@ -79,6 +79,7 @@ import type {
   AgentDefinitionCreateRequestApi,
   AgentDefinitionCreateResponseApi,
   AgentDefinitionDeleteResponseApi,
+  AgentDefinitionDetailResponseApi,
   AgentDefinitionEditRequestApi,
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
@@ -102,6 +103,7 @@ import type {
   AgentPromptOptimiserTrialEvaluationsResponseApi,
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
+  AgentRunsResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
@@ -191,6 +193,13 @@ import type {
   AgentccWebhookEventsListParams,
   AgentccWebhooksList200,
   AgentccWebhooksListParams,
+  AlertDeletedResponseApi,
+  AlertItemResponseApi,
+  AlertListResponseApi,
+  AlertOptionsResponseApi,
+  AlertTestRequestApi,
+  AlertTestResponseApi,
+  AlertWriteRequestApi,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
   AnnotationLabelCreateResponseApi,
@@ -662,6 +671,7 @@ import type {
   IntegrationMessageResponseApi,
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
+  IntegrationsConnectionsSlackChannelsListParams,
   IntegrationsSyncLogsListParams,
   InvestigationControlErrorApi,
   InviteCancelApi,
@@ -1062,6 +1072,7 @@ import type {
   RunTestNameResponseApi,
   RunTestResponseApi,
   RunTestScenarioItemResponseApi,
+  RunTracesV3ResponseApi,
   SAMLErrorResponseApi,
   SAMLIDPUploadDetailResponseApi,
   SAMLIDPUploadListResponseApi,
@@ -1144,6 +1155,7 @@ import type {
   SignupRequestApi,
   SignupResponseApi,
   SimulateAgentDefinitionsListParams,
+  SimulateAgentDefinitionsRunsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -1182,6 +1194,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3TestExecutionCallsParams,
+  SimulateV3TestExecutionTracesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1195,6 +1208,9 @@ import type {
   SkillDetailResponseApi,
   SkillListResponseApi,
   SkillUpdateRequestApi,
+  SlackChannelsResponseApi,
+  SlackInstallApi,
+  SlackInstallResponseApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -1207,6 +1223,7 @@ import type {
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
+  StoredAgentResponseApi,
   StreamStatusResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
@@ -1286,6 +1303,8 @@ import type {
   TraceVoiceCallDetailResponseApi,
   TraceVoiceCallListQueryApi,
   TraceVoiceCallListResponseApi,
+  TracerAlertsListParams,
+  TracerAlertsOptionsListParams,
   TracerChartsFetchGraphParams,
   TracerCustomEvalConfigList200,
   TracerCustomEvalConfigListCustomEvalConfigs200,
@@ -15764,7 +15783,8 @@ export const getAgentccOrgConfigsBulkListUrl = () => {
 
 /**
  * Bulk endpoint for gateway startup sync.
-Returns all active org configs keyed by org ID.
+Returns all active org configs keyed by org ID, plus the ids of orgs whose
+payload could not be built, so the gateway keeps their last good config.
 Authenticated by admin token (not user JWT).
  */
 export const agentccOrgConfigsBulkList = async (
@@ -21355,6 +21375,66 @@ export const integrationsConnectionsValidateCredentials = async (
   );
 };
 
+export type integrationsConnectionsSlackChannelsListResponse200 = {
+  data: SlackChannelsResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseSuccess =
+  integrationsConnectionsSlackChannelsListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsSlackChannelsListResponseError =
+  integrationsConnectionsSlackChannelsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsSlackChannelsListResponse =
+  | integrationsConnectionsSlackChannelsListResponseSuccess
+  | integrationsConnectionsSlackChannelsListResponseError;
+
+export const getIntegrationsConnectionsSlackChannelsListUrl = (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/integrations/connections/${connectionId}/slack/channels/?${stringifiedParams}`
+    : `/integrations/connections/${connectionId}/slack/channels/`;
+};
+
+export const integrationsConnectionsSlackChannelsList = async (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+  options?: RequestInit,
+): Promise<integrationsConnectionsSlackChannelsListResponse> => {
+  return apiMutator<integrationsConnectionsSlackChannelsListResponse>(
+    getIntegrationsConnectionsSlackChannelsListUrl(connectionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type integrationsConnectionsReadResponse200 = {
   data: IntegrationConnectionDetailApi;
   status: 200;
@@ -21806,6 +21886,48 @@ export const integrationsConnectionsSyncNow = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsSlackInstallCreateResponse200 = {
+  data: SlackInstallResponseApi;
+  status: 200;
+};
+
+export type integrationsSlackInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsSlackInstallCreateResponseSuccess =
+  integrationsSlackInstallCreateResponse200 & {
+    headers: Headers;
+  };
+export type integrationsSlackInstallCreateResponseError =
+  integrationsSlackInstallCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsSlackInstallCreateResponse =
+  | integrationsSlackInstallCreateResponseSuccess
+  | integrationsSlackInstallCreateResponseError;
+
+export const getIntegrationsSlackInstallCreateUrl = () => {
+  return `/integrations/slack/install/`;
+};
+
+export const integrationsSlackInstallCreate = async (
+  slackInstallApi: SlackInstallApi,
+  options?: RequestInit,
+): Promise<integrationsSlackInstallCreateResponse> => {
+  return apiMutator<integrationsSlackInstallCreateResponse>(
+    getIntegrationsSlackInstallCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(slackInstallApi),
     },
   );
 };
@@ -22720,9 +22842,14 @@ export type mcpOauthTokenCreateResponse401 = {
   status: 401;
 };
 
+export type mcpOauthTokenCreateResponse429 = {
+  data: MCPOAuthTokenErrorResponseApi;
+  status: 429;
+};
+
 export type mcpOauthTokenCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 429>;
 };
 
 export type mcpOauthTokenCreateResponseSuccess =
@@ -22732,6 +22859,7 @@ export type mcpOauthTokenCreateResponseSuccess =
 export type mcpOauthTokenCreateResponseError = (
   | mcpOauthTokenCreateResponse400
   | mcpOauthTokenCreateResponse401
+  | mcpOauthTokenCreateResponse429
   | mcpOauthTokenCreateResponseDefault
 ) & {
   headers: Headers;
@@ -56175,7 +56303,7 @@ export const simulateAgentDefinitionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsReadResponse200 = {
-  data: AgentDefinitionResponseApi;
+  data: AgentDefinitionDetailResponseApi;
   status: 200;
 };
 
@@ -56347,6 +56475,73 @@ export const simulateAgentDefinitionsEditUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentDefinitionEditRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsRunsListResponse200 = {
+  data: AgentRunsResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsRunsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsRunsListResponseSuccess =
+  simulateAgentDefinitionsRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsRunsListResponseError = (
+  | simulateAgentDefinitionsRunsListResponse404
+  | simulateAgentDefinitionsRunsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsRunsListResponse =
+  | simulateAgentDefinitionsRunsListResponseSuccess
+  | simulateAgentDefinitionsRunsListResponseError;
+
+export const getSimulateAgentDefinitionsRunsListUrl = (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/runs/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/runs/`;
+};
+
+export const simulateAgentDefinitionsRunsList = async (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsRunsListResponse> => {
+  return apiMutator<simulateAgentDefinitionsRunsListResponse>(
+    getSimulateAgentDefinitionsRunsListUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -56593,6 +56788,63 @@ export const simulateAgentDefinitionsVersionsActivateCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse200 = {
+  data: StoredAgentResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 500;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseSuccess =
+  simulateAgentDefinitionsVersionsAgentListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsAgentListResponseError = (
+  | simulateAgentDefinitionsVersionsAgentListResponse404
+  | simulateAgentDefinitionsVersionsAgentListResponse500
+  | simulateAgentDefinitionsVersionsAgentListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse =
+  | simulateAgentDefinitionsVersionsAgentListResponseSuccess
+  | simulateAgentDefinitionsVersionsAgentListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsAgentListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/agent/`;
+};
+
+export const simulateAgentDefinitionsVersionsAgentList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsAgentListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsAgentListResponse>(
+    getSimulateAgentDefinitionsVersionsAgentListUrl(agentId, versionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -68493,6 +68745,73 @@ export const simulateV3TestExecutionExport = async (
   );
 };
 
+export type simulateV3TestExecutionTracesResponse200 = {
+  data: RunTracesV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTracesResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type simulateV3TestExecutionTracesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type simulateV3TestExecutionTracesResponseSuccess =
+  simulateV3TestExecutionTracesResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionTracesResponseError = (
+  | simulateV3TestExecutionTracesResponse503
+  | simulateV3TestExecutionTracesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateV3TestExecutionTracesResponse =
+  | simulateV3TestExecutionTracesResponseSuccess
+  | simulateV3TestExecutionTracesResponseError;
+
+export const getSimulateV3TestExecutionTracesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/traces/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/traces/`;
+};
+
+export const simulateV3TestExecutionTraces = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTracesResponse> => {
+  return apiMutator<simulateV3TestExecutionTracesResponse>(
+    getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type telemetryHeartbeatCreateResponse200 = {
   data: DeploymentHeartbeatResponseApi;
   status: 200;
@@ -68573,6 +68892,324 @@ export const telemetryRegisterCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(deploymentRegistrationApi),
+    },
+  );
+};
+
+export type tracerAlertsListResponse200 = {
+  data: AlertListResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsListResponseSuccess = tracerAlertsListResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsListResponseError = tracerAlertsListResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsListResponse =
+  | tracerAlertsListResponseSuccess
+  | tracerAlertsListResponseError;
+
+export const getTracerAlertsListUrl = (params?: TracerAlertsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/?${stringifiedParams}`
+    : `/tracer/alerts/`;
+};
+
+export const tracerAlertsList = async (
+  params?: TracerAlertsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsListResponse> => {
+  return apiMutator<tracerAlertsListResponse>(getTracerAlertsListUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export type tracerAlertsCreateResponse201 = {
+  data: AlertItemResponseApi;
+  status: 201;
+};
+
+export type tracerAlertsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerAlertsCreateResponseSuccess =
+  tracerAlertsCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerAlertsCreateResponseError =
+  tracerAlertsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsCreateResponse =
+  | tracerAlertsCreateResponseSuccess
+  | tracerAlertsCreateResponseError;
+
+export const getTracerAlertsCreateUrl = () => {
+  return `/tracer/alerts/`;
+};
+
+export const tracerAlertsCreate = async (
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsCreateResponse> => {
+  return apiMutator<tracerAlertsCreateResponse>(getTracerAlertsCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(alertWriteRequestApi),
+  });
+};
+
+export type tracerAlertsErrorFeedTestCreateResponse200 = {
+  data: AlertTestResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseSuccess =
+  tracerAlertsErrorFeedTestCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsErrorFeedTestCreateResponseError =
+  tracerAlertsErrorFeedTestCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsErrorFeedTestCreateResponse =
+  | tracerAlertsErrorFeedTestCreateResponseSuccess
+  | tracerAlertsErrorFeedTestCreateResponseError;
+
+export const getTracerAlertsErrorFeedTestCreateUrl = (alertId: string) => {
+  return `/tracer/alerts/error_feed/${alertId}/test/`;
+};
+
+export const tracerAlertsErrorFeedTestCreate = async (
+  alertId: string,
+  alertTestRequestApi: AlertTestRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsErrorFeedTestCreateResponse> => {
+  return apiMutator<tracerAlertsErrorFeedTestCreateResponse>(
+    getTracerAlertsErrorFeedTestCreateUrl(alertId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertTestRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsOptionsListResponse200 = {
+  data: AlertOptionsResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsOptionsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsOptionsListResponseSuccess =
+  tracerAlertsOptionsListResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsOptionsListResponseError =
+  tracerAlertsOptionsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsOptionsListResponse =
+  | tracerAlertsOptionsListResponseSuccess
+  | tracerAlertsOptionsListResponseError;
+
+export const getTracerAlertsOptionsListUrl = (
+  params?: TracerAlertsOptionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/options/?${stringifiedParams}`
+    : `/tracer/alerts/options/`;
+};
+
+export const tracerAlertsOptionsList = async (
+  params?: TracerAlertsOptionsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsOptionsListResponse> => {
+  return apiMutator<tracerAlertsOptionsListResponse>(
+    getTracerAlertsOptionsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsReadResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsReadResponseSuccess = tracerAlertsReadResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsReadResponseError = tracerAlertsReadResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsReadResponse =
+  | tracerAlertsReadResponseSuccess
+  | tracerAlertsReadResponseError;
+
+export const getTracerAlertsReadUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsRead = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsReadResponse> => {
+  return apiMutator<tracerAlertsReadResponse>(
+    getTracerAlertsReadUrl(kind, alertId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsPartialUpdateResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsPartialUpdateResponseSuccess =
+  tracerAlertsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsPartialUpdateResponseError =
+  tracerAlertsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsPartialUpdateResponse =
+  | tracerAlertsPartialUpdateResponseSuccess
+  | tracerAlertsPartialUpdateResponseError;
+
+export const getTracerAlertsPartialUpdateUrl = (
+  kind: string,
+  alertId: string,
+) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsPartialUpdate = async (
+  kind: string,
+  alertId: string,
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsPartialUpdateResponse> => {
+  return apiMutator<tracerAlertsPartialUpdateResponse>(
+    getTracerAlertsPartialUpdateUrl(kind, alertId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertWriteRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsDeleteResponse200 = {
+  data: AlertDeletedResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsDeleteResponseSuccess =
+  tracerAlertsDeleteResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsDeleteResponseError =
+  tracerAlertsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsDeleteResponse =
+  | tracerAlertsDeleteResponseSuccess
+  | tracerAlertsDeleteResponseError;
+
+export const getTracerAlertsDeleteUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsDelete = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsDeleteResponse> => {
+  return apiMutator<tracerAlertsDeleteResponse>(
+    getTracerAlertsDeleteUrl(kind, alertId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -81810,6 +82447,9 @@ export const getTracerTraceVoiceCallDetailUrl = (
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
 - project_id (optional) — the project the call was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -81892,6 +82532,9 @@ export const getTracerTraceReadUrl = (
 /**
  * Query params:
 - project_id (optional) — the project the trace was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (

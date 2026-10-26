@@ -1561,10 +1561,10 @@ class TestProductionShapes:
         )
         assert filled.agent_version_id == a1.id
         assert RunTest.objects.get(id=filled.run_test_id).agent_version_id is None
-        # An empty run test ran the latest version at the time.
+        # An empty run test ran the active version at the time.
         assert (
             Execution.objects.get(id=filled_run.test_execution_id).agent_version_id
-            == chosen.id
+            == a1.id
         )
 
     def test_a_mixed_production_set_twice_changes_nothing_the_second_time(
