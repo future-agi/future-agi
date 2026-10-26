@@ -28,8 +28,12 @@ import {
   PYTHON_DEFINE,
   AGENT_PROMPT as SIM_AGENT_PROMPT,
   MCP_ADD_CMD,
+  INSTALL_CMD,
+  AGENT_DOCS_URL,
 } from "src/sections/simulate-v2/environments/fromCode";
 import { LogoTile } from "src/sections/simulate-v2/environments/LandingBits";
+import useFiKeys from "./useFiKeys";
+import KeyStrip from "./KeyStrip";
 
 /*
   Get started — simulation first.
@@ -47,7 +51,7 @@ import { LogoTile } from "src/sections/simulate-v2/environments/LandingBits";
 */
 
 const DOCS = "https://docs.futureagi.com";
-const AGENT_DOCS = "https://docs.futureagi.com/llms.txt";
+const AGENT_DOCS = AGENT_DOCS_URL;
 
 const TRACE_AGENT_PROMPT =
   "Add Future AGI tracing to this application. Install the traceAI SDK, register the tracer with project_type OBSERVE using my FI_API_KEY and FI_SECRET_KEY, and instrument every LLM and agent call following Future AGI's best practices. Refer to https://docs.futureagi.com for details.";
@@ -280,168 +284,6 @@ const POPULAR = [
   "llamaindex",
   "bedrock",
 ];
-
-// ---- keys: the workspace's own, masked on screen, copied in full -----------
-function useFiKeys() {
-  /* The workspace's newest enabled key — the list the Keys page shows. */
-  const { data, isLoading } = useQuery({
-    queryKey: ["get-started-keys"],
-    queryFn: () =>
-      axios.get(endpoints.keys.getKeys, {
-        params: {
-          current_page_index: 0,
-          page_size: 10,
-          sort_field: "created_at",
-          sort_order: "desc",
-        },
-      }),
-    select: (d) =>
-      (d.data?.result?.table || []).find((r) => r.enabled !== false) || null,
-  });
-  const mask = (v) =>
-    v ? `${String(v).slice(0, 4)}••••••••${String(v).slice(-4)}` : null;
-  const api = data?.api_key || null;
-  const secret = data?.secret_key || null;
-  const shown = (masked) =>
-    `export FI_API_KEY=${(masked ? mask(api) : api) || "your_api_key"}\nexport FI_SECRET_KEY=${(masked ? mask(secret) : secret) || "your_secret_key"}`;
-  return {
-    isLoading,
-    name: data?.key_name || null,
-    has: !!api,
-    api,
-    secret,
-    mask,
-    envShown: shown(true),
-    envCopy: shown(false),
-  };
-}
-
-function KeyValue({ name, value, masked }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={0.75}
-      sx={{ minWidth: 0 }}
-    >
-      <Typography
-        sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-      >
-        {name}
-      </Typography>
-      <Typography
-        noWrap
-        sx={{ fontFamily: "monospace", fontSize: 12, color: "text.primary" }}
-      >
-        {masked}
-      </Typography>
-      <Tooltip title={copied ? "Copied" : `Copy ${name}`}>
-        <IconButton
-          size="small"
-          aria-label={`Copy ${name}`}
-          onClick={() => {
-            navigator.clipboard?.writeText(value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          <Iconify
-            icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
-            width={14}
-          />
-        </IconButton>
-      </Tooltip>
-    </Stack>
-  );
-}
-KeyValue.propTypes = {
-  name: PropTypes.string,
-  value: PropTypes.string,
-  masked: PropTypes.string,
-};
-
-/* One line under the header: the keys every snippet below already uses. */
-function KeyStrip({ keys }) {
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={2}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        px: 1.5,
-        minHeight: 40,
-        flexWrap: "wrap",
-        rowGap: 0.5,
-        mb: 3,
-      }}
-    >
-      <Iconify
-        icon="solar:key-linear"
-        width={16}
-        sx={{ color: "text.tertiary" }}
-      />
-      {keys.isLoading ? (
-        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          Loading your keys…
-        </Typography>
-      ) : keys.has ? (
-        <>
-          <KeyValue
-            name="FI_API_KEY"
-            value={keys.api}
-            masked={keys.mask(keys.api)}
-          />
-          <KeyValue
-            name="FI_SECRET_KEY"
-            value={keys.secret}
-            masked={keys.mask(keys.secret)}
-          />
-          <Typography
-            noWrap
-            title="These keys are filled into every snippet below"
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            {keys.name || "Used below"}
-          </Typography>
-        </>
-      ) : (
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          No keys yet — create one and it fills in every snippet below.
-        </Typography>
-      )}
-      <Tooltip
-        arrow
-        title="Self-hosting? Point the SDK and CLI at your deployment with FI_BASE_URL."
-      >
-        <Iconify
-          icon="solar:info-circle-linear"
-          width={14}
-          aria-label="Self-hosting"
-          sx={{ color: "text.disabled", flexShrink: 0 }}
-        />
-      </Tooltip>
-      <Button
-        component={RouterLink}
-        href={paths.dashboard.keys}
-        size="small"
-        variant="text"
-        sx={{ color: "text.secondary" }}
-      >
-        {keys.has ? "Manage keys" : "Create key"}
-      </Button>
-    </Stack>
-  );
-}
-KeyStrip.propTypes = { keys: PropTypes.object };
 
 // ---- what's done: onboarding status + simulation history --------------------
 function useOnboardingStatus({ poll } = {}) {
@@ -853,7 +695,7 @@ function SimulateSection({ keys }) {
         <>
           <Step n={1} title="Install and sign in">
             <Body>Once per machine — adds the Python SDK and the fai CLI.</Body>
-            <CodeBlock code="pip install futureagi && fai login" />
+            <CodeBlock code={INSTALL_CMD} />
             <Typography
               sx={{
                 typography: "s3",
@@ -1358,6 +1200,14 @@ export default function GetStartedLaunchView() {
             to={paths.dashboard.gateway.root}
           />
         </Box>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1.5 }}>
+          Setting up CI, RL training or keys for a server? Everything from code
+          is in{" "}
+          <InlineLink to={paths.dashboard.settings.developer}>
+            Settings → Developer
+          </InlineLink>
+          .
+        </Typography>
       </Box>
     </Box>
   );

@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CodeBlock from "src/components/code-block";
-import { pythonTrain, serveCmd } from "../environments/fromCode";
+import { pythonTrain, serveCmd, INSTALL_CMD } from "../environments/fromCode";
 import SideDrawer from "../components/SideDrawer";
 import LocalSteps from "../environments/LocalSteps";
 import { CopyField } from "../components/primitives";
@@ -71,7 +71,7 @@ export default function RunFromCodeDrawer({
     {
       title: "Install and sign in",
       body: "Once per machine. Sign-in opens the browser; in CI use FI_API_KEY.",
-      cmd: "pip install futureagi && fai login",
+      cmd: INSTALL_CMD,
     },
     {
       title: "Run this environment",

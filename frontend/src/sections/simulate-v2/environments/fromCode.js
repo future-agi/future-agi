@@ -20,6 +20,12 @@ env.push()                           # optional: versions here`;
 export const AGENT_PROMPT =
   "Build an environment for my refund agent, run it three times against 40 scenarios including prompt-injection attacks, and fix whatever fails most.";
 
+/* Install the Python SDK and the fai CLI, and sign in — once per machine. */
+export const INSTALL_CMD = "pip install futureagi && fai login";
+
+/* The docs index written for coding agents. */
+export const AGENT_DOCS_URL = "https://docs.futureagi.com/llms.txt";
+
 export const MCP_ADD_CMD =
   "claude mcp add futureagi --transport http https://api.futureagi.com/mcp";
 
