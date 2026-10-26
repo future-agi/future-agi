@@ -19,9 +19,10 @@ import (
 // The budget is FI_INGEST_BUDGET_MIB, or derived from the Go memory limit
 // (GOMEMLIMIT; when unset, main sets it to 90% of the container's memory
 // limit): half of what is left after a fixed allowance for the runtime,
-// lookup tables, connection buffers and the flusher's insert buffer. The
-// other half is headroom for the garbage the GC lets build up between
-// cycles. The budget is never raised to fit a request.
+// lookup tables, connection buffers and the flushers' insert buffers (one
+// pair per concurrent insert). The other half is headroom for the garbage
+// the GC lets build up between cycles. The budget is never raised to fit a
+// request.
 //
 // A third of the budget is the wire pool, the rest the work pool (see
 // memPool). The body cap and the gRPC receive cap are lowered, when needed,
@@ -35,8 +36,31 @@ const defaultMaxBodyBytes = 16 << 20
 const noLimitBudget = 256 << 20
 
 // fixedAllowance is what the budget leaves aside for the rest of the process,
-// beyond twice the flusher's insert buffer.
+// beyond twice the insert buffer for each concurrent insert.
 const fixedAllowance = 32 << 20
+
+// Concurrent ClickHouse inserts of pending rows (Config.InsertConcurrency,
+// FI_INSERT_CONCURRENCY). One insert at a time stored about 500-800
+// attribute-heavy spans a second on Standalone with CPU to spare on both
+// sides (R1, #3598). Each concurrent insert takes two insert buffers
+// from the budget's allowance, so the default follows the Go memory limit: 3
+// from 512 MiB (Standalone) up and with no limit, 2 from 384 MiB, else 1.
+const (
+	defaultInsertConcurrency = 3
+	maxInsertConcurrency     = 16
+)
+
+// insertConcurrency is the default number of concurrent inserts for a
+// memory limit.
+func insertConcurrency(memLimit int64) int {
+	switch {
+	case memLimit <= 0 || memLimit >= 512<<20:
+		return defaultInsertConcurrency
+	case memLimit >= 384<<20:
+		return 2
+	}
+	return 1
+}
 
 // maxEncodedPerBody is how many JSON bytes a request may write to ClickHouse
 // per byte of the body cap. Rows repeat their resource's attributes, and
@@ -101,12 +125,14 @@ type ingestLimits struct {
 	source     string // where the budget came from
 	budget     int64
 	wire, work int64
-	maxBody    int64    // HTTP body cap, as sent and decompressed
-	maxRecv    int64    // gRPC receive cap
-	maxEncoded int64    // JSON bytes one request may write to ClickHouse
-	insertMax  int64    // the flusher's insert buffer: rows are sent in inserts of about this size
-	maxConns   int      // per listener; 0: no limit
-	notes      []string // what was lowered and why, for the startup log
+	maxBody    int64         // HTTP body cap, as sent and decompressed
+	maxRecv    int64         // gRPC receive cap
+	maxEncoded int64         // JSON bytes one request may write to ClickHouse
+	insertMax  int64         // a flusher's insert buffer: rows are sent in inserts of about this size
+	inserts    int           // concurrent inserts (flushers), each with its insert buffers
+	maxWait    time.Duration // longest wait of one request for its leases, both pools together
+	maxConns   int           // per listener; 0: no limit
+	notes      []string      // what was lowered and why, for the startup log
 }
 
 // goMemoryLimit is the Go memory limit, or 0 when there is none.
@@ -118,7 +144,7 @@ func goMemoryLimit() int64 {
 	return lim
 }
 
-// insertBufferBytes is the flusher's insert size for a memory limit.
+// insertBufferBytes is a flusher's insert size for a memory limit.
 func insertBufferBytes(memLimit int64) int64 {
 	if memLimit <= 0 {
 		return 8 << 20
@@ -127,13 +153,20 @@ func insertBufferBytes(memLimit int64) int64 {
 }
 
 func resolveIngestLimits(cfg Config, memLimit int64) ingestLimits {
-	l := ingestLimits{memLimit: memLimit, insertMax: insertBufferBytes(memLimit)}
+	l := ingestLimits{memLimit: memLimit, insertMax: insertBufferBytes(memLimit),
+		inserts: insertConcurrency(memLimit), maxWait: defaultLeaseMaxWait}
+	if cfg.InsertConcurrency > 0 {
+		l.inserts = min(cfg.InsertConcurrency, maxInsertConcurrency)
+	}
+	if cfg.IngestMaxWait > 0 {
+		l.maxWait = min(cfg.IngestMaxWait, maxLeaseMaxWait)
+	}
 	budgetMiB := cfg.IngestBudgetMiB
 	switch {
 	case budgetMiB > 0:
 		l.budget, l.source = int64(min(budgetMiB, 1<<20))<<20, "FI_INGEST_BUDGET_MIB"
 	case memLimit > 0:
-		fixed := int64(fixedAllowance) + 2*l.insertMax
+		fixed := int64(fixedAllowance) + 2*l.insertMax*int64(l.inserts)
 		l.budget, l.source = max((memLimit-fixed)/2, memLimit/8), "GOMEMLIMIT"
 	default:
 		l.budget, l.source = noLimitBudget, "default"

@@ -61,9 +61,17 @@ type Config struct {
 	// MaxConnections caps the open connections of each listener; a
 	// connection past it is closed at once. 0 = no limit.
 	MaxConnections int `yaml:"otlp_max_connections"`
+	// IngestMaxWait is the longest one request waits, wire and work pools
+	// together, for its share of the ingest budget; then it is refused as
+	// busy (503 + Retry-After: 1, UNAVAILABLE). 0 = 2s.
+	IngestMaxWait time.Duration `yaml:"ingest_max_wait"`
+	// InsertConcurrency is how many ClickHouse inserts of pending rows run at
+	// once. 0 = 3 from a 512 MiB Go memory limit up (and with none), 2 from
+	// 384 MiB, else 1.
+	InsertConcurrency int `yaml:"insert_concurrency"`
 }
 
-// Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
+// Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutines.
 //
 // gRPC and HTTP both decode an OTLP ExportTraceServiceRequest, run the same
 // converter, and push rows onto the same `pending` buffer. The wire layer is
@@ -119,9 +127,10 @@ type Server struct {
 	grpcConns sync.Map
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
-	// signals via `pendCh`. A single flusher goroutine drains it on either
-	// the row-count or age trigger. One channel/one goroutine keeps lock
-	// contention minimal at 100K spans/sec.
+	// signals via `pendCh`. Flusher goroutines (limits.inserts of them) drain
+	// it on either the row-count or age trigger: each wake-up goes to one idle
+	// flusher, which swaps the pending batch out and inserts it, so up to
+	// limits.inserts inserts run at once while new rows fill the next batch.
 	//
 	// `pendCurated` accumulates the CURATED dimension identities for ALL
 	// payloads received since the last flush into ONE drain-scoped batch (it
@@ -139,6 +148,16 @@ type Server struct {
 	pendLeases []*lease
 	pendLeased int64
 	pendCh     chan struct{}
+	// drainSeq numbers the drains in the order they swap the pending batch
+	// out (under pendMu). A drain's leases are released only once every
+	// earlier drain has ended too (releaseDrained): a request may park its
+	// rows lease just after the swap that took its rows, so the lease rides
+	// with the next drain, which may end first when inserts run at once.
+	drainSeq     uint64
+	curatedStamp time.Time // the last drain's curated version stamp (under pendMu)
+	releaseMu    sync.Mutex
+	releaseNext  uint64              // the oldest drain whose leases are not released yet
+	drained      map[uint64][]*lease // leases of drains that ended out of order
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -265,6 +284,8 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	}
 	s.grpcAuth, s.requireCreds = authenticator.AuthenticateGRPC, authenticator != nil
 	s.grpcKnown = authenticator.KnownGRPCCredentials
+	s.wire.setMaxWait(limits.maxWait)
+	s.work.setMaxWait(limits.maxWait)
 	s.work.onBlock = s.kickFlush
 	s.work.busy = func() bool { return s.draining.Load() > 0 }
 	if writer != nil {
@@ -527,7 +548,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		s.rejectHTTP(w, &rejection{reason: "method", status: http.StatusMethodNotAllowed, msg: "method not allowed"})
+		s.rejectHTTP(w, "", &rejection{reason: "method", status: http.StatusMethodNotAllowed, msg: "method not allowed"})
 		return
 	}
 
@@ -541,7 +562,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if ct != "application/x-protobuf" && ct != "application/json" {
 		// The spec is explicit: unsupported media types return 415.
 		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		s.rejectHTTP(w, &rejection{reason: "content_type", status: http.StatusUnsupportedMediaType, msg: "unsupported content type: " + ct})
+		s.rejectHTTP(w, "", &rejection{reason: "content_type", status: http.StatusUnsupportedMediaType, msg: "unsupported content type: " + ct})
 		return
 	}
 
@@ -550,20 +571,22 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		// RFC 7694: a 415 caused by the content coding lists the codings
 		// the server does accept.
 		w.Header().Set("Accept-Encoding", "gzip, identity")
-		s.rejectHTTP(w, &rejection{reason: "content_encoding", status: http.StatusUnsupportedMediaType,
+		s.rejectHTTP(w, ct, &rejection{reason: "content_encoding", status: http.StatusUnsupportedMediaType,
 			msg: "unsupported content encoding: " + strings.Join(r.Header.Values("Content-Encoding"), ", ")})
 		return
 	}
 
 	// Refusals that need none of the body come before any of it is read.
 	if check, ok := s.checkUsage(r.Context()); !ok {
-		s.rejectHTTP(w, quotaRejection(check.Reason))
+		s.rejectHTTP(w, ct, quotaRejection(check.Reason))
 		return
 	}
 	if s.heap.overLimit(time.Now()) {
-		s.rejectHTTP(w, rejectHeap)
+		s.rejectHTTP(w, ct, rejectHeap)
 		return
 	}
+	// One wait budget for both leases (withLeaseBudget).
+	r = r.WithContext(withLeaseBudget(r.Context(), s.limits.maxWait))
 
 	// The body is read under a wire lease and capped (the cap applies to
 	// the body as sent and, for gzip, again after decompression). It is then
@@ -573,12 +596,12 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	body, wire, err := s.readOTLPHTTPBody(w, r, gzipped)
 	defer wire.release()
 	if err != nil {
-		s.rejectHTTP(w, s.bodyRejection(err))
+		s.rejectHTTP(w, ct, s.bodyRejection(err))
 		return
 	}
 	work, rowsLease, rej := s.leaseWork(r.Context(), body, ct == "application/json")
 	if rej != nil {
-		s.rejectHTTP(w, rej)
+		s.rejectHTTP(w, ct, rej)
 		return
 	}
 	defer work.release()
@@ -589,19 +612,19 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	switch ct {
 	case "application/x-protobuf":
 		if err := req.UnmarshalProto(body); err != nil {
-			s.rejectHTTP(w, &rejection{reason: "malformed", msg: "decode protobuf: " + err.Error()})
+			s.rejectHTTP(w, ct, &rejection{reason: "malformed", msg: "decode protobuf: " + err.Error()})
 			return
 		}
 	case "application/json":
 		if err := req.UnmarshalJSON(body); err != nil {
-			s.rejectHTTP(w, &rejection{reason: "malformed", msg: "decode json: " + err.Error()})
+			s.rejectHTTP(w, ct, &rejection{reason: "malformed", msg: "decode json: " + err.Error()})
 			return
 		}
 	}
 
 	// X-Project-Name only fills ResourceSpans that do not name a project.
 	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
-		s.rejectHTTP(w, &rejection{reason: "project", msg: err.Error()})
+		s.rejectHTTP(w, ct, &rejection{reason: "project", msg: err.Error()})
 		return
 	}
 
@@ -617,7 +640,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
 		if err != nil {
 			w.Header().Set("Retry-After", "5")
-			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			writeHTTPRefusal(w, ct, http.StatusServiceUnavailable, codes.Unavailable, "simulation routing temporarily unavailable")
 			return
 		}
 		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
@@ -629,15 +652,15 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		rejectedSpans = int64(beforeStamp - req.Traces().SpanCount())
 		if errors.Is(err, auth.ErrProjectResolutionUnavailable) {
-			s.rejectHTTP(w, rejectProjectUnavailable)
+			s.rejectHTTP(w, ct, rejectProjectUnavailable)
 			return
 		}
 		if errors.Is(err, auth.ErrTooManyNewProjects) {
-			s.rejectHTTP(w, rejectNewProjects)
+			s.rejectHTTP(w, ct, rejectNewProjects)
 			return
 		}
 		if err != nil {
-			s.rejectHTTP(w, &rejection{reason: "project", msg: "auth stamp: " + err.Error()})
+			s.rejectHTTP(w, ct, &rejection{reason: "project", msg: "auth stamp: " + err.Error()})
 			return
 		}
 		if dropped > 0 {
@@ -647,7 +670,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
 		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
-			s.rejectHTTP(w, &rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
+			s.rejectHTTP(w, ct, &rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
 			return
 		}
 	}
@@ -655,7 +678,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
-		s.rejectHTTP(w, &rejection{reason: "convert", msg: "convert: " + err.Error()})
+		s.rejectHTTP(w, ct, &rejection{reason: "convert", msg: "convert: " + err.Error()})
 		return
 	}
 	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
@@ -891,17 +914,31 @@ func (s *Server) enqueueScoped(
 	}
 }
 
-// flushLoop runs until stopCh closes. Wakes on either an explicit kick
-// (row-count threshold) or the time-based ticker.
+// flushLoop runs limits.inserts flushers until stopCh closes, and returns
+// when every one of them has finished the drain it was running. Each wakes
+// on either an explicit kick (row-count threshold, budget pressure) or the
+// shared age ticker; one wake-up wakes one idle flusher.
 func (s *Server) flushLoop() {
 	defer s.wg.Done()
 	t := time.NewTicker(s.cfg.BatchMaxAge)
 	defer t.Stop()
+	var flushers sync.WaitGroup
+	for range max(s.limits.inserts, 1) {
+		flushers.Add(1)
+		go func() {
+			defer flushers.Done()
+			s.flusher(t.C)
+		}()
+	}
+	flushers.Wait()
+}
+
+func (s *Server) flusher(tick <-chan time.Time) {
 	for {
 		select {
 		case <-s.stopCh:
 			return
-		case <-t.C:
+		case <-tick:
 			s.drainNow(context.Background())
 		case <-s.pendCh:
 			s.drainNow(context.Background())
@@ -912,7 +949,8 @@ func (s *Server) flushLoop() {
 // drainNow swaps the pending buffer and flushes it. Uses a fresh slice so
 // the next request can immediately start filling without contending. When it
 // returns, the rows it took are no longer held, and their work-pool leases
-// are released.
+// are released, or will be as soon as every earlier drain has ended
+// (releaseDrained). Drains may run at once (flushLoop).
 func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
 	batch := s.pend
@@ -925,15 +963,24 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pendProperty = nil
 	s.pendRoots = nil
 	s.pendLeases, s.pendLeased = nil, 0
+	seq := s.drainSeq
+	s.drainSeq++
+	// The curated rows' RMT version (latest wins) is stamped at the swap, in
+	// swap order, not when the write happens: drains that run at once may
+	// write in any order, and an earlier batch must not out-version a later
+	// one.
+	stamp := time.Now().UTC()
+	if !stamp.After(s.curatedStamp) {
+		stamp = s.curatedStamp.Add(time.Microsecond) // DateTime64(6)
+	}
+	s.curatedStamp = stamp
+	s.draining.Add(1) // under pendMu: busy before the swapped rows' leases can be missed
 	s.pendMu.Unlock()
-	s.draining.Add(1)
 	defer s.draining.Add(-1)
 	// The rows' leases cover everything below: the span insert, the
 	// stored-root notice, the catalog handoff and the curated write.
 	defer func() {
-		for _, l := range leases {
-			l.release()
-		}
+		s.releaseDrained(seq, leases)
 		// While a request waits for the work pool, drain again at once if
 		// rows (and their leases) arrived during this drain: they would
 		// otherwise wait for the next tick.
@@ -975,9 +1022,39 @@ func (s *Server) drainNow(ctx context.Context) {
 	// retry, no dead-letter — see its doc), so even on a CH outage this adds at
 	// most two bounded requests and can NEVER stall span draining or pollute the
 	// span dead-letter. The result is swallowed — the span insert above already
-	// completed and Django's backfill reconciles any curated gap. One `now`
-	// stamps version/first_seen for every curated row in this drain.
+	// completed and Django's backfill reconciles any curated gap. One `stamp`
+	// (taken at the swap, above) stamps version/first_seen for every curated
+	// row in this drain.
 	if curated != nil && !curated.Empty() {
-		_ = s.curated.Write(ctx, curated, time.Now().UTC())
+		_ = s.curated.Write(ctx, curated, stamp)
+	}
+}
+
+// releaseDrained releases the leases of drain seq once it and every earlier
+// drain have ended, in drain order, without waiting: the drain that ends
+// last releases what the others left. So a lease is never released before
+// the drain holding its rows has ended, even when the lease was parked one
+// swap late (adoptRows) and its own drain ends first.
+func (s *Server) releaseDrained(seq uint64, leases []*lease) {
+	s.releaseMu.Lock()
+	defer s.releaseMu.Unlock()
+	if seq != s.releaseNext {
+		if s.drained == nil {
+			s.drained = map[uint64][]*lease{}
+		}
+		s.drained[seq] = leases
+		return
+	}
+	for {
+		for _, l := range leases {
+			l.release()
+		}
+		s.releaseNext++
+		next, ok := s.drained[s.releaseNext]
+		if !ok {
+			return
+		}
+		delete(s.drained, s.releaseNext)
+		leases = next
 	}
 }

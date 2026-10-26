@@ -13,6 +13,8 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // The ingest pipeline shared by OTLP/HTTP and OTLP/gRPC, in order:
@@ -168,8 +170,10 @@ func (s *Server) logRejection(transport, code string, r *rejection, held int64) 
 		"suppressed", held)
 }
 
-// rejectHTTP answers an OTLP/HTTP request the pipeline refuses.
-func (s *Server) rejectHTTP(w http.ResponseWriter, r *rejection) {
+// rejectHTTP answers an OTLP/HTTP request the pipeline refuses. ct is the
+// request's media type (application/x-protobuf or application/json), or ""
+// when it is not one of them (writeHTTPRefusal).
+func (s *Server) rejectHTTP(w http.ResponseWriter, ct string, r *rejection) {
 	st := r.httpStatus()
 	if ok, held := s.countRejection("http", strconv.Itoa(st), r); ok {
 		s.logRejection("http", strconv.Itoa(st), r, held)
@@ -177,8 +181,40 @@ func (s *Server) rejectHTTP(w http.ResponseWriter, r *rejection) {
 	if r.kind != rejectPermanent && st != http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", "1")
 	}
-	http.Error(w, r.msg, st)
+	writeHTTPRefusal(w, ct, st, r.grpcCode(), r.msg)
 }
+
+// writeHTTPRefusal answers HTTP status st with a google.rpc.Status (code,
+// msg) encoded in the request's media type, as OTLP/HTTP specifies for
+// failures: the OpenTelemetry Collector's otlphttp exporter and the SDKs
+// show its message, where a text/plain body left them only "413 Request
+// Entity Too Large". A request in some other media type (a 415, a 405) gets
+// msg as text/plain. code is what OTLP/gRPC answers for the same refusal.
+func writeHTTPRefusal(w http.ResponseWriter, ct string, st int, code codes.Code, msg string) {
+	var body []byte
+	var err error
+	sp := status.New(code, msg).Proto()
+	switch ct {
+	case "application/x-protobuf":
+		body, err = proto.Marshal(sp)
+	case "application/json":
+		body, err = protojson.Marshal(sp)
+	default:
+		err = errNoOTLPMediaType
+	}
+	if err != nil {
+		http.Error(w, msg, st)
+		return
+	}
+	h := w.Header()
+	h.Del("Content-Length")
+	h.Set("Content-Type", ct)
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(st)
+	_, _ = w.Write(body)
+}
+
+var errNoOTLPMediaType = errors.New("not an OTLP media type")
 
 // rejectGRPC is the status for an OTLP/gRPC call the pipeline refuses.
 func (s *Server) rejectGRPC(r *rejection) error {
@@ -262,7 +298,9 @@ func (s *Server) settleRows(rows *lease, enqueued bool) {
 
 // adoptRows parks a rows lease with the pending batch. The drain that next
 // swaps the batch releases it when it ends. A lease parked just after a swap
-// whose batch already held its rows is released one drain late, never early.
+// whose batch already held its rows is released one drain late, never early:
+// drains release their leases in swap order (releaseDrained), even when
+// several run at once.
 func (s *Server) adoptRows(l *lease) {
 	if l == nil {
 		return
@@ -288,16 +326,19 @@ func (s *Server) kickFlush() {
 
 // IngestStats is the ingest section of /healthz.
 type IngestStats struct {
-	BudgetBytes      int64            `json:"budget_bytes"`
-	BudgetSource     string           `json:"budget_source"`
-	MemoryLimitBytes int64            `json:"memory_limit_bytes"`
-	MaxBodyBytes     int64            `json:"max_body_bytes"`
-	MaxGRPCRecvBytes int64            `json:"max_grpc_recv_bytes"`
-	Wire             PoolStats        `json:"wire"`
-	Work             PoolStats        `json:"work"`
-	PendingLeased    int64            `json:"pending_leased_bytes"`
-	LiveHeapBytes    int64            `json:"live_heap_bytes"`
-	Rejected         map[string]int64 `json:"rejected"` // by transport/reason/code
+	BudgetBytes       int64            `json:"budget_bytes"`
+	BudgetSource      string           `json:"budget_source"`
+	MemoryLimitBytes  int64            `json:"memory_limit_bytes"`
+	MaxBodyBytes      int64            `json:"max_body_bytes"`
+	MaxGRPCRecvBytes  int64            `json:"max_grpc_recv_bytes"`
+	MaxWaitMillis     int64            `json:"max_wait_ms"`        // longest wait of a request for its leases
+	InsertConcurrency int              `json:"insert_concurrency"` // ClickHouse inserts that may run at once
+	InsertsInFlight   int32            `json:"inserts_in_flight"`  // drains under way now
+	Wire              PoolStats        `json:"wire"`
+	Work              PoolStats        `json:"work"`
+	PendingLeased     int64            `json:"pending_leased_bytes"`
+	LiveHeapBytes     int64            `json:"live_heap_bytes"`
+	Rejected          map[string]int64 `json:"rejected"` // by transport/reason/code
 	// ConnectionsClosed counts connections the listeners closed: past the
 	// connection cap (grpc_over_cap, http_over_cap), and gRPC connections
 	// that sent too many small DATA frames (grpc_small_frames) or had too
@@ -325,7 +366,9 @@ func (s *Server) IngestStats() IngestStats {
 	st := IngestStats{
 		BudgetBytes: s.limits.budget, BudgetSource: s.limits.source, MemoryLimitBytes: s.limits.memLimit,
 		MaxBodyBytes: s.limits.maxBody, MaxGRPCRecvBytes: s.limits.maxRecv,
-		Wire: poolStats(s.wire), Work: poolStats(s.work), LiveHeapBytes: s.heap.live.Load(),
+		MaxWaitMillis: s.limits.maxWait.Milliseconds(), InsertConcurrency: s.limits.inserts,
+		InsertsInFlight: s.draining.Load(),
+		Wire:            poolStats(s.wire), Work: poolStats(s.work), LiveHeapBytes: s.heap.live.Load(),
 		Rejected: map[string]int64{},
 		ConnectionsClosed: map[string]int64{
 			"grpc_over_cap": s.grpcConnsRefused.Load(), "http_over_cap": s.httpConnsRefused.Load(),
@@ -350,7 +393,8 @@ func (s *Server) logLimits() {
 		"budget_mib", l.budget>>20, "source", l.source, "memory_limit_mib", l.memLimit>>20,
 		"wire_mib", l.wire>>20, "work_mib", l.work>>20,
 		"max_body_mib", float64(l.maxBody)/(1<<20), "grpc_max_recv_mib", float64(l.maxRecv)/(1<<20),
-		"insert_mib", float64(l.insertMax)/(1<<20), "max_connections", l.maxConns)
+		"insert_mib", float64(l.insertMax)/(1<<20), "insert_concurrency", l.inserts,
+		"max_wait", l.maxWait.String(), "max_connections", l.maxConns)
 	notes := append([]string(nil), l.notes...)
 	sort.Strings(notes)
 	for _, n := range notes {

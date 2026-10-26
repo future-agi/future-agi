@@ -35,8 +35,11 @@ import (
 // FIFO), so a large request is not starved by a stream of small ones. A
 // waiter keeps its place for as long as the pool makes progress (some lease
 // was released within the last wait, or freeing is under way: busy), up to
-// maxWait or the request's own deadline; then it is answered as busy, which
-// OTLP exporters retry.
+// maxWait, what is left of the request's wait budget (withLeaseBudget: one
+// maxWait across both pools), or the request's own deadline; then it is
+// answered as busy, which OTLP exporters retry. maxWait is short (2 s by
+// default, FI_INGEST_MAX_WAIT) so that an exporter with a 10 s export budget,
+// as the OpenTelemetry SDKs have by default, still has time to retry.
 type memPool struct {
 	name    string
 	sem     *semaphore.Weighted
@@ -62,14 +65,51 @@ type memPool struct {
 }
 
 // leaseWait is how long a request waits for its share of a pool while
-// nothing is given back to it; leaseMaxWait is how long it waits in all.
+// nothing is given back to it; defaultLeaseMaxWait is how long it waits in
+// all, across both pools (Config.IngestMaxWait, FI_INGEST_MAX_WAIT).
+//
+// The longest wait was 10 s. The OpenTelemetry SDKs' exporters also give an
+// export 10 s in all, retries included, so under a burst they gave up before
+// a busy answer reached them and dropped the batch (R1, #3598). At 2 s the
+// Python SDK's exporters get about three attempts per export; exporters that
+// retry for longer (the OpenTelemetry Collector: 5 minutes) are unaffected.
 const (
-	leaseWait    = 2 * time.Second
-	leaseMaxWait = 10 * time.Second
+	leaseWait           = 2 * time.Second
+	defaultLeaseMaxWait = 2 * time.Second
+	maxLeaseMaxWait     = 5 * time.Minute
 )
 
 func newMemPool(name string, size int64) *memPool {
-	return &memPool{name: name, sem: semaphore.NewWeighted(size), size: size, wait: leaseWait, maxWait: leaseMaxWait}
+	p := &memPool{name: name, sem: semaphore.NewWeighted(size), size: size}
+	p.setMaxWait(defaultLeaseMaxWait)
+	return p
+}
+
+// setMaxWait sets the longest wait (and caps the no-progress wait at it).
+func (p *memPool) setMaxWait(d time.Duration) {
+	if d <= 0 {
+		d = defaultLeaseMaxWait
+	}
+	p.maxWait, p.wait = d, min(leaseWait, d)
+}
+
+// leaseBudget is what is left of one request's wait for the ingest budget.
+// A request waits for the wire pool, then the work pool; without a shared
+// budget it could wait maxWait for each.
+type leaseBudget struct{ left atomic.Int64 } // nanoseconds
+
+type leaseBudgetKey struct{}
+
+// withLeaseBudget gives the request of ctx d to wait for leases, in total.
+func withLeaseBudget(ctx context.Context, d time.Duration) context.Context {
+	b := &leaseBudget{}
+	b.left.Store(int64(d))
+	return context.WithValue(ctx, leaseBudgetKey{}, b)
+}
+
+func leaseBudgetFrom(ctx context.Context) *leaseBudget {
+	b, _ := ctx.Value(leaseBudgetKey{}).(*leaseBudget)
+	return b
 }
 
 var (
@@ -106,18 +146,33 @@ func (p *memPool) take(ctx context.Context, n int64) error {
 
 // waitFor waits in line for n bytes. It gives up (errPoolBusy) when nothing
 // was given back to the pool for p.wait while it was not busy, after
-// p.maxWait, or when ctx ends.
+// p.maxWait or what is left of the request's lease budget, or when ctx ends.
 func (p *memPool) waitFor(ctx context.Context, n int64) error {
+	limit := p.maxWait
+	budget := leaseBudgetFrom(ctx)
+	if budget != nil {
+		limit = min(limit, time.Duration(budget.left.Load()))
+	}
 	if p.onBlock != nil {
 		p.onBlock()
 	}
 	p.waits.Add(1)
+	if limit <= 0 { // the request has already waited its turn
+		p.timeouts.Add(1)
+		return errPoolBusy
+	}
 	p.waiting.Add(1)
 	start := time.Now()
-	wctx, cancel := context.WithTimeout(ctx, p.maxWait)
+	defer func() {
+		if budget != nil {
+			budget.left.Add(-int64(time.Since(start)))
+		}
+	}()
+	wctx, cancel := context.WithTimeout(ctx, limit)
 	stop := make(chan struct{})
+	wait := p.wait
 	go func() {
-		t := time.NewTicker(p.wait)
+		t := time.NewTicker(wait)
 		defer t.Stop()
 		last := p.freed.Load()
 		for {

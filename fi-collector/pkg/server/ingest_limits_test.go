@@ -22,8 +22,8 @@ func TestResolveIngestLimits(t *testing.T) {
 	}{
 		{"no memory limit", Config{}, 0, 256 * mib, 16 * mib, 16 * mib, "default", "no memory limit"},
 		{"standalone GOMEMLIMIT=256MiB", Config{}, 256 * mib, 108 * mib, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
-		{"Helm GOMEMLIMIT=900MiB", Config{}, 900 * mib, (900*mib - 32*mib - 2*(900*mib/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
-		{"a 1 GiB container (90%)", Config{}, 1024 * mib * 9 / 10, (1024*mib*9/10 - 32*mib - 2*(1024*mib*9/10/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
+		{"Helm GOMEMLIMIT=900MiB", Config{}, 900 * mib, (900*mib - 32*mib - 2*3*(900*mib/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
+		{"a 1 GiB container (90%)", Config{}, 1024 * mib * 9 / 10, (1024*mib*9/10 - 32*mib - 2*3*(1024*mib*9/10/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
 		{"GOMEMLIMIT=64MiB lowers the caps", Config{}, 64 * mib, 14 * mib, 14*mib/3/2 - readChunk, 14 * mib / 3 * 4 / grpcLeasePer4, "GOMEMLIMIT", "body cap lowered"},
 		{"configured budget", Config{IngestBudgetMiB: 200}, 256 * mib, 200 * mib, 16 * mib, 16 * mib, "FI_INGEST_BUDGET_MIB", ""},
 		{"receive cap over the budget", Config{GRPCMaxRecvMiB: 64}, 256 * mib, 108 * mib, 16 * mib, 108 * mib / 3 * 4 / grpcLeasePer4, "GOMEMLIMIT", "gRPC receive cap lowered"},

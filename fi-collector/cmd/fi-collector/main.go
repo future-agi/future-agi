@@ -12,7 +12,8 @@
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
 //     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
-//     FI_OTLP_MAX_CONNECTIONS, FI_DEAD_LETTER_FILE, ...)
+//     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
+//     FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -293,6 +294,7 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
 		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
 		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
+		{"FI_INSERT_CONCURRENCY", &c.Server.InsertConcurrency},
 	} {
 		if v := os.Getenv(o.env); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -300,6 +302,15 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 			} else {
 				log.Warn("ignoring invalid "+o.env, "value", v)
 			}
+		}
+	}
+	// FI_INGEST_MAX_WAIT: a Go duration ("2s", "1500ms"), the longest a
+	// request waits for the ingest budget before it is refused as busy.
+	if v := os.Getenv("FI_INGEST_MAX_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.Server.IngestMaxWait = d
+		} else {
+			log.Warn("ignoring invalid FI_INGEST_MAX_WAIT (want a duration such as 2s)", "value", v)
 		}
 	}
 	// FI_GZIP_INFLIGHT_MIB bounded gzip requests only. One budget now bounds

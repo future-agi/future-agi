@@ -218,6 +218,8 @@ func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 	if s.heap.overLimit(time.Now()) {
 		return s.rejectGRPC(rejectHeap)
 	}
+	// One wait budget for both leases (withLeaseBudget).
+	ctx = withLeaseBudget(ctx, s.limits.maxWait)
 	raw, wire, err := s.recvGRPCMessage(ctx, stream)
 	if err != nil {
 		return err

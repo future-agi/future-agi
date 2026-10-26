@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/encoding"
 )
@@ -69,5 +70,45 @@ func TestApplyEnvOverridesIngestLimits(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "FI_OTLP_MAX_CONNECTIONS") {
 		t.Errorf("an invalid value must be logged: %q", logs.String())
+	}
+}
+
+// FI_INGEST_MAX_WAIT (a Go duration) and FI_INSERT_CONCURRENCY reach the
+// server config; invalid values are ignored with a warning naming them.
+func TestApplyEnvOverridesBurstSettings(t *testing.T) {
+	cases := []struct {
+		wait, inserts string
+		wantWait      time.Duration
+		wantInserts   int
+		warn          []string
+	}{
+		{"", "", 0, 0, nil},
+		{"3s", "4", 3 * time.Second, 4, nil},
+		{"1500ms", "1", 1500 * time.Millisecond, 1, nil},
+		{"10", "-2", 0, 0, []string{"FI_INGEST_MAX_WAIT", "FI_INSERT_CONCURRENCY"}},
+		{"0s", "many", 0, 0, []string{"FI_INGEST_MAX_WAIT", "FI_INSERT_CONCURRENCY"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.wait+"/"+tc.inserts, func(t *testing.T) {
+			clearCollectorEnv(t)
+			t.Setenv("FI_INGEST_MAX_WAIT", tc.wait)
+			t.Setenv("FI_INSERT_CONCURRENCY", tc.inserts)
+			var logs bytes.Buffer
+			cfg := rootConfig{}
+			if err := applyEnvOverrides(slog.New(slog.NewTextHandler(&logs, nil)), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Server.IngestMaxWait != tc.wantWait || cfg.Server.InsertConcurrency != tc.wantInserts {
+				t.Errorf("wait %v inserts %d; want %v %d", cfg.Server.IngestMaxWait, cfg.Server.InsertConcurrency, tc.wantWait, tc.wantInserts)
+			}
+			for _, w := range tc.warn {
+				if !strings.Contains(logs.String(), w) {
+					t.Errorf("an invalid %s must be logged: %q", w, logs.String())
+				}
+			}
+			if tc.warn == nil && logs.Len() != 0 {
+				t.Errorf("unexpected warnings: %q", logs.String())
+			}
+		})
 	}
 }

@@ -151,27 +151,6 @@ func TestPoolWaiterWaitsWhileThePoolIsBusy(t *testing.T) {
 	l.release()
 }
 
-// Use the production 2s no-progress setting, not the shortened 300ms fixture:
-// a draining request may need more than 2s while still making progress.
-func TestPoolDefaultWaitAllowsThreeSecondDrain(t *testing.T) {
-	p := newMemPool("work", 100)
-	held := holdLeases(t, p, 1, 100)[0]
-	p.busy = func() bool { return true }
-	timer := time.AfterFunc(3*time.Second, held.release)
-	defer timer.Stop()
-	defer held.release()
-	start := time.Now()
-	l, err := p.acquire(context.Background(), 100)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("default wait: %v after %v", err, elapsed)
-	}
-	defer l.release()
-	if elapsed < 3*time.Second || elapsed > 5*time.Second {
-		t.Fatalf("waited %v, want about 3s", elapsed)
-	}
-}
-
 // Concurrent wire growers retain their initial shares, but do not wait forever.
 // This models gzip inflation and joining unknown-length plain bodies alike.
 func TestWireGrowersStopAtNoProgressTimeout(t *testing.T) {
