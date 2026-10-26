@@ -283,6 +283,8 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             startIcon={
               <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             }
+            /* Never squeezed by the row: the icon and label stay inside its border. */
+            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
             Back
           </Button>

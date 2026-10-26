@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
@@ -278,6 +279,8 @@ const SpanGrid = React.forwardRef(
     const firstPageRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       page,
@@ -893,7 +896,7 @@ const SpanGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}

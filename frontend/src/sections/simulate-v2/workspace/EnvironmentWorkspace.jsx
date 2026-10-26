@@ -1216,38 +1216,35 @@ export default function EnvironmentWorkspace() {
                 const pk = sandboxed
                   ? { kind: "sealed", label: "Sealed" }
                   : proofKindOf(envState.agent);
-                chips.push({
-                  key: "proof",
-                  /* "Runs:" says what the chip describes, so it doesn't read as a second status beside Ready. */
-                  prefix: "Runs:",
-                  icon:
-                    pk.kind === "sealed"
-                      ? "solar:lock-keyhole-minimalistic-linear"
-                      : pk.kind === "live"
-                        ? "solar:plug-circle-linear"
-                        : "solar:document-text-linear",
-                  label: pk.label,
-                  tip:
-                    pk.kind === "prompt-only"
-                      ? "Prompt only — checked by running the prompt without your tools."
-                      : pk.kind === "live"
-                        ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
-                        : sandboxed
-                          ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
-                          : env?.runsOn === "local" ||
-                              env?.builtFrom?.worldSource?.runsOn === "local"
-                            ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
-                            : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
-                });
+                /* Sealed is the normal case (and the Overview's agent line says so);
+                   only Live or Prompt only earns a header chip — they change what a run
+                   does or proves, right where Run is pressed. */
+                if (pk.kind !== "sealed")
+                  chips.push({
+                    key: "proof",
+                    /* "Runs:" says what the chip describes, so it doesn't read as a second status beside Ready. */
+                    prefix: "Runs:",
+                    icon:
+                      pk.kind === "sealed"
+                        ? "solar:lock-keyhole-minimalistic-linear"
+                        : pk.kind === "live"
+                          ? "solar:plug-circle-linear"
+                          : "solar:document-text-linear",
+                    label: pk.label,
+                    tip:
+                      pk.kind === "prompt-only"
+                        ? "Prompt only — checked by running the prompt without your tools."
+                        : pk.kind === "live"
+                          ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
+                          : sandboxed
+                            ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
+                            : env?.runsOn === "local" ||
+                                env?.builtFrom?.worldSource?.runsOn === "local"
+                              ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
+                              : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                  });
               }
-              if (managedOf(env, envState) === "code")
-                chips.push({
-                  key: "managed",
-                  icon: "solar:code-square-linear",
-                  label: "Managed in code",
-                  tip: "Versions come from fai env push. Changes made here become a draft you merge into the repo.",
-                  onClick: () => setCodeOpen(true),
-                });
+              /* "Managed in code" lives in the Code drawer — the header's Code button opens it. */
               if (isComingSoon(env))
                 chips.push({
                   key: "soon",

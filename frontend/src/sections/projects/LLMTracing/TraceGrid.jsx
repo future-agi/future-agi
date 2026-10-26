@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import axios, { endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
@@ -157,6 +158,8 @@ const TraceGrid = React.forwardRef(
     const firstPageRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       page,
@@ -791,7 +794,7 @@ const TraceGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
