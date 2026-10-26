@@ -14,6 +14,12 @@
 
 import { useMemo, useSyncExternalStore } from "react";
 import {
+  suggestedFixFor,
+  reelsFor,
+  conversationFindings,
+  silentBreaksFor,
+} from "./omegaFindings";
+import {
   DEEP_ANALYSIS_STATUS,
   useObserveProjectList,
   useErrorFeedList as realUseList,
@@ -34,7 +40,8 @@ import {
 
 const sparkFor = (id) => {
   let seed = 0;
-  for (let i = 0; i < id.length; i += 1) seed = (seed * 31 + id.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < id.length; i += 1)
+    seed = (seed * 31 + id.charCodeAt(i)) >>> 0;
   return Array.from({ length: 14 }, () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
     return 3 + (seed % 30);
@@ -51,7 +58,8 @@ const seededInt = (idSeed, max) => {
 };
 
 const nowIso = (mAgo) => new Date(Date.now() - mAgo * 60 * 1000).toISOString();
-const dayIso = (dAgo) => new Date(Date.now() - dAgo * 24 * 60 * 60 * 1000).toISOString();
+const dayIso = (dAgo) =>
+  new Date(Date.now() - dAgo * 24 * 60 * 60 * 1000).toISOString();
 
 /**
  * PRD evidence-state axis (Confirmed / Emerging / Unresolved / Dismissed).
@@ -95,7 +103,7 @@ const MOCK_CLUSTERS = [
       type: "ToolArgumentMismatch",
     },
     severity: "high",
-    status: "escalating",
+    status: "acknowledged",
     evidence_state: "confirmed",
     why_shown:
       "64 calls where the guest corrected the time and modify_booking still received the first one; matched successful bookings do not show the pattern.",
@@ -381,7 +389,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4563",
     project_id: "customer-support-line-agent",
-    error: { name: "Loyalty discount applied without checking the caller's tier", type: "PolicyViolation" },
+    error: {
+      name: "Loyalty discount applied without checking the caller's tier",
+      type: "PolicyViolation",
+    },
     severity: "critical",
     status: "escalating",
     evidence_state: "confirmed",
@@ -399,7 +410,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4566",
     project_id: "customer-support-line-agent",
-    error: { name: "Agent says the return label was sent when creating it failed", type: "UnsupportedClaim" },
+    error: {
+      name: "Agent says the return label was sent when creating it failed",
+      type: "UnsupportedClaim",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -417,7 +431,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4571",
     project_id: "guest-booking-line",
-    error: { name: "Deposit quoted from last season's price list", type: "StaleToolResult" },
+    error: {
+      name: "Deposit quoted from last season's price list",
+      type: "StaleToolResult",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -435,7 +452,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4574",
     project_id: "airline-rebooking",
-    error: { name: "Seat request dropped when rebooking onto a partner airline", type: "ToolResultDropped" },
+    error: {
+      name: "Seat request dropped when rebooking onto a partner airline",
+      type: "ToolResultDropped",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -453,7 +473,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4578",
     project_id: "clinic-appointment-line",
-    error: { name: "Appointment confirmed in a slot another patient already holds", type: "UnsupportedClaim" },
+    error: {
+      name: "Appointment confirmed in a slot another patient already holds",
+      type: "UnsupportedClaim",
+    },
     severity: "critical",
     status: "escalating",
     evidence_state: "confirmed",
@@ -471,7 +494,10 @@ const MOCK_CLUSTERS = [
   {
     cluster_id: "ISS-4582",
     project_id: "returns-refunds-line-agent",
-    error: { name: "Store credit offered when the caller asked for a refund", type: "PolicyViolation" },
+    error: {
+      name: "Store credit offered when the caller asked for a refund",
+      type: "PolicyViolation",
+    },
     severity: "medium",
     status: "escalating",
     evidence_state: "unresolved",
@@ -491,7 +517,10 @@ const MOCK_CLUSTERS = [
        its main environment first. */
     cluster_id: "ISS-4585",
     project_id: "billing-copilot",
-    error: { name: "Invoice total leaves out the late fee the customer was told about", type: "SelfContradiction" },
+    error: {
+      name: "Invoice total leaves out the late fee the customer was told about",
+      type: "SelfContradiction",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -511,7 +540,10 @@ const MOCK_CLUSTERS = [
        but has no environment yet: Fix builds its main environment first. */
     cluster_id: "ISS-4593",
     project_id: "rebooking-assistant",
-    error: { name: "Rebooked flight quoted without the fare difference", type: "UnsupportedClaim" },
+    error: {
+      name: "Rebooked flight quoted without the fare difference",
+      type: "UnsupportedClaim",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -531,7 +563,10 @@ const MOCK_CLUSTERS = [
        records this project yet, so Fix reads Connect agent to fix. */
     cluster_id: "ISS-4589",
     project_id: "storefront-chat",
-    error: { name: "Order cancelled when the customer only asked how cancelling works", type: "PolicyViolation" },
+    error: {
+      name: "Order cancelled when the customer only asked how cancelling works",
+      type: "PolicyViolation",
+    },
     severity: "high",
     status: "escalating",
     evidence_state: "confirmed",
@@ -563,8 +598,12 @@ const findMock = (id) => MOCK_CLUSTERS.find((c) => c.cluster_id === id) || null;
 */
 let mockVersion = 0;
 const mockListeners = new Set();
-const subscribeMock = (l) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-const useMockVersion = () => useSyncExternalStore(subscribeMock, () => mockVersion);
+const subscribeMock = (l) => {
+  mockListeners.add(l);
+  return () => mockListeners.delete(l);
+};
+const useMockVersion = () =>
+  useSyncExternalStore(subscribeMock, () => mockVersion);
 const triageMock = (row, { status, severity, assignee }) => {
   if (status !== undefined) row.status = status;
   if (severity !== undefined) row.severity = severity;
@@ -575,22 +614,27 @@ const triageMock = (row, { status, severity, assignee }) => {
 
 export function useUpdateErrorFeedIssue() {
   const real = realUseUpdate();
-  return useMemo(() => ({
-    ...real,
-    mutate: (vars, opts) => {
-      const mock = findMock(vars?.clusterId);
-      if (!mock) return real.mutate(vars, opts);
-      triageMock(mock, vars);
-      opts?.onSuccess?.(undefined, vars);
-      return undefined;
-    },
-  }), [real]);
+  return useMemo(
+    () => ({
+      ...real,
+      mutate: (vars, opts) => {
+        const mock = findMock(vars?.clusterId);
+        if (!mock) return real.mutate(vars, opts);
+        triageMock(mock, vars);
+        opts?.onSuccess?.(undefined, vars);
+        return undefined;
+      },
+    }),
+    [real],
+  );
 }
 
 /** One demo issue by id — for prototype screens outside the Error Feed. */
-export const mockCluster = (clusterId) => MOCK_CLUSTERS.find((c) => c.cluster_id === clusterId) || null;
+export const mockCluster = (clusterId) =>
+  MOCK_CLUSTERS.find((c) => c.cluster_id === clusterId) || null;
 /** The issues an Observe project's traces raised — an agent's Overview lists its open ones. */
-export const mockClustersForProject = (projectId) => (projectId ? MOCK_CLUSTERS.filter((c) => c.project_id === projectId) : []);
+export const mockClustersForProject = (projectId) =>
+  projectId ? MOCK_CLUSTERS.filter((c) => c.project_id === projectId) : [];
 
 export function isMockClusterId(clusterId) {
   return !!findMock(clusterId);
@@ -713,7 +757,8 @@ const INPUT_PROMPTS = {
 };
 
 const AGENT_UTTERANCE = {
-  "ISS-4536": "You're rebooked on the 8:15 — the total for one passenger is $142.",
+  "ISS-4536":
+    "You're rebooked on the 8:15 — the total for one passenger is $142.",
   "ISS-4529": "You're booked for four at 7pm — see you then.",
   "ISS-4471": "Booked to 8 Elm Street — is that right?",
   "ISS-4453": "Done — your car is booked to 40 King Street.",
@@ -751,37 +796,46 @@ function mockTracesFor(cluster) {
   return Array.from({ length: sampled }, (_, i) => {
     /* Every fifth is a passing comparison — never the first, which the
        evidence panel opens on. */
-    const failed = i % 5 !== 4;
+    /* Every conversation listed under an issue failed; the passing ones
+       are the separate "Working" comparisons. */
+    const failed = true;
     const inputTokens = 400 + (rand() % 900);
     const outputTokens = 180 + (rand() % 700);
     const latencyMs = 1200 + (rand() % 3200);
-    const cost = Math.round(((rand() % 140) + 20) / 1000 * 100) / 100;
-    const evalScore = failed ? 0.15 + (rand() % 40) / 100 : 0.72 + (rand() % 26) / 100;
+    const cost = Math.round((((rand() % 140) + 20) / 1000) * 100) / 100;
+    const evalScore = failed
+      ? 0.15 + (rand() % 40) / 100
+      : 0.72 + (rand() % 26) / 100;
     const input = prompts[i % prompts.length];
 
     /* A short step reel for the Trace Evidence panel: label is the speaker,
        text the step, note the detail. The failing step is marked. */
-    const failReel = failed ? [
-      { label: "User", text: "Gave a correction in their message", note: `User said: "${input}"` },
-      { label: "Agent", text: "Retrieved account context", note: "Loaded the previous state; correction not applied to it." },
-      { label: "Tool", text: "Called the downstream tool with the previous state", note: `Argument sent: ${cluster.error.type} — mechanism reproduces here.`, isFailure: true },
-      { label: "Agent", text: "Confirmed the wrong result to the user", note: `Agent said: "${agentSays}"` },
-    ] : [];
-    const passReel = failed ? [] : [
-      { label: "User", text: "Gave a correction in their message", note: `User said: "${input}"` },
-      { label: "Agent", text: "Retrieved account context and merged the correction", note: "Correction applied to the state before the tool call.", status: "pass" },
-      { label: "Tool", text: "Called the downstream tool with the corrected argument", note: "Argument passed through correctly.", status: "pass" },
-      { label: "Agent", text: "Confirmed the correct result to the user", note: "Response matches the state.", status: "pass" },
-    ];
+    /* The evidence story is the issue's own failure type, failing and working. */
+    const { fail: failReel, pass: passReel } = reelsFor(
+      cluster,
+      input,
+      agentSays,
+    );
+    const findings = conversationFindings(cluster, i, failed, failReel);
 
     return {
       id: `trace-${cluster.cluster_id}-${i + 1}`,
+      /* What the analyzer saved about this conversation. */
+      outcome: findings.outcome,
+      recovered: findings.recovered,
+      failure_type: findings.failureType,
+      checklist: findings.checklist,
       trace_id: `trace-${cluster.cluster_id}-${i + 1}`,
       timestamp: nowIso(i * 45 + 5 + (rand() % 40)),
       created_at: nowIso(i * 45 + 5 + (rand() % 40)),
       user_id: `user-${(rand() % 50) + 1}`,
       status: failed ? "fail" : "pass",
-      severity: failed && evalScore < 0.3 ? "critical" : failed ? cluster.severity : "low",
+      severity:
+        failed && evalScore < 0.3
+          ? "critical"
+          : failed
+            ? cluster.severity
+            : "low",
       eval_score: Math.round(evalScore * 100) / 100,
       /* Flat fields the Traces tab's table reads. */
       input,
@@ -812,10 +866,13 @@ function mockTracesFor(cluster) {
 function tracesAggregates(traces, cluster) {
   const n = traces.length || 1;
   const lat = traces.map((t) => t.latency_ms).sort((a, b) => a - b);
-  const pct = (q) => lat.length ? lat[Math.min(lat.length - 1, Math.floor(q * lat.length))] : 0;
+  const pct = (q) =>
+    lat.length ? lat[Math.min(lat.length - 1, Math.floor(q * lat.length))] : 0;
   return {
     total_traces: cluster.trace_count || traces.length,
-    avg_score: traces.reduce((a, t) => a + (t.score || 0), 0) / n,
+    /* The issue's own eval score, the same number the rail and Trends show. */
+    avg_score:
+      cluster.eval_score ?? traces.reduce((a, t) => a + (t.score || 0), 0) / n,
     avg_turns: traces.reduce((a, t) => a + (t.turns || 0), 0) / n,
     p50_latency: pct(0.5),
     p95_latency: pct(0.95),
@@ -830,7 +887,14 @@ const spread = (total, weights) => {
   const sum = weights.reduce((x, w) => x + w, 0);
   const out = weights.map((w) => Math.floor((total * w) / sum));
   let left = total - out.reduce((x, n) => x + n, 0);
-  for (let i = out.length - 1; left > 0; i = (i - 1 + out.length) % out.length) { out[i] += 1; left -= 1; }
+  for (
+    let i = out.length - 1;
+    left > 0;
+    i = (i - 1 + out.length) % out.length
+  ) {
+    out[i] += 1;
+    left -= 1;
+  }
   return out;
 };
 
@@ -840,7 +904,10 @@ function mockDailyEvents(cluster) {
   const rand = seededInt(idSeedFor(cluster.cluster_id) + 1, 1_000_000);
   const weights = Array.from({ length: 14 }, () => 1 + (rand() % 5));
   const errorsByDay = spread(cluster.trace_count, weights);
-  const usersByDay = spread(Math.min(cluster.users_affected, cluster.trace_count), weights);
+  const usersByDay = spread(
+    Math.min(cluster.users_affected, cluster.trace_count),
+    weights,
+  );
   return errorsByDay.map((errors, i) => ({
     date: dayIso(13 - i),
     errors,
@@ -856,8 +923,16 @@ function mockDailyEvents(cluster) {
 function mockSidebar(cluster) {
   return {
     timeline: [
-      { at: cluster.first_seen, kind: "first_seen", detail: "First occurrence observed" },
-      { at: nowIso(60 * 24 * 3), kind: "review", detail: "Marked For review by @maya" },
+      {
+        at: cluster.first_seen,
+        kind: "first_seen",
+        detail: "First occurrence observed",
+      },
+      {
+        at: nowIso(60 * 24 * 3),
+        kind: "review",
+        detail: "Marked For review by @maya",
+      },
       { at: cluster.last_seen, kind: "last_seen", detail: "Latest occurrence" },
     ],
     ai_metadata: {
@@ -867,8 +942,18 @@ function mockSidebar(cluster) {
     evaluations: [
       /* The shape the rail reads — label, type, result, score. Task success
          carries the issue's own eval score, so it agrees with AI metadata. */
-      { label: "Task success", type: "llm_judge", result: cluster.eval_score >= 0.7 ? "passed" : "failed", score: cluster.eval_score },
-      { label: "Policy adherence", type: "llm_judge", result: "passed", score: 0.94 },
+      {
+        label: "Task success",
+        type: "llm_judge",
+        result: cluster.eval_score >= 0.7 ? "passed" : "failed",
+        score: cluster.eval_score,
+      },
+      {
+        label: "Policy adherence",
+        type: "llm_judge",
+        result: "passed",
+        score: 0.94,
+      },
     ],
     co_occurring: [],
   };
@@ -878,23 +963,60 @@ function mockSidebar(cluster) {
 function mockTrends(cluster) {
   const rand = seededInt(idSeedFor(cluster.cluster_id) + 2, 1_000_000);
   return {
-    metrics: [
-      { label: "Traces (14d)", value: cluster.trace_count, delta: 0.12 },
-      { label: "Users affected", value: cluster.users_affected, delta: 0.05 },
-      { label: "Avg eval score", value: cluster.eval_score, delta: -0.03 },
-      { label: "Latency p95", value: 2400 + (rand() % 800), delta: 0.08, suffix: " ms" },
-    ],
+    /* Same sample as the Traces tab, so p95 and scores agree across tabs. */
+    metrics: (() => {
+      const agg = tracesAggregates(mockTracesFor(cluster), cluster);
+      return [
+        {
+          label: "Traces (14d)",
+          value: cluster.trace_count,
+          display: cluster.trace_count.toLocaleString(),
+          delta: 0.12,
+          deltaText: "+12%",
+          icon: "solar:list-linear",
+        },
+        {
+          label: "Users affected",
+          value: cluster.users_affected,
+          display: cluster.users_affected.toLocaleString(),
+          delta: 0.05,
+          deltaText: "+5%",
+          icon: "solar:users-group-rounded-linear",
+        },
+        {
+          label: "Avg eval score",
+          value: cluster.eval_score,
+          display: cluster.eval_score.toFixed(2),
+          delta: -0.03,
+          deltaText: "−0.03",
+          icon: "solar:clipboard-check-linear",
+        },
+        {
+          label: "Latency p95",
+          value: agg.p95_latency,
+          display: `${(agg.p95_latency / 1000).toFixed(1)}s`,
+          delta: 0.08,
+          deltaText: "+8%",
+          icon: "solar:stopwatch-linear",
+        },
+      ];
+    })(),
     events_over_time: mockDailyEvents(cluster),
     /* The Trends tab's score cards: label, this period and the one before. */
     score_trends: [
-      { label: "Task success", current: 0.62, prev: 0.66 },
-      { label: "Policy adherence", current: 0.9, prev: 0.88 },
+      /* The rail's own numbers: Task success is the issue's eval score. */
+      {
+        label: "Task success",
+        current: cluster.eval_score,
+        prev: Math.min(1, cluster.eval_score + 0.04),
+      },
+      { label: "Policy adherence", current: 0.94, prev: 0.92 },
     ],
     activity_heatmap: Array.from({ length: 7 }, (_, day) =>
       Array.from({ length: 24 }, (_, hour) => ({
         day,
         hour,
-        value: (day * 24 + hour) % 5 === 0 ? 2 + (rand() % 4) : (rand() % 3),
+        value: (day * 24 + hour) % 5 === 0 ? 2 + (rand() % 4) : rand() % 3,
       })),
     ),
   };
@@ -912,14 +1034,17 @@ function mockComparisonsFor(cluster) {
   /* Comparisons hold at ~1/3 the failing volume in the mock — enough
      to feel like a real baseline without competing with the failing
      list for attention. */
-  const sampled = Math.min(Math.max(Math.round(cluster.trace_count / 3), 6), 14);
+  const sampled = Math.min(
+    Math.max(Math.round(cluster.trace_count / 3), 6),
+    14,
+  );
   const prompts = INPUT_PROMPTS[cluster.cluster_id] || [cluster.error.name];
 
   return Array.from({ length: sampled }, (_, i) => {
     const inputTokens = 380 + (rand() % 800);
     const outputTokens = 160 + (rand() % 620);
     const latencyMs = 900 + (rand() % 2600);
-    const cost = Math.round(((rand() % 130) + 15) / 1000 * 100) / 100;
+    const cost = Math.round((((rand() % 130) + 15) / 1000) * 100) / 100;
     const evalScore = 0.78 + (rand() % 20) / 100;
     const input = prompts[i % prompts.length];
 
@@ -945,10 +1070,22 @@ function mockComparisonsFor(cluster) {
         output: "Result matched the expected state — no drift.",
         fail_reel: [],
         pass_reel: [
-          { label: "Recognised the correction in the user's message", note: `User said: "${input}"` },
-          { label: "Merged the correction into working state", note: "Correction applied before the downstream tool call." },
-          { label: "Called the downstream tool with the corrected argument", note: "Argument matched the resolved state." },
-          { label: "Confirmed the correct result to the user", note: "Response reflected the state as merged." },
+          {
+            label: "Recognised the correction in the user's message",
+            note: `User said: "${input}"`,
+          },
+          {
+            label: "Merged the correction into working state",
+            note: "Correction applied before the downstream tool call.",
+          },
+          {
+            label: "Called the downstream tool with the corrected argument",
+            note: "Argument matched the resolved state.",
+          },
+          {
+            label: "Confirmed the correct result to the user",
+            note: "Response reflected the state as merged.",
+          },
         ],
       },
     };
@@ -978,23 +1115,31 @@ function filterAndPaginate(rows, params = {}) {
   let list = rows.slice();
   if (params.search) {
     const q = String(params.search).toLowerCase();
-    list = list.filter((r) => r.error.name.toLowerCase().includes(q) || r.cluster_id.toLowerCase().includes(q));
+    list = list.filter(
+      (r) =>
+        r.error.name.toLowerCase().includes(q) ||
+        r.cluster_id.toLowerCase().includes(q),
+    );
   }
-  if (params.severity) list = list.filter((r) => r.severity === params.severity);
+  if (params.severity)
+    list = list.filter((r) => r.severity === params.severity);
   if (params.status) list = list.filter((r) => r.status === params.status);
-  if (params.fix_layer) list = list.filter((r) => r.fix_layer === params.fix_layer);
+  if (params.fix_layer)
+    list = list.filter((r) => r.fix_layer === params.fix_layer);
   if (params.evidence_state)
     list = list.filter((r) => r.evidence_state === params.evidence_state);
 
   const sortKey = params.sort_by || "last_seen";
   const dir = params.sort_dir === "asc" ? 1 : -1;
   list.sort((a, b) => {
-    const av = sortKey === "last_seen" || sortKey === "first_seen"
-      ? new Date(a[sortKey]).getTime()
-      : (a[sortKey] ?? 0);
-    const bv = sortKey === "last_seen" || sortKey === "first_seen"
-      ? new Date(b[sortKey]).getTime()
-      : (b[sortKey] ?? 0);
+    const av =
+      sortKey === "last_seen" || sortKey === "first_seen"
+        ? new Date(a[sortKey]).getTime()
+        : a[sortKey] ?? 0;
+    const bv =
+      sortKey === "last_seen" || sortKey === "first_seen"
+        ? new Date(b[sortKey]).getTime()
+        : b[sortKey] ?? 0;
     return (av > bv ? 1 : av < bv ? -1 : 0) * dir;
   });
 
@@ -1014,9 +1159,27 @@ export function useErrorFeedList(params, options = {}) {
     const realHasRows = (real.data?.data?.length || 0) > 0;
     if (realHasRows) return real;
     const mock = filterAndPaginate(MOCK_CLUSTERS, params);
-    return { ...real, data: mock, isSuccess: true, isError: false, error: null };
+    return {
+      ...real,
+      data: mock,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [real, v, params?.search, params?.severity, params?.status, params?.fix_layer, params?.evidence_state, params?.sort_by, params?.sort_dir, params?.limit, params?.offset]);
+  }, [
+    real,
+    v,
+    params?.search,
+    params?.severity,
+    params?.status,
+    params?.fix_layer,
+    params?.evidence_state,
+    params?.sort_by,
+    params?.sort_dir,
+    params?.limit,
+    params?.offset,
+  ]);
   return merged;
 }
 
@@ -1031,18 +1194,24 @@ export function useErrorFeedStats(params, options = {}) {
       ...real,
       data: {
         total: MOCK_CLUSTERS.length,
-        escalating_count: MOCK_CLUSTERS.filter((r) => r.status === "escalating").length,
-        for_review_count: MOCK_CLUSTERS.filter((r) => r.status === "for_review").length,
-        acknowledged_count: MOCK_CLUSTERS.filter((r) => r.status === "acknowledged").length,
-        resolved_count: MOCK_CLUSTERS.filter((r) => r.status === "resolved").length,
-        ignored_count: MOCK_CLUSTERS.filter((r) => r.status === "ignored").length,
+        escalating_count: MOCK_CLUSTERS.filter((r) => r.status === "escalating")
+          .length,
+        for_review_count: MOCK_CLUSTERS.filter((r) => r.status === "for_review")
+          .length,
+        acknowledged_count: MOCK_CLUSTERS.filter(
+          (r) => r.status === "acknowledged",
+        ).length,
+        resolved_count: MOCK_CLUSTERS.filter((r) => r.status === "resolved")
+          .length,
+        ignored_count: MOCK_CLUSTERS.filter((r) => r.status === "ignored")
+          .length,
         users_affected: MOCK_CLUSTERS.reduce((s, r) => s + r.users_affected, 0),
       },
       isSuccess: true,
       isError: false,
       error: null,
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `v` re-reads the mutated demo issue
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `v` re-reads the mutated demo issue
   }, [real, v, params]);
   return merged;
 }
@@ -1055,13 +1224,16 @@ export function useErrorFeedStats(params, options = {}) {
 export function useErrorFeedDetail(clusterId, options = {}) {
   const mock = findMock(clusterId);
   const v = useMockVersion();
-  const real = realUseDetail(clusterId, mock ? { ...options, enabled: false } : options);
+  const real = realUseDetail(
+    clusterId,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     return {
       ...real,
       data: {
-        row: { ...mock },
+        row: { ...mock, suggested_fix: suggestedFixFor(mock) },
         description: `${mock.error.name}. This issue represents a recurring mechanism observed in production; opening it in a sandbox environment reproduces the failing occurrences and the successful comparisons side by side.`,
         success_trace: null,
         representative_trace: null,
@@ -1072,13 +1244,24 @@ export function useErrorFeedDetail(clusterId, options = {}) {
       isLoading: false,
       error: null,
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `v` re-reads the mutated demo issue
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `v` re-reads the mutated demo issue
   }, [real, mock, v]);
+}
+
+/** Conversations that broke a requirement without becoming an issue (for a project, or all). */
+export function useSilentBreaks(projectId) {
+  return useMemo(() => {
+    const rows = silentBreaksFor(MOCK_CLUSTERS);
+    return projectId ? rows.filter((r) => r.projectId === projectId) : rows;
+  }, [projectId]);
 }
 
 export function useErrorFeedOverview(clusterId, options = {}) {
   const mock = findMock(clusterId);
-  const real = realUseOverview(clusterId, mock ? { ...options, enabled: false } : options);
+  const real = realUseOverview(
+    clusterId,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     return {
@@ -1094,7 +1277,11 @@ export function useErrorFeedOverview(clusterId, options = {}) {
 
 export function useErrorFeedTraces(clusterId, params = {}, options = {}) {
   const mock = findMock(clusterId);
-  const real = realUseTraces(clusterId, params, mock ? { ...options, enabled: false } : options);
+  const real = realUseTraces(
+    clusterId,
+    params,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     const traces = mockTracesFor(mock);
@@ -1103,7 +1290,9 @@ export function useErrorFeedTraces(clusterId, params = {}, options = {}) {
       ...real,
       data: {
         traces,
-        total: traces.length,
+        /* All of the issue's traces; the table lists the latest sample. */
+        total: Math.max(mock.trace_count || 0, traces.length),
+        sampled: traces.length,
         /* The aggregate bar's shape: totals, averages, latency percentiles. */
         aggregates: tracesAggregates(traces, mock),
       },
@@ -1117,7 +1306,11 @@ export function useErrorFeedTraces(clusterId, params = {}, options = {}) {
 
 export function useErrorFeedTrends(clusterId, params = {}, options = {}) {
   const mock = findMock(clusterId);
-  const real = realUseTrends(clusterId, params, mock ? { ...options, enabled: false } : options);
+  const real = realUseTrends(
+    clusterId,
+    params,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     return {
@@ -1133,7 +1326,11 @@ export function useErrorFeedTrends(clusterId, params = {}, options = {}) {
 
 export function useErrorFeedSidebar(clusterId, traceId, options = {}) {
   const mock = findMock(clusterId);
-  const real = realUseSidebar(clusterId, traceId, mock ? { ...options, enabled: false } : options);
+  const real = realUseSidebar(
+    clusterId,
+    traceId,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     return {
@@ -1149,7 +1346,11 @@ export function useErrorFeedSidebar(clusterId, traceId, options = {}) {
 
 export function useErrorFeedDeepAnalysis(clusterId, traceId, options = {}) {
   const mock = findMock(clusterId);
-  const real = realUseDeepAnalysis(clusterId, traceId, mock ? { ...options, enabled: false } : options);
+  const real = realUseDeepAnalysis(
+    clusterId,
+    traceId,
+    mock ? { ...options, enabled: false } : options,
+  );
   return useMemo(() => {
     if (!mock) return real;
     return {

@@ -9,34 +9,60 @@
 import { DEFAULT_SECTIONS } from "../_mock/agentConstraints";
 import { issueMechanismOf } from "./issueFixModel";
 
-const headingsOf = (text) => (text || "").split("\n")
-  .map((l) => /^#{1,3}\s+(.+?)\s*$/.exec(l.trim())?.[1])
-  .filter(Boolean);
+const headingsOf = (text) =>
+  (text || "")
+    .split("\n")
+    .map((l) => /^#{1,3}\s+(.+?)\s*$/.exec(l.trim())?.[1])
+    .filter(Boolean);
 
 /* The prompt's own name for a section, else the default one. */
-const sectionNamed = (text, want) => headingsOf(text).find((h) => h.toLowerCase().includes(want.toLowerCase()))
-  || DEFAULT_SECTIONS.find((h) => h.toLowerCase().includes(want.toLowerCase())) || want;
+const sectionNamed = (text, want) =>
+  headingsOf(text).find((h) => h.toLowerCase().includes(want.toLowerCase())) ||
+  DEFAULT_SECTIONS.find((h) => h.toLowerCase().includes(want.toLowerCase())) ||
+  want;
 
 /* The first prompt line that matches, quoted as the agent has it. */
-const lineMatching = (text, re) => (text || "").split("\n")
-  .map((l) => l.trim().replace(/^[-*]\s+/, ""))
-  /* Instructions only — not the tool list the prompt carries. */
-  .find((l) => l && !l.startsWith("#") && !/\w\(\)/.test(l) && re.test(l)) || null;
+const lineMatching = (text, re) =>
+  (text || "")
+    .split("\n")
+    .map((l) => l.trim().replace(/^[-*]\s+/, ""))
+    /* Instructions only — not the tool list the prompt carries. */
+    .find((l) => l && !l.startsWith("#") && !/\w\(\)/.test(l) && re.test(l)) ||
+  null;
 
-export const codeDiagnosisOf = ({ issue, env, promptText = null, rootCause = null }) => {
+export const codeDiagnosisOf = ({
+  issue,
+  env,
+  promptText = null,
+  rootCause = null,
+}) => {
   if (!issue) return null;
+  /* The Error Feed's suggested fix is where the diagnosis starts; its
+     "wrong if" is the check the fix has to survive. */
+  const fromFeed = issue.suggested_fix?.change
+    ? {
+        suggested: issue.suggested_fix.change,
+        wrongIf: issue.suggested_fix.wrongIf || null,
+      }
+    : {};
   const m = issueMechanismOf(issue.cluster_id);
   const tools = env?.tools || [];
-  const symptom = rootCause?.headline || issue.why_shown || issue.error?.name || null;
+  const symptom =
+    rootCause?.headline || issue.why_shown || issue.error?.name || null;
   const said = `${symptom || ""} ${issue.error?.name || ""} ${rootCause?.fix || ""}`;
-  const skipped = m.missing ? (tools.find((t) => m.match?.test(t.name))?.name || m.missing) : null;
+  const skipped = m.missing
+    ? tools.find((t) => m.match?.test(t.name))?.name || m.missing
+    : null;
   /* The tool whose result the agent spoke past — named in the issue's own words. */
   const spokePast = tools.find((t) => said.includes(t.name))?.name || null;
 
   if (skipped) {
     const desc = tools.find((t) => t.name === skipped)?.desc || null;
     const section = sectionNamed(promptText, "Tool use");
-    const quote = lineMatching(promptText, new RegExp(skipped.replace(/_/g, "[ _]"), "i"));
+    const quote = lineMatching(
+      promptText,
+      new RegExp(skipped.replace(/_/g, "[ _]"), "i"),
+    );
     return {
       mechanism: "tool",
       where: [
@@ -46,19 +72,40 @@ export const codeDiagnosisOf = ({ issue, env, promptText = null, rootCause = nul
       cause: `Nothing makes the agent call ${skipped} before it answers. ${desc ? `Its description only says “${desc.replace(/\.$/, "")}”` : "Its description doesn't say when it applies"}, and the ${section} section ${quote ? "mentions it without making it a step" : "never names it"}, so the agent answers from what the caller said.`,
       change: `Make ${skipped} a required step: its description says when it applies, and the ${section} section says the agent waits for it before answering.`,
       symptom,
+      ...fromFeed,
+    };
+  }
+  /* No skipped tool to point at: the fix follows the issue's own failure
+     type, so "What to change" always agrees with the suggested fix. */
+  const sf = issue.suggested_fix;
+  if (sf?.cause && sf.section !== "Closing") {
+    const sec = sectionNamed(promptText, sf.section);
+    return {
+      mechanism: "rule",
+      where: [{ kind: "System prompt", ref: sec, quote: null }],
+      cause: sf.cause,
+      change: `In the ${sec} section: ${sf.change.charAt(0).toLowerCase()}${sf.change.slice(1)}`,
+      symptom,
+      ...fromFeed,
     };
   }
   const section = sectionNamed(promptText, "Closing");
-  const quote = lineMatching(promptText, /let the caller know|tell the caller|is on its way|confirm (it|that|the|what)|before (you )?(end|close)/i);
+  const quote = lineMatching(
+    promptText,
+    /let the caller know|tell the caller|is on its way|confirm (it|that|the|what)|before (you )?(end|close)/i,
+  );
   const tool = spokePast || "the tool";
   return {
     mechanism: "claim",
     where: [
       { kind: "System prompt", ref: section, quote },
-      ...(spokePast ? [{ kind: "Tool result", ref: spokePast, quote: null }] : []),
+      ...(spokePast
+        ? [{ kind: "Tool result", ref: spokePast, quote: null }]
+        : []),
     ],
     cause: `The agent confirms before it reads ${spokePast ? `${spokePast}'s result` : "the tool's result"}. The ${section} section ${quote ? "tells it to close with that confirmation" : "ends the call with a confirmation"} and has no branch for a call that failed, so a failed ${tool === "the tool" ? "call" : tool} is still reported as done.`,
     change: `In the ${section} section, confirm only after ${tool} returns success. On an error, say what failed and offer another way.`,
     symptom,
+    ...fromFeed,
   };
 };

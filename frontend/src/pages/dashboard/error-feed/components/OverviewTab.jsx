@@ -12,6 +12,7 @@ import {
   alpha,
   useTheme,
   Tab,
+  Tooltip,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -600,11 +601,15 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
           hour: "2-digit",
           minute: "2-digit",
         });
-        const tokens =
-          (t.summary.input_tokens ?? 0) + (t.summary.output_tokens ?? 0);
-        const cost = estimateTraceCost(
-          t.summary.input_tokens ?? 0,
-          t.summary.output_tokens ?? 0,
+        /* The trace's own cost when it has one — the number the Traces tab
+           and the evidence header show — else an estimate from its tokens. */
+        const cost = (
+          t.cost ??
+          t.summary?.cost ??
+          estimateTraceCost(
+            t.summary.input_tokens ?? 0,
+            t.summary.output_tokens ?? 0,
+          )
         ).toFixed(4);
 
         return (
@@ -651,8 +656,31 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
               {t.evidence?.input ?? "—"}
             </Typography>
 
-            {/* Bottom row: latency · cost · tokens */}
+            {/* Bottom row: outcome (and whether it recovered) · latency · cost; tokens are on the evidence header */}
             <Stack direction="row" alignItems="center" gap={1}>
+              {t.outcome && (
+                <Typography fontSize="12px" noWrap sx={{ flexShrink: 0 }}>
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 600,
+                      color: (OUTCOME[t.outcome] || OUTCOME.unclear).color,
+                    }}
+                  >
+                    {(OUTCOME[t.outcome] || OUTCOME.unclear).label}
+                  </Box>
+                  {t.recovered === false && (
+                    <Box component="span" sx={{ color: "text.tertiary" }}>
+                      {" · not recovered"}
+                    </Box>
+                  )}
+                  {t.recovered === true && (
+                    <Box component="span" sx={{ color: "text.tertiary" }}>
+                      {" · recovered"}
+                    </Box>
+                  )}
+                </Typography>
+              )}
               <Stack direction="row" alignItems="center" gap={0.3}>
                 <Iconify
                   icon="solar:clock-circle-linear"
@@ -671,16 +699,6 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                 />
                 <Typography fontSize="12px" color="text.disabled">
                   ${cost}
-                </Typography>
-              </Stack>
-              <Stack direction="row" alignItems="center" gap={0.3}>
-                <Iconify
-                  icon="solar:notes-linear"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-                <Typography fontSize="12px" color="text.disabled">
-                  {tokens.toLocaleString()} tok
                 </Typography>
               </Stack>
             </Stack>
@@ -1250,7 +1268,7 @@ function roleColor(isFailure) {
   return isFailure ? "status.danger.fg" : "text.tertiary";
 }
 
-function ReelStep({ step, isFailReel, isLast }) {
+function ReelStep({ step, isFailReel, isLast, index }) {
   const [showRaw, setShowRaw] = useState(false);
 
   const status = step.status;
@@ -1260,7 +1278,13 @@ function ReelStep({ step, isFailReel, isLast }) {
     : status === "pass" || status === "ok"
       ? PASS_COLOR
       : "text.disabled";
-  const raw = step.rawJson || step.raw;
+  /* The step's own data: what the analyzer saved, else its input and output. */
+  const raw =
+    step.rawJson ||
+    step.raw ||
+    (step.wentIn || step.cameOut
+      ? { input: step.wentIn ?? null, output: step.cameOut ?? null }
+      : null);
   const note = step.note;
   const rColor = roleColor(isFailure);
 
@@ -1305,7 +1329,10 @@ function ReelStep({ step, isFailReel, isLast }) {
   );
 
   return (
-    <Box sx={{ position: "relative", mb: isLast ? 0 : 1.25 }}>
+    <Box
+      data-reel-step={index}
+      sx={{ position: "relative", mb: isLast ? 0 : 1.25, scrollMarginTop: 80 }}
+    >
       {/* Timeline dot — ! badge for the failure moment, else status dot. */}
       {isFailure ? (
         <Box
@@ -1369,54 +1396,139 @@ function ReelStep({ step, isFailReel, isLast }) {
               <RichText text={note} isFailReel={isFailReel} />
             </Typography>
           )}
+          <StepIO step={step} />
+          {raw && (
+            <StepOpen
+              raw={raw}
+              open={showRaw}
+              onToggle={() => setShowRaw((v) => !v)}
+            />
+          )}
         </Box>
       ) : (
         <>
           {header}
+          <StepIO step={step} />
           {raw && (
-            <Box
-              {...clickable(() => setShowRaw((v) => !v), { expanded: showRaw })}
-              sx={{
-                ...focusRing,
-                fontSize: "12px",
-                color: "text.disabled",
-                mt: 0.4,
-                cursor: "pointer",
-                userSelect: "none",
-                "&:hover": { color: "text.secondary" },
-              }}
-            >
-              {showRaw ? "− raw JSON" : "+ raw JSON ▾"}
-            </Box>
-          )}
-          {raw && showRaw && (
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                mt: 0.5,
-                p: 1,
-                borderRadius: "6px",
-                bgcolor: "action.hover",
-                fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "12px",
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                color: "text.secondary",
-                maxHeight: 200,
-                overflow: "auto",
-              }}
-            >
-              {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
-            </Box>
+            <StepOpen
+              raw={raw}
+              open={showRaw}
+              onToggle={() => setShowRaw((v) => !v)}
+            />
           )}
         </>
       )}
     </Box>
   );
 }
+/* What went into the step and what came out — one line each, the full value on hover. */
+function StepIO({ step }) {
+  if (!step.wentIn && !step.cameOut) return null;
+  const row = (label, value) =>
+    value ? (
+      <>
+        <Typography
+          fontSize="12px"
+          color="text.disabled"
+          sx={{ lineHeight: "20px" }}
+        >
+          {label}
+        </Typography>
+        <Tooltip title={value} arrow placement="top-start">
+          <Box
+            component="code"
+            sx={{
+              minWidth: 0,
+              justifySelf: "start",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              px: 0.75,
+              borderRadius: "4px",
+              bgcolor: "action.hover",
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              fontSize: "12px",
+              lineHeight: "20px",
+              color: "text.primary",
+            }}
+          >
+            {value}
+          </Box>
+        </Tooltip>
+      </>
+    ) : null;
+  return (
+    <Box
+      sx={{
+        mt: 0.6,
+        display: "grid",
+        gridTemplateColumns: "auto minmax(0, 1fr)",
+        columnGap: 1,
+        rowGap: 0.25,
+        alignItems: "center",
+      }}
+    >
+      {row("Went in", step.wentIn)}
+      {row("Came out", step.cameOut)}
+    </Box>
+  );
+}
+StepIO.propTypes = { step: PropTypes.object.isRequired };
+
+/* "Open this step": the step's full data, in place. */
+function StepOpen({ raw, open, onToggle }) {
+  return (
+    <>
+      <Box
+        {...clickable(onToggle, { expanded: open })}
+        sx={{
+          ...focusRing,
+          display: "inline-block",
+          fontSize: "12px",
+          fontWeight: 500,
+          color: "text.secondary",
+          mt: 0.5,
+          cursor: "pointer",
+          userSelect: "none",
+          "&:hover": { color: "text.primary", textDecoration: "underline" },
+        }}
+      >
+        {open ? "Hide step" : "Open this step"}
+      </Box>
+      {open && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            p: 1,
+            borderRadius: "6px",
+            bgcolor: "action.hover",
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            fontSize: "12px",
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            color: "text.secondary",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
+        </Box>
+      )}
+    </>
+  );
+}
+StepOpen.propTypes = {
+  raw: PropTypes.oneOfType([PropTypes.string, PropTypes.object]).isRequired,
+  open: PropTypes.bool,
+  onToggle: PropTypes.func.isRequired,
+};
+
 ReelStep.propTypes = {
+  index: PropTypes.number,
   step: PropTypes.object.isRequired,
   isFailReel: PropTypes.bool,
   isLast: PropTypes.bool,
@@ -1452,6 +1564,7 @@ function BreadcrumbList({ steps, isFailReel }) {
         {steps.map((step, i) => (
           <ReelStep
             key={i}
+            index={i}
             step={step}
             isFailReel={isFailReel}
             isLast={i === steps.length - 1}
@@ -1635,6 +1748,191 @@ ReelTabs.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
 };
+
+/* ── This conversation: outcome, recovered, failure type, and its checklist ── */
+const OUTCOME = {
+  succeeded: { label: "Succeeded", color: "status.success.fg" },
+  failed: { label: "Failed", color: "status.danger.fg" },
+  unclear: { label: "Unclear", color: "text.secondary" },
+};
+const CHECK = {
+  met: {
+    icon: "solar:check-circle-linear",
+    color: "status.success.fg",
+    label: "Met",
+  },
+  broken: {
+    icon: "solar:close-circle-linear",
+    color: "status.danger.fg",
+    label: "Broken",
+  },
+  unclear: {
+    icon: "solar:question-circle-linear",
+    color: "text.tertiary",
+    label: "Unclear",
+  },
+};
+const goToStep = (i) => {
+  const el = document.querySelector(`[data-reel-step="${i}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.animate?.([{ opacity: 0.4 }, { opacity: 1 }], { duration: 600 });
+};
+
+function ConversationFindings({ trace }) {
+  const [all, setAll] = useState(false);
+  const list = trace?.checklist || [];
+  if (!trace?.outcome && !list.length) return null;
+  const n = (k) => list.filter((c) => c.status === k).length;
+  const open = list.filter((c) => c.status !== "met");
+  const shown = all ? list : open;
+  const o = OUTCOME[trace.outcome] || OUTCOME.unclear;
+  const labels = [
+    trace.recovered == null
+      ? null
+      : trace.recovered
+        ? "Recovered"
+        : "Not recovered",
+    trace.failure_type,
+  ].filter(Boolean);
+  return (
+    <Box
+      sx={{
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      {/* Outcome · recovered · failure type, then the checklist's tally. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={1}
+        sx={{
+          px: 1.75,
+          py: 1,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          minWidth: 0,
+        }}
+      >
+        <Typography
+          fontSize="12px"
+          fontWeight={600}
+          color="text.secondary"
+          noWrap
+        >
+          This conversation
+        </Typography>
+        <Typography fontSize="12px" noWrap sx={{ minWidth: 0 }}>
+          <Box component="span" sx={{ color: o.color, fontWeight: 600 }}>
+            {o.label}
+          </Box>
+          {labels.length > 0 && (
+            <Box component="span" sx={{ color: "text.secondary" }}>
+              {` · ${labels.join(" · ")}`}
+            </Box>
+          )}
+        </Typography>
+        <Box sx={{ flex: 1 }} />
+        {list.length > 0 && (
+          <Typography
+            fontSize="12px"
+            color="text.tertiary"
+            noWrap
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {`${n("met")} of ${list.length} met`}
+            {n("broken") ? ` · ${n("broken")} broken` : ""}
+            {n("unclear") ? ` · ${n("unclear")} unclear` : ""}
+          </Typography>
+        )}
+      </Stack>
+      {/* What it was supposed to do — the open items first; the met ones fold away. */}
+      {shown.length > 0 && (
+        <Stack sx={{ px: 1.75, py: 0.75 }} gap={0.25}>
+          {shown.map((c, i) => {
+            const k = CHECK[c.status] || CHECK.unclear;
+            return (
+              <Stack
+                key={i}
+                direction="row"
+                alignItems="center"
+                gap={1}
+                sx={{ minHeight: 26, minWidth: 0 }}
+              >
+                <Tooltip title={k.label} arrow>
+                  <Box
+                    component="span"
+                    sx={{ display: "inline-flex", flexShrink: 0 }}
+                  >
+                    <Iconify icon={k.icon} width={16} sx={{ color: k.color }} />
+                  </Box>
+                </Tooltip>
+                <Typography
+                  fontSize="13px"
+                  color="text.primary"
+                  noWrap
+                  sx={{ minWidth: 0 }}
+                >
+                  {c.text}
+                  {c.note && (
+                    <Box component="span" sx={{ color: "text.tertiary" }}>
+                      {` (${c.note})`}
+                    </Box>
+                  )}
+                </Typography>
+                {c.status === "broken" && c.proofStep != null && (
+                  <Box
+                    {...clickable(() => goToStep(c.proofStep), {
+                      role: "link",
+                    })}
+                    sx={{
+                      ...focusRing,
+                      flexShrink: 0,
+                      fontSize: "12px",
+                      fontWeight: 500,
+                      color: "text.secondary",
+                      cursor: "pointer",
+                      "&:hover": {
+                        color: "text.primary",
+                        textDecoration: "underline",
+                      },
+                    }}
+                  >
+                    See proof
+                  </Box>
+                )}
+              </Stack>
+            );
+          })}
+        </Stack>
+      )}
+      {n("met") > 0 && (
+        <Box
+          {...clickable(() => setAll((v) => !v), { expanded: all })}
+          sx={{
+            ...focusRing,
+            px: 1.75,
+            pb: 1,
+            pt: shown.length ? 0 : 1,
+            fontSize: "12px",
+            fontWeight: 500,
+            color: "text.secondary",
+            cursor: "pointer",
+            "&:hover": { color: "text.primary" },
+          }}
+        >
+          {all
+            ? "Show only what's open"
+            : `Show all ${list.length} requirements`}
+        </Box>
+      )}
+    </Box>
+  );
+}
+ConversationFindings.propTypes = { trace: PropTypes.object };
 
 function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const [viewMode, setViewMode] = useState("breadcrumb");
@@ -2637,6 +2935,7 @@ export default function OverviewTab({ _error: currentError }) {
             </Stack>
           ) : (
             <Stack gap={1.5} sx={{ p: 1.75 }}>
+              <ConversationFindings trace={trace} />
               {currentError?.source === "eval" ? (
                 <SectionCard
                   title={isVoice ? "Voice call" : "Input / Output"}

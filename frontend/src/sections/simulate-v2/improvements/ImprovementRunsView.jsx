@@ -10,9 +10,11 @@ import {
   Stack,
   Tab,
   Tabs,
+  IconButton,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { mockCluster } from "src/api/errorFeed/mockAdapter";
 import { alpha } from "@mui/material/styles";
 import { neutralCheckboxSx } from "../components/primitives";
 import { textTone } from "../components/textTone";
@@ -415,18 +417,24 @@ export default function ImprovementRunsView({
       }}
     >
       <Box sx={{ mb: 2, flexShrink: 0 }}>
-        <Button
-          size="small"
-          onClick={onBack}
-          startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-          sx={{ color: "text.secondary", ml: -0.75, mb: 0.75, minWidth: 0 }}
-        >
-          {`Back to ${backLabel}`}
-        </Button>
+        {/* Two lines: back · name · status, then versions · where · the issue it fixes. */}
         <Stack direction="row" alignItems="center" spacing={1.5}>
           <Box flex={1} minWidth={0}>
             <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
+              <Tooltip arrow title={`Back to ${backLabel}`}>
+                <IconButton
+                  size="small"
+                  aria-label={`Back to ${backLabel}`}
+                  onClick={onBack}
+                  sx={{ color: "text.secondary", ml: -0.5 }}
+                >
+                  <Iconify icon="solar:arrow-left-linear" width={16} />
+                </IconButton>
+              </Tooltip>
+              <Typography
+                noWrap
+                sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
+              >
                 {row?.name || record.name}
               </Typography>
               {running ? (
@@ -450,7 +458,7 @@ export default function ImprovementRunsView({
                 sx={{
                   typography: "s2",
                   color: "text.subtitle",
-                  mt: 0.25,
+                  pl: 4.5,
                   width: "fit-content",
                   maxWidth: "100%",
                 }}
@@ -458,7 +466,10 @@ export default function ImprovementRunsView({
                 {[
                   row?.identity,
                   env.name,
-                  record.trigger?.issueId || row?.trigger?.label,
+                  /* The issue it fixes, by name — not just its ID. */
+                  record.trigger?.issueId
+                    ? `${record.trigger.issueId} ${mockCluster(record.trigger.issueId)?.error?.name || ""}`.trim()
+                    : row?.trigger?.label,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

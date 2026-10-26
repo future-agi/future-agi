@@ -26,8 +26,19 @@ export default function IssueProjectLine({ issue }) {
         width={14}
         sx={{ color: "text.disabled", flexShrink: 0 }}
       />
-      <Tooltip title="The Observe project these traces land in" arrow>
-        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+      <Tooltip
+        title={`${link.name} — the Observe project these traces land in`}
+        arrow
+      >
+        <Typography
+          noWrap
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            minWidth: 56,
+            flexShrink: 1,
+          }}
+        >
           {link.name}
         </Typography>
       </Tooltip>
@@ -52,6 +63,10 @@ export default function IssueProjectLine({ issue }) {
             typography: "s2",
             fontWeight: 600,
             color: "text.primary",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
             ...(link.agent && {
               cursor: "pointer",
               "&:hover": { textDecoration: "underline" },
@@ -59,7 +74,9 @@ export default function IssueProjectLine({ issue }) {
             }),
           }}
         >
-          {link.agent?.name || "Agent"}
+          <Tooltip title={link.agent?.name || "Agent"} arrow>
+            <span>{link.agent?.name || "Agent"}</span>
+          </Tooltip>
         </Box>
       ) : (
         <Typography noWrap sx={{ typography: "s2", color: "text.disabled" }}>

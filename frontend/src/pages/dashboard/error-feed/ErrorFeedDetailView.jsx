@@ -1,11 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Chip,
   IconButton,
-  Menu,
-  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -21,30 +18,24 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import Iconify from "src/components/iconify";
-import {
-  useErrorFeedDetail,
-  useUpdateErrorFeedIssue,
-} from "src/api/errorFeed/mockAdapter";
-import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
+import { useErrorFeedDetail } from "src/api/errorFeed/mockAdapter";
 import ErrorMetadataPanel, {
   LinearTeamPicker,
 } from "./components/ErrorMetadataPanel";
 import OverviewTab from "./components/OverviewTab";
+import SuggestedFixCard from "./components/SuggestedFixCard";
 import TracesTab from "./components/TracesTab";
 import TrendsTab from "./components/TrendsTab";
 import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
 import AnalyzeTab from "./components/AnalyzeTab";
 import { useErrorFeedStore } from "./store";
 import FixPage from "src/sections/simulate-v2/errorFeed/FixPage";
-import IssueStatusChip from "./components/IssueStatusChip";
-import ErrorStatusChip from "./components/ErrorStatusChip";
 import useIssueRootCause from "./useIssueRootCause";
 import ReopenedBanner from "src/sections/simulate-v2/errorFeed/ReopenedBanner";
 import RegressionMemoryRow from "src/sections/simulate-v2/errorFeed/RegressionMemoryRow";
 import FixButton from "src/sections/simulate-v2/errorFeed/FixButton";
 import IssueProjectLine from "src/sections/simulate-v2/errorFeed/IssueProjectLine";
 import { useIssueFix } from "src/sections/simulate-v2/errorFeed/issueFix";
-import { triageFixEffect } from "src/sections/simulate-v2/errorFeed/issueFixModel";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
 import IssueBriefButton from "./IssueBriefButton";
 
@@ -104,15 +95,6 @@ const errorTypeLabel = (type) => {
     .toLowerCase();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
 };
-/* "2h ago" — the same short form the list uses. */
-const agoLabel = (iso) => {
-  const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
-  if (!Number.isFinite(m)) return "";
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
-};
 
 export default function ErrorFeedDetailView() {
   const { id } = useParams();
@@ -123,10 +105,8 @@ export default function ErrorFeedDetailView() {
     (s) => s.setAnalyzePendingStart,
   );
   const { data: detail, isLoading } = useErrorFeedDetail(id);
-  const updateIssue = useUpdateErrorFeedIssue();
   const fixSheetOpen = useErrorFeedStore((s) => s.fixSheetOpen);
   const setFixSheetOpen = useErrorFeedStore((s) => s.setFixSheetOpen);
-  const [triageAnchor, setTriageAnchor] = useState(null);
   const copyText = (text, msg) => {
     navigator.clipboard
       ?.writeText(text)
@@ -174,11 +154,7 @@ export default function ErrorFeedDetailView() {
 
   useAnalyzeRunner(currentError?.cluster_id, currentError);
   /* Fix needs to know which agent the issue came from. */
-  const {
-    agent: fixAgent,
-    status: fixStatus,
-    setReopened,
-  } = useIssueFix(currentError);
+  const { agent: fixAgent, status: fixStatus } = useIssueFix(currentError);
   /* Fix and Copy for coding agent carry the same root cause. */
   const rootCause = useIssueRootCause(currentError);
   /* Triage is the issue's own; the fix's status shows beside it, never in
@@ -231,105 +207,90 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          {/* Breadcrumb · the issue's ID, and the two utilities */}
-          <Stack direction="row" alignItems="center" gap={0.5} mb={0.75}>
-            <Button
-              size="small"
-              variant="text"
-              startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-              onClick={() => navigate("/dashboard/error-feed")}
-              sx={{
-                color: "text.secondary",
-                minWidth: 0,
-                "&:hover": { color: "text.primary", bgcolor: "action.hover" },
-              }}
-            >
-              Error Feed
-            </Button>
-            <Iconify
-              icon="solar:alt-arrow-right-linear"
-              width={14}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography
-              sx={{
-                fontSize: "12px",
-                color: "text.secondary",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-              }}
-            >
-              {currentError.cluster_id}
-            </Typography>
-            <Box flex={1} />
-            <Tooltip title="Copy issue ID" arrow>
-              <IconButton
-                size="small"
-                onClick={() =>
-                  copyText(currentError.cluster_id, "Issue ID copied")
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="solar:copy-linear" width={14} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Copy link" arrow>
-              <IconButton
-                size="small"
-                onClick={() => copyText(window.location.href, "Link copied")}
-                sx={{ color: "text.secondary" }}
-              >
-                <Iconify icon="solar:link-linear" width={16} />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-
-          {/* Title, and the three actions: triage, hand off, fix */}
-          <Stack
-            direction="row"
-            alignItems="flex-start"
-            justifyContent="space-between"
-            gap={2}
-          >
-            <Stack gap={0.75} flex={1} minWidth={0}>
-              <Typography
-                typography="m3"
-                fontWeight="fontWeightSemiBold"
-                color="text.primary"
-                sx={{ lineHeight: 1.35 }}
-              >
-                {currentError.error.name}
-              </Typography>
-              {/* status · severity · what kind · how big · how recent */}
+          {/* Two lines: back · title, then ID · what kind · where. Status, fix,
+              severity, counts and times live in the right rail, so they
+              aren't repeated here.
+              The breadcrumb is the back arrow; the ID copies on click. */}
+          <Stack direction="row" alignItems="center" gap={2}>
+            <Stack gap={0.25} flex={1} minWidth={0}>
+              <Stack direction="row" alignItems="center" gap={1} minWidth={0}>
+                <Tooltip title="Back to Error Feed" arrow>
+                  <IconButton
+                    size="small"
+                    aria-label="Back to Error Feed"
+                    onClick={() => navigate("/dashboard/error-feed")}
+                    sx={{ color: "text.secondary", ml: -0.5 }}
+                  >
+                    <Iconify icon="solar:arrow-left-linear" width={16} />
+                  </IconButton>
+                </Tooltip>
+                <Typography
+                  noWrap
+                  sx={{
+                    fontSize: 16,
+                    lineHeight: "24px",
+                    fontWeight: 600,
+                    color: "text.primary",
+                    minWidth: 0,
+                  }}
+                >
+                  {currentError.error.name}
+                </Typography>
+              </Stack>
               <Stack
                 direction="row"
                 alignItems="center"
-                gap={1}
-                flexWrap="wrap"
+                gap={0.75}
+                minWidth={0}
+                sx={{ pl: 4, overflow: "hidden" }}
               >
-                {/* The issue's own status, then its fix's (RSI PRD fix-status chip). */}
-                <ErrorStatusChip status={currentError.status} />
-                <IssueStatusChip issue={currentError} />
-                <ErrorSeverityBadge severity={currentError.severity} />
+                <Tooltip title="Copy issue ID" arrow>
+                  <Typography
+                    component="button"
+                    onClick={() =>
+                      copyText(currentError.cluster_id, "Issue ID copied")
+                    }
+                    sx={{
+                      flexShrink: 0,
+                      p: 0,
+                      border: 0,
+                      bgcolor: "transparent",
+                      cursor: "pointer",
+                      typography: "s2",
+                      color: "text.secondary",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      "&:hover": { color: "text.primary" },
+                    }}
+                  >
+                    {currentError.cluster_id}
+                  </Typography>
+                </Tooltip>
                 <Typography
                   typography="s2"
-                  color="text.secondary"
-                  sx={{ ml: 0.5 }}
+                  color="text.tertiary"
+                  noWrap
+                  sx={{ flexShrink: 0 }}
                 >
-                  {[
-                    errorTypeLabel(currentError.error.type),
-                    currentError.trace_count != null &&
-                      `${currentError.trace_count.toLocaleString()} traces`,
-                    currentError.users_affected != null &&
-                      `${currentError.users_affected.toLocaleString()} users`,
-                    currentError.last_seen &&
-                      `last seen ${agoLabel(currentError.last_seen)}`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {`· ${errorTypeLabel(currentError.error.type)} ·`}
                 </Typography>
+                {/* The Observe project it comes from, and the agent that project traces. */}
+                <Box
+                  sx={{
+                    minWidth: 0,
+                    flexShrink: 3,
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    "& .MuiTypography-root": {
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    },
+                  }}
+                >
+                  <IssueProjectLine issue={currentError} />
+                </Box>
               </Stack>
-              {/* The Observe project it comes from, and the agent that project traces. */}
-              <IssueProjectLine issue={currentError} />
             </Stack>
 
             <Stack
@@ -338,89 +299,17 @@ export default function ErrorFeedDetailView() {
               gap={0.75}
               flexShrink={0}
             >
-              {/* Triage — Resolve, Acknowledge, Ignore — in one menu; the
-                  right rail's Status says the same thing at a glance. */}
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={(e) => setTriageAnchor(e.currentTarget)}
-                endIcon={
-                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
-                }
-                disabled={updateIssue.isPending}
-                sx={{ borderColor: "divider", color: "text.primary" }}
-              >
-                Triage
-              </Button>
-              <Menu
-                anchorEl={triageAnchor}
-                open={!!triageAnchor}
-                onClose={() => setTriageAnchor(null)}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                transformOrigin={{ vertical: "top", horizontal: "right" }}
-                slotProps={{ paper: { sx: { width: 320, mt: 0.5 } } }}
-              >
-                {[
-                  {
-                    key: "acknowledged",
-                    icon: "solar:check-circle-linear",
-                    label: "Acknowledge",
-                    note: "",
-                    disabled: currentError?.status === "acknowledged",
-                  },
-                  {
-                    key: "for_review",
-                    icon: "solar:eye-linear",
-                    label: "Mark for review",
-                    note: "",
-                    disabled: currentError?.status === "for_review",
-                  },
-                  {
-                    key: "resolved",
-                    icon: "solar:check-linear",
-                    label: "Resolve",
-                    note: triageFixEffect(fixStatus, "resolved")?.note || "",
-                    disabled: currentError?.status === "resolved",
-                  },
-                ].map((t) => (
-                  <MenuItem
-                    key={t.key}
-                    disabled={t.disabled}
-                    onClick={() => {
-                      setTriageAnchor(null);
-                      updateIssue.mutate({
-                        clusterId: currentError.cluster_id,
-                        status: t.key,
-                      });
-                      const effect = triageFixEffect(fixStatus, t.key);
-                      if (effect) setReopened(effect.reopen);
-                    }}
-                    sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
-                  >
-                    <Iconify
-                      icon={t.icon}
-                      width={16}
-                      sx={{ mt: "2px", color: "text.secondary", flexShrink: 0 }}
-                    />
-                    <Box minWidth={0}>
-                      <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>
-                        {t.label}
-                      </Typography>
-                      {t.note && (
-                        <Typography
-                          sx={{
-                            fontSize: "12px",
-                            color: "text.secondary",
-                            whiteSpace: "normal",
-                          }}
-                        >
-                          {t.note}
-                        </Typography>
-                      )}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Menu>
+              <Tooltip title="Copy link" arrow>
+                <IconButton
+                  size="small"
+                  aria-label="Copy link"
+                  onClick={() => copyText(window.location.href, "Link copied")}
+                  sx={{ color: "text.secondary" }}
+                >
+                  <Iconify icon="solar:link-linear" width={16} />
+                </IconButton>
+              </Tooltip>
+              {/* Status is set in the right rail — one place, not two. */}
               {/* Hand the issue to a coding agent instead. */}
               <IssueBriefButton
                 issue={currentError}
@@ -508,6 +397,14 @@ export default function ErrorFeedDetailView() {
                       }}
                       onCreateLinear={() => setLinearPickerOpen(true)}
                     />
+                    {currentError?.suggested_fix && (
+                      <Box sx={{ mt: 1.5 }}>
+                        <SuggestedFixCard
+                          fix={currentError.suggested_fix}
+                          status={fixStatus}
+                        />
+                      </Box>
+                    )}
                   </Box>
                 )}
                 {activeTabKey === "overview" && (

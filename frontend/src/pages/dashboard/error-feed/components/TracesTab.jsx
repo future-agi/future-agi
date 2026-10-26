@@ -155,6 +155,40 @@ function TracesGrid({ rows, onRowClick }) {
         cellStyle: { fontSize: "12px" },
       },
       {
+        /* How the conversation came out, and whether the agent recovered. */
+        headerName: "Outcome",
+        field: "outcome",
+        width: 190,
+        sortable: true,
+        cellRenderer: ({ data }) => {
+          if (!data?.outcome) return "—";
+          const color =
+            data.outcome === "failed"
+              ? "status.danger.fg"
+              : data.outcome === "succeeded"
+                ? "status.success.fg"
+                : "text.secondary";
+          const word =
+            data.outcome.charAt(0).toUpperCase() + data.outcome.slice(1);
+          const rec =
+            data.recovered === false
+              ? " · not recovered"
+              : data.recovered
+                ? " · recovered"
+                : "";
+          return (
+            <Box component="span" sx={{ fontSize: 12 }}>
+              <Box component="span" sx={{ color, fontWeight: 600 }}>
+                {word}
+              </Box>
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                {rec}
+              </Box>
+            </Box>
+          );
+        },
+      },
+      {
         headerName: "Start Time",
         field: "timestamp",
         width: 100,
@@ -321,7 +355,9 @@ export default function TracesTab({ error }) {
         <Typography fontSize="12px" color="text.disabled" mt={1}>
           {isLoading
             ? "Loading traces…"
-            : `Showing ${rows.length} of ${total.toLocaleString()} total traces in this issue`}
+            : rows.length < total
+              ? `Showing the latest ${rows.length} of ${total.toLocaleString()} traces in this issue`
+              : `Showing all ${total.toLocaleString()} traces in this issue`}
         </Typography>
       </Box>
 

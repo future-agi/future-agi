@@ -5,6 +5,7 @@ import PageHeader from "src/components/page-header";
 import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
+import SilentBreaks from "./components/SilentBreaks";
 import { useErrorFeedApiParams } from "./store";
 
 export default function ErrorFeedView() {
@@ -105,6 +106,9 @@ export default function ErrorFeedView() {
           selected={selected}
           onClearSelection={handleClearSelection}
         />
+
+        {/* Requirements broken outside any issue — they'd look clean otherwise. */}
+        <SilentBreaks projectId={apiParams?.project_id} />
 
         {/* Table */}
         <ErrorFeedTable

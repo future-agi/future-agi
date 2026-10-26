@@ -1507,64 +1507,66 @@ export default function AnalyzeTab({ error }) {
         py: 0.5,
       }}
     >
-      {/* Context strip */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={1}
-        sx={{
-          px: 1.5,
-          py: 1,
-          borderRadius: "8px",
-          border: "1px solid",
-          borderColor: "divider",
-          bgcolor: "action.hover",
-          flexShrink: 0,
-        }}
-      >
-        <Iconify
-          icon="solar:layers-linear"
-          width={14}
-          sx={{ color: "text.disabled" }}
-        />
-        <Typography
-          fontSize="12px"
-          fontWeight={600}
-          color="text.primary"
-          noWrap
+      {/* Context strip — only once there's an analysis to re-run. */}
+      {messages.length > 0 && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={1}
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "action.hover",
+            flexShrink: 0,
+          }}
         >
-          {error?.error?.name ?? "Issue"}
-        </Typography>
-        <Typography fontSize="12px" color="text.disabled">
-          · {error?.trace_count?.toLocaleString() ?? "—"} traces
-        </Typography>
-        {startedLabel && (
-          <Typography fontSize="12px" color="text.disabled">
-            · started {startedLabel}
+          <Iconify
+            icon="solar:layers-linear"
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
+          <Typography
+            fontSize="12px"
+            fontWeight={600}
+            color="text.primary"
+            noWrap
+          >
+            {error?.error?.name ?? "Issue"}
           </Typography>
-        )}
-        <Box sx={{ flex: 1 }} />
-        <Tooltip
-          title="Find root cause again with the current traces (1 credit)"
-          arrow
-        >
-          <span>
-            <Button
-              size="small"
-              variant="text"
-              disabled={isStreaming}
-              onClick={onTriggerRun}
-              startIcon={<Iconify icon="solar:refresh-linear" width={12} />}
-              sx={{
-                color: "text.secondary",
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Re-run
-            </Button>
-          </span>
-        </Tooltip>
-      </Stack>
+          <Typography fontSize="12px" color="text.disabled">
+            · {error?.trace_count?.toLocaleString() ?? "—"} traces
+          </Typography>
+          {startedLabel && (
+            <Typography fontSize="12px" color="text.disabled">
+              · started {startedLabel}
+            </Typography>
+          )}
+          <Box sx={{ flex: 1 }} />
+          <Tooltip
+            title="Find root cause again with the current traces (1 credit)"
+            arrow
+          >
+            <span>
+              <Button
+                size="small"
+                variant="text"
+                disabled={isStreaming}
+                onClick={onTriggerRun}
+                startIcon={<Iconify icon="solar:refresh-linear" width={12} />}
+                sx={{
+                  color: "text.secondary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Re-run
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+      )}
 
       {/* Scrollable message stream */}
       <Box
@@ -1611,16 +1613,17 @@ export default function AnalyzeTab({ error }) {
                 />
               </Box>
               <Typography fontSize="13px" fontWeight={600} color="text.primary">
-                No root cause yet
+                {error?.suggested_fix?.cause
+                  ? "Likely cause"
+                  : "No root cause yet"}
               </Typography>
               <Typography
                 fontSize="12px"
                 color="text.secondary"
                 sx={{ lineHeight: 1.55 }}
               >
-                Find the root cause of this issue. Sub-agents will sample
-                representative calls, compare against a passing baseline, and
-                synthesise the result here.
+                {error?.suggested_fix?.cause ||
+                  "Sample calls, compare them with passing ones, and explain why it happens."}
               </Typography>
               <Button
                 size="small"
@@ -1631,7 +1634,9 @@ export default function AnalyzeTab({ error }) {
                 onClick={onTriggerRun}
                 sx={{ mt: 0.5 }}
               >
-                Find root cause
+                {error?.suggested_fix?.cause
+                  ? "Explain in depth"
+                  : "Find root cause"}
               </Button>
             </Stack>
           ) : messages.length === 0 && isStreaming ? (

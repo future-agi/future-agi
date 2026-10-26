@@ -12,6 +12,8 @@ import {
   Stack,
   Switch,
   Typography,
+  Tooltip,
+  IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -343,8 +345,10 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
   const meta = [
     issue?.cluster_id,
+    issue?.suggested_fix?.failureType,
     issue?.trace_count && `${issue.trace_count} traces`,
-    issue?.severity,
+    issue?.severity &&
+      `${issue.severity.charAt(0).toUpperCase()}${issue.severity.slice(1)}`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -483,65 +487,35 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     >
       {/* Full width, the improvement page's gutters — no centred column. */}
       <Box sx={{ px: { xs: 2, md: 2.5 }, pt: 2, pb: 6 }}>
-        {/* ── where this is: Error Feed › the issue › Fix ── */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.75}
-          sx={{ mb: 1.5 }}
-        >
-          <Button
-            size="small"
-            onClick={() => navigate(paths.dashboard.errorFeed.root)}
-            startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-            sx={{ color: "text.secondary", minWidth: 0 }}
-          >
-            Error Feed
-          </Button>
-          <Iconify
-            icon="solar:alt-arrow-right-linear"
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
+        {/* Two lines, like the issue page: back to the issue · what's being
+            fixed, then the issue's ID, kind, size and severity. */}
+        <Box sx={{ mb: 2.5, minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" gap={1} minWidth={0}>
+            <Tooltip title="Back to the issue" arrow>
+              <IconButton
+                size="small"
+                aria-label="Back to the issue"
+                onClick={onClose}
+                sx={{ color: "text.secondary", ml: -0.5 }}
+              >
+                <Iconify icon="solar:arrow-left-linear" width={16} />
+              </IconButton>
+            </Tooltip>
+            <Typography
+              noWrap
+              sx={{
+                fontSize: 16,
+                lineHeight: "24px",
+                fontWeight: 600,
+                minWidth: 0,
+              }}
+            >
+              {`Fix · ${issue?.error?.name || "this issue"}`}
+            </Typography>
+          </Stack>
           <Typography
-            {...clickable(onClose, {
-              role: "link",
-              label: "Back to the issue",
-            })}
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              fontFamily: MONO,
-              cursor: "pointer",
-              "&:hover": { color: "text.primary" },
-              ...focusRing,
-            }}
-          >
-            {issue?.cluster_id}
-          </Typography>
-          <Iconify
-            icon="solar:alt-arrow-right-linear"
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography
-            sx={{ typography: "s2", color: "text.primary", fontWeight: 600 }}
-          >
-            Fix
-          </Typography>
-        </Stack>
-
-        <Box sx={{ mb: 2.5 }}>
-          <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-            Fix this issue
-          </Typography>
-          <Typography
-            sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
-          >
-            {issue?.error?.name}
-          </Typography>
-          <Typography
-            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+            noWrap
+            sx={{ typography: "s2", color: "text.tertiary", pl: 4 }}
           >
             {meta}
           </Typography>
@@ -1381,7 +1355,6 @@ FixPage.propTypes = {
   rootCause: PropTypes.object,
 };
 
-const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 /* A step of the plan — numbered, titled, its rows inside one frame. */
 /*
@@ -1451,8 +1424,32 @@ function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
         ))}
       </Stack>,
     ],
+    diagnosis.suggested && [
+      "Suggested fix",
+      <Typography
+        key="suggested"
+        sx={{ typography: "s2", color: "text.primary" }}
+      >
+        {diagnosis.suggested}
+        <Box component="span" sx={{ color: "text.subtitle" }}>
+          {" · from the Error Feed"}
+        </Box>
+      </Typography>,
+    ],
     ["Why it fails", field("cause")],
     ["What to change", field("change")],
+    diagnosis.wrongIf && [
+      "Wrong if",
+      <Typography
+        key="wrongif"
+        sx={{ typography: "s2", color: "text.secondary" }}
+      >
+        {diagnosis.wrongIf}
+        <Box component="span" sx={{ color: "text.subtitle" }}>
+          {" · what would prove this fix wrong, from the Error Feed"}
+        </Box>
+      </Typography>,
+    ],
     diagnosis.symptom && [
       "Symptom",
       <Typography

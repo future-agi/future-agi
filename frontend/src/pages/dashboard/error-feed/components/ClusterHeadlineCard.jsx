@@ -45,7 +45,9 @@ const CONFIDENCE_LABEL = {
 };
 
 // ── State: not_analyzed (empty) ──────────────────────────────────────────────
-function NotAnalyzedState({ onAnalyze }) {
+/* Before a deep analysis, the analyzer's own read of the cause — it already
+   has one for every issue — rather than "no root cause yet". */
+function NotAnalyzedState({ onAnalyze, likely }) {
   return (
     <Stack direction="row" alignItems="center" gap={2} sx={{ py: 0.5 }}>
       <Box
@@ -68,31 +70,34 @@ function NotAnalyzedState({ onAnalyze }) {
       </Box>
       <Stack flex={1} gap={0.4} minWidth={0}>
         <Typography fontSize="13px" fontWeight={600} color="text.primary">
-          No root cause yet
+          {likely ? "Likely cause" : "No root cause yet"}
         </Typography>
         <Typography
           fontSize="12px"
           color="text.secondary"
           sx={{ lineHeight: 1.55 }}
         >
-          Get a plain-English explanation and a suggested fix.
+          {likely || "Get a plain-English explanation of why it happens."}
         </Typography>
       </Stack>
       <Button
         size="small"
-        variant="contained"
+        variant="outlined"
         startIcon={
           <Iconify icon="solar:stars-minimalistic-linear" width={14} />
         }
         onClick={onAnalyze}
-        sx={{ flexShrink: 0 }}
+        sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
       >
-        Find root cause
+        {likely ? "Explain in depth" : "Find root cause"}
       </Button>
     </Stack>
   );
 }
-NotAnalyzedState.propTypes = { onAnalyze: PropTypes.func };
+NotAnalyzedState.propTypes = {
+  onAnalyze: PropTypes.func,
+  likely: PropTypes.string,
+};
 
 const ANALYSIS_STEP_LABELS = [
   "Sampling traces",
@@ -369,7 +374,9 @@ export default function ClusterHeadlineCard({
     state === "analyzing"
       ? "Finding root cause…"
       : state === "not_analyzed"
-        ? "No root cause yet"
+        ? error?.suggested_fix?.cause
+          ? "Likely cause"
+          : "No root cause yet"
         : `${CONFIDENCE_LABEL[data.confidence] ?? "Found"} · ${data.category}`;
 
   return (
@@ -540,7 +547,10 @@ export default function ClusterHeadlineCard({
       <Collapse in={!collapsed} timeout={200} unmountOnExit>
         <Box sx={{ mt: 1.5 }}>
           {state === "not_analyzed" && (
-            <NotAnalyzedState onAnalyze={runAnalysis} />
+            <NotAnalyzedState
+              onAnalyze={runAnalysis}
+              likely={error?.suggested_fix?.cause}
+            />
           )}
           {state === "analyzing" && (
             <AnalyzingState activeStepIdx={activeStepIdx} />

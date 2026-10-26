@@ -77,6 +77,9 @@ export default function FixButton({ issue, onOpenSheet }) {
 
   /* Reopened with the change it came back on: the banner under the header
      carries View fix and Fix again, so the header doesn't repeat them. */
+  /* Until the store has loaded, say nothing — not "Connect agent to fix"
+     for an agent that is connected but not read yet. */
+  if (!state?.hydrated) return null;
   if (agent && status?.key === "reopened" && status.change) return null;
 
   /* A fix already in flight: open it. */
@@ -88,7 +91,13 @@ export default function FixButton({ issue, onOpenSheet }) {
         title={`${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${inFlight.why}`}
       >
         <Button
-          variant="outlined"
+          /* A fix waiting on someone is the page's main action. */
+          variant={
+            ["review", "ready"].includes(status.key) ? "contained" : "outlined"
+          }
+          color={
+            ["review", "ready"].includes(status.key) ? "primary" : undefined
+          }
           onClick={openFix}
           startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
         >

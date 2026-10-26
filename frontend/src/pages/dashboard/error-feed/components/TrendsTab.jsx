@@ -469,9 +469,13 @@ SectionCard.propTypes = {
 function MetricCards({ metrics }) {
   return (
     <Box
-      sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1 }}
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
+        gap: 1,
+      }}
     >
-      {metrics.map((m, i) => {
+      {metrics.map((m) => {
         // "Affected users" treats a drop as good, but for error-rate and
         // eval-score the direction is the same sign convention as for errors:
         // positive delta = red. Eval score is the exception — higher is
@@ -513,13 +517,7 @@ function MetricCards({ metrics }) {
                 }}
               >
                 <Iconify
-                  icon={
-                    i === 0
-                      ? "solar:danger-circle-linear"
-                      : i === 1
-                        ? "solar:speedometer-middle-linear"
-                        : "solar:users-group-rounded-linear"
-                  }
+                  icon={m.icon || "solar:chart-2-linear"}
                   width={14}
                   sx={{ color: "text.secondary" }}
                 />
@@ -530,7 +528,7 @@ function MetricCards({ metrics }) {
               fontWeight={600}
               sx={{ color: "text.primary", lineHeight: 1.1 }}
             >
-              {m.value}
+              {m.display ?? m.value}
             </Typography>
             <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
               <Iconify icon={badgeIcon} width={12} sx={{ color: badgeColor }} />
@@ -539,13 +537,17 @@ function MetricCards({ metrics }) {
                 fontWeight={600}
                 sx={{ color: badgeColor }}
               >
-                {m.delta > 0 ? "+" : ""}
-                {typeof m.delta === "number"
-                  ? Math.abs(m.delta) < 1
-                    ? m.delta.toFixed(2)
-                    : m.delta
-                  : m.delta}
-                {m.unit}
+                {m.deltaText ?? (
+                  <>
+                    {m.delta > 0 ? "+" : ""}
+                    {typeof m.delta === "number"
+                      ? Math.abs(m.delta) < 1
+                        ? m.delta.toFixed(2)
+                        : m.delta
+                      : m.delta}
+                    {m.unit}
+                  </>
+                )}
               </Typography>
               <Typography fontSize="12px" color="text.disabled">
                 vs prev period
