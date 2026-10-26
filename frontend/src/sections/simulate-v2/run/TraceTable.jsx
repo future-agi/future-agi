@@ -20,7 +20,9 @@ import {
   Divider,
   IconButton,
 } from "@mui/material";
+import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { subTasksFor } from "../_mock/contract";
 import {
@@ -2114,6 +2116,8 @@ function unmeasuredWhy(t) {
   verdict on its own.
 */
 function VerdictLabel({ task, outcome }) {
+  const navigate = useNavigate();
+  const { envId } = useParams();
   const v = task.verdictCause;
   let label = outcome.label;
   let color = outcome.color;
@@ -2121,7 +2125,7 @@ function VerdictLabel({ task, outcome }) {
   if (v?.pulled) {
     label = "Pulled for review";
     color = "text.tertiary";
-    tip = `${v.reason} Outside every count.`;
+    tip = `${v.reason} Left out of every count. Click to review it.`;
   } else if (v?.cause && v.cause !== "pass") {
     const inc = v.cause.startsWith("inc-");
     label = `${inc ? OUTCOMES[v.outcome || outcomeOfCause(v.cause)].label : outcome.label} · ${causeShort(v.cause)}`;
@@ -2130,11 +2134,41 @@ function VerdictLabel({ task, outcome }) {
         ? `${verdictLineOf(v)}. ${VERDICT_CAUSES[v.cause].note}`
         : VERDICT_CAUSES[v.cause]?.note || "";
   }
+  /* A pulled scenario links to itself in the environment, to review it. */
+  const review =
+    v?.pulled && envId
+      ? clickable(
+          (e) => {
+            e?.stopPropagation?.();
+            navigate(
+              `${paths.dashboard.simulate.environmentStep(envId, "scenarios")}?scenario=${encodeURIComponent(task.id)}`,
+            );
+          },
+          { role: "link" },
+        )
+      : null;
   return (
     <>
       <Tooltip arrow title={tip}>
-        <Typography noWrap sx={{ typography: "s3", fontWeight: 600, color }}>
+        <Typography
+          noWrap
+          {...(review || {})}
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color,
+            ...(review && {
+              ...focusRing,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.25,
+              cursor: "pointer",
+              "&:hover": { color: "text.primary", textDecoration: "underline" },
+            }),
+          }}
+        >
           {label}
+          {review && <Iconify icon="solar:arrow-right-up-linear" width={12} />}
         </Typography>
       </Tooltip>
       {(v?.retried || task.retried) &&

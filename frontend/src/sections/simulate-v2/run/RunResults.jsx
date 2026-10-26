@@ -90,7 +90,6 @@ import ImprovementRunStrip from "./ImprovementRunStrip";
 
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
-import { scenarioTitle } from "../_mock/scenarios";
 import logger from "src/utils/logger";
 
 /**
@@ -360,9 +359,7 @@ export default function RunResults({
   /* The voice call drawer hides while one opened from it (an eval, a fix) is
      open. Other runs use SideDrawer, which registers itself — registering
      here too put this entry on top and hid that drawer behind itself. */
-  const callCovered = useDrawerCovered(
-    !!openTask && isVoiceRun,
-  );
+  const callCovered = useDrawerCovered(!!openTask && isVoiceRun);
   /* Same edit drawer the Evaluations tab uses — the variable mapping and any
      configurable fields live there. Opens when a column is edited from its
      kebab menu. Delegated to the environment's applied evals so a saved edit
@@ -828,7 +825,6 @@ export default function RunResults({
       passing: 0,
     },
   );
-  const pulledTasks = tasks.filter((t) => t.pulled);
 
   const applyFilters = (result) => {
     if (!result) {
@@ -863,6 +859,7 @@ export default function RunResults({
 
   /* ── Insights → the rest of the page ── */
   /* A claim on Insights filters the Scenarios tab to the scenarios behind it. */
+  const pulledIds = tasks.filter((t) => t.pulled).map((t) => t.id);
   const filterTo = (label, ids) => {
     const idSet = new Set(ids || []);
     setBucketFilter({ label, match: (t) => idSet.has(t.id) });
@@ -1228,6 +1225,37 @@ export default function RunResults({
                 >
                   <Box component="span" sx={{ cursor: "default" }}>
                     {`${report.summary.health.lost} not scored`}
+                  </Box>
+                </Tooltip>
+              </>
+            )}
+            {/* Tested invalid twice: out of every count; the rows are a click away. */}
+            {pulledIds.length > 0 && (
+              <>
+                {" · "}
+                <Tooltip
+                  arrow
+                  placement="bottom-start"
+                  title="Tested invalid twice, so left out of every count. Click to see them."
+                >
+                  <Box
+                    component="span"
+                    {...clickable(
+                      () => filterTo("Pulled for review", pulledIds),
+                      {
+                        role: "link",
+                      },
+                    )}
+                    sx={{
+                      ...focusRing,
+                      cursor: "pointer",
+                      "&:hover": {
+                        color: "text.primary",
+                        textDecoration: "underline",
+                      },
+                    }}
+                  >
+                    {`${pulledIds.length} pulled for review`}
                   </Box>
                 </Tooltip>
               </>
@@ -1853,9 +1881,6 @@ export default function RunResults({
                   >
                     {`${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations. Each one counts for the member it ended with.`}
                   </Typography>
-                )}
-                {pulledTasks.length > 0 && !bucketFilter && (
-                  <PulledGroup tasks={pulledTasks} envId={envId} />
                 )}
                 {groupableShown.length === 0 ? (
                   <EmptyState
@@ -2601,104 +2626,6 @@ const STATUS_CHIPS = [
     about: "Passed every repeat.",
   },
 ];
-
-/*
-  Scenarios pulled from the run after testing invalid twice — listed on their
-  own above the table, each with a link to the scenario in its environment
-  to review it. Outside every count.
-*/
-function PulledGroup({ tasks, envId }) {
-  const navigate = useNavigate();
-  return (
-    <Box
-      sx={{
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        flexShrink: 0,
-        maxHeight: 168,
-        overflow: "auto",
-      }}
-    >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.75}
-        sx={{
-          px: 2.5,
-          py: 0.875,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Iconify
-          icon="solar:flag-linear"
-          width={13}
-          sx={{ color: "text.tertiary" }}
-        />
-        <Typography
-          sx={{ fontSize: 13, fontWeight: 500, color: "text.secondary" }}
-        >
-          {`Pulled for review (${tasks.length})`}
-        </Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-          · test invalid twice — left out of every count
-        </Typography>
-      </Stack>
-      {tasks.map((t) => (
-        <Stack
-          key={t.id}
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{
-            px: 2.5,
-            py: 0.625,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            "&:last-of-type": { borderBottom: "none" },
-          }}
-        >
-          <Typography
-            noWrap
-            sx={{
-              typography: "s2",
-              fontWeight: 600,
-              minWidth: 0,
-              flexShrink: 1,
-            }}
-          >
-            {scenarioTitle(t.title) || t.name || t.id}
-          </Typography>
-          <Typography
-            noWrap
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            {t.pulled.reason}
-          </Typography>
-          <Button
-            size="small"
-            variant="text"
-            onClick={() =>
-              navigate(
-                `${paths.dashboard.simulate.environmentStep(envId, "scenarios")}?scenario=${encodeURIComponent(t.id)}`,
-              )
-            }
-            endIcon={<Iconify icon="solar:arrow-right-up-linear" width={14} />}
-            sx={{ color: "text.primary", flexShrink: 0, minWidth: 0 }}
-          >
-            Review
-          </Button>
-        </Stack>
-      ))}
-    </Box>
-  );
-}
-PulledGroup.propTypes = { tasks: PropTypes.array, envId: PropTypes.string };
 
 /* Outcome quick-filter — one chip per status bucket plus All. The active chip
    is filled in its status colour; the rest are quiet outlines. Each carries
