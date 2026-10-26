@@ -19,6 +19,14 @@ import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
 const SharedView = lazyWithRetry(() => import("src/pages/shared/SharedView"));
+/* Stand-in for GitHub's app install page, opened as a pop-up by the GitHub
+   integration until the GitHub App backend exists. */
+const GithubInstallWindow = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/windows/GithubInstallWindow"
+    ),
+);
 const OssSetupView = lazyWithRetry(
   () => import("src/sections/oss-first-run/OssSetupView"),
 );
@@ -63,6 +71,18 @@ export default function Router() {
     {
       path: "/sos",
       element: <SOSLoginPage />,
+    },
+
+    // GitHub install window (standalone, no dashboard layout)
+    {
+      path: "/integrations-connect/github-install",
+      element: (
+        <AuthGuard>
+          <Suspense fallback={<SplashScreen />}>
+            <GithubInstallWindow />
+          </Suspense>
+        </AuthGuard>
+      ),
     },
 
     // MCP OAuth consent (standalone, no dashboard layout, requires auth)

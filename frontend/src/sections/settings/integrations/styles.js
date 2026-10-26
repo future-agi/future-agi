@@ -8,6 +8,9 @@ export const backButtonSx = {
   "& .MuiButton-startIcon": { marginRight: "4px" },
 };
 
+/** The "Back to …" button at the top of a page: backButtonSx with tighter sides. */
+export const pageBackButtonSx = { ...backButtonSx, px: 1.5 };
+
 /** Shared sx for outlined neutral buttons (Cancel, secondary actions) */
 export const outlinedNeutralButtonSx = {
   color: "text.primary",

@@ -73,6 +73,24 @@ const FalconAIConnectorsPage = lazyWithRetry(
 const IntegrationDetailPage = lazyWithRetry(
   () => import("src/sections/settings/integrations/IntegrationDetail"),
 );
+const GithubIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/github/GithubIntegrationPage"
+    ),
+);
+const SlackIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/slack/SlackIntegrationPage"
+    ),
+);
+const CodingAgentsIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/coding-agents/CodingAgentsIntegrationPage"
+    ),
+);
 const ApiKeys = lazyWithRetry(
   () => import("src/pages/dashboard/settings/ApiKeys"),
 );
@@ -700,6 +718,54 @@ export const dashboardRoutes = (
       ),
     },
     {
+      path: "integrations/github",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <GithubIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
+      path: "integrations/slack",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <SlackIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
+      path: "integrations/coding-agents",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <CodingAgentsIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
       path: "integrations/:connectionId",
       element: (
         <RoleProtection
@@ -857,6 +923,36 @@ export const dashboardRoutes = (
                   allowedRoles={["workspace_admin", "workspace_member"]}
                 >
                   <WorkspaceIntegrations />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/github",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <GithubIntegrationPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/slack",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <SlackIntegrationPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/coding-agents",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <CodingAgentsIntegrationPage />
                 </WorkspaceRoleProtection>
               ),
             },
