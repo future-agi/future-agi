@@ -15461,6 +15461,7 @@ export interface AgentDefinitionBulkDeleteResponseApi {
   readonly message?: string;
   readonly agents_updated?: number;
   readonly versions_updated?: number;
+  readonly skipped_agent_ids?: readonly string[];
 }
 
 /**
@@ -35444,7 +35445,10 @@ export type SdkApiV1SimulationRunsListParams = {
 
 export type SimulateAgentDefinitionsListParams = {
   search?: string;
-  agent_type?: SimulateAgentDefinitionsListAgentType;
+  agent_type?: SimulateAgentDefinitionsListAgentTypeItem[];
+  source?: string[];
+  environments?: SimulateAgentDefinitionsListEnvironmentsItem[];
+  observe?: SimulateAgentDefinitionsListObserveItem[];
   agent_definition_id?: string;
   /**
    * @minimum 1
@@ -35456,12 +35460,28 @@ export type SimulateAgentDefinitionsListParams = {
   limit?: number;
 };
 
-export type SimulateAgentDefinitionsListAgentType =
-  (typeof SimulateAgentDefinitionsListAgentType)[keyof typeof SimulateAgentDefinitionsListAgentType];
+export type SimulateAgentDefinitionsListAgentTypeItem =
+  (typeof SimulateAgentDefinitionsListAgentTypeItem)[keyof typeof SimulateAgentDefinitionsListAgentTypeItem];
 
-export const SimulateAgentDefinitionsListAgentType = {
+export const SimulateAgentDefinitionsListAgentTypeItem = {
   voice: "voice",
   text: "text",
+} as const;
+
+export type SimulateAgentDefinitionsListEnvironmentsItem =
+  (typeof SimulateAgentDefinitionsListEnvironmentsItem)[keyof typeof SimulateAgentDefinitionsListEnvironmentsItem];
+
+export const SimulateAgentDefinitionsListEnvironmentsItem = {
+  with: "with",
+  without: "without",
+} as const;
+
+export type SimulateAgentDefinitionsListObserveItem =
+  (typeof SimulateAgentDefinitionsListObserveItem)[keyof typeof SimulateAgentDefinitionsListObserveItem];
+
+export const SimulateAgentDefinitionsListObserveItem = {
+  linked: "linked",
+  not_linked: "not_linked",
 } as const;
 
 export type SimulateAgentDefinitionsRunsListParams = {

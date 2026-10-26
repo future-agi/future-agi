@@ -48511,12 +48511,50 @@
                         "name": "agent_type",
                         "in": "query",
                         "required": false,
-                        "type": "string",
-                        "enum": [
-                            "voice",
-                            "text"
-                        ],
-                        "x-nullable": true
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "voice",
+                                "text"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "environments",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "with",
+                                "without"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "observe",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "linked",
+                                "not_linked"
+                            ]
+                        }
                     },
                     {
                         "name": "agent_definition_id",
@@ -119983,6 +120021,14 @@
                 "versions_updated": {
                     "title": "Versions updated",
                     "type": "integer",
+                    "readOnly": true
+                },
+                "skipped_agent_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     "readOnly": true
                 }
             }

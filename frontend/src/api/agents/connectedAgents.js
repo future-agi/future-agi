@@ -1,17 +1,40 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { paramsSerializer } from "src/utils/utils";
 
-export const connectedAgentsQueryKey = ({ page, pageSize, search }) => [
-  "agents",
-  "connected",
-  { page, pageSize, search },
+export const CONNECTED_AGENT_FILTERS = [
+  "agent_type",
+  "source",
+  "environments",
+  "observe",
 ];
+
+export const connectedAgentsQueryKey = ({
+  page,
+  pageSize,
+  search,
+  filters,
+}) => ["agents", "connected", { page, pageSize, search, filters }];
 
 // The list takes a 1-based page; the table keeps a 0-based one. Unknown
 // params are a 400, so send only these.
-export const buildConnectedAgentsParams = ({ page, pageSize, search }) => {
+export const buildConnectedAgentsParams = ({
+  page,
+  pageSize,
+  search,
+  filters,
+}) => {
   const q = (search || "").trim();
-  return { page: page + 1, limit: pageSize, ...(q && { search: q }) };
+  const params = { page: page + 1, limit: pageSize, ...(q && { search: q }) };
+  CONNECTED_AGENT_FILTERS.forEach((key) => {
+    if (filters?.[key]?.length) params[key] = filters[key];
+  });
+  return params;
 };
 
 export const mapConnectedAgent = (raw) => ({
@@ -38,18 +61,31 @@ export const mapConnectedAgent = (raw) => ({
 const fetchConnectedAgents = async (args) => {
   const res = await axios.get(endpoints.agentDefinitions.list, {
     params: buildConnectedAgentsParams(args),
+    paramsSerializer: paramsSerializer(),
   });
   return res.data;
 };
 
-export function useConnectedAgents({ page, pageSize, search }) {
+export function useConnectedAgents({ page, pageSize, search, filters }) {
   return useQuery({
-    queryKey: connectedAgentsQueryKey({ page, pageSize, search }),
-    queryFn: () => fetchConnectedAgents({ page, pageSize, search }),
+    queryKey: connectedAgentsQueryKey({ page, pageSize, search, filters }),
+    queryFn: () => fetchConnectedAgents({ page, pageSize, search, filters }),
     select: (d) => ({
       items: (d.results ?? []).map(mapConnectedAgent),
       total: d.count ?? 0,
     }),
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useDeleteConnectedAgents() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agentIds) =>
+      axios.delete(endpoints.agentDefinitions.delete, {
+        data: { agent_ids: agentIds },
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["agents", "connected"] }),
   });
 }

@@ -1,3 +1,5 @@
+import operator
+from functools import reduce
 from typing import Any
 from uuid import UUID
 
@@ -5,8 +7,10 @@ from django.db.models import (
     Case,
     CharField,
     Count,
+    Exists,
     F,
     OuterRef,
+    Q,
     QuerySet,
     Subquery,
     When,
@@ -25,6 +29,25 @@ from simulate.models import (
 from simulate.services.harness_environment import environment_name, run_summaries
 
 ENVIRONMENTS_PER_ROW = 5
+
+_OBSERVE_LINKED = Q(
+    observability_provider__enabled=True,
+    observability_provider__project__deleted=False,
+)
+_ENVIRONMENT_CONDITIONS = {
+    "with": Q(_environment_count__gt=0),
+    "without": Q(_environment_count=0),
+}
+_OBSERVE_CONDITIONS = {"linked": _OBSERVE_LINKED, "not_linked": ~_OBSERVE_LINKED}
+_FILTER_CONDITIONS = {
+    "agent_type": lambda value: Q(agent_type=value),
+    "source": lambda value: Q(_source=value),
+    "environments": _ENVIRONMENT_CONDITIONS.__getitem__,
+    "observe": _OBSERVE_CONDITIONS.__getitem__,
+}
+
+AGENT_ENVIRONMENT_FILTERS = tuple(_ENVIRONMENT_CONDITIONS)
+AGENT_OBSERVE_FILTERS = tuple(_OBSERVE_CONDITIONS)
 
 
 def _environments() -> QuerySet[HostedHarnessJob]:
@@ -79,6 +102,19 @@ def annotate_agent_rows(
             output_field=CharField(),
         )
     )
+
+
+def agent_ids_in_environments(queryset: QuerySet[AgentDefinition]) -> set[UUID]:
+    return set(queryset.filter(Exists(_environments())).values_list("id", flat=True))
+
+
+def filter_agent_rows(
+    queryset: QuerySet[AgentDefinition], filters: dict[str, list[str]]
+) -> QuerySet[AgentDefinition]:
+    for field, condition in _FILTER_CONDITIONS.items():
+        if values := filters.get(field):
+            queryset = queryset.filter(reduce(operator.or_, map(condition, values)))
+    return queryset
 
 
 def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:
