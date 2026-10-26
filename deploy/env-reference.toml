@@ -1230,7 +1230,7 @@ require separate qualification.
     keys = ["FI_HOST_UPDATE_STATUS_SLOT"]
     default = "empty; required only by the optional overlay"
     setups = ["S", "D"]
-    text = "Public random 128-bit correlation slot from the host reporting registration, encoded as 32 lowercase hex characters. App/backend requires exact slot, topology and production identity agreement. A mismatch returns unavailable without a snapshot; it never authorizes an update."
+    text = "Public random 128-bit correlation slot from the host reporting registration, encoded as 32 lowercase hex characters. App/backend requires exact slot and runtime topology agreement. Production is reported by the host registration, not inferred from the app's unrelated `ENV_TYPE`; the app displays the host-reported boolean unchanged. A slot or topology mismatch returns unavailable without a snapshot; it never authorizes an update."
 
     [[part.section.row]]
     keys = ["FI_HOST_UPDATE_STATUS_FILE"]

@@ -146,6 +146,79 @@ class ReaderTests(unittest.TestCase):
                 "stale",
             )
 
+    def test_app_identity_omits_host_reported_production(self):
+        for topology, production in (
+            ("standalone", False),
+            ("distributed", False),
+            ("distributed", True),
+        ):
+            with self.subTest(topology=topology, production=production):
+                self.snapshot["installation"].update(
+                    topology=topology, production=production
+                )
+                expected = {"slot_id": IDENTITY["slot_id"], "topology": topology}
+                self.assertEqual(decode(self.snapshot, expected), self.snapshot)
+                with patch.object(
+                    status, "_read_file", return_value=raw(self.snapshot)
+                ):
+                    response = status.read_public_status(
+                        configured_file=status.STATUS_FILE,
+                        expected_installation=expected,
+                        clock=lambda: NOW,
+                    )
+                self.assertEqual(
+                    response, status.available_response(self.snapshot, now=NOW)
+                )
+                # The reader still supports callers with an independent expected
+                # production fact. Absence is optional, not a wildcard for bad data.
+                with self.assertRaises(status.StatusUnavailable) as caught:
+                    decode(self.snapshot, {**expected, "production": not production})
+                self.assertEqual(caught.exception.reason, "installation_mismatch")
+
+    def test_optional_production_keeps_identity_and_snapshot_checks_closed(self):
+        expected = {key: IDENTITY[key] for key in ("slot_id", "topology")}
+        for key, value in (("slot_id", "f" * 32), ("topology", "distributed")):
+            with self.subTest(key=key):
+                with self.assertRaises(status.StatusUnavailable) as caught:
+                    decode(self.snapshot, {**expected, key: value})
+                self.assertEqual(caught.exception.reason, "installation_mismatch")
+        for identity in (
+            None,
+            [],
+            {},
+            {"slot_id": IDENTITY["slot_id"]},
+            {"topology": "standalone"},
+            {**expected, "slot_id": ""},
+            {**expected, "topology": "unknown"},
+            {**expected, "production": None},
+            {**expected, "production": 0},
+            {**expected, "production": "false"},
+            {**expected, "extra": "CANARY_SECRET"},
+        ):
+            with (
+                self.subTest(identity=identity),
+                patch.object(
+                    status, "_read_file", side_effect=AssertionError("must not open")
+                ),
+            ):
+                self.assertEqual(
+                    status.read_public_status(
+                        configured_file=status.STATUS_FILE,
+                        expected_installation=identity,
+                    ),
+                    status.unavailable_response("installation_mismatch"),
+                )
+        for production in (True, None, 0, "false"):
+            with self.subTest(production=production):
+                self.snapshot["installation"]["production"] = production
+                with self.assertRaises(status.StatusUnavailable) as caught:
+                    decode(self.snapshot, expected)
+                self.assertEqual(caught.exception.reason, "malformed")
+        del self.snapshot["installation"]["production"]
+        with self.assertRaises(status.StatusUnavailable) as caught:
+            decode(self.snapshot, expected)
+        self.assertEqual(caught.exception.reason, "malformed")
+
     def test_identity_clock_and_unavailable_timezone(self):
         for key, value in (
             ("slot_id", "f" * 32),
@@ -348,6 +421,28 @@ class SerializerTests(unittest.TestCase):
         serializer = HostUpdateStatusResponseSerializer(data=value)
         self.assertFalse(serializer.is_valid())
         self.assertNotIn("CANARY_SECRET", str(serializer.errors))
+
+    def test_host_reported_production_remains_a_required_boolean(self):
+        from tfc.host_updates.serializers import HostUpdateStatusResponseSerializer
+
+        value = copy.deepcopy(FIXTURES["valid_api"][0]["response"])
+        installation = value["result"]["snapshot"]["installation"]
+        installation["topology"] = "distributed"
+        for production in (False, True):
+            installation["production"] = production
+            serializer = HostUpdateStatusResponseSerializer(data=value)
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            self.assertIs(
+                serializer.validated_data["result"]["snapshot"]["installation"][
+                    "production"
+                ],
+                production,
+            )
+        for production in (None, 0, "false"):
+            installation["production"] = production
+            self.assertFalse(HostUpdateStatusResponseSerializer(data=value).is_valid())
+        del installation["production"]
+        self.assertFalse(HostUpdateStatusResponseSerializer(data=value).is_valid())
 
     def test_swagger_nullability_closed_objects_and_required_fields(self):
         from tfc.host_updates.serializers import HostUpdateStatusResponseSerializer
@@ -823,6 +918,109 @@ class EndpointTests(DatabaseTestCase):
                     response.json(), status.unavailable_response("malformed")
                 )
                 self.assertNotIn("CANARY", response.content.decode())
+
+    def test_env_type_does_not_define_host_production_identity(self):
+        from django.test import override_settings
+
+        base = Path(os.environ.get("FI_HOST_UPDATE_TEST_TMPDIR", Path.home())).resolve()
+        with tempfile.TemporaryDirectory(
+            prefix="host-identity-", dir=base
+        ) as directory:
+            mount = Path(directory) / "status.json"
+            snapshot = copy.deepcopy(FIXTURES["valid_status"][0]["snapshot"])
+            for env_type in ("local", "production"):
+                for topology, production in (
+                    ("standalone", False),
+                    ("distributed", False),
+                    ("distributed", True),
+                    ("standalone", True),
+                ):
+                    snapshot["installation"].update(
+                        topology=topology, production=production
+                    )
+                    mount.write_bytes(raw(snapshot))
+                    mount.chmod(0o644)
+                    with (
+                        self.subTest(
+                            env_type=env_type, topology=topology, production=production
+                        ),
+                        patch.dict(
+                            os.environ,
+                            {
+                                "FI_EMBEDDED_TEMPORAL_WORKER": str(
+                                    topology == "standalone"
+                                ).lower(),
+                            },
+                        ),
+                        patch.object(status, "STATUS_FILE", str(mount)),
+                        override_settings(
+                            ENV_TYPE=env_type,
+                            FI_HOST_UPDATE_STATUS_FILE=str(mount),
+                        ),
+                    ):
+                        response = self.client.get(self.url)
+                        self.assertEqual(response.status_code, 200)
+                        if topology == "standalone" and production:
+                            self.assertEqual(
+                                response.json(),
+                                status.unavailable_response("malformed"),
+                            )
+                        else:
+                            result = response.json()["result"]
+                            self.assertEqual(result["availability"], "available")
+                            self.assertIsNone(result["reason_code"])
+                            self.assertEqual(result["snapshot"], snapshot)
+                            self.assertIs(
+                                result["snapshot"]["installation"]["production"],
+                                production,
+                            )
+                        self.assertEqual(mount.read_bytes(), raw(snapshot))
+
+    def test_slot_and_topology_mismatch_still_deny_without_production_expectation(self):
+        from django.test import override_settings
+
+        snapshot = copy.deepcopy(FIXTURES["valid_status"][0]["snapshot"])
+        for topology, production in (
+            ("standalone", False),
+            ("distributed", False),
+            ("distributed", True),
+        ):
+            snapshot["installation"].update(topology=topology, production=production)
+            for env_type in ("local", "production"):
+                for mismatch in ("slot_id", "topology"):
+                    with (
+                        self.subTest(
+                            topology=topology,
+                            production=production,
+                            env_type=env_type,
+                            mismatch=mismatch,
+                        ),
+                        override_settings(
+                            ENV_TYPE=env_type,
+                            FI_HOST_UPDATE_STATUS_FILE=status.STATUS_FILE,
+                            FI_HOST_UPDATE_STATUS_SLOT=(
+                                "f" * 32
+                                if mismatch == "slot_id"
+                                else IDENTITY["slot_id"]
+                            ),
+                        ),
+                        patch.dict(
+                            os.environ,
+                            {
+                                "FI_EMBEDDED_TEMPORAL_WORKER": str(
+                                    (topology == "standalone")
+                                    != (mismatch == "topology")
+                                ).lower(),
+                            },
+                        ),
+                        patch.object(status, "_read_file", return_value=raw(snapshot)),
+                    ):
+                        response = self.client.get(self.url)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(
+                            response.json(),
+                            status.unavailable_response("installation_mismatch"),
+                        )
 
     def test_real_status_files_return_closed_results_without_mutation(self):
         from django.test import override_settings

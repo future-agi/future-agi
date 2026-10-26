@@ -3,6 +3,8 @@
 The shape source is packaged with the app and pinned to both frozen schemas.
 DRF's usual coercion/unknown-field behavior is intentionally not used for this
 untrusted public-file boundary. Validation reconstructs accepted scalars.
+The response's installation.production remains a required host-reported boolean,
+independent of the app's optional expected-identity comparison and ENV_TYPE.
 """
 
 from rest_framework import serializers

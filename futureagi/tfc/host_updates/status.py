@@ -418,13 +418,31 @@ def _invalid_constant(value):
     raise StatusUnavailable()
 
 
+def _expected_installation(identity):
+    """Validate app-known identity, optionally including a host production fact.
+
+    The app knows its registered slot and runtime topology, not the host's
+    --production registration. ENV_TYPE is unrelated. A caller that independently
+    knows production may still require an exact match; omission ignores only that
+    comparison, never the required boolean in the public snapshot.
+    """
+    properties = PUBLIC_SCHEMA["properties"]["installation"]["properties"]
+    keys = ("slot_id", "topology")
+    if type(identity) is dict and "production" in identity:
+        keys += ("production",)
+    return _shape(identity, _object(**{key: properties[key] for key in keys}))
+
+
 def _semantics(snapshot, expected_installation, now):
     installation = snapshot["installation"]
     _require(
         not installation["production"] or installation["topology"] == "distributed"
     )
-    _shape(expected_installation, PUBLIC_SCHEMA["properties"]["installation"])
-    _require(installation == expected_installation, "installation_mismatch")
+    expected = _expected_installation(expected_installation)
+    _require(
+        all(installation[key] == value for key, value in expected.items()),
+        "installation_mismatch",
+    )
     generated = _time(snapshot["generated_at"])
     _require((generated - now).total_seconds() <= 300, "clock_skew")
     versions = snapshot["versions"]
@@ -707,7 +725,7 @@ def read_public_status(*, configured_file, expected_installation, clock=None):
     if configured_file != STATUS_FILE:
         return unavailable_response("untrusted_file")
     try:
-        _shape(expected_installation, PUBLIC_SCHEMA["properties"]["installation"])
+        _expected_installation(expected_installation)
     except StatusUnavailable:
         return unavailable_response("installation_mismatch")
     try:

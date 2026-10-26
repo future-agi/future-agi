@@ -55,10 +55,11 @@ class HostUpdateStatusView(APIView):
     def get(self, request, *args, **kwargs):
         response = read_public_status(
             configured_file=settings.FI_HOST_UPDATE_STATUS_FILE,
+            # The slot binds the host registration. ENV_TYPE does not identify
+            # its --production flag; retain that host-reported value unchanged.
             expected_installation={
                 "slot_id": settings.FI_HOST_UPDATE_STATUS_SLOT,
                 "topology": self._topology,
-                "production": settings.ENV_TYPE == "production",
             },
         )
         serializer = HostUpdateStatusResponseSerializer(data=response)
