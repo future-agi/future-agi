@@ -443,6 +443,10 @@ export default function HarnessDetail() {
   const answeredIds = answeredMessageIds(current?.conversation?.messages);
   const isAdaptation = Boolean(current?.job?.metadata?.adaptation);
   const isDesign = Boolean(current?.job?.metadata?.design);
+  // A composition (environment-releases.md §7.3) builds nothing: it binds an agent to released
+  // environments, so build progress, stages and authoring usage do not apply to it.
+  const composition = current?.job?.metadata?.release_composition;
+  const built = !isDesign && !composition;
   // A design that stopped on an unanswered question is waiting, not broken: Continue resumes it.
   const parked = isDesign && status?.failure?.code === "design_waiting";
 
@@ -944,7 +948,7 @@ export default function HarnessDetail() {
             </Stack>
             {/* A design has no scenarios to count or build stages to tick; its own steps
                 are in DesignProgress below. */}
-            {!isDesign && (
+            {built && (
               <LinearProgress
                 variant="determinate"
                 value={progress}
@@ -954,7 +958,7 @@ export default function HarnessDetail() {
             )}
             <Stack direction="row" justifyContent="space-between" mt={0.5}>
               <Typography variant="caption" color="text.secondary">
-                {isDesign ? "" : scenarioTally(status, current.job)}
+                {built ? scenarioTally(status, current.job) : ""}
               </Typography>
               {elapsedLabel && (
                 <Typography variant="caption" color="text.secondary">
@@ -973,7 +977,19 @@ export default function HarnessDetail() {
               {isTerminal ? `${updatedLabel} · ` : ""}attempt{" "}
               {status?.attempt || 1}
             </Typography>
-            <Box sx={{ mt: 1.5 }}>
+            {composition && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 1.5 }}
+              >
+                Composed from{" "}
+                {(composition.environment || []).at(-1)?.name || "a release"} ·{" "}
+                {(current.scenarios || []).length} scenarios. Its runs are
+                listed under Runs.
+              </Typography>
+            )}
+            <Box sx={{ mt: 1.5, display: composition ? "none" : "block" }}>
               <Typography variant="caption" fontWeight={600}>
                 Consumption
               </Typography>
@@ -1029,7 +1045,7 @@ export default function HarnessDetail() {
 
             {/* Finished stages fold away: on a completed run the full list is fifteen ticks
                 carrying no information. A run that ended badly always stays expanded. */}
-            {collapsible && !isDesign && (
+            {collapsible && built && (
               <Button
                 fullWidth
                 color="inherit"
@@ -1069,7 +1085,7 @@ export default function HarnessDetail() {
               </Button>
             )}
 
-            {!isDesign && (
+            {built && (
               <Stack spacing={1.1} sx={{ pl: collapsible ? "11px" : 0 }}>
                 {visibleStages.map((stage) => {
                   const index = stages.indexOf(stage);
