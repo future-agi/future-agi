@@ -754,6 +754,35 @@ invalidate a previous downloaded claim. Discovery backoff and the independently
 due action/window opportunity are durable; missed timer wakes do not form a
 catch-up queue. A failed target remains quarantined until explicit retry.
 
+## Test prerequisites
+
+Run the daemon-free updater suite from the repository root with Python 3.9 or
+newer. Positive host-ownership and public-reporting fixtures exercise the real
+path guards: their temporary directories need trusted ancestry, not merely a
+0700 child of world-writable `/tmp` (including sticky `/tmp`). Use a private,
+owned temporary directory beneath a trusted `$HOME`, as Update CI does:
+
+```bash
+(
+  set -euo pipefail
+  TMPDIR="$(mktemp -d "$HOME/fagi-update-tests.XXXXXX")"
+  export TMPDIR
+  trap 'rm -rf -- "$TMPDIR"' EXIT
+  python3 -m unittest discover -s deploy/tests -p 'test_update_*.py' -v
+)
+```
+
+Every ancestor of that home must be a real directory owned by the current user
+or root and not group/world-writable. If your home does not meet that prerequisite,
+choose another operator-owned trusted parent; do not chmod shared directories or
+relax the runtime guards. Native env-file exchange/recovery tests also require
+ext4-backed temp space on Linux or APFS on macOS: a container's overlayfs or a
+virtiofs bind mount is not equivalent. Tests that intentionally introduce unsafe
+ancestry still must refuse it. Install optional `jsonschema==4.23.0` to exercise the schema
+checks (CI does so on Python 3.12); release/image-convention tests additionally use
+`PyYAML==6.0.3`. Daemon-free Compose rendering needs a working `docker compose`.
+Real Docker E2E suites remain separately opt-in; this command does not start them.
+
 ## The release manifest
 
 `release-manifest.schema.json` describes it; `manifest.py` enforces it,

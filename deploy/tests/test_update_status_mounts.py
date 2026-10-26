@@ -203,8 +203,50 @@ class StatusOverlayStaticTests(unittest.TestCase):
             self.assertIn('keys = ["' + key + '"]', reference)
 
 
+class StatusMountAssertions:
+    def assert_status_mounts(self, mounts, source):
+        self.assertEqual(len(mounts), 1)
+        mount = copy.deepcopy(mounts[0])
+        self.assertIs(mount.get("read_only"), True)
+        self.assertIsInstance(mount.get("bind"), dict)
+        # Compose v2 serializes the false bool's zero value as bind: {}, while
+        # newer releases retain create_host_path: false. Neither creates a
+        # missing host source. Do not normalize true or any other bind option.
+        self.assertIs(mount["bind"].pop("create_host_path", False), False)
+        self.assertEqual(mount, {
+            "type": "bind", "source": str(source), "target": TARGET,
+            "read_only": True, "bind": {},
+        })
+
+
+class StatusMountSemanticsTests(StatusMountAssertions, unittest.TestCase):
+    def setUp(self):
+        self.mount = {"type": "bind", "source": "/owned/public/slot", "target": TARGET,
+                      "read_only": True, "bind": {}}
+
+    def test_absent_and_explicit_false_have_the_same_no_create_meaning(self):
+        for bind in ({}, {"create_host_path": False}):
+            with self.subTest(bind=bind):
+                self.assert_status_mounts([{**self.mount, "bind": bind}], self.mount["source"])
+
+    def test_create_writable_wrong_target_and_other_mount_changes_are_rejected(self):
+        for changes in ({"bind": {"create_host_path": True}}, {"read_only": False},
+                        {"target": "/wrong"}, {"source": "/wrong"}, {"type": "volume"},
+                        {"bind": {"propagation": "shared"}}, {"bind": None}):
+            with self.subTest(changes=changes), self.assertRaises(AssertionError):
+                self.assert_status_mounts([{**self.mount, **changes}], self.mount["source"])
+        for mounts in ([], [self.mount, self.mount]):
+            with self.subTest(mounts=mounts), self.assertRaises(AssertionError):
+                self.assert_status_mounts(mounts, self.mount["source"])
+
+    def test_source_overlays_explicitly_disable_host_path_creation(self):
+        for overlay in OVERLAYS.values():
+            with self.subTest(overlay=overlay):
+                self.assertIn("\n        bind:\n          create_host_path: false\n", (ROOT / overlay).read_text())
+
+
 @unittest.skipUnless(shutil.which("docker"), "Docker CLI required for daemon-free Compose rendering")
-class StatusOverlayComposeTests(unittest.TestCase):
+class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="fagi-compose-status-")
         self.addCleanup(temporary.cleanup)
@@ -255,10 +297,7 @@ class StatusOverlayComposeTests(unittest.TestCase):
                 self.assertEqual(service["environment"].pop("FI_HOST_UPDATE_STATUS_FILE"), TARGET + "/status.json")
                 self.assertEqual(service["environment"].pop("FI_HOST_UPDATE_STATUS_SLOT"), SLOT)
                 mounts = [v for v in service["volumes"] if v["target"] == TARGET]
-                self.assertEqual(mounts, [{
-                    "type": "bind", "source": str(self.source), "target": TARGET,
-                    "read_only": True, "bind": {"create_host_path": False},
-                }])
+                self.assert_status_mounts(mounts, self.source)
                 service["volumes"].remove(mounts[0])
                 if not service["volumes"] and "volumes" not in baseline["services"][consumer]:
                     del service["volumes"]

@@ -1689,11 +1689,28 @@ class Workflows(unittest.TestCase):
         # A matrix image is selected by its matrix name.
         legs = {leg["name"] for leg in jobs["build"]["strategy"]["matrix"]["include"]}
         self.assertEqual(selected_by(jobs["build"]["if"]), legs)
+        selection = "contains(needs.guard.outputs.components, format('\"{0}\"', matrix.name))"
+        enabled = jobs["build"]["with"]["enabled"]
         self.assertEqual(
-            jobs["build"]["with"]["enabled"],
-            "${{ contains(needs.guard.outputs.components,"
-            " format('\"{0}\"', matrix.name)) }}",
+            enabled,
+            "${{ " + selection + " && (needs.guard.outputs.channel == 'stable' || github.run_attempt == 1) }}",
         )
+        # Evaluate the asserted expression for each standalone selection, not
+        # just for an all-components release. Both beta and rc tags are mapped
+        # to channel=beta by the guard; only stable images may rebuild on rerun.
+        expression = enabled[3:-2].replace(selection, "selected").replace(
+            "needs.guard.outputs.channel", "channel").replace("github.run_attempt", "attempt")
+        expression = expression.replace("&&", "and").replace("||", "or")
+        for leg in legs:
+            for component in [*components, ""]:
+                for suffix, channel in (("", "stable"), ("-beta.1", "beta"), ("-rc.1", "beta")):
+                    for attempt in (1, 2, 9):
+                        with self.subTest(leg=leg, component=component, suffix=suffix, attempt=attempt):
+                            selected = json.dumps(leg) in json.dumps([component])
+                            actual = eval(expression, {"__builtins__": {}}, {
+                                "selected": selected, "channel": channel, "attempt": attempt,
+                            })
+                            self.assertEqual(actual, component == leg and (not suffix or attempt == 1))
         reusable = yaml_jobs(WORKFLOWS / "build-image-multiarch.yml")
         self.assertEqual(reusable["prepare"]["if"], "inputs.enabled")
         component_of = {

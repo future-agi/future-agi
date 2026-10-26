@@ -816,6 +816,11 @@ class ImageAssembler:
 
     @staticmethod
     def _base_image():
+        # `save` never pulls. A fresh CI daemon need not have the Dockerfile's
+        # base cached; use the same inherited Docker context for inspect, pull
+        # and save, and leave an existing cached image untouched.
+        if run(["docker", "image", "inspect", BASE_IMAGE], check=False).code != 0:
+            run(["docker", "pull", BASE_IMAGE], timeout=300)
         with tempfile.TemporaryDirectory(prefix="fagi-upd-e2e-") as tmp:
             archive = Path(tmp) / "base.tar"
             run(["docker", "save", BASE_IMAGE, "-o", str(archive)], timeout=300)
