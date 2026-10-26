@@ -39,6 +39,7 @@ from simulate.services.harness_github import GitHubResponse
 from simulate.services.harness_provider import _preflight_source_connectors
 from simulate.services.harness_versioning.versions import move_default
 from simulate.services.hosted_harness import HostedHarnessError, _soft_delete
+from simulate.services.hosted_harness_gateway import _empty_source_archive
 from simulate.tests.test_harness_agent_creation import VALUES, _body, _job, _post
 from simulate.tests.test_harness_agent_creation import (  # noqa: F401 - fixture
     gates as gates,
@@ -57,6 +58,9 @@ from simulate.tests.test_harness_agent_versions import (
 )
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
+)
+from simulate.tests.test_harness_versioning_assembly import (  # noqa: F401 - fixture
+    gateway as gateway,
 )
 from simulate.tests.test_harness_versioning_backfill import _agent_version, _definition
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
@@ -1196,6 +1200,26 @@ class TestFirstObservation:
         else:
             assert _observe(environment) == {str(environment.id): "created"}
             assert _push_rows(environment)[1].source["commit_sha"] == HEAD_X
+
+    def test_the_builds_launch_pins_its_version_to_the_fetched_commit(
+        self, settings, user, workspace, gates, scheduled, gateway, monkeypatch
+    ):
+        settings.HARNESS_PROVIDER = "hosted"
+        api = APIClient()
+        api.force_authenticate(user=user)
+        environment = _job(_post(api, workspace, _body(values=VALUES)))
+        a1 = environment.agent_version
+        assert "commit_sha" not in _side(a1).source
+        monkeypatch.setattr(
+            "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+            lambda _self, _job: (_empty_source_archive(), HEAD_X),
+        )
+
+        gateway.launch(environment, endpoint_base_url="https://platform.example.com")
+
+        environment.refresh_from_db()
+        assert environment.payload["source"]["commit_sha"] == HEAD_X
+        assert _side(a1).source["commit_sha"] == HEAD_X
 
     def test_a_reset_to_the_build_commit_with_other_credentials_ends_on_them(
         self, settings, user, workspace, gh, gates, scheduled

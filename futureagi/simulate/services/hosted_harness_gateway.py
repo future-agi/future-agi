@@ -2439,6 +2439,10 @@ class HostedHarnessGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        from simulate.services.harness_agent_versions import stamp_built_commit
+
+        # An environment's build pins the versions naming only its branch to this commit.
+        stamp_built_commit(job, commit_sha)
         # Bundle authoring is performed inside the sandbox. The platform sends source plus any
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
