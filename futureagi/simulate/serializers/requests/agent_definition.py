@@ -415,24 +415,31 @@ class AgentDefinitionBulkDeleteRequestSerializer(serializers.Serializer):
     )
 
 
+class OneOrManyField(serializers.ListField):
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            data = [data]
+        return super().to_internal_value(data)
+
+
 class AgentDefinitionFilterSerializer(serializers.Serializer):
     """
     Serializer for validating GET /agent-definitions/ query parameters.
     """
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
-    agent_type = serializers.ListField(
+    agent_type = OneOrManyField(
         child=serializers.ChoiceField(
             choices=AgentTypeChoices.choices, allow_blank=True
         ),
         required=False,
     )
-    source = serializers.ListField(child=serializers.CharField(), required=False)
-    environments = serializers.ListField(
+    source = OneOrManyField(child=serializers.CharField(), required=False)
+    environments = OneOrManyField(
         child=serializers.ChoiceField(choices=AGENT_ENVIRONMENT_FILTERS),
         required=False,
     )
-    observe = serializers.ListField(
+    observe = OneOrManyField(
         child=serializers.ChoiceField(choices=AGENT_OBSERVE_FILTERS),
         required=False,
     )
