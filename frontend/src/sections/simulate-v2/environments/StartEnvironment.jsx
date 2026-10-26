@@ -373,14 +373,14 @@ export default function StartEnvironment({ entry = false }) {
                way to start from a description instead of an agent. */
             <Button
               size="small"
-              variant="outlined"
+              variant="contained"
+              color="primary"
               onClick={() =>
                 pickFromLanding("scratch", null, "header", null, SCRATCH_META)
               }
               startIcon={
                 <Iconify icon="solar:document-add-linear" width={14} />
               }
-              sx={{ color: "text.primary", borderColor: "divider" }}
             >
               Build from scratch
             </Button>
@@ -525,7 +525,8 @@ export default function StartEnvironment({ entry = false }) {
                 {view === "landing" && (
                   <Button
                     size="small"
-                    variant="outlined"
+                    variant="contained"
+                    color="primary"
                     onClick={() =>
                       pickFromLanding(
                         "scratch",
@@ -538,11 +539,7 @@ export default function StartEnvironment({ entry = false }) {
                     startIcon={
                       <Iconify icon="solar:document-add-linear" width={14} />
                     }
-                    sx={{
-                      color: "text.primary",
-                      borderColor: "divider",
-                      flexShrink: 0,
-                    }}
+                    sx={{ flexShrink: 0 }}
                   >
                     Build from scratch
                   </Button>

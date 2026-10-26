@@ -141,7 +141,8 @@ export default function EnvironmentsLanding({
         </Box>
         <Button
           size="small"
-          variant="outlined"
+          variant="contained"
+          color="primary"
           onClick={() =>
             onPick("local", null, "landing", "local", {
               name: "From code",
