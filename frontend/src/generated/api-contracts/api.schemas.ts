@@ -1321,6 +1321,7 @@ export interface UserInfoResponseApi {
   two_factor_methods?: UserInfoTwoFactorMethodsApi;
   org_2fa_required?: boolean;
   org_2fa_grace_ends_at?: string;
+  restrict_simulate_to_environments: boolean;
 }
 
 export interface DeactivateUserApi {
@@ -3320,6 +3321,8 @@ export type OrgConfigBulkResponseApiResult = {
 export interface OrgConfigBulkResponseApi {
   status: boolean;
   result: OrgConfigBulkResponseApiResult;
+  /** Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them. */
+  unbuilt_org_ids: string[];
 }
 
 export type AgentccProviderCredentialApiModelsList = { [key: string]: unknown };
@@ -5035,6 +5038,7 @@ export const IntegrationConnectionListApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionListApiStatus =
@@ -5153,6 +5157,7 @@ export const IntegrationConnectionCreateApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionCreateApiCredentials = {
@@ -5220,6 +5225,7 @@ export const IntegrationConnectionDetailApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionDetailApiStatus =
@@ -5313,6 +5319,7 @@ export const ValidateCredentialsApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
@@ -5363,6 +5370,26 @@ export interface IntegrationValidationResponseApi {
   result: IntegrationValidationResultApi;
 }
 
+export interface SlackChannelApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+}
+
+export interface SlackChannelsResultApi {
+  channels: SlackChannelApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface SlackChannelsResponseApi {
+  status: boolean;
+  result: SlackChannelsResultApi;
+}
+
 export interface IntegrationConnectionUpdateApi {
   /**
    * @minLength 1
@@ -5404,6 +5431,20 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export interface SlackInstallApi {
+  connection_id?: string;
+}
+
+export interface SlackInstallResultApi {
+  /** @minLength 1 */
+  authorization_url: string;
+}
+
+export interface SlackInstallResponseApi {
+  status: boolean;
+  result: SlackInstallResultApi;
 }
 
 export type SyncLogApiStatus =
@@ -9206,6 +9247,11 @@ export interface DatasetCreationProgressResultApi {
 export interface DatasetCreationProgressResponseApi {
   status: boolean;
   result: DatasetCreationProgressResultApi;
+}
+
+export interface DatasetDeleteApi {
+  /** @maxItems 50 */
+  dataset_ids: string[];
 }
 
 export interface EditRunPromptColumnApi {
@@ -15295,6 +15341,12 @@ export type AgentDefinitionListResponseApiModelDetails = {
   [key: string]: unknown;
 };
 
+export interface RunEnvironmentRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface AgentDefinitionListResponseApi {
   readonly id?: string;
   /**
@@ -15352,6 +15404,13 @@ export interface AgentDefinitionListResponseApi {
    * @minLength 1
    */
   readonly model?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly source?: string;
+  readonly version_count?: number;
+  readonly environment_count?: number;
+  readonly environments?: readonly RunEnvironmentRefApi[];
 }
 
 export type ApiErrorWithDetailsResponseApiType =
@@ -15648,6 +15707,189 @@ export interface AgentDefinitionCreateResponseApi {
   agent?: AgentDefinitionResponseApi;
 }
 
+export type AgentDefinitionDetailResponseApiAgentType =
+  (typeof AgentDefinitionDetailResponseApiAgentType)[keyof typeof AgentDefinitionDetailResponseApiAgentType];
+
+export const AgentDefinitionDetailResponseApiAgentType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionDetailResponseApiLanguage =
+  (typeof AgentDefinitionDetailResponseApiLanguage)[keyof typeof AgentDefinitionDetailResponseApiLanguage];
+
+export const AgentDefinitionDetailResponseApiLanguage = {
+  ar: "ar",
+  bg: "bg",
+  zh: "zh",
+  cs: "cs",
+  da: "da",
+  nl: "nl",
+  en: "en",
+  fi: "fi",
+  fr: "fr",
+  de: "de",
+  el: "el",
+  hi: "hi",
+  hu: "hu",
+  id: "id",
+  it: "it",
+  ja: "ja",
+  ko: "ko",
+  ms: "ms",
+  no: "no",
+  pl: "pl",
+  pt: "pt",
+  ro: "ro",
+  ru: "ru",
+  sk: "sk",
+  es: "es",
+  sv: "sv",
+  tr: "tr",
+  uk: "uk",
+  vi: "vi",
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionDetailResponseApiLanguagesItem =
+  (typeof AgentDefinitionDetailResponseApiLanguagesItem)[keyof typeof AgentDefinitionDetailResponseApiLanguagesItem];
+
+export const AgentDefinitionDetailResponseApiLanguagesItem = {
+  ar: "ar",
+  bg: "bg",
+  zh: "zh",
+  cs: "cs",
+  da: "da",
+  nl: "nl",
+  en: "en",
+  fi: "fi",
+  fr: "fr",
+  de: "de",
+  el: "el",
+  hi: "hi",
+  hu: "hu",
+  id: "id",
+  it: "it",
+  ja: "ja",
+  ko: "ko",
+  ms: "ms",
+  no: "no",
+  pl: "pl",
+  pt: "pt",
+  ro: "ro",
+  ru: "ru",
+  sk: "sk",
+  es: "es",
+  sv: "sv",
+  tr: "tr",
+  uk: "uk",
+  vi: "vi",
+} as const;
+
+export type AgentDefinitionDetailResponseApiAuthenticationMethod =
+  (typeof AgentDefinitionDetailResponseApiAuthenticationMethod)[keyof typeof AgentDefinitionDetailResponseApiAuthenticationMethod];
+
+export const AgentDefinitionDetailResponseApiAuthenticationMethod = {
+  api_key: "api_key",
+} as const;
+
+/**
+ * Headers to be sent to the websocket server
+ */
+export type AgentDefinitionDetailResponseApiWebsocketHeaders = {
+  [key: string]: unknown;
+};
+
+/**
+ * Details of the model
+ */
+export type AgentDefinitionDetailResponseApiModelDetails = {
+  [key: string]: unknown;
+};
+
+export type AgentDefinitionDetailResponseApiActiveVersion = {
+  [key: string]: string;
+};
+
+export interface AgentDefinitionDetailResponseApi {
+  readonly id?: string;
+  /**
+   * Name of the AI agent
+   * @minLength 1
+   */
+  readonly agent_name?: string;
+  readonly agent_type?: AgentDefinitionDetailResponseApiAgentType;
+  /**
+   * Phone number associated with the AI agent
+   * @minLength 1
+   */
+  readonly contact_number?: string;
+  /** Whether the agent handles inbound calls */
+  readonly inbound?: boolean;
+  /** Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation). */
+  readonly target_speaks_first?: boolean;
+  /**
+   * Detailed description of the AI agent's purpose and capabilities
+   * @minLength 1
+   */
+  readonly description?: string;
+  /**
+   * External identifier for the assistant
+   * @minLength 1
+   */
+  readonly assistant_id?: string;
+  /**
+   * Provider of the AI agent
+   * @minLength 1
+   */
+  readonly provider?: string;
+  /** Language of the agent */
+  readonly language?: AgentDefinitionDetailResponseApiLanguage;
+  readonly languages?: readonly AgentDefinitionDetailResponseApiLanguagesItem[];
+  readonly authentication_method?: AgentDefinitionDetailResponseApiAuthenticationMethod;
+  /**
+   * WebSocket URL for real-time communication with the agent
+   * @minLength 1
+   */
+  readonly websocket_url?: string;
+  /** Headers to be sent to the websocket server */
+  readonly websocket_headers?: AgentDefinitionDetailResponseApiWebsocketHeaders;
+  readonly workspace?: string;
+  readonly knowledge_base?: string;
+  /** Organization this agent definition belongs to */
+  readonly organization?: string;
+  readonly api_key?: string;
+  readonly observability_provider?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  /**
+   * Model of the agent
+   * @minLength 1
+   */
+  readonly model?: string;
+  /** Details of the model */
+  readonly model_details?: AgentDefinitionDetailResponseApiModelDetails;
+  readonly livekit_url?: string;
+  readonly livekit_api_key?: string;
+  readonly livekit_agent_name?: string;
+  readonly livekit_config_json?: string;
+  readonly livekit_max_concurrency?: string;
+  readonly versions?: readonly string[];
+  readonly active_version?: AgentDefinitionDetailResponseApiActiveVersion;
+  readonly version_count?: number;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly source?: string;
+  readonly environment_count?: number;
+  readonly observability_enabled?: boolean;
+}
+
 export interface AgentDefinitionDeleteResponseApi {
   /** @minLength 1 */
   readonly message?: string;
@@ -15681,6 +15923,7 @@ export type AgentDefinitionEditRequestApiLivekitConfigJson = {
 };
 
 export interface AgentDefinitionEditRequestApi {
+  observability_enabled?: boolean;
   /**
    * @minLength 1
    * @maxLength 255
@@ -15719,6 +15962,40 @@ export interface AgentDefinitionEditResponseApi {
   /** @minLength 1 */
   readonly message?: string;
   agent?: AgentDefinitionResponseApi;
+}
+
+export type HarnessRunSummaryApiKind =
+  (typeof HarnessRunSummaryApiKind)[keyof typeof HarnessRunSummaryApiKind];
+
+export const HarnessRunSummaryApiKind = {
+  environment: "environment",
+  simulate: "simulate",
+} as const;
+
+export interface AgentVersionRefApi {
+  id: string;
+  version_number: number;
+}
+
+export interface HarnessRunSummaryApi {
+  kind: HarnessRunSummaryApiKind;
+  test_execution_id: string;
+  run_test_id: string;
+  run_test_name: string;
+  run_number: number;
+  /** @minLength 1 */
+  status: string;
+  environment: RunEnvironmentRefApi;
+  agent_version: AgentVersionRefApi;
+  outcome_passed: number;
+  outcome_failed: number;
+  outcome_skipped: number;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface AgentRunsResponseApi {
+  readonly results?: readonly HarnessRunSummaryApi[];
 }
 
 /**
@@ -15893,6 +16170,10 @@ export interface AgentVersionResponseApi {
   readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
   readonly is_active?: string;
   readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly api_key?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -15907,6 +16188,104 @@ export interface AgentVersionActivateResponseApi {
   /** @minLength 1 */
   readonly message?: string;
   version?: AgentVersionResponseApi;
+}
+
+export interface StoredProviderRefApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface StoredBehaviourUnitApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  shape: string;
+  /** @minLength 1 */
+  instructions: string;
+  tools: string[];
+  transitions: string[];
+}
+
+export interface StoredToolEndpointApi {
+  /** @minLength 1 */
+  url: string;
+}
+
+export type StoredToolApiParameters = { [key: string]: unknown };
+
+export interface StoredToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  kind: string;
+  parameters: StoredToolApiParameters;
+  endpoint: StoredToolEndpointApi;
+}
+
+export interface StoredModelApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  name: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface StoredVoiceApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  voice_id: string;
+  /** @minLength 1 */
+  language: string;
+  speed: number;
+}
+
+export interface StoredTelephonyApi {
+  /** @minLength 1 */
+  number: string;
+  /** @minLength 1 */
+  provider: string;
+  direction_supported: string[];
+}
+
+export interface StoredAgentApi {
+  /** @minLength 1 */
+  schema_version: string;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  name: string;
+  provider_ref: StoredProviderRefApi;
+  behaviour: StoredBehaviourUnitApi[];
+  tools: StoredToolApi[];
+  model: StoredModelApi;
+  voice: StoredVoiceApi;
+  telephony: StoredTelephonyApi[];
+  supports: string[];
+  /** @minLength 1 */
+  direction_answer: string;
+  gaps: string[];
+  /** @minLength 1 */
+  instrumentation: string;
+  /** @minLength 1 */
+  setup_hash: string;
+}
+
+export interface StoredAgentResponseApi {
+  agent: StoredAgentApi;
+  /** @minLength 1 */
+  sdk_version: string;
+  stored_at: string;
+  setup_stale: boolean;
 }
 
 /**
@@ -17128,6 +17507,7 @@ export interface HarnessEnvironmentApi {
   runs_count: number;
   last_updated: string;
   created_at: string;
+  last_run: HarnessRunSummaryApi;
 }
 
 export interface HarnessEnvironmentListResponseApi {
@@ -17761,7 +18141,9 @@ export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
 
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
-export type HarnessJobInfoApiMetadata = { [key: string]: string };
+export type HarnessJobInfoApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export type HarnessJobInfoApiRuntime = { [key: string]: string };
 
@@ -17997,7 +18379,9 @@ export const HarnessJobCreateApiSchemaVersion = {
   "futureagiharness-jobv1": "futureagi.harness-job.v1",
 } as const;
 
-export type HarnessJobCreateApiMetadata = { [key: string]: string };
+export type HarnessJobCreateApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export type HarnessSourceApiKind =
   (typeof HarnessSourceApiKind)[keyof typeof HarnessSourceApiKind];
@@ -18251,7 +18635,9 @@ export const HarnessPreflightApiSchemaVersion = {
   "futureagiharness-jobv1": "futureagi.harness-job.v1",
 } as const;
 
-export type HarnessPreflightApiMetadata = { [key: string]: string };
+export type HarnessPreflightApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 /**
  * Target-provider values to verify live; used for this check only.
@@ -18374,6 +18760,15 @@ export interface HarnessSourceUploadResponseApi {
   total_bytes: number;
 }
 
+export type HarnessJobAdjustmentApiTargetStage =
+  (typeof HarnessJobAdjustmentApiTargetStage)[keyof typeof HarnessJobAdjustmentApiTargetStage];
+
+export const HarnessJobAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
 export interface HarnessJobAdjustmentApi {
   /**
    * A user correction to apply at the next safe harness stage boundary.
@@ -18386,6 +18781,9 @@ export interface HarnessJobAdjustmentApi {
    * @maxLength 128
    */
   client_request_id?: string;
+  target_stage?: HarnessJobAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
 }
 
 export type HarnessJobActionApiReason =
@@ -18804,6 +19202,8 @@ export const HarnessScenarioOperationApiModality = {
   voice: "voice",
 } as const;
 
+export type HarnessScenarioOperationApiAgent = { [key: string]: string };
+
 export type HarnessProvisionPersonaApiPersona = { [key: string]: unknown };
 
 export interface HarnessProvisionPersonaApi {
@@ -18836,6 +19236,7 @@ export interface HarnessScenarioOperationApi {
   agent_name?: string;
   agent_prompt?: string;
   chosen_evals?: string[];
+  agent?: HarnessScenarioOperationApiAgent;
   run_test_id?: string;
   scenario_keys?: string[];
 }
@@ -18954,6 +19355,15 @@ export interface HarnessUsageResponseApi {
   upgrade_cta?: HarnessUsageResponseApiUpgradeCta;
 }
 
+export type HarnessConversationAdjustmentApiTargetStage =
+  (typeof HarnessConversationAdjustmentApiTargetStage)[keyof typeof HarnessConversationAdjustmentApiTargetStage];
+
+export const HarnessConversationAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
 export interface HarnessConversationAdjustmentApi {
   /**
    * @minLength 1
@@ -18965,6 +19375,9 @@ export interface HarnessConversationAdjustmentApi {
    * @maxLength 128
    */
   client_request_id?: string;
+  target_stage?: HarnessConversationAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
 }
 
 export interface HarnessConversationAdjustmentResponseApi {
@@ -19063,6 +19476,50 @@ export interface HarnessConversationEventAckApi {
   acked_through_sequence: number;
 }
 
+export interface HarnessConversationOverviewQueryApi {
+  [key: string]: unknown;
+}
+
+export type HarnessConversationOverviewApiEnvironment = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiUseCasesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiCoverage = { [key: string]: string };
+
+export type HarnessConversationOverviewApiRecentRunsItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiBuildChangesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiEarlierMessagesItem = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationOverviewApi {
+  environment: HarnessConversationOverviewApiEnvironment;
+  scenario_count: number;
+  use_cases: HarnessConversationOverviewApiUseCasesItem[];
+  coverage: HarnessConversationOverviewApiCoverage;
+  recent_runs: HarnessConversationOverviewApiRecentRunsItem[];
+  build_changes: HarnessConversationOverviewApiBuildChangesItem[];
+  earlier_messages: HarnessConversationOverviewApiEarlierMessagesItem[];
+}
+
+export interface HarnessConversationPublishApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  digest: string;
+}
+
 export interface HarnessConversationRerunApi {
   [key: string]: unknown;
 }
@@ -19084,6 +19541,64 @@ export interface HarnessConversationRunStatusApi {
   /** @minimum 0 */
   total_scenarios: number;
   receipts: HarnessConversationRunStatusApiReceipts;
+}
+
+export interface HarnessConversationRunsQueryApi {
+  /** @maxLength 64 */
+  run_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  limit?: number;
+}
+
+export type HarnessConversationRunStartApiRangesItem = {
+  [key: string]: number;
+};
+
+export interface HarnessConversationRunStartApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationRunStartApiRangesItem[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+  /** @maxLength 64 */
+  operation_id?: string;
+}
+
+export type HarnessConversationScenarioQueryApiRangesItem = {
+  [key: string]: number;
+};
+
+export type HarnessConversationScenarioQueryApiFilters = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationScenarioQueryApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationScenarioQueryApiRangesItem[];
+  /** @maxItems 500 */
+  names?: string[];
+  /** @maxItems 1000 */
+  ids?: string[];
+  /** @maxLength 500 */
+  search?: string;
+  filters?: HarnessConversationScenarioQueryApiFilters;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  full?: boolean;
 }
 
 export type HarnessConversationTranscriptAppendApiEntriesItem = {
@@ -22320,6 +22835,29 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   error: "error",
 } as const;
 
+export type CallExecutionV3DetailResponseApiScoringStatus =
+  (typeof CallExecutionV3DetailResponseApiScoringStatus)[keyof typeof CallExecutionV3DetailResponseApiScoringStatus];
+
+export const CallExecutionV3DetailResponseApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type CallExecutionV3DetailResponseApiCsatStatus =
+  (typeof CallExecutionV3DetailResponseApiCsatStatus)[keyof typeof CallExecutionV3DetailResponseApiCsatStatus];
+
+export const CallExecutionV3DetailResponseApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export interface PersonaDetailsApi {
   /** @minLength 1 */
   name: string;
@@ -22344,6 +22882,17 @@ export interface CostBreakdownApi {
   customer: number;
 }
 
+export type SimulateRunV3EvaluationResultApiStatus =
+  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
+
+export const SimulateRunV3EvaluationResultApiStatus = {
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -22351,14 +22900,12 @@ export interface SimulateRunV3EvaluationResultApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  /** @minLength 1 */
   type: string;
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;
   passed: boolean;
   reason: string;
-  /** @minLength 1 */
-  status: string;
+  status: SimulateRunV3EvaluationResultApiStatus;
 }
 
 export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
@@ -22528,6 +23075,10 @@ export interface CallExecutionV3DetailResponseApi {
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
   function_calls: SimulateRunV3FunctionCallApi[];
+  scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
+  csat_status: CallExecutionV3DetailResponseApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -23025,6 +23576,31 @@ export interface RunExecutionApi {
   summary: RunSummaryApi;
 }
 
+export interface SimulateRunV3ScoringCountsApi {
+  /** @minimum 0 */
+  not_applicable: number;
+  /** @minimum 0 */
+  pending: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  timed_out: number;
+}
+
+export interface SimulateRunV3CallsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  scoring: SimulateRunV3ScoringCountsApi;
+}
+
 export type RunCallApiOutcome =
   (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
 
@@ -23035,6 +23611,29 @@ export const RunCallApiOutcome = {
   failed: "failed",
   inconclusive: "inconclusive",
   error: "error",
+} as const;
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
 } as const;
 
 export interface RunCallApi {
@@ -23083,6 +23682,10 @@ export interface RunCallApi {
   /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
@@ -23146,7 +23749,7 @@ export interface EvaluationColumnApi {
 
 export interface RunCallsV3ResponseApi {
   execution: RunExecutionApi;
-  summary: RunSummaryApi;
+  summary: SimulateRunV3CallsSummaryApi;
   count: number;
   page: number;
   page_size: number;
@@ -23154,6 +23757,7 @@ export interface RunCallsV3ResponseApi {
   results: RunCallApi[];
   groups: RunGroupApi[];
   facets: RunFacetsApi;
+  status_counts: OutcomeCountsApi;
   evaluation_columns: EvaluationColumnApi[];
 }
 
@@ -23187,6 +23791,54 @@ export interface RunExportV3RequestApi {
   search?: string;
   filters?: RunExportV3RequestApiFilters;
   ordering?: RunExportV3RequestApiOrdering;
+}
+
+export interface RunTraceApi {
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  start_time: string;
+  status: string;
+  latency_ms: number;
+  call_execution_id: string;
+}
+
+export interface RunTracesV3ResponseApi {
+  project_id: string;
+  traces: RunTraceApi[];
+}
+
+export type ApiErrorResponseApiType =
+  (typeof ApiErrorResponseApiType)[keyof typeof ApiErrorResponseApiType];
+
+export const ApiErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ApiErrorResponseApiDetails = { [key: string]: string[] };
+
+export interface ApiErrorResponseApi {
+  status?: boolean;
+  type?: ApiErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiErrorResponseApiDetails;
 }
 
 export interface DeploymentHeartbeatApi {
@@ -23321,6 +23973,205 @@ export interface DeploymentRegistrationResponseApi {
   instance_secret: string;
 }
 
+export type AlertItemApiKind =
+  (typeof AlertItemApiKind)[keyof typeof AlertItemApiKind];
+
+export const AlertItemApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertItemApiSeverityThreshold =
+  (typeof AlertItemApiSeverityThreshold)[keyof typeof AlertItemApiSeverityThreshold];
+
+export const AlertItemApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertItemApiFilters = { [key: string]: unknown };
+
+export type AlertItemApiLogsItem = { [key: string]: unknown };
+
+export interface AlertItemApi {
+  id: string;
+  kind: AlertItemApiKind;
+  /** @minLength 1 */
+  name: string;
+  enabled: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertItemApiSeverityThreshold;
+  occurrence_threshold?: number;
+  filters?: AlertItemApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minLength 1 */
+  slack_channel_name?: string;
+  cooldown_seconds?: number;
+  last_triggered_at?: string;
+  /** @minLength 1 */
+  health?: string;
+  /** @minLength 1 */
+  failure_reason?: string;
+  created_at?: string;
+  updated_at?: string;
+  project?: string;
+  organization?: string;
+  workspace?: string;
+  created_by?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  metric_name?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  last_checked_at?: string;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  deleted?: boolean;
+  deleted_at?: string;
+  logs?: AlertItemApiLogsItem[];
+  notification_emails?: string[];
+}
+
+export interface AlertListResultApi {
+  alerts: AlertItemApi[];
+}
+
+export interface AlertListResponseApi {
+  status: boolean;
+  result: AlertListResultApi;
+}
+
+export type AlertWriteRequestApiKind =
+  (typeof AlertWriteRequestApiKind)[keyof typeof AlertWriteRequestApiKind];
+
+export const AlertWriteRequestApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertWriteRequestApiSeverityThreshold =
+  (typeof AlertWriteRequestApiSeverityThreshold)[keyof typeof AlertWriteRequestApiSeverityThreshold];
+
+export const AlertWriteRequestApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertWriteRequestApiFilters = { [key: string]: unknown };
+
+export interface AlertWriteRequestApi {
+  kind?: AlertWriteRequestApiKind;
+  /** @minLength 1 */
+  name?: string;
+  enabled?: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertWriteRequestApiSeverityThreshold;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  occurrence_threshold?: number;
+  filters?: AlertWriteRequestApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minimum 0 */
+  cooldown_seconds?: number;
+  project?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  notification_emails?: string[];
+}
+
+export interface AlertItemResponseApi {
+  status: boolean;
+  result: AlertItemApi;
+}
+
+export interface AlertTestRequestApi {
+  [key: string]: unknown;
+}
+
+export interface AlertTestResultApi {
+  sent: boolean;
+  /** @minLength 1 */
+  slack_ts: string;
+}
+
+export interface AlertTestResponseApi {
+  status: boolean;
+  result: AlertTestResultApi;
+}
+
+export interface AlertOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface AlertProjectOptionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface AlertOptionsResultApi {
+  triggers: AlertOptionApi[];
+  severities: string[];
+  statuses: string[];
+  sources: string[];
+  projects: AlertProjectOptionApi[];
+}
+
+export interface AlertOptionsResponseApi {
+  status: boolean;
+  result: AlertOptionsResultApi;
+}
+
+export interface AlertDeletedResultApi {
+  id: string;
+  deleted: boolean;
+}
+
+export interface AlertDeletedResponseApi {
+  status: boolean;
+  result: AlertDeletedResultApi;
+}
+
 export interface BulkAnnotationAnnotationRequestApi {
   annotation_label_id: string;
   value?: string;
@@ -23369,39 +24220,6 @@ export interface BulkAnnotationResponseResultApi {
 export interface BulkAnnotationResponseApi {
   status?: boolean;
   result: BulkAnnotationResponseResultApi;
-}
-
-export type ApiErrorResponseApiType =
-  (typeof ApiErrorResponseApiType)[keyof typeof ApiErrorResponseApiType];
-
-export const ApiErrorResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type ApiErrorResponseApiDetails = { [key: string]: string[] };
-
-export interface ApiErrorResponseApi {
-  status?: boolean;
-  type?: ApiErrorResponseApiType;
-  code?: string;
-  detail?: string;
-  result?: string;
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: ApiErrorResponseApiDetails;
 }
 
 export type FetchGraphResponseApiResultMetricStatistic =
@@ -25503,6 +26321,18 @@ export interface OverviewApiResponseApi {
   result: OverviewResponseApi;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export interface RootCauseApi {
   rank: number;
   /** @minLength 1 */
@@ -25806,6 +26636,283 @@ export interface InvestigationControlErrorApi {
   details?: InvestigationControlErrorApiDetails;
 }
 
+export interface ConversationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiVersion = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiName = JsonValueApi;
+
+export interface ConversationCallAgentApi {
+  /** Any valid JSON value. */
+  id: ConversationCallAgentApiId;
+  /** Any valid JSON value. */
+  version: ConversationCallAgentApiVersion;
+  /** Any valid JSON value. */
+  name: ConversationCallAgentApiName;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiStatus = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiDirection = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiEndedReason = JsonValueApi;
+
+export interface ConversationCallApi {
+  /** Any valid JSON value. */
+  status: ConversationCallApiStatus;
+  /** Any valid JSON value. */
+  direction: ConversationCallApiDirection;
+  duration_seconds: number | null;
+  /** Any valid JSON value. */
+  ended_reason: ConversationCallApiEndedReason;
+  agent: ConversationCallAgentApi;
+}
+
+export type ConversationVariablesApiConfigured = {
+  [key: string]: JsonValueApi;
+};
+
+export type ConversationVariablesApiCollected = { [key: string]: JsonValueApi };
+
+export interface ConversationVariablesApi {
+  configured: ConversationVariablesApiConfigured;
+  collected: ConversationVariablesApiCollected;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSummary = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSuccessful = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiInVoicemail = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSentiment = JsonValueApi;
+
+export type ConversationAnalysisApiFlags = { [key: string]: JsonValueApi };
+
+export interface ConversationAnalysisApi {
+  /** Any valid JSON value. */
+  summary: ConversationAnalysisApiSummary;
+  /** Any valid JSON value. */
+  successful: ConversationAnalysisApiSuccessful;
+  /** Any valid JSON value. */
+  in_voicemail: ConversationAnalysisApiInVoicemail;
+  /** Any valid JSON value. */
+  sentiment: ConversationAnalysisApiSentiment;
+  flags: ConversationAnalysisApiFlags;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP50 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP90 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiMax = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiNum = JsonValueApi;
+
+export interface ConversationLatencyApi {
+  /** Any valid JSON value. */
+  p50: ConversationLatencyApiP50;
+  /** Any valid JSON value. */
+  p90: ConversationLatencyApiP90;
+  /** Any valid JSON value. */
+  max: ConversationLatencyApiMax;
+  /** Any valid JSON value. */
+  num: ConversationLatencyApiNum;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiText = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiName = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiArguments = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiOk = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiContent = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiTo = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiType = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiDigit = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiMediaItem = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiFrom = JsonValueApi;
+
+export interface ConversationTurnApi {
+  /** @minimum 0 */
+  i: number;
+  /** @minLength 1 */
+  role: string;
+  start?: number | null;
+  end?: number | null;
+  /** Any valid JSON value. */
+  text?: ConversationTurnApiText;
+  spoken?: boolean;
+  at?: number | null;
+  /** Any valid JSON value. */
+  id?: ConversationTurnApiId;
+  /** Any valid JSON value. */
+  name?: ConversationTurnApiName;
+  /** Any valid JSON value. */
+  arguments?: ConversationTurnApiArguments;
+  /** Any valid JSON value. */
+  ok?: ConversationTurnApiOk;
+  /** Any valid JSON value. */
+  content?: ConversationTurnApiContent;
+  /** Any valid JSON value. */
+  to?: ConversationTurnApiTo;
+  /** Any valid JSON value. */
+  type?: ConversationTurnApiType;
+  /** Any valid JSON value. */
+  digit?: ConversationTurnApiDigit;
+  media?: ConversationTurnApiMediaItem[];
+  /** Any valid JSON value. */
+  from?: ConversationTurnApiFrom;
+}
+
+export type ConversationProviderLogIssueApiLevel =
+  (typeof ConversationProviderLogIssueApiLevel)[keyof typeof ConversationProviderLogIssueApiLevel];
+
+export const ConversationProviderLogIssueApiLevel = {
+  warn: "warn",
+  error: "error",
+} as const;
+
+export interface ConversationProviderLogIssueApi {
+  at: number;
+  level: ConversationProviderLogIssueApiLevel;
+  message: string;
+}
+
+export type ConversationDossierApiLatencyMs = {
+  [key: string]: ConversationLatencyApi;
+};
+
+export interface ConversationDossierApi {
+  /** @minLength 1 */
+  provider: string;
+  agent_instructions: string | null;
+  call: ConversationCallApi;
+  variables: ConversationVariablesApi;
+  analysis: ConversationAnalysisApi;
+  latency_ms: ConversationDossierApiLatencyMs;
+  turns: ConversationTurnApi[];
+  provider_log_issues?: ConversationProviderLogIssueApi[];
+  not_included: string[];
+}
+
+export type ConversationEvidenceRowApiAttrsString = { [key: string]: string };
+
+export interface ConversationEvidenceRowApi {
+  project_id: string;
+  trace_id: string;
+  org_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  id: string;
+  parent_span_id: string;
+  name: string;
+  /** @minLength 1 */
+  observation_type: string;
+  start_time: string;
+  end_time: string | null;
+  attrs_string: ConversationEvidenceRowApiAttrsString;
+  conversation: ConversationDossierApi;
+}
+
+export interface ConversationEvidenceResponseApi {
+  rows: ConversationEvidenceRowApi[];
+}
+
 export interface SimulationEvidenceRequestApi {
   /**
    * @minLength 1
@@ -25840,6 +26947,18 @@ export type InvestigationClaimApiWorkloadType =
 export const InvestigationClaimApiWorkloadType = {
   trace: "trace",
   simulation_test_execution: "simulation_test_execution",
+} as const;
+
+export interface InvestigationEvidenceWindowApi {
+  start: string;
+  end: string;
+}
+
+export type InvestigationClaimApiEvidenceSource =
+  (typeof InvestigationClaimApiEvidenceSource)[keyof typeof InvestigationClaimApiEvidenceSource];
+
+export const InvestigationClaimApiEvidenceSource = {
+  conversation: "conversation",
 } as const;
 
 export interface InvestigationMemoryEntryApi {
@@ -25912,6 +27031,8 @@ export interface InvestigationClaimApi {
   lease_token: string;
   lease_expires_at: string;
   read_cutoff: string;
+  evidence_window?: InvestigationEvidenceWindowApi;
+  evidence_source?: InvestigationClaimApiEvidenceSource;
   /**
    * @minLength 1
    * @maxLength 20
@@ -25935,6 +27056,7 @@ export type UpdateGroupingAttemptApiAction =
 export const UpdateGroupingAttemptApiAction = {
   renew: "renew",
   cancel: "cancel",
+  fail: "fail",
 } as const;
 
 export interface UpdateGroupingAttemptApi {
@@ -25944,11 +27066,15 @@ export interface UpdateGroupingAttemptApi {
    */
   lease_token: string;
   action: UpdateGroupingAttemptApiAction;
+  /** @maxLength 100 */
+  failure_code?: string;
 }
 
 export interface GroupingControlResponseApi {
   /** @minLength 1 */
   state?: string;
+  /** @minLength 1 */
+  failure_code?: string;
   /** @minLength 1 */
   status?: string;
   checkpoint_revision?: number;
@@ -27041,6 +28167,14 @@ export interface SpanObserveIndexQueryApi {
   filters?: string;
 }
 
+export type SpanListColumnConfigApiTargetType =
+  (typeof SpanListColumnConfigApiTargetType)[keyof typeof SpanListColumnConfigApiTargetType];
+
+export const SpanListColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -27076,6 +28210,7 @@ export interface SpanListColumnConfigApi {
   choices_map?: SpanListColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: SpanListColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: SpanListColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -28847,6 +29982,14 @@ export interface TraceSessionTableRowApi {
   [key: string]: JsonValueApi | undefined;
 }
 
+export type TraceObserveColumnConfigApiTargetType =
+  (typeof TraceObserveColumnConfigApiTargetType)[keyof typeof TraceObserveColumnConfigApiTargetType];
+
+export const TraceObserveColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -28882,6 +30025,7 @@ export interface TraceObserveColumnConfigApi {
   choices_map?: TraceObserveColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: TraceObserveColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: TraceObserveColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -29332,6 +30476,7 @@ export type TraceObserveListResultApiTableItem = {
 
 export interface TraceObserveListResultApi {
   metadata: TraceObserveListMetadataApi;
+  /** Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span. */
   table: TraceObserveListResultApiTableItem[];
   config: TraceObserveColumnConfigApi[];
 }
@@ -29464,6 +30609,69 @@ export interface TraceVoiceCallListQueryApi {
   allow_sampled?: boolean;
 }
 
+export type TraceVoiceCallDetailResultApiEvalRollupScope =
+  (typeof TraceVoiceCallDetailResultApiEvalRollupScope)[keyof typeof TraceVoiceCallDetailResultApiEvalRollupScope];
+
+export const TraceVoiceCallDetailResultApiEvalRollupScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -29496,6 +30704,12 @@ export type TraceVoiceCallDetailResultApiObservationSpanItem = {
 
 export type TraceVoiceCallDetailResultApiEvalOutputs = {
   [key: string]: unknown;
+};
+
+export type TraceVoiceCallDetailResultApiEvalRollup = {
+  scope: TraceVoiceCallDetailResultApiEvalRollupScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
 };
 
 export type TraceVoiceCallDetailResultApiScenarioGraph = {
@@ -29556,6 +30770,7 @@ export interface TraceVoiceCallDetailResultApi {
   call_metadata: TraceVoiceCallDetailResultApiCallMetadata;
   observation_span: TraceVoiceCallDetailResultApiObservationSpanItem[];
   eval_outputs: TraceVoiceCallDetailResultApiEvalOutputs;
+  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup | null;
   /** @minLength 1 */
   call_execution_id?: string | null;
   /** @minLength 1 */
@@ -29584,11 +30799,38 @@ export interface TraceVoiceCallDetailResponseApi {
   result: TraceVoiceCallDetailResultApi;
 }
 
-export type TraceDetailResultApiTrace = { [key: string]: unknown };
+export type EvalRollupApiScope =
+  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
 
-export type TraceDetailResultApiObservationSpansItem = {
-  [key: string]: unknown;
-};
+export const EvalRollupApiScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export interface EvalRollupApi {
+  scope: EvalRollupApiScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
+}
+
+export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
+
+export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
+
+export interface TraceDetailSpanApi {
+  observation_span: TraceDetailSpanApiObservationSpan;
+  children?: TraceDetailSpanApiChildrenItem[];
+  /** Raw eval rows retained for backwards-compatible array consumers. */
+  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
+  eval_rollup?: EvalRollupApi;
+  annotations?: TraceDetailSpanApiAnnotationsItem[];
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
 export type TraceDetailResultApiSummary = { [key: string]: unknown };
 
@@ -29596,7 +30838,7 @@ export type TraceDetailResultApiGraph = { [key: string]: unknown };
 
 export interface TraceDetailResultApi {
   trace: TraceDetailResultApiTrace;
-  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  observation_spans: TraceDetailSpanApi[];
   summary: TraceDetailResultApiSummary;
   graph: TraceDetailResultApiGraph;
 }
@@ -29807,6 +31049,65 @@ export interface UserAlertMonitorDuplicateResultApi {
 export interface UserAlertMonitorDuplicateResponseApi {
   status?: boolean;
   result: UserAlertMonitorDuplicateResultApi;
+}
+
+export interface UserAlertMonitorListColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+}
+
+export type UserAlertMonitorListItemApiStatus =
+  (typeof UserAlertMonitorListItemApiStatus)[keyof typeof UserAlertMonitorListItemApiStatus];
+
+export const UserAlertMonitorListItemApiStatus = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export interface UserAlertMonitorTrendApi {
+  timestamp: string;
+  /** @minimum 0 */
+  count: number;
+}
+
+export type UserAlertMonitorListItemApiFilters = { [key: string]: unknown };
+
+export interface UserAlertMonitorListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  created_at: string;
+  updated_at: string;
+  /** @minLength 1 */
+  metric_type: string;
+  filters: UserAlertMonitorListItemApiFilters;
+  status: UserAlertMonitorListItemApiStatus;
+  /** @minimum 0 */
+  no_of_alerts: number;
+  last_triggered: string;
+  is_mute: boolean;
+  trends: UserAlertMonitorTrendApi[];
+}
+
+export interface UserAlertMonitorListMetadataApi {
+  /** @minimum 0 */
+  total_rows: number;
+  /** @minimum 0 */
+  total_pages: number;
+}
+
+export interface UserAlertMonitorListResultApi {
+  column_config: UserAlertMonitorListColumnApi[];
+  table: UserAlertMonitorListItemApi[];
+  metadata: UserAlertMonitorListMetadataApi;
+}
+
+export interface UserAlertMonitorListResponseApi {
+  status: boolean;
+  result: UserAlertMonitorListResultApi;
 }
 
 export interface UserAlertMonitorMetricOptionApi {
@@ -32074,6 +33375,10 @@ export type AgentccAnalyticsOverviewParams = {
    * @minLength 1
    */
   granularity?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
 };
 
@@ -32308,6 +33613,10 @@ export type AgentccRequestLogsListParams = {
   limit?: number;
   user_id?: string;
   session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
   request_id?: string;
   /**
@@ -32636,6 +33945,13 @@ export type IntegrationsConnectionsListParams = {
    * @maximum 100
    */
   page_size?: number;
+};
+
+export type IntegrationsConnectionsSlackChannelsListParams = {
+  /**
+   * @maxLength 512
+   */
+  cursor?: string;
 };
 
 export type IntegrationsSyncLogsListParams = {
@@ -33957,6 +35273,13 @@ export type Saml2AuthAuthReadParams = {
   state?: string;
 };
 
+export type Saml2AuthCompleteListParams = {
+  /**
+   * One-time SAML response candidate key.
+   */
+  c: string;
+};
+
 export type Saml2AuthGithubCallbackListParams = {
   code?: string;
   state?: string;
@@ -34141,6 +35464,14 @@ export const SimulateAgentDefinitionsListAgentType = {
   text: "text",
 } as const;
 
+export type SimulateAgentDefinitionsRunsListParams = {
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  limit?: number;
+};
+
 export type SimulateApiAgentDefinitionOperationsListParams = {
   /**
    * A page number within the paginated result set.
@@ -34208,6 +35539,7 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    * @maximum 100
    */
   limit?: number;
+  agent_definition_id?: string;
 };
 
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
@@ -34587,6 +35919,34 @@ export const SimulateV3TestExecutionCallsGroupBy = {
   attack: "attack",
   task: "task",
   status: "status",
+} as const;
+
+export type SimulateV3TestExecutionTracesParams = {
+  call_execution_id: string;
+};
+
+export type TracerAlertsListParams = {
+  kind?: TracerAlertsListKind;
+};
+
+export type TracerAlertsListKind =
+  (typeof TracerAlertsListKind)[keyof typeof TracerAlertsListKind];
+
+export const TracerAlertsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type TracerAlertsOptionsListParams = {
+  kind?: TracerAlertsOptionsListKind;
+};
+
+export type TracerAlertsOptionsListKind =
+  (typeof TracerAlertsOptionsListKind)[keyof typeof TracerAlertsOptionsListKind];
+
+export const TracerAlertsOptionsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
 } as const;
 
 export type TracerChartsFetchGraphParams = {
@@ -35090,6 +36450,10 @@ export type TracerFeedIssuesOverviewListParams = {
   rep_limit?: number;
 };
 
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
+};
+
 export type TracerFeedIssuesRootCauseListParams = {
   /**
    * @minLength 1
@@ -35429,6 +36793,14 @@ export type TracerObservationSpanRootSpansParams = {
 };
 
 export type TracerObservationSpanReadParams = {
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
   project_id?: string;
   /**
    * @minLength 1
@@ -36100,6 +37472,14 @@ export type TracerTraceListVoiceCallsParams = {
 
 export type TracerTraceVoiceCallDetailParams = {
   /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
+  /**
    * Voice-call trace UUID. Supply this or the legacy traceId alias.
    */
   trace_id?: string;
@@ -36114,6 +37494,14 @@ export type TracerTraceVoiceCallDetailParams = {
 };
 
 export type TracerTraceReadParams = {
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
   /**
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
    */
@@ -36176,21 +37564,41 @@ export type TracerUserAlertsList200 = {
 
 export type TracerUserAlertsListMonitorsParams = {
   /**
-   * A page number within the paginated result set.
+   * Zero-based page number.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
+   * @maximum 100
    */
-  limit?: number;
+  page_size?: number;
+  search_text?: string;
+  project_id?: string[];
+  status?: TracerUserAlertsListMonitorsStatusItem[];
+  metric_type?: string[];
+  /**
+   * @minLength 1
+   */
+  sort_by?: string;
+  sort_direction?: TracerUserAlertsListMonitorsSortDirection;
 };
 
-export type TracerUserAlertsListMonitors200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: UserAlertMonitorApi[];
-};
+export type TracerUserAlertsListMonitorsStatusItem =
+  (typeof TracerUserAlertsListMonitorsStatusItem)[keyof typeof TracerUserAlertsListMonitorsStatusItem];
+
+export const TracerUserAlertsListMonitorsStatusItem = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export type TracerUserAlertsListMonitorsSortDirection =
+  (typeof TracerUserAlertsListMonitorsSortDirection)[keyof typeof TracerUserAlertsListMonitorsSortDirection];
+
+export const TracerUserAlertsListMonitorsSortDirection = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type TracerUserAlertsMetricOptionsParams = {
   /**

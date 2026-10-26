@@ -28,8 +28,12 @@ vi.mock("react-apexcharts", () => ({
   ),
 }));
 
+const datePickerProps = vi.hoisted(() => ({ current: null }));
 vi.mock("src/components/custom-datepicker/DatePicker", () => ({
-  default: () => null,
+  default: (props) => {
+    datePickerProps.current = props;
+    return null;
+  },
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -1485,6 +1489,61 @@ describe("PrimaryGraph", () => {
       "data-primary-first-y",
       "36",
     );
+  });
+
+  it("opens the custom range picker on the range this graph has applied", async () => {
+    const applied = ["2026-10-09 00:00:00", "2026-10-17 00:00:00"];
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        showDateFilter
+        dateFilter={{ dateOption: "Custom", dateFilter: applied }}
+        setDateFilter={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Custom" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Custom range" }),
+    );
+    expect(datePickerProps.current.open).toBe(true);
+    expect(datePickerProps.current.value).toEqual(applied);
+  });
+
+  it("keeps the Filter button mounted while a filter change reloads the graph", async () => {
+    const statusFilter = {
+      column_id: "status",
+      filter_config: {
+        col_type: "SYSTEM_METRIC",
+        filter_type: "text",
+        filter_op: "in",
+        filter_value: ["OK"],
+      },
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const graph = (extraFilters) => (
+      <QueryClientProvider client={queryClient}>
+        <PrimaryGraph
+          observeIdOverride="project-override"
+          extraFilters={extraFilters}
+          showDateFilter
+          onFilterToggle={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+    const view = render(graph([]));
+    const filterButton = await screen.findByRole("button", { name: "Filter" });
+
+    // The filter panel stays anchored to this button while the new filter
+    // set loads; unmounting it sends the open popover to the page corner.
+    axios.post.mockImplementation(() => new Promise(() => {}));
+    view.rerender(graph([statusFilter]));
+
+    expect(
+      await screen.findByRole("status", { name: GRAPH_LOADING_MESSAGE }),
+    ).toBeInTheDocument();
+    expect(filterButton).toBeInTheDocument();
   });
 
   it("renders a completed exact response without an intermediate empty label", async () => {

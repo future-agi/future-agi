@@ -20,6 +20,9 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
 
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = scenarioCount * k;
+  // A value no preset matches was set through Custom, so Custom is the row
+  // that shows as chosen.
+  const isCustom = !TRIAL_PRESETS.includes(k);
 
   const apply = (v) => {
     onChange?.(v);
@@ -82,6 +85,8 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
           return (
             <Box
               key={v}
+              role="menuitemradio"
+              aria-checked={active}
               onClick={() => apply(v)}
               sx={{
                 display: "flex", alignItems: "center", gap: 1,
@@ -111,10 +116,13 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
         <Box sx={{ borderTop: "1px solid", borderColor: "divider", mt: 0.5, pt: 0.5 }}>
           {!customOpen ? (
             <Box
+              role="menuitemradio"
+              aria-checked={isCustom}
               onClick={() => setCustomOpen(true)}
               sx={{
                 display: "flex", alignItems: "center", gap: 1,
                 px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
+                bgcolor: isCustom ? "action.hover" : "transparent",
                 "&:hover": { bgcolor: "action.hover" },
               }}
             >
@@ -122,6 +130,16 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
               <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
                 Custom…
               </Typography>
+              {isCustom && (
+                <Typography sx={{
+                  typography: "s2", fontWeight: 700, color: "primary.main",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                  {k}×
+                </Typography>
+              )}
+              <Box sx={{ flex: 1 }} />
+              {isCustom && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
             </Box>
           ) : (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 0.75 }}>

@@ -3,9 +3,11 @@ import PropTypes from "prop-types";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
-const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
+const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
   const { observeId } = useParams();
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
@@ -19,6 +21,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
   // projects, so an unpinned read could open another project's copy. A
   // project route stays authoritative.
   const pinnedProjectId = traceDetailDrawerOpen?.projectId || undefined;
+  const testExecutionId = traceDetailDrawerOpen?.testExecutionId || undefined;
   const filters = traceDetailDrawerOpen?.filters || [];
 
   const currentIdx = useMemo(
@@ -44,10 +47,17 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
       setTraceDetailDrawerOpen({
         traceId: next.traceId,
         ...(next.projectId ? { projectId: next.projectId } : {}),
+        ...(testExecutionId ? { testExecutionId } : {}),
         filters,
       });
     },
-    [currentIdx, visibleTraces, filters, setTraceDetailDrawerOpen],
+    [
+      currentIdx,
+      visibleTraces,
+      filters,
+      testExecutionId,
+      setTraceDetailDrawerOpen,
+    ],
   );
 
   const onPrev = useCallback(() => navigateToTrace(-1), [navigateToTrace]);
@@ -57,19 +67,26 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
     <TraceDetailDrawerV2
       traceId={traceId}
       open={Boolean(traceDetailDrawerOpen)}
-      onClose={() => setTraceDetailDrawerOpen(null)}
+      onClose={() => {
+        removeEvalFocus();
+        setTraceDetailDrawerOpen(null);
+      }}
       projectId={observeId || pinnedProjectId}
+      testExecutionId={testExecutionId}
       onPrev={onPrev}
       onNext={onNext}
       hasPrev={hasPrev}
       hasNext={hasNext}
+      initialEvalFocus={evalFocus === true}
       refreshParentGrid={refreshGrid}
+      readOnly={readOnly}
     />
   );
 };
 
 LLMTracingTraceDetailDrawer.propTypes = {
   refreshGrid: PropTypes.func,
+  readOnly: PropTypes.bool,
 };
 
 export default LLMTracingTraceDetailDrawer;

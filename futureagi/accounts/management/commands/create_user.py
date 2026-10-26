@@ -20,7 +20,7 @@ class Command(BaseCommand):
         from accounts.utils import create_owner_account
 
         try:
-            user = create_owner_account(email, name, password)
+            user = create_owner_account(email, name, password, telemetry_source="cli")
         except ValidationError as exc:
             raise CommandError("\n".join(exc.messages)) from None
         self.stdout.write(

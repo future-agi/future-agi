@@ -2,11 +2,14 @@ package pricing
 
 import "context"
 
-// Pricer chains the two token-based pricing sources with Django's exact
-// precedence (otel.py:calculate_cost_from_tokens): litellm table by exact
-// model key, else per-org CustomAIModel. User-provided cost attributes are
-// handled UPSTREAM in adapter.DeriveHotKeys — by the time a caller asks a
-// Pricer, the span had no cost attributes.
+// Pricer chains the token-based pricing sources. The first two keep Django's
+// exact precedence (otel.py:calculate_cost_from_tokens): litellm table by
+// exact model key, else per-org CustomAIModel. A provider-prefixed name that
+// both miss ("openai/gpt-4o") is then priced from the table's bare entry when
+// the prefix is that entry's provider (Table.ProviderPrefixedCost); Django had
+// no such step. User-provided cost attributes, including a sender's billed
+// cost (gen_ai.usage.*_cost), are handled UPSTREAM in adapter.DeriveHotKeys —
+// by the time a caller asks a Pricer, the span had no cost attributes.
 type Pricer struct {
 	table  *Table
 	custom *CustomPricing // nil when the collector runs without PG
@@ -28,7 +31,10 @@ func (p *Pricer) TokenCost(
 		return c, true
 	}
 	if p.custom != nil && orgID != "" {
-		return p.custom.Cost(ctx, orgID, model, promptTokens, completionTokens)
+		// An org's own price for the exact name beats the prefix fallback.
+		if c, ok := p.custom.Cost(ctx, orgID, model, promptTokens, completionTokens); ok {
+			return c, true
+		}
 	}
-	return 0, false
+	return p.table.ProviderPrefixedCost(model, promptTokens, completionTokens)
 }

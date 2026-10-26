@@ -1,14 +1,14 @@
 import React, { useState } from "react";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import SvgColor from "src/components/svg-color";
-import Iconify from "src/components/iconify";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
 import { useErrorFeedApiParams } from "./store";
 
 export default function ErrorFeedView() {
-  const theme = useTheme();
+  const navigate = useNavigate();
   const [selected, setSelected] = useState([]);
 
   const apiParams = useErrorFeedApiParams();
@@ -94,6 +94,15 @@ export default function ErrorFeedView() {
         </Stack>
 
         <Stack direction="row" alignItems="center" gap={1}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<SvgColor src="/assets/icons/navbar/ic_alert.svg" sx={{ width: 16, height: 16 }} />}
+            onClick={() => navigate("/dashboard/error-feed/alerts")}
+            sx={{ height: 32, fontSize: "13px", borderColor: "divider", color: "text.secondary", borderRadius: "6px" }}
+          >
+            Alert rules
+          </Button>
           <Button
             variant="outlined"
             size="small"

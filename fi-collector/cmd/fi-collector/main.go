@@ -11,7 +11,7 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_GRPC_MAX_RECV_MIB, FI_GZIP_INFLIGHT_MIB, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -175,9 +175,9 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	go runAdmin(":9464", writer, authenticator, log)
 
-	go authenticator.WatchRevocations(ctx)
+	startAuthWatchers(ctx, authenticator)
 
 	logStarting(log, cfg)
 	runErr := srv.Run(ctx)
@@ -284,6 +284,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
 	}
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.GzipInflightMiB = n
+		} else {
+			log.Warn("ignoring invalid FI_GZIP_INFLIGHT_MIB", "value", v)
+		}
+	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
 	}
@@ -368,19 +375,49 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	return nil
 }
 
+// authWatchers is the part of the authenticator that runs in the background.
+type authWatchers interface {
+	WatchRevocations(context.Context)
+	WatchRoutingColumns(context.Context)
+}
+
+// startAuthWatchers runs the loops that keep the authenticator current until
+// ctx is cancelled: cache eviction on revocation, and the check for the
+// columns sandbox-key routing needs. Without the second, no sandbox key is
+// ever routed.
+func startAuthWatchers(ctx context.Context, a authWatchers) {
+	go a.WatchRevocations(ctx)
+	go a.WatchRoutingColumns(ctx)
+}
+
+// routingReporter is the part of the authenticator /healthz reads.
+type routingReporter interface {
+	RoutingSnapshot() auth.RoutingSnapshot
+}
+
+// healthBody is the /healthz body. The simulation routing counters are in the
+// body only; they never change the status code.
+func healthBody(status string, stats chwriter.Stats, router routingReporter) map[string]any {
+	body := map[string]any{"status": status, "stats": stats}
+	if router != nil {
+		body["simulation_routing"] = router.RoutingSnapshot().Body()
+	}
+	return body
+}
+
 // runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
+			_ = json.NewEncoder(rw).Encode(healthBody("unhealthy", s, router))
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
+		_ = json.NewEncoder(rw).Encode(healthBody("ok", s, router))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

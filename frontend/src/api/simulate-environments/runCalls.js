@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
@@ -13,18 +13,20 @@ const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
 // v3 run-results contract sends, where the server has already scored the eval.
 function liveEvalCell(col, data) {
   const stored =
-    data.value && typeof data.value === "object" ? storedEvalCell(col, data) : null;
+    data.value && typeof data.value === "object"
+      ? storedEvalCell(col, data)
+      : null;
   return {
     id: col.id,
     kind: col.kind ?? "evaluation",
     name: data.name || col.name || col.column_name || col.id,
     score: data.score ?? stored?.score ?? to01(data.value?.score) ?? null,
     passed: data.passed ?? stored?.passed ?? null,
-    label: typeof data.value === "string" ? data.value : (stored?.label ?? null),
+    label: typeof data.value === "string" ? data.value : stored?.label ?? null,
     reason: data.reason || "",
-    // "completed", "failed", "error", "skipped" or "pending" — lets an
+    // "pending", "succeeded", "failed", "timed_out" or "skipped" — lets an
     // unscored cell say why.
-    status: String(data.status || "completed").toLowerCase(),
+    status: String(data.status || "succeeded").toLowerCase(),
     threshold: 0.5,
     removed: data.removed === true,
   };
@@ -36,7 +38,10 @@ function liveEvalCell(col, data) {
 // drawer's list-derived fallback (while `useCallDetail` is loading or errored)
 // can mark it too — same expression as `runDetail.js`'s `callEvalResult`.
 function storedEvalCell(col, data) {
-  const norm = normalizeEvalResult(data.value, data.type ?? col.eval_config?.output);
+  const norm = normalizeEvalResult(
+    data.value,
+    data.type ?? col.eval_config?.output,
+  );
   if (norm.kind === "empty") return null;
   let score = null;
   let passed = null;
@@ -105,6 +110,8 @@ export function mapCallRow(row, evalColumns = []) {
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,
     sourceScenario: scenarioName,
+    // The key a re-run sends; null on calls the harness never tagged.
+    sourceScenarioKey: row?.source_scenario_key ?? null,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
     trialIndex,
     scenarioDetails: row?.scenario_details ?? null,
@@ -121,6 +128,12 @@ export function mapCallRow(row, evalColumns = []) {
     executionStatus: row?.execution_status ?? row?.status ?? null,
     critical: false,
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
+    // How far the call's scoring got: `pending`, `succeeded`, `failed`,
+    // `timed_out` or `not_applicable`; CSAT adds `skipped`. Null from an API
+    // that predates scoring status.
+    scoringStatus: row?.scoring_status ?? null,
+    csatStatus: row?.csat_status ?? null,
+    csatReason: row?.csat_reason ?? null,
     turns: row?.turn_count ?? null,
     latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
     stopLatencyMs: row?.avg_stop_time_after_interruption ?? null,
@@ -177,15 +190,15 @@ export function taskFromCallDetail(detail) {
  * @returns {import("./runDetail").TraceColumn[]}
  */
 export function buildTraceColumns(columnOrder = []) {
-  const staticCols = TRACE_COLUMNS.filter(
-    (c) => c.key !== "subGoalEvals",
-  ).map((c) => ({
-    key: c.key,
-    label: c.label,
-    defaultOn: c.defaultOn,
-    width: c.width,
-    group: c.group,
-  }));
+  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "subGoalEvals").map(
+    (c) => ({
+      key: c.key,
+      label: c.label,
+      defaultOn: c.defaultOn,
+      width: c.width,
+      group: c.group,
+    }),
+  );
   const evalCols = (columnOrder || []).map((c) => ({
     key: c.id,
     label: c.name || c.id,
@@ -194,6 +207,31 @@ export function buildTraceColumns(columnOrder = []) {
     group: c.kind === "sub_goal" ? "Sub-goal Results" : "Evaluations",
   }));
   return [...staticCols, ...evalCols];
+}
+
+/**
+ * The run header's read. Every calls page carries the same whole-run
+ * `execution`, so the table feeds it and the header only fetches without one.
+ * @param {string} executionId
+ */
+export const runSummaryKey = (executionId) => [
+  "simulation-run-results-v3",
+  executionId,
+  "summary",
+];
+
+/**
+ * One calls-list request, stamped with when it was sent. Writes to the header
+ * entry are ordered by that stamp, so an older snapshot never replaces a newer
+ * one however the responses arrive.
+ * @param {string} executionId
+ * @param {Object} params
+ */
+export function fetchRunCalls(executionId, params) {
+  const requestedAt = Date.now();
+  return axios
+    .get(endpoints.runResultsV3.calls(executionId), { params })
+    .then((response) => ({ ...response.data, requestedAt }));
 }
 
 /**
@@ -222,17 +260,13 @@ export function runCallsQueryOptions(executionId, opts = {}) {
       groupBy,
     ],
     queryFn: () =>
-      axios
-        .get(endpoints.runResultsV3.calls(executionId), {
-          params: {
-            page,
-            page_size: limit,
-            search,
-            filters: JSON.stringify(filters),
-            ...(groupBy ? { group_by: groupBy } : {}),
-          },
-        })
-        .then((response) => response.data),
+      fetchRunCalls(executionId, {
+        page,
+        page_size: limit,
+        search,
+        filters: JSON.stringify(filters),
+        ...(groupBy ? { group_by: groupBy } : {}),
+      }),
     staleTime: 1000 * 60,
   };
 }
@@ -251,13 +285,30 @@ export function useRunCalls(executionId, opts = {}) {
   const query = useQuery({
     ...runCallsQueryOptions(executionId, listOpts),
     enabled: !!executionId && enabled,
+    // A finished run can still have calls scoring (an eval added later, a
+    // failed run's late verdicts), so keep polling until none are pending.
     refetchInterval: (query) =>
-      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status) ||
+      query.state.data?.summary?.scoring?.pending > 0
         ? 3000
         : false,
   });
 
   const data = query.data;
+  const { dataUpdatedAt } = query;
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!data?.execution || data.requestedAt == null) return;
+    const key = runSummaryKey(executionId);
+    const current = queryClient.getQueryData(key)?.requestedAt;
+    // Only a snapshot requested later than the header's replaces it.
+    if (current != null && current >= data.requestedAt) return;
+    queryClient.setQueryData(
+      key,
+      { execution: data.execution, requestedAt: data.requestedAt },
+      { updatedAt: dataUpdatedAt },
+    );
+  }, [data, dataUpdatedAt, executionId, queryClient]);
   const { tasks, columns, count, groups, facets, summary, totalPages } =
     useMemo(() => {
       if (!data) {
@@ -299,7 +350,8 @@ export function useRunCalls(executionId, opts = {}) {
             csat: group.aggregates?.csat ?? null,
             turns: group.aggregates?.turns ?? null,
             latency: group.aggregates?.latency_ms ?? null,
-            stopLatency: group.aggregates?.avg_stop_time_after_interruption ?? null,
+            stopLatency:
+              group.aggregates?.avg_stop_time_after_interruption ?? null,
             aiInterruptions: group.aggregates?.ai_interruptions ?? null,
             tokens: group.aggregates?.tokens ?? null,
             evals,
@@ -316,6 +368,7 @@ export function useRunCalls(executionId, opts = {}) {
         totalPages: data.total_pages ?? 1,
       };
     }, [data]);
+  const statusCounts = useMemo(() => data?.status_counts ?? {}, [data]);
 
   return {
     tasks,
@@ -323,6 +376,7 @@ export function useRunCalls(executionId, opts = {}) {
     count,
     groups,
     facets,
+    statusCounts,
     summary,
     totalPages,
     agentType: data?.execution?.agent_type ?? null,

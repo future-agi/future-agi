@@ -16,11 +16,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +32,11 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
@@ -45,6 +48,10 @@ type Config struct {
 	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
 	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
 	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
+	// GzipInflightMiB caps the decompressed body bytes all gzip OTLP/HTTP
+	// requests hold at once (see inflateBudget). 0 = 128, or GOMEMLIMIT/8
+	// when lower; never below 16.
+	GzipInflightMiB int `yaml:"gzip_inflight_mib"`
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
@@ -60,12 +67,15 @@ type Server struct {
 	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
 	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
 	auth            *auth.Authenticator
+	router          auth.SimulationRouter // nil: requests of sandbox keys are dropped
+	refusalLog      auth.LogLimiter
 	usage           UsageEmitter
 	metering        Metering
 	log             *slog.Logger
 	pricer          chexp.Pricer
 	grpc            *grpc.Server
 	httpd           *http.Server
+	inflate         *inflateBudget // decompressed gzip bytes held by in-flight HTTP requests
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -95,6 +105,7 @@ type Option struct {
 	log             *slog.Logger
 	pricer          chexp.Pricer
 	propertyCatalog PropertyCatalogWriter
+	router          auth.SimulationRouter
 }
 
 // TraceNotifier receives ended roots only after their canonical batch is stored.
@@ -115,6 +126,12 @@ func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 	return Option{propertyCatalog: w}
 }
+
+// WithSimulationRouter replaces the router of sandbox-key requests, which
+// defaults to the authenticator. A nil router is ignored. A server that ends
+// with no router at all (no authenticator and no option) drops the requests of
+// sandbox keys, so they are never stored under the project name they carry.
+func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -153,7 +170,14 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var pricer chexp.Pricer
 	var propertyCatalogWriter PropertyCatalogWriter
 	var traceNotifier TraceNotifier
+	var router auth.SimulationRouter
+	if authenticator != nil {
+		router = authenticator
+	}
 	for _, o := range opts {
+		if o.router != nil {
+			router = o.router
+		}
 		if o.traceNotifier != nil {
 			traceNotifier = o.traceNotifier
 		}
@@ -173,6 +197,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		cfg:             cfg,
 		writer:          writer,
 		auth:            authenticator,
+		router:          router,
 		usage:           usage,
 		metering:        metering,
 		log:             log,
@@ -186,6 +211,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		curated: curatedwriter.New(writer),
 		pendCh:  make(chan struct{}, 1),
 		stopCh:  make(chan struct{}),
+		inflate: newInflateBudget(gzipInflightBytes(cfg.GzipInflightMiB)),
 	}
 	return s
 }
@@ -209,9 +235,20 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
 		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", s.cfg.GRPCMaxRecvMiB)
+		// No gzip decompressor is registered, on purpose: gRPC stays
+		// uncompressed-only. A grpc-go decompressor is handed only the
+		// compressed bytes, not the call, so it cannot wait on the call for a
+		// share of the inflate budget or hold that share until the handler
+		// returns, as OTLP/HTTP gzip requests do. A gzip call gets
+		// UNIMPLEMENTED before its message is read.
+		// TestGRPCGzipDecompressorIsNotRegistered (cmd/fi-collector) fails if
+		// any import registers one.
 		grpcOpts := []grpc.ServerOption{
 			grpc.MaxRecvMsgSize(s.cfg.GRPCMaxRecvMiB << 20),
 			grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+			// The nesting limit, checked before a request is decoded
+			// (nestingCheckedCodec).
+			grpc.ForceServerCodecV2(newNestingCheckedCodec()),
 		}
 		if s.auth != nil {
 			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
@@ -236,6 +273,7 @@ func (s *Server) Run(ctx context.Context) error {
 		if s.auth != nil {
 			handler = s.auth.HTTPMiddleware(mux)
 		}
+		s.log.Info("http listener", "addr", s.cfg.HTTPAddr, "gzip_inflight_mib", s.inflate.size>>20)
 		s.httpd = &http.Server{
 			Addr:              s.cfg.HTTPAddr,
 			Handler:           handler,
@@ -344,6 +382,13 @@ type otlpHandler struct {
 }
 
 func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) (ptraceotlp.ExportResponse, error) {
+	// x-project-name metadata only fills ResourceSpans that do not name a
+	// project (auth.ProjectNameHeader).
+	md, _ := metadata.FromIncomingContext(ctx)
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameMetadataValues(md)); err != nil {
+		return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	if check, ok := h.s.checkUsage(ctx); !ok {
 		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
 	}
@@ -352,10 +397,20 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// the existing org/project behavior but deliberately does not add a
 	// workspace attribute to the canonical span payload.
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(ctx); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
+		var err error
+		routed, err = h.s.routeSimulation(ctx, result, req.Traces())
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "simulation routing temporarily unavailable")
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			return partialSuccessResponse(routed), nil
+		}
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
 			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
@@ -365,6 +420,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
 		}
@@ -374,7 +430,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
@@ -391,8 +447,15 @@ const maxOTLPHTTPBodyBytes = 16 << 20
 
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
 // (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
-// `application/x-protobuf` and `application/json`. Any other method or
-// content type is rejected with the canonical status code.
+// `application/x-protobuf` and `application/json`, either uncompressed or
+// with `Content-Encoding: gzip` (the spec requires servers to support gzip).
+// Any other method, content type or content coding is rejected with the
+// canonical status code.
+//
+// The project may also come from the X-Project-Name header (alias
+// FI-Project-Name), for exporters that can set headers but not resource
+// attributes; a resource attribute `project_name` still wins (see
+// auth.ProjectNameHeader).
 //
 // Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
 // in the response media type that matches the request — the spec requires
@@ -413,24 +476,59 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		ct = ct[:i]
 	}
 	ct = trimSpace(ct)
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
-	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+	if ct != "application/x-protobuf" && ct != "application/json" {
+		// The spec is explicit: unsupported media types return 415.
+		w.Header().Set("Accept", "application/x-protobuf, application/json")
+		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
 		return
 	}
-	if len(body) > maxOTLPHTTPBodyBytes {
-		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
-		// equally visible server-side.
-		s.log.Error("http body over size cap, request rejected",
-			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
-		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+
+	gzipped, ok := otlpContentCoding(r.Header)
+	if !ok {
+		// RFC 7694: a 415 caused by the content coding lists the codings
+		// the server does accept.
+		w.Header().Set("Accept-Encoding", "gzip, identity")
+		http.Error(w, "unsupported content encoding: "+strings.Join(r.Header.Values("Content-Encoding"), ", "),
+			http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// The 16 MiB cap applies to the body as sent and, for gzip, again after
+	// decompression. A gzip body is read in full, then reserves 16 MiB for the
+	// count pass. On success that shrinks to the exact decompressed size and
+	// remains leased until the handler returns. The lease covers decompressed
+	// body bytes only.
+	body, release, err := readOTLPHTTPBody(w, r, gzipped, maxOTLPHTTPBodyBytes, s.inflate)
+	defer release()
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge) || errors.Is(err, errInflatedBodyTooLarge):
+			// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+			// equally visible server-side.
+			if ok, held := s.inflate.overCapLog.allow(time.Now()); ok {
+				s.log.Error("http body over size cap, request rejected",
+					"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes, "gzip", gzipped, "suppressed", held)
+			}
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		case errors.Is(err, errInflateBudgetBusy):
+			s.rejectBusy(w, r)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
 
 	req := ptraceotlp.NewExportRequest()
 	switch ct {
 	case "application/x-protobuf":
+		// pdata's protobuf decoder has no depth limit and a deep enough body
+		// overflows the stack, killing the process; jsoniter already stops
+		// JSON at the same depth.
+		if err := checkProtoNesting(body); err != nil {
+			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := req.UnmarshalProto(body); err != nil {
 			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
 			return
@@ -440,10 +538,11 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-	default:
-		// The spec is explicit: unsupported media types return 415.
-		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+	}
+
+	// X-Project-Name only fills ResourceSpans that do not name a project.
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -454,10 +553,23 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(r.Context()); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
+		var err error
+		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			writeExportResponse(w, ct, partialSuccessResponse(routed))
+			return
+		}
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
 			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
@@ -468,6 +580,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
 			return
@@ -480,15 +593,20 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
-	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
-	// the request's content-type. The spec requires the response media type
-	// to match the request.
-	resp := ptraceotlp.NewExportResponse()
+	// ExportTraceServiceResponse — same wire shape, encoded to match the
+	// request's content-type. The spec requires the response media type to
+	// match the request.
+	writeExportResponse(w, ct, ptraceotlp.NewExportResponse())
+}
+
+// writeExportResponse answers 200 with resp in the request's media type.
+func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.ExportResponse) {
 	var out []byte
+	var err error
 	switch ct {
 	case "application/json":
 		out, err = resp.MarshalJSON()
@@ -502,6 +620,100 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// dropNoRouter is the reason given for a sandbox-key request that arrives
+// where nothing can route it.
+const dropNoRouter = "no_router"
+
+// routeSimulation sends the spans of a sandbox key to the hidden project of
+// its agent. An error means the request must be refused as retryable; nothing
+// of it has been stored or changed.
+func (s *Server) routeSimulation(ctx context.Context, result *auth.ResolveResult, traces ptrace.Traces) (auth.RouteOutcome, error) {
+	if s.router == nil {
+		if result.KeyType != auth.KeyTypeIngest {
+			return auth.RouteOutcome{}, nil
+		}
+		// Storing the spans under their own project name would put a
+		// sandbox run in a production project.
+		spans := traces.SpanCount()
+		traces.ResourceSpans().RemoveIf(func(ptrace.ResourceSpans) bool { return true })
+		var out auth.RouteOutcome
+		if spans > 0 {
+			out.Dropped = map[string]int{dropNoRouter: spans}
+			if s.refusalLog.Allow(dropNoRouter, time.Now()) {
+				s.log.Error("simulation span dropped: the server has no router for sandbox keys",
+					"reason", dropNoRouter, "spans", spans)
+			}
+		}
+		return out, nil
+	}
+	outcome, err := s.router.RouteSimulation(ctx, auth.CacheKeyFromContext(ctx), traces, result)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRoutingNotReady):
+		// Expected until the first column check, or for the first request
+		// after a cached key is read again.
+		s.log.Debug("simulation routing is not ready; request refused", "err", err)
+	case s.refusalLog.Allow("refused", time.Now()):
+		s.log.Warn("simulation routing refused a request as retryable", "err", err)
+	}
+	return outcome, err
+}
+
+// partialSuccessResponse is the empty success response, carrying the count
+// and reasons of the spans routing dropped when there were any.
+func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	if n := routed.DroppedSpans(); n > 0 {
+		partial := resp.PartialSuccess()
+		partial.SetRejectedSpans(int64(n))
+		partial.SetErrorMessage("simulation routing dropped " + strconv.Itoa(n) + " spans: " + routed.Summary())
+	}
+	return resp
+}
+
+// enqueueRouted parks the rows of a request. Rows of a hidden project, whether
+// routing put the whole request there or another key's request names one,
+// neither the observed catalog nor the stored-root notifier may see, so they
+// are parked without a tenant scope: both then skip them, and the catalog does
+// not record a scope failure for every drain that carries them.
+func (s *Server) enqueueRouted(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	routed auth.RouteOutcome,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+	hiddenProjectIDs map[string]struct{},
+) {
+	if routed.Hidden != "" {
+		s.enqueue(rows, ids)
+		return
+	}
+	if len(hiddenProjectIDs) > 0 {
+		var visible, hidden []map[string]any
+		for _, row := range rows {
+			if projectID, _ := row["project_id"].(string); projectID != "" {
+				if _, isHidden := hiddenProjectIDs[projectID]; isHidden {
+					hidden = append(hidden, row)
+					continue
+				}
+			}
+			visible = append(visible, row)
+		}
+		if len(hidden) > 0 {
+			// The payload's identities go with the visible rows, or with the
+			// hidden ones when nothing else is left.
+			if len(visible) == 0 {
+				s.enqueue(hidden, ids)
+				return
+			}
+			s.enqueue(hidden, nil)
+			rows = visible
+		}
+	}
+	s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -524,6 +736,17 @@ func trimSpace(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// rejectBusy answers a gzip request that did not get its share of the inflate
+// budget in time with 503 + Retry-After, which the OTLP spec makes retryable.
+func (s *Server) rejectBusy(w http.ResponseWriter, r *http.Request) {
+	if ok, held := s.inflate.busyLog.allow(time.Now()); ok {
+		s.log.Warn("gzip inflate budget busy, request rejected",
+			"path", r.URL.Path, "budget_bytes", s.inflate.size, "in_use_bytes", s.inflate.inUse.Load(), "suppressed", held)
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "server busy decompressing other requests, retry later", http.StatusServiceUnavailable)
 }
 
 // enqueue parks rows on the pending buffer and signals the flusher.

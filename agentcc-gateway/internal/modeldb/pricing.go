@@ -1,6 +1,7 @@
 package modeldb
 
-// PricingInfo contains per-token pricing for a model (USD per token).
+// PricingInfo contains a model's pricing in USD: per token, and for speech models per second of
+// audio transcribed or per character synthesised.
 type PricingInfo struct {
 	InputPerToken       float64 `json:"input_per_token"`
 	OutputPerToken      float64 `json:"output_per_token"`
@@ -9,6 +10,8 @@ type PricingInfo struct {
 	BatchOutputPerToken float64 `json:"batch_output_per_token,omitempty"`
 	InputPerImage       float64 `json:"input_per_image,omitempty"`
 	OutputPerImage      float64 `json:"output_per_image,omitempty"`
+	InputPerSecond      float64 `json:"input_per_second,omitempty"`
+	InputPerCharacter   float64 `json:"input_per_character,omitempty"`
 }
 
 // CostOptions controls which pricing tier to use.

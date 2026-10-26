@@ -9444,9 +9444,10 @@
                     {
                         "name": "api_key_id",
                         "in": "query",
+                        "description": "Gateway key id (not the API key's UUID primary key).",
                         "required": false,
                         "type": "string",
-                        "format": "uuid"
+                        "maxLength": 255
                     }
                 ],
                 "responses": {
@@ -12659,7 +12660,7 @@
         "/agentcc/org-configs/bulk/": {
             "get": {
                 "operationId": "agentcc_org-configs_bulk_list",
-                "description": "Bulk endpoint for gateway startup sync.\nReturns all active org configs keyed by org ID.\nAuthenticated by admin token (not user JWT).",
+                "description": "Bulk endpoint for gateway startup sync.\nReturns all active org configs keyed by org ID, plus the ids of orgs whose\npayload could not be built, so the gateway keeps their last good config.\nAuthenticated by admin token (not user JWT).",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -13202,9 +13203,10 @@
                     {
                         "name": "api_key_id",
                         "in": "query",
+                        "description": "Gateway key id (not the API key's UUID primary key).",
                         "required": false,
                         "type": "string",
-                        "format": "uuid"
+                        "maxLength": 255
                     },
                     {
                         "name": "request_id",
@@ -17315,6 +17317,48 @@
             },
             "parameters": []
         },
+        "/integrations/connections/{connection_id}/slack/channels/": {
+            "get": {
+                "operationId": "integrations_connections_slack_channels_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 512
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackChannelsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/integrations/connections/{id}/": {
             "get": {
                 "operationId": "integrations_connections_read",
@@ -17692,6 +17736,42 @@
                     "type": "string"
                 }
             ]
+        },
+        "/integrations/slack/install/": {
+            "post": {
+                "operationId": "integrations_slack_install_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/integrations/sync-logs/": {
             "get": {
@@ -18403,6 +18483,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests",
+                        "schema": {
+                            "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds before retrying the token request.",
+                                "type": "integer"
+                            }
                         }
                     },
                     "default": {
@@ -28341,10 +28433,52 @@
             "delete": {
                 "operationId": "model-hub_develops_delete_dataset_delete",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DatasetDelete"
+                        }
+                    }
+                ],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -28355,7 +28489,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -47114,6 +47250,42 @@
                 }
             ]
         },
+        "/saml2_auth/complete/": {
+            "get": {
+                "operationId": "saml2_auth_complete_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "c",
+                        "in": "query",
+                        "description": "One-time SAML response candidate key.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirects to the configured frontend URL."
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SAMLErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "saml2_auth"
+                ]
+            },
+            "parameters": []
+        },
         "/saml2_auth/github/callback/": {
             "get": {
                 "operationId": "saml2_auth_github_callback_list",
@@ -48521,7 +48693,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AgentDefinitionResponse"
+                            "$ref": "#/definitions/AgentDefinitionDetailResponse"
                         }
                     },
                     "404": {
@@ -48634,6 +48806,56 @@
                         }
                     },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/runs/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_runs_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 5,
+                        "maximum": 20,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentRunsResponse"
+                        }
+                    },
+                    "404": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -48864,6 +49086,56 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_agent_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/StoredAgentResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
             },
             "parameters": [
                 {
@@ -50523,6 +50795,13 @@
                         "type": "integer",
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "agent_definition_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -52022,6 +52301,91 @@
                 }
             ]
         },
+        "/simulate/api/harness/conversations/{id}/overview/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_overview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverviewQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/publish/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_publish",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/conversations/{id}/rerun/": {
             "post": {
                 "operationId": "simulate_api_harness_conversations_rerun",
@@ -52087,6 +52451,132 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/start/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs_start_run",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/scenarios/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_scenarios",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": [
                 {
@@ -58105,6 +58595,54 @@
                 }
             ]
         },
+        "/simulate/v3/test-executions/{test_execution_id}/traces/": {
+            "get": {
+                "operationId": "simulate_v3_test_execution_traces",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/RunTracesV3Response"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "test_execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/telemetry/heartbeat/": {
             "post": {
                 "operationId": "telemetry_heartbeat_create",
@@ -58172,6 +58710,253 @@
                 ]
             },
             "parameters": []
+        },
+        "/tracer/alerts/": {
+            "get": {
+                "operationId": "tracer_alerts_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_alerts_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/error_feed/{alert_id}/test/": {
+            "post": {
+                "operationId": "tracer_alerts_error_feed_test_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/alerts/options/": {
+            "get": {
+                "operationId": "tracer_alerts_options_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertOptionsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/{kind}/{alert_id}/": {
+            "get": {
+                "operationId": "tracer_alerts_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_alerts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_alerts_delete",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertDeletedResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "kind",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/tracer/bulk-annotation/": {
             "post": {
@@ -61734,6 +62519,72 @@
                 }
             ]
         },
+        "/tracer/feed/issues/{cluster_id}/redirect/": {
+            "get": {
+                "operationId": "tracer_feed_issues_redirect_list",
+                "description": "Resolve an old issue ID to its active redirect target.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/FeedRedirectApiResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "cluster_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/feed/issues/{cluster_id}/root-cause/": {
             "get": {
                 "operationId": "tracer_feed_issues_root-cause_list",
@@ -62214,6 +63065,55 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/InvestigationControlError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InvestigationControlError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "attempt_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/internal/error-feed-v2/attempts/{attempt_id}/conversation-evidence/": {
+            "post": {
+                "operationId": "tracer_internal_error-feed-v2_attempts_conversation-evidence_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ConversationEvidenceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationEvidenceResponse"
                         }
                     },
                     "409": {
@@ -65145,6 +66045,22 @@
                 "operationId": "tracer_observation-span_read",
                 "description": "",
                 "parameters": [
+                    {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     {
                         "name": "project_id",
                         "in": "query",
@@ -70079,8 +70995,24 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.",
+                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.\n- test_execution_id or call_execution_id (optional) — a run the caller\n  can read; the hidden simulation project of that run's agent is read\n  in place of the caller's projects.",
                 "parameters": [
+                    {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     {
                         "name": "trace_id",
                         "in": "query",
@@ -70156,8 +71088,24 @@
             "get": {
                 "operationId": "tracer_trace_read",
                 "summary": "Retrieve a trace by its ID.",
-                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.",
+                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.\n- test_execution_id or call_execution_id (optional) — a run the caller\n  can read; the hidden simulation project of that run's agent is read\n  in place of the caller's projects.",
                 "parameters": [
+                    {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     {
                         "name": "project_id",
                         "in": "query",
@@ -70920,50 +71868,91 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "page",
+                        "name": "page_number",
                         "in": "query",
-                        "description": "A page number within the paginated result set.",
+                        "description": "Zero-based page number.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
                     },
                     {
-                        "name": "limit",
+                        "name": "page_size",
                         "in": "query",
-                        "description": "Number of results to return per page.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "search_text",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "triggered",
+                                "healthy"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "metric_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "sort_by",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "sort_direction",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ]
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/UserAlertMonitor"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/UserAlertMonitorListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -70975,7 +71964,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -83483,7 +84474,8 @@
                 "default_workspace_role",
                 "org_level",
                 "ws_level",
-                "effective_level"
+                "effective_level",
+                "restrict_simulate_to_environments"
             ],
             "type": "object",
             "properties": {
@@ -83604,6 +84596,10 @@
                     "title": "Org 2fa grace ends at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "restrict_simulate_to_environments": {
+                    "title": "Restrict simulate to environments",
+                    "type": "boolean"
                 }
             }
         },
@@ -88748,7 +89744,8 @@
         "OrgConfigBulkResponse": {
             "required": [
                 "status",
-                "result"
+                "result",
+                "unbuilt_org_ids"
             ],
             "type": "object",
             "properties": {
@@ -88761,6 +89758,14 @@
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/OrgConfigBulkItem"
+                    }
+                },
+                "unbuilt_org_ids": {
+                    "description": "Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
                     }
                 }
             }
@@ -92547,7 +93552,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -92753,7 +93759,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -92873,7 +93880,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -93039,7 +94047,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -93159,6 +94168,72 @@
                 }
             }
         },
+        "SlackChannel": {
+            "required": [
+                "id",
+                "name",
+                "is_private",
+                "is_member"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_private": {
+                    "title": "Is private",
+                    "type": "boolean"
+                },
+                "is_member": {
+                    "title": "Is member",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SlackChannelsResult": {
+            "required": [
+                "channels",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "channels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SlackChannel"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SlackChannelsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackChannelsResult"
+                }
+            }
+        },
         "IntegrationConnectionUpdate": {
             "type": "object",
             "properties": {
@@ -93230,6 +94305,46 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationMessageResult"
+                }
+            }
+        },
+        "SlackInstall": {
+            "type": "object",
+            "properties": {
+                "connection_id": {
+                    "title": "Connection id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SlackInstallResult": {
+            "required": [
+                "authorization_url"
+            ],
+            "type": "object",
+            "properties": {
+                "authorization_url": {
+                    "title": "Authorization url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "SlackInstallResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackInstallResult"
                 }
             }
         },
@@ -103306,6 +104421,22 @@
                 },
                 "result": {
                     "$ref": "#/definitions/DatasetCreationProgressResult"
+                }
+            }
+        },
+        "DatasetDelete": {
+            "required": [
+                "dataset_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 50
                 }
             }
         },
@@ -118471,6 +119602,25 @@
                 }
             }
         },
+        "RunEnvironmentRef": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "AgentDefinitionListResponse": {
             "type": "object",
             "properties": {
@@ -118692,6 +119842,37 @@
                     "readOnly": true,
                     "minLength": 1,
                     "x-nullable": true
+                },
+                "agent_kind": {
+                    "title": "Agent kind",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "version_count": {
+                    "title": "Version count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "environment_count": {
+                    "title": "Environment count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "environments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunEnvironmentRef"
+                    },
+                    "readOnly": true
                 }
             }
         },
@@ -119237,6 +120418,313 @@
                 }
             }
         },
+        "AgentDefinitionDetailResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "agent_name": {
+                    "title": "Agent name",
+                    "description": "Name of the AI agent",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "text"
+                    ],
+                    "readOnly": true
+                },
+                "contact_number": {
+                    "title": "Contact number",
+                    "description": "Phone number associated with the AI agent",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "inbound": {
+                    "title": "Inbound",
+                    "description": "Whether the agent handles inbound calls",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "target_speaks_first": {
+                    "title": "Target speaks first",
+                    "description": "Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation).",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "description": {
+                    "title": "Description",
+                    "description": "Detailed description of the AI agent's purpose and capabilities",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "assistant_id": {
+                    "title": "Assistant id",
+                    "description": "External identifier for the assistant",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "provider": {
+                    "title": "Provider",
+                    "description": "Provider of the AI agent",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "language": {
+                    "title": "Language",
+                    "description": "Language of the agent",
+                    "type": "string",
+                    "enum": [
+                        "ar",
+                        "bg",
+                        "zh",
+                        "cs",
+                        "da",
+                        "nl",
+                        "en",
+                        "fi",
+                        "fr",
+                        "de",
+                        "el",
+                        "hi",
+                        "hu",
+                        "id",
+                        "it",
+                        "ja",
+                        "ko",
+                        "ms",
+                        "no",
+                        "pl",
+                        "pt",
+                        "ro",
+                        "ru",
+                        "sk",
+                        "es",
+                        "sv",
+                        "tr",
+                        "uk",
+                        "vi"
+                    ],
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "title": "Languages",
+                        "description": "Language of the agent",
+                        "type": "string",
+                        "enum": [
+                            "ar",
+                            "bg",
+                            "zh",
+                            "cs",
+                            "da",
+                            "nl",
+                            "en",
+                            "fi",
+                            "fr",
+                            "de",
+                            "el",
+                            "hi",
+                            "hu",
+                            "id",
+                            "it",
+                            "ja",
+                            "ko",
+                            "ms",
+                            "no",
+                            "pl",
+                            "pt",
+                            "ro",
+                            "ru",
+                            "sk",
+                            "es",
+                            "sv",
+                            "tr",
+                            "uk",
+                            "vi"
+                        ]
+                    },
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "authentication_method": {
+                    "title": "Authentication method",
+                    "type": "string",
+                    "enum": [
+                        "api_key"
+                    ],
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "websocket_url": {
+                    "title": "Websocket url",
+                    "description": "WebSocket URL for real-time communication with the agent",
+                    "type": "string",
+                    "format": "uri",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "websocket_headers": {
+                    "title": "Websocket headers",
+                    "description": "Headers to be sent to the websocket server",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "workspace": {
+                    "title": "Workspace",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "knowledge_base": {
+                    "title": "Knowledge base",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "organization": {
+                    "title": "Organization",
+                    "description": "Organization this agent definition belongs to",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "api_key": {
+                    "title": "Api key",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "observability_provider": {
+                    "title": "Observability provider",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "model": {
+                    "title": "Model",
+                    "description": "Model of the agent",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "model_details": {
+                    "title": "Model details",
+                    "description": "Details of the model",
+                    "type": "object",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "livekit_url": {
+                    "title": "Livekit url",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "livekit_api_key": {
+                    "title": "Livekit api key",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "livekit_agent_name": {
+                    "title": "Livekit agent name",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "livekit_config_json": {
+                    "title": "Livekit config json",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "livekit_max_concurrency": {
+                    "title": "Livekit max concurrency",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "readOnly": true
+                },
+                "active_version": {
+                    "title": "Active version",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "version_count": {
+                    "title": "Version count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "agent_kind": {
+                    "title": "Agent kind",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "environment_count": {
+                    "title": "Environment count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "observability_enabled": {
+                    "title": "Observability enabled",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
         "AgentDefinitionDeleteResponse": {
             "type": "object",
             "properties": {
@@ -119251,6 +120739,10 @@
         "AgentDefinitionEditRequest": {
             "type": "object",
             "properties": {
+                "observability_enabled": {
+                    "title": "Observability enabled",
+                    "type": "boolean"
+                },
                 "agent_name": {
                     "title": "Agent name",
                     "type": "string",
@@ -119393,6 +120885,122 @@
                 },
                 "agent": {
                     "$ref": "#/definitions/AgentDefinitionResponse"
+                }
+            }
+        },
+        "AgentVersionRef": {
+            "required": [
+                "id",
+                "version_number"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessRunSummary": {
+            "required": [
+                "kind",
+                "test_execution_id",
+                "run_test_id",
+                "run_test_name",
+                "run_number",
+                "status",
+                "environment",
+                "agent_version",
+                "outcome_passed",
+                "outcome_failed",
+                "outcome_skipped",
+                "started_at",
+                "completed_at"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "environment",
+                        "simulate"
+                    ]
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_test_name": {
+                    "title": "Run test name",
+                    "type": "string"
+                },
+                "run_number": {
+                    "title": "Run number",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment": {
+                    "$ref": "#/definitions/RunEnvironmentRef"
+                },
+                "agent_version": {
+                    "$ref": "#/definitions/AgentVersionRef"
+                },
+                "outcome_passed": {
+                    "title": "Outcome passed",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome_failed": {
+                    "title": "Outcome failed",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome_skipped": {
+                    "title": "Outcome skipped",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "AgentRunsResponse": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessRunSummary"
+                    },
+                    "readOnly": true
                 }
             }
         },
@@ -119623,8 +121231,7 @@
                 },
                 "observability_enabled": {
                     "title": "Observability enabled",
-                    "type": "boolean",
-                    "default": false
+                    "type": "boolean"
                 }
             }
         },
@@ -119749,6 +121356,20 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "agent_kind": {
+                    "title": "Agent kind",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "api_key": {
+                    "title": "Api key",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -119788,6 +121409,347 @@
                 },
                 "version": {
                     "$ref": "#/definitions/AgentVersionResponse"
+                }
+            }
+        },
+        "StoredProviderRef": {
+            "required": [
+                "provider",
+                "id",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "StoredBehaviourUnit": {
+            "required": [
+                "id",
+                "shape",
+                "instructions",
+                "tools",
+                "transitions"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "shape": {
+                    "title": "Shape",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "transitions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "StoredToolEndpoint": {
+            "required": [
+                "url"
+            ],
+            "type": "object",
+            "properties": {
+                "url": {
+                    "title": "Url",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "StoredTool": {
+            "required": [
+                "name",
+                "description",
+                "kind",
+                "parameters",
+                "endpoint"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "parameters": {
+                    "title": "Parameters",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "endpoint": {
+                    "$ref": "#/definitions/StoredToolEndpoint"
+                }
+            }
+        },
+        "StoredModel": {
+            "required": [
+                "provider",
+                "name",
+                "temperature",
+                "max_tokens"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "temperature": {
+                    "title": "Temperature",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "max_tokens": {
+                    "title": "Max tokens",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "StoredVoice": {
+            "required": [
+                "provider",
+                "voice_id",
+                "language",
+                "speed"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "voice_id": {
+                    "title": "Voice id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "language": {
+                    "title": "Language",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "speed": {
+                    "title": "Speed",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "StoredTelephony": {
+            "required": [
+                "number",
+                "provider",
+                "direction_supported"
+            ],
+            "type": "object",
+            "properties": {
+                "number": {
+                    "title": "Number",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "direction_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "StoredAgent": {
+            "required": [
+                "schema_version",
+                "type",
+                "kind",
+                "name",
+                "provider_ref",
+                "behaviour",
+                "tools",
+                "model",
+                "voice",
+                "telephony",
+                "supports",
+                "direction_answer",
+                "gaps",
+                "instrumentation",
+                "setup_hash"
+            ],
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "provider_ref": {
+                    "$ref": "#/definitions/StoredProviderRef"
+                },
+                "behaviour": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/StoredBehaviourUnit"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/StoredTool"
+                    }
+                },
+                "model": {
+                    "$ref": "#/definitions/StoredModel"
+                },
+                "voice": {
+                    "$ref": "#/definitions/StoredVoice"
+                },
+                "telephony": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/StoredTelephony"
+                    }
+                },
+                "supports": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "direction_answer": {
+                    "title": "Direction answer",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "gaps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "instrumentation": {
+                    "title": "Instrumentation",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "setup_hash": {
+                    "title": "Setup hash",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "StoredAgentResponse": {
+            "required": [
+                "agent",
+                "sdk_version",
+                "stored_at",
+                "setup_stale"
+            ],
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "$ref": "#/definitions/StoredAgent"
+                },
+                "sdk_version": {
+                    "title": "Sdk version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stored_at": {
+                    "title": "Stored at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "setup_stale": {
+                    "title": "Setup stale",
+                    "type": "boolean"
                 }
             }
         },
@@ -122366,7 +124328,8 @@
                 "tools_count",
                 "runs_count",
                 "last_updated",
-                "created_at"
+                "created_at",
+                "last_run"
             ],
             "type": "object",
             "properties": {
@@ -122448,6 +124411,9 @@
                     "title": "Created at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "last_run": {
+                    "$ref": "#/definitions/HarnessRunSummary"
                 }
             }
         },
@@ -124185,8 +126151,10 @@
                     "title": "Metadata",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "runtime": {
@@ -125274,8 +127242,10 @@
                     "title": "Metadata",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "default": {}
                 }
@@ -125342,8 +127312,10 @@
                     "title": "Metadata",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "default": {}
                 },
@@ -125589,6 +127561,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -126480,6 +128466,14 @@
                         "minLength": 1
                     }
                 },
+                "agent": {
+                    "title": "Agent",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
                 "run_test_id": {
                     "title": "Run test id",
                     "type": "string",
@@ -126720,6 +128714,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -126909,6 +128917,98 @@
                 }
             }
         },
+        "HarnessConversationOverviewQuery": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessConversationOverview": {
+            "required": [
+                "environment",
+                "scenario_count",
+                "use_cases",
+                "coverage",
+                "recent_runs",
+                "build_changes",
+                "earlier_messages"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "title": "Environment",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "use_cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "coverage": {
+                    "title": "Coverage",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "recent_runs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "build_changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "earlier_messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                }
+            }
+        },
+        "HarnessConversationPublish": {
+            "required": [
+                "digest"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessConversationRerun": {
             "type": "object",
             "properties": {}
@@ -126958,6 +129058,129 @@
                 "receipts": {
                     "title": "Receipts",
                     "type": "object"
+                }
+            }
+        },
+        "HarnessConversationRunsQuery": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessConversationRunStart": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "operation_id": {
+                    "title": "Operation id",
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "HarnessConversationScenarioQuery": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 500
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000
+                },
+                "search": {
+                    "title": "Search",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "full": {
+                    "title": "Full",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -134614,8 +136837,7 @@
                 },
                 "type": {
                     "title": "Type",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 },
                 "value": {
                     "title": "Value",
@@ -134639,7 +136861,13 @@
                 "status": {
                     "title": "Status",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
                 }
             }
         },
@@ -134691,7 +136919,10 @@
                 "outcome",
                 "cost_breakdown_cents",
                 "evaluations",
-                "function_calls"
+                "function_calls",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -135161,6 +137392,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3FunctionCall"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137102,6 +139362,90 @@
                 }
             }
         },
+        "SimulateRunV3ScoringCounts": {
+            "required": [
+                "not_applicable",
+                "pending",
+                "succeeded",
+                "failed",
+                "timed_out"
+            ],
+            "type": "object",
+            "properties": {
+                "not_applicable": {
+                    "title": "Not applicable",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "succeeded": {
+                    "title": "Succeeded",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "timed_out": {
+                    "title": "Timed out",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SimulateRunV3CallsSummary": {
+            "required": [
+                "total",
+                "outcomes",
+                "measured",
+                "pass_rate",
+                "duration",
+                "latency",
+                "tokens",
+                "cost_cents",
+                "scoring"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "outcomes": {
+                    "$ref": "#/definitions/OutcomeCounts"
+                },
+                "measured": {
+                    "title": "Measured",
+                    "type": "integer"
+                },
+                "pass_rate": {
+                    "title": "Pass rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "duration": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "latency": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "tokens": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "cost_cents": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "scoring": {
+                    "$ref": "#/definitions/SimulateRunV3ScoringCounts"
+                }
+            }
+        },
         "RunCall": {
             "required": [
                 "id",
@@ -137134,7 +139478,10 @@
                 "csat",
                 "ended_reason",
                 "error_message",
-                "evaluations"
+                "evaluations",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -137311,6 +139658,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3EvaluationResult"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137516,6 +139892,7 @@
                 "results",
                 "groups",
                 "facets",
+                "status_counts",
                 "evaluation_columns"
             ],
             "type": "object",
@@ -137524,7 +139901,7 @@
                     "$ref": "#/definitions/RunExecution"
                 },
                 "summary": {
-                    "$ref": "#/definitions/RunSummary"
+                    "$ref": "#/definitions/SimulateRunV3CallsSummary"
                 },
                 "count": {
                     "title": "Count",
@@ -137556,6 +139933,9 @@
                 },
                 "facets": {
                     "$ref": "#/definitions/RunFacets"
+                },
+                "status_counts": {
+                    "$ref": "#/definitions/OutcomeCounts"
                 },
                 "evaluation_columns": {
                     "type": "array",
@@ -137602,6 +139982,143 @@
                         "-outcome"
                     ],
                     "default": "-started_at"
+                }
+            }
+        },
+        "RunTrace": {
+            "required": [
+                "trace_id",
+                "name",
+                "start_time",
+                "status",
+                "latency_ms",
+                "call_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "start_time": {
+                    "title": "Start time",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "RunTracesV3Response": {
+            "required": [
+                "project_id",
+                "traces"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "traces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunTrace"
+                    }
+                }
+            }
+        },
+        "ApiErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
                 }
             }
         },
@@ -137854,6 +140371,585 @@
                 }
             }
         },
+        "AlertItem": {
+            "required": [
+                "id",
+                "kind",
+                "name",
+                "enabled"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "slack_channel_name": {
+                    "title": "Slack channel name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer"
+                },
+                "last_triggered_at": {
+                    "title": "Last triggered at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "health": {
+                    "title": "Health",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_reason": {
+                    "title": "Failure reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workspace": {
+                    "title": "Workspace",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "metric_name": {
+                    "title": "Metric name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "last_checked_at": {
+                    "title": "Last checked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                },
+                "deleted_at": {
+                    "title": "Deleted at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "logs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertListResult": {
+            "required": [
+                "alerts"
+            ],
+            "type": "object",
+            "properties": {
+                "alerts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertItem"
+                    }
+                }
+            }
+        },
+        "AlertListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertListResult"
+                }
+            }
+        },
+        "AlertWriteRequest": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number"
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number"
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertItemResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertItem"
+                }
+            }
+        },
+        "AlertTestRequest": {
+            "type": "object",
+            "properties": {}
+        },
+        "AlertTestResult": {
+            "required": [
+                "sent",
+                "slack_ts"
+            ],
+            "type": "object",
+            "properties": {
+                "sent": {
+                    "title": "Sent",
+                    "type": "boolean"
+                },
+                "slack_ts": {
+                    "title": "Slack ts",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertTestResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertTestResult"
+                }
+            }
+        },
+        "AlertOption": {
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertProjectOption": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertOptionsResult": {
+            "required": [
+                "triggers",
+                "severities",
+                "statuses",
+                "sources",
+                "projects"
+            ],
+            "type": "object",
+            "properties": {
+                "triggers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertOption"
+                    }
+                },
+                "severities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertProjectOption"
+                    }
+                }
+            }
+        },
+        "AlertOptionsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertOptionsResult"
+                }
+            }
+        },
+        "AlertDeletedResult": {
+            "required": [
+                "id",
+                "deleted"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                }
+            }
+        },
+        "AlertDeletedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertDeletedResult"
+                }
+            }
+        },
         "BulkAnnotationAnnotationRequest": {
             "required": [
                 "annotation_label_id"
@@ -138010,77 +141106,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/BulkAnnotationResponseResult"
-                }
-            }
-        },
-        "ApiErrorResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "enum": [
-                        "validation_error",
-                        "authentication_error",
-                        "payment_required",
-                        "entitlement_error",
-                        "permission_error",
-                        "not_found",
-                        "conflict",
-                        "client_error",
-                        "rate_limit",
-                        "server_error",
-                        "service_unavailable",
-                        "timeout",
-                        "api_error"
-                    ],
-                    "x-nullable": true
-                },
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "attr": {
-                    "title": "Attr",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "details": {
-                    "title": "Details",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
                 }
             }
         },
@@ -142819,6 +145844,41 @@
                 }
             }
         },
+        "FeedRedirect": {
+            "required": [
+                "requested_cluster_id",
+                "resolved_cluster_id"
+            ],
+            "type": "object",
+            "properties": {
+                "requested_cluster_id": {
+                    "title": "Requested cluster id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "resolved_cluster_id": {
+                    "title": "Resolved cluster id",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "FeedRedirectApiResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/FeedRedirect"
+                }
+            }
+        },
         "RootCause": {
             "required": [
                 "rank",
@@ -143765,6 +146825,501 @@
                 }
             }
         },
+        "ConversationEvidenceRequest": {
+            "required": [
+                "lease_token"
+            ],
+            "type": "object",
+            "properties": {
+                "lease_token": {
+                    "title": "Lease token",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "ConversationCallAgent": {
+            "required": [
+                "id",
+                "version",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationCall": {
+            "required": [
+                "status",
+                "direction",
+                "duration_seconds",
+                "ended_reason",
+                "agent"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "duration_seconds": {
+                    "title": "Duration seconds",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ended_reason": {
+                    "title": "Ended reason",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "agent": {
+                    "$ref": "#/definitions/ConversationCallAgent"
+                }
+            }
+        },
+        "ConversationVariables": {
+            "required": [
+                "configured",
+                "collected"
+            ],
+            "type": "object",
+            "properties": {
+                "configured": {
+                    "title": "Configured",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "collected": {
+                    "title": "Collected",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "ConversationAnalysis": {
+            "required": [
+                "summary",
+                "successful",
+                "in_voicemail",
+                "sentiment",
+                "flags"
+            ],
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "title": "Summary",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "successful": {
+                    "title": "Successful",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "in_voicemail": {
+                    "title": "In voicemail",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "sentiment": {
+                    "title": "Sentiment",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "flags": {
+                    "title": "Flags",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "ConversationLatency": {
+            "required": [
+                "p50",
+                "p90",
+                "max",
+                "num"
+            ],
+            "type": "object",
+            "properties": {
+                "p50": {
+                    "title": "P50",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "p90": {
+                    "title": "P90",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "max": {
+                    "title": "Max",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "num": {
+                    "title": "Num",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationTurn": {
+            "required": [
+                "i",
+                "role"
+            ],
+            "type": "object",
+            "properties": {
+                "i": {
+                    "title": "I",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "end": {
+                    "title": "End",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "spoken": {
+                    "title": "Spoken",
+                    "type": "boolean"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "arguments": {
+                    "title": "Arguments",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "ok": {
+                    "title": "Ok",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "to": {
+                    "title": "To",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "digit": {
+                    "title": "Digit",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "media": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "from": {
+                    "title": "From",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ConversationProviderLogIssue": {
+            "required": [
+                "at",
+                "level",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "at": {
+                    "title": "At",
+                    "type": "number"
+                },
+                "level": {
+                    "title": "Level",
+                    "type": "string",
+                    "enum": [
+                        "warn",
+                        "error"
+                    ]
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                }
+            }
+        },
+        "ConversationDossier": {
+            "required": [
+                "provider",
+                "agent_instructions",
+                "call",
+                "variables",
+                "analysis",
+                "latency_ms",
+                "turns",
+                "not_included"
+            ],
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_instructions": {
+                    "title": "Agent instructions",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "call": {
+                    "$ref": "#/definitions/ConversationCall"
+                },
+                "variables": {
+                    "$ref": "#/definitions/ConversationVariables"
+                },
+                "analysis": {
+                    "$ref": "#/definitions/ConversationAnalysis"
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/ConversationLatency"
+                    }
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ConversationTurn"
+                    }
+                },
+                "provider_log_issues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ConversationProviderLogIssue"
+                    }
+                },
+                "not_included": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "ConversationEvidenceRow": {
+            "required": [
+                "project_id",
+                "trace_id",
+                "org_id",
+                "id",
+                "parent_span_id",
+                "name",
+                "observation_type",
+                "start_time",
+                "end_time",
+                "attrs_string",
+                "conversation"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "org_id": {
+                    "title": "Org id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "parent_span_id": {
+                    "title": "Parent span id",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "observation_type": {
+                    "title": "Observation type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start_time": {
+                    "title": "Start time",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end_time": {
+                    "title": "End time",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "attrs_string": {
+                    "title": "Attrs string",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "conversation": {
+                    "$ref": "#/definitions/ConversationDossier"
+                }
+            }
+        },
+        "ConversationEvidenceResponse": {
+            "required": [
+                "rows"
+            ],
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ConversationEvidenceRow"
+                    }
+                }
+            }
+        },
         "SimulationEvidenceRequest": {
             "required": [
                 "lease_token",
@@ -143810,6 +147365,25 @@
                     "type": "integer",
                     "maximum": 50,
                     "minimum": 1
+                }
+            }
+        },
+        "InvestigationEvidenceWindow": {
+            "required": [
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
                 }
             }
         },
@@ -144020,6 +147594,16 @@
                     "type": "string",
                     "format": "date-time"
                 },
+                "evidence_window": {
+                    "$ref": "#/definitions/InvestigationEvidenceWindow"
+                },
+                "evidence_source": {
+                    "title": "Evidence source",
+                    "type": "string",
+                    "enum": [
+                        "conversation"
+                    ]
+                },
                 "engine_version": {
                     "title": "Engine version",
                     "type": "string",
@@ -144082,8 +147666,15 @@
                     "type": "string",
                     "enum": [
                         "renew",
-                        "cancel"
+                        "cancel",
+                        "fail"
                     ]
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 100
                 }
             }
         },
@@ -144092,6 +147683,11 @@
             "properties": {
                 "state": {
                     "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1
                 },
@@ -146380,6 +149976,15 @@
                     "title": "Eval template id",
                     "type": "string",
                     "minLength": 1,
+                    "x-nullable": true
+                },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
                     "x-nullable": true
                 },
                 "annotators": {
@@ -150197,6 +153802,15 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
                 "annotators": {
                     "title": "Annotators",
                     "type": "object",
@@ -151260,6 +154874,7 @@
                     "$ref": "#/definitions/TraceObserveListMetadata"
                 },
                 "table": {
+                    "description": "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -151567,6 +155182,115 @@
                 }
             }
         },
+        "EvalRollupSpan": {
+            "required": [
+                "span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "span_name": {
+                    "title": "Span name",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "explanation": {
+                    "title": "Explanation",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string"
+                }
+            }
+        },
+        "EvalRollupEval": {
+            "required": [
+                "eval_config_id",
+                "eval_name",
+                "aggregate",
+                "spans"
+            ],
+            "type": "object",
+            "properties": {
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eval_name": {
+                    "title": "Eval name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "template_type": {
+                    "title": "Template type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
+                "choices_map": {
+                    "title": "Choices map",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "aggregate": {
+                    "title": "Aggregate",
+                    "type": "object",
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupSpan"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
         "TraceVoiceCallDetailResult": {
             "required": [
                 "id",
@@ -151810,6 +155534,34 @@
                     "type": "object",
                     "additionalProperties": true
                 },
+                "eval_rollup": {
+                    "required": [
+                        "scope",
+                        "evals"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "scope": {
+                            "title": "Scope",
+                            "type": "string",
+                            "enum": [
+                                "trace",
+                                "span"
+                            ]
+                        },
+                        "evals": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/EvalRollupEval"
+                            }
+                        },
+                        "error": {
+                            "title": "Error",
+                            "type": "boolean"
+                        }
+                    },
+                    "x-nullable": true
+                },
                 "call_execution_id": {
                     "title": "Call execution id",
                     "type": "string",
@@ -151913,6 +155665,67 @@
                 }
             }
         },
+        "EvalRollup": {
+            "required": [
+                "scope",
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "span"
+                    ]
+                },
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupEval"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
+        "TraceDetailSpan": {
+            "required": [
+                "observation_span"
+            ],
+            "type": "object",
+            "properties": {
+                "observation_span": {
+                    "title": "Observation span",
+                    "type": "object"
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_scores": {
+                    "description": "Raw eval rows retained for backwards-compatible array consumers.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_rollup": {
+                    "$ref": "#/definitions/EvalRollup"
+                },
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
         "TraceDetailResult": {
             "required": [
                 "trace",
@@ -151929,7 +155742,7 @@
                 "observation_spans": {
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "$ref": "#/definitions/TraceDetailSpan"
                     }
                 },
                 "summary": {
@@ -152491,6 +156304,186 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UserAlertMonitorDuplicateResult"
+                }
+            }
+        },
+        "UserAlertMonitorListColumn": {
+            "required": [
+                "id",
+                "name",
+                "is_visible"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_visible": {
+                    "title": "Is visible",
+                    "type": "boolean"
+                }
+            }
+        },
+        "UserAlertMonitorTrend": {
+            "required": [
+                "timestamp",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListItem": {
+            "required": [
+                "id",
+                "name",
+                "created_at",
+                "updated_at",
+                "metric_type",
+                "filters",
+                "status",
+                "no_of_alerts",
+                "last_triggered",
+                "is_mute",
+                "trends"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "triggered",
+                        "healthy"
+                    ]
+                },
+                "no_of_alerts": {
+                    "title": "No of alerts",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "last_triggered": {
+                    "title": "Last triggered",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "trends": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorTrend"
+                    }
+                }
+            }
+        },
+        "UserAlertMonitorListMetadata": {
+            "required": [
+                "total_rows",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListResult": {
+            "required": [
+                "column_config",
+                "table",
+                "metadata"
+            ],
+            "type": "object",
+            "properties": {
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListColumn"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListItem"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/UserAlertMonitorListMetadata"
+                }
+            }
+        },
+        "UserAlertMonitorListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/UserAlertMonitorListResult"
                 }
             }
         },

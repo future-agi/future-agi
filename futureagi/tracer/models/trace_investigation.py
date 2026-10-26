@@ -228,6 +228,7 @@ class TraceInvestigationReport(BaseModel):
     error_message = models.TextField(null=True, blank=True)
     turn_count = models.PositiveIntegerField(null=True, blank=True)
     has_issues = models.BooleanField(null=True, blank=True)
+    grouping_gate = models.CharField(max_length=32, null=True, blank=True)
     job = models.ForeignKey(
         TraceInvestigationJob,
         on_delete=models.CASCADE,

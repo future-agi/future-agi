@@ -293,7 +293,10 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
       if (index === 0) {
         await page.getByRole('button', { name: 'Add Evaluations', exact: true }).click();
       } else {
-        await page.getByText(`Evals (${index})`, { exact: true }).locator('..')
+        // The header reads "Evals (n)" only while nothing is ticked; a saved eval
+        // is auto-selected, which switches it to "n of m selected". Match either
+        // form so the Add button is reachable in both states.
+        await page.getByText(/^(?:Evals \(\d+\)|\d+ of \d+ selected)$/).locator('..')
           .getByRole('button', { name: 'Add', exact: true }).click();
       }
       await page.getByPlaceholder('Search evaluations...', { exact: true }).fill(family.name);
@@ -376,6 +379,11 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   await test.step('backend check 2: native Run All and exact public result/reason cells', async () => {
     await mockModel.assertReady();
+    // Saves select their rows. Clear that selection to exercise Run All, whose
+    // two individual requests and exact results are asserted below.
+    const selectionHeader = page.getByText('2 of 2 selected', { exact: true });
+    await ui(selectionHeader).toBeVisible();
+    await selectionHeader.locator('..').getByRole('checkbox').uncheck();
     await ui(page.getByRole('button', { name: 'Run All (2)', exact: true })).toBeEnabled();
     const startedAt = Date.now();
     const runPath = `${DATASETS}${datasetId}/start_evals_process/`;
