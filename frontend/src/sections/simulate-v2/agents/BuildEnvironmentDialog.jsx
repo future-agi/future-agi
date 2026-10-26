@@ -362,9 +362,8 @@ export default function BuildEnvironmentDialog({
             sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }}
           />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Create one environment per materially different setup — its data or
-            systems, channel, market or language, or product line. Not one per
-            version or batch.
+            One environment per materially different setup — data or systems,
+            channel, market, language or product line. Not one per version.
           </Typography>
         </Stack>
       </Stack>

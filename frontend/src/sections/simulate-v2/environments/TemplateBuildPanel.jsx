@@ -262,7 +262,7 @@ export default function TemplateBuildPanel({
                   sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
                 />
                 <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {`${agent.name} is tested live, so it calls its own tools — this world grades its conversations but doesn't answer its tools. To have the world's tools answer, test a sealed copy (the agent's Connections).`}
+                  {`${agent.name} is tested live and calls its own tools; this world only grades it. Test a sealed copy for simulated tools.`}
                 </Typography>
               </Stack>
             )}
@@ -291,7 +291,7 @@ export default function TemplateBuildPanel({
                   on={where === "local"}
                   onClick={() => setWhere("local")}
                   short="Through our CLI · the world stays on your laptop"
-                  hint="The CLI builds this world on your machine and streams results back over a secure tunnel, so runs still show up in this workspace. Good for regulated code, air-gapped setups or offline work."
+                  hint="Builds the world on your machine; runs still show up here. Good for regulated or offline code."
                 />
               </Box>
             </Box>
@@ -454,7 +454,7 @@ export default function TemplateBuildPanel({
             component="div"
             sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
           >
-            <HintLine hint="The world's tools answer from seeded data in an isolated sandbox. An agent that runs live on its platform still reaches its own tools — the build says so.">
+            <HintLine hint="The world's tools answer from seeded data in a sandbox.">
               The world never touches production.
             </HintLine>
           </Typography>

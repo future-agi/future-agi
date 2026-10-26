@@ -23,7 +23,7 @@ import TrialsPicker from "./TrialsPicker";
  *   context                          marks on the set     edit · delete    the run
  *
  * Run + Repeats stay anchored to the workspace header (top-right); its Run
- * button already reads "Run simulation (N)" while rows are checked.
+ * button reads "Run selected" while rows are checked (the bar already says how many).
  */
 const ICON_BTN_SX = { minWidth: 0, width: 30, px: 0 };
 const BTN_SX = {
@@ -202,7 +202,7 @@ export default function SelectionBar({
                 startIcon={<Iconify icon="solar:play-bold" width={14} />}
                 sx={{ whiteSpace: "nowrap" }}
               >
-                {`Run simulation (${count})`}
+                Run selected
               </Button>
             </span>
           </Tooltip>

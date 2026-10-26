@@ -1267,7 +1267,7 @@ function VolumeAreaChart({ tasks }) {
     <Panel
       title="Task outcomes"
       subtitle={`Every test task in this run, in execution order · ${passed} passed / ${total}`}
-      info="Every task as a single green/red bar in the order it ran. Clusters of red next to each other usually mean the agent hit a regression around the same input or persona — worth clicking through to compare those specific tasks."
+      info="Every task in run order. Clusters of red usually share an input or persona."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -1355,7 +1355,7 @@ const TaskLatencyOverTime = memo(function TaskLatencyOverTime({ tasks }) {
     <Panel
       title="Call duration"
       subtitle="Wall-clock length of each measured scenario's call"
-      info="How long each measured call lasted, start to hang-up, one point per scenario. This is the length of the whole conversation — it mostly follows how many turns the scenario took, so a tall point is usually a long conversation rather than a slow agent. For how long callers wait on the agent, read Agent response time."
+      info="Whole-call length per scenario — mostly turn count. For waiting time, see Agent response time."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -1445,7 +1445,7 @@ const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks }) {
       // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       colors={[CHART_GREEN, "#F59E0B", CHART_RED, "#94A3B8"]}
       onSliceClick={onSliceClick}
-      info="Splits the run's scenarios four ways: passed on every attempt, flaky (passed on some attempts), failed on every attempt, or not counted — test invalid (the simulated caller, the starting state or a judge broke) or an error (our infrastructure or the connection). A big grey wedge is a test or infrastructure problem, not an agent one; a big amber wedge means the agent is inconsistent on the same scenario."
+      info="Passed, flaky, failed or not counted. Grey is a test or infrastructure problem; amber is inconsistency."
     />
   );
 });
@@ -1695,7 +1695,7 @@ const SuccessDonut = memo(function SuccessDonut({ tasks }) {
       buckets={buckets}
       colors={SUCCESS_COLORS}
       onSliceClick={onSliceClick}
-      info="The single-line answer: what share of calls the agent actually completed, counted over every attempt of every scenario that produced a verdict. Scenarios where the environment, connection or grader broke are left out — they say nothing about the agent. Click either slice to jump to those scenarios."
+      info="Share of calls the agent completed, over every graded attempt. Click a slice to see them."
     />
   );
 });
@@ -1733,7 +1733,7 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
       buckets={buckets}
       colors={SENTIMENT_COLORS}
       onSliceClick={onSliceClick}
-      info="How the simulated caller sounded by the end of the task. A big negative wedge — even on passing tasks — usually means the agent got the answer right the wrong way (too curt, too slow, too many clarifiers). Pair with disconnection reason to spot rude-but-successful patterns."
+      info="How the caller sounded at the end. Negative on passing tasks means right answer, wrong way."
     />
   );
 });
@@ -1786,7 +1786,7 @@ const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
       buckets={buckets}
       colors={DISCONNECT_COLORS}
       onSliceClick={onSliceClick}
-      info="How each task actually ended — completed, escalated to a human, ran out of turns, timed out, the connection dropped, or the environment errored. Dropped and Error slices are infrastructure, not the agent; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task."
+      info="How each task ended. Dropped and Error are infrastructure, not the agent."
     />
   );
 });
@@ -1859,7 +1859,7 @@ const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({
       title="Call duration percentiles"
       subtitle={`p50 ${msOrDash(p50)} · p90 ${msOrDash(p90)} · p99 ${msOrDash(p99)} · n = ${latencies.length}`}
       exportRows={exportRows}
-      info="Every measured call's duration, sorted: read across to a percentile, up to the duration. p50 = typical; p90 = the longest 10%; p99 = the worst tail. A tail percentile needs enough calls to mean anything — p90 is shown from 10 calls and p99 from 100; below that it would just be the single longest call. A curve that bends sharply upward near the right edge means a few long conversations are dragging the tail."
+      info="Call durations by percentile. p90 shows from 10 calls, p99 from 100."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -2112,7 +2112,7 @@ const AgentResponseTimePanel = memo(function AgentResponseTimePanel({ tasks }) {
       title="Agent response time per call"
       action={<SourceTag>Platform, transcript timing</SourceTag>}
       exportRows={exportRows}
-      info={`Each call's average time for the agent to start replying after the caller stops talking — the same per-call figure as the Agent Latency tile. Red buckets are at or over the ${RESPONSE_TARGET_MS}ms target, where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.`}
+      info={`Time for the agent to start replying. Red is at or over the ${RESPONSE_TARGET_MS}ms target.`}
       footer={`${overPct}% of calls were over the ${RESPONSE_TARGET_MS}ms target. p50 ${fmtMs(p50)}, p95 ${fmtMs(p95)}.`}
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
@@ -2168,7 +2168,7 @@ const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
       title="CSAT distribution (0–10)"
       action={<SourceTag>Existing score</SourceTag>}
       exportRows={exportRows}
-      info={`How many calls landed on each CSAT score from 0 to 10 — the same per-call score as the Avg CSAT tile. Red scores (${CSAT_BAD_AT} and below) are unhappy callers; a lump on the left means the agent is solving problems in a way callers don't like. The footer checks how often the run's verdict (every attempt passed) agrees with every eval on the call passing — where they split, the task verdict and the graders are measuring different things.`}
+      info={`Calls per CSAT score, 0–10. Red (${CSAT_BAD_AT} and below) are unhappy callers.`}
       footer={`The run verdict agrees with "every eval passed" on ${agreePct}% of measured calls.`}
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
@@ -2266,7 +2266,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
       title="Cost breakdown by pipeline stage"
       subtitle={`${fmtCredits(totalCost)} total across ${series[0].data.length} calls — LLM / TTS / STT / Transport split`}
       exportRows={exportRows}
-      info="Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long."
+      info="Per-call spend by voice-pipeline stage. The tallest stage is where to save."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -2576,7 +2576,7 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
       title="Distribution summary"
       subtitle="p50 · p90 · p99 · max for every per-call metric"
       exportRows={exportRows}
-      info="One tile per metric with the numbers that describe its shape, and n — how many values it is built from. Duration and turns count measured calls only; cost and tokens count every scenario, since they were spent either way. p90 is shown from 10 values and p99 from 100 — below that they would just be the maximum. A big gap between p50 and the tail means a few outliers are dragging the run. Turns count every message from either side."
+      info="Each metric's shape and sample size. A big p50-to-tail gap means a few outliers."
     >
       <Box
         sx={{
@@ -2967,7 +2967,7 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
     <Panel
       title="Task grid"
       subtitle={`Every task in this run · ${passed} passed / ${total} · hover for details`}
-      info="One cell per task, colour-coded by outcome. Useful when the run has enough tasks that a bar chart blurs — the grid keeps every task visible at once so bad clusters (a block of red) show up as visual patterns you can point at."
+      info="One cell per task, coloured by outcome — blocks of red are clusters."
     >
       <Box sx={{ px: 2, py: 2 }}>
         <Box
@@ -3427,7 +3427,7 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
       title="Use case risk"
       subtitle={`Weakest ${rows.length} of ${totalGroups} · red segment = failed, purple = passed`}
       exportRows={exportRows}
-      info="Groups calls by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each, counting every attempt of every measured scenario. Ranked by how confidently the use case is weak — a use case that failed once in one call ranks below one that fails steadily across many — so the top of the list is a pattern worth fixing, not noise."
+      info="Pass/fail by use case, ranked by how reliably each one is weak."
     >
       <UseCaseRiskStacked rows={rows} />
     </Panel>
@@ -3737,7 +3737,7 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
         passed: r.passed,
         total: r.total,
       }))}
-      info="One row per evaluator with its own pass rate over the measured calls. A task passes only when its attempts pass, and a grader failing on many calls is usually why — so the grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest."
+      info="Pass rate per evaluator. The one failing most is usually the bottleneck."
     >
       <EvalGraderTable rows={rows} />
     </Panel>
@@ -4060,7 +4060,7 @@ function AttributionTable({ tasks }) {
     <Panel
       title="Failure attribution"
       subtitle="Which layer to blame first — read counter-clockwise from Agent."
-      info="Groups every non-passing scenario — failed, flaky, or never measured — by the layer that owns the fix: agent behaviour, transport, environment / tooling, simulated caller, or grader. A flaky scenario whose simulated caller drifted is the simulator's, not the agent's. Before you assign an engineer, this tells you whether it's an agent-code bug, an infra flake, or a bad evaluator. Skips passing scenarios entirely."
+      info="Non-passing scenarios by who owns the fix: agent, transport, environment, caller or grader."
     >
       <AttributionDonut rows={rows} />
     </Panel>
@@ -4274,7 +4274,7 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
       title="Slowest tasks"
       subtitle="Ranked by wall-clock duration — hover to see the task"
       exportRows={exportRows}
-      info="The eight longest measured calls. Call length mostly follows how many turns a conversation took, so check the turn count before blaming speed — a long call with few turns is the slow one. These drive the tail of Call duration percentiles. If the top ones share a persona or use case, you've found a pattern, not a one-off."
+      info="The eight longest calls. A long call with few turns is the slow one."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -4315,7 +4315,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
       title="Most expensive tasks"
       subtitle="Ranked by cost — hover to see the task"
       exportRows={exportRows}
-      info="The eight scenarios that cost the most this run, counting every scenario that ran — money spent on a call is spent whether or not it produced a verdict. A handful of expensive scenarios usually dominate the total — a shorter prompt or fewer turns on these often saves more than tuning every scenario. Cross-check with tokens: high cost with high tokens is prompt or conversation bloat."
+      info="The eight costliest scenarios — trimming these usually saves the most."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -4392,7 +4392,7 @@ const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
     <Panel
       title="Tool call volume"
       subtitle={`${total} invocations · ${rows.length} tools`}
-      info="How many times the agent called each tool across the measured calls, read from each call's own tool log. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most."
+      info="Calls per tool. Rarely used may mean the agent doesn't know when to use it."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
@@ -4522,7 +4522,7 @@ const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
     <Panel
       title="Tool failure rate"
       subtitle="Per tool: the tool failed (infra) vs the agent never called it (prompt)"
-      info="For each tool, how often it went wrong out of every time it was needed or used. Red is the tool itself failing — the call errored or timed out, and the agent can't reason its way around a broken tool, so route these to infra. Amber is the agent not calling a tool the scenario required — that is an agent / prompt fix, not an infra one."
+      info="Red: the tool failed (infra). Amber: the agent skipped a required tool (prompt)."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
@@ -5783,7 +5783,7 @@ function VoiceLatencyPanel({ voice }) {
     <Panel
       title="Voice latency SLOs"
       subtitle="TTFW · LLM · TTS · ASR — the four segments that decide caller experience."
-      info="Latency broken down by the four voice-pipeline segments callers actually feel: Time-to-First-Word, model thinking, text-to-speech, speech-to-text. Any red p90 means callers heard silence past your SLO — that's the one to fix first."
+      info="Latency by voice-pipeline stage. A red p90 is silence past your SLO — fix it first."
     >
       <Box sx={{ px: 1 }}>
         <FitDataTable columns={columns} data={rows} getRowId={(r) => r.id} />
@@ -5863,7 +5863,7 @@ function FailureClustersPanel({ tasks }) {
     <Panel
       title="Top failure themes"
       subtitle={`Where losses cluster · ${totalFailed} measured failures`}
-      info="Auto-groups failures by (attribution layer × use case) and ranks the clusters by count. Fixing the top cluster typically resolves several failing tasks at once — better ROI than triaging individual tasks."
+      info="Failures grouped by layer × use case. Fixing the top cluster fixes several at once."
     >
       {clusters.length === 0 ? (
         <Box sx={{ p: 3, textAlign: "center" }}>
@@ -6005,7 +6005,7 @@ const LatencyHistogramPanel = memo(function LatencyHistogramPanel({
     <PanelChart
       title="Latency distribution"
       subtitle={`${pctUnder}% of tasks under the ${(slaMs / 1000).toFixed(1)}s SLA · ${underSla} / ${total}`}
-      info="Shape of the latency curve, bucketed. A tall stack on the left = most tasks are fast, healthy. A long tail on the right = a few slow tasks that are dragging your percentiles. The subtitle counts how many tasks stayed under your SLA."
+      info="Latency distribution. A long right tail is a few slow tasks dragging percentiles."
     >
       <ReactApexChart
         type="bar"

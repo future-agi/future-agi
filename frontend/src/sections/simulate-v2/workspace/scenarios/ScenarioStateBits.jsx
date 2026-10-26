@@ -201,8 +201,7 @@ export function ArchivePopover({ anchorEl, onClose, onArchive }) {
         Archive this scenario?
       </Typography>
       <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
-        It stays listed and can be restored. It stops running and counting, and
-        the scenario set moves to a new version.
+        It stays listed and can be restored, but stops running and counting.
       </Typography>
       <InputBase
         fullWidth

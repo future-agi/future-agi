@@ -189,7 +189,7 @@ export function PrototypeControlsCard({ agent, onSaveValues }) {
       <ActionRow
         title="Revoked key"
         body="Shows the agent as Disconnected"
-        hint="What happens when a key is revoked, the GitHub App is removed or the platform agent is deleted — the agent shows Disconnected with the reason."
+        hint="A revoked key, removed GitHub App or deleted agent shows Disconnected, with the reason."
       >
         <Button
           size="small"
@@ -219,8 +219,8 @@ export function PrototypeControlsCard({ agent, onSaveValues }) {
         }
         hint={
           pending
-            ? "The next Sync or improvement start syncs the agent and saves it as a new version marked as an outside change, so the baseline matches production."
-            : "Someone changes the agent in its own platform or repository. The next improvement syncs it before the baseline, and the change becomes a version marked as an outside change."
+            ? "The next Sync saves it as a new version marked as an outside change."
+            : "A change made outside Future AGI becomes a version marked as an outside change."
         }
       >
         <Button

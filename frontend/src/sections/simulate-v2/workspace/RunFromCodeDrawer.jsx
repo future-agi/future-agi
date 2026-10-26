@@ -76,7 +76,7 @@ export default function RunFromCodeDrawer({
     {
       title: "Run this environment",
       body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}.`,
-      hint: "--scenarios picks a subset by ID or tag, --agent-url tests a local build of your agent, --time-limit 2h and --stuck-after 10m for long-running agents.",
+      hint: "--scenarios picks a subset; --agent-url tests a local build.",
       cmd: `fai sim run ${id} ${flags}`,
     },
     {
@@ -290,10 +290,8 @@ jobs:
                     color: "text.tertiary",
                   }}
                 >
-                  The reward comes from this environment&apos;s verifiers, the
-                  same evals that grade a run, so a policy trained here is
-                  trained on what the check measures. Works with OpenEnv, TRL,
-                  verifiers and gym-style loops.
+                  The reward is this environment&apos;s evals. Works with
+                  OpenEnv, TRL, verifiers and gym-style loops.
                 </Typography>
               </Stack>
             )}
@@ -311,9 +309,8 @@ jobs:
                     color: "text.tertiary",
                   }}
                 >
-                  It can run simulations, read failures, add scenarios and
-                  propose fixes; runs it starts show up here, marked MCP.
-                  Connect it once in{" "}
+                  Runs, failures and fixes from your coding agent. Connect it
+                  once in{" "}
                   <Link
                     component={RouterLink}
                     to={paths.dashboard.settings.mcpServer}
@@ -321,8 +318,8 @@ jobs:
                     sx={{ color: "inherit" }}
                   >
                     Settings → MCP Server
-                  </Link>{" "}
-                  (Claude Code, Cursor, VS Code, Windsurf).
+                  </Link>
+                  .
                 </Typography>
               </Stack>
             )}

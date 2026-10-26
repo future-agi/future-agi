@@ -12,6 +12,10 @@ import {
   IconButton,
   Tooltip,
   Checkbox,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { subGoalsOfScenario } from "../../_mock/envModel";
@@ -22,7 +26,7 @@ import BlockerFlag from "./BlockerFlag";
 import SourceBadge from "./SourceBadge";
 import {
   StateChip,
-  ArchiveControl,
+  ArchivePopover,
   TextAction,
   ProposedBadge,
 } from "./ScenarioStateBits";
@@ -139,39 +143,119 @@ const COLUMNS = [
     w: 260,
     tip: "What the agent has to do for the scenario to pass",
   },
-  { id: "actions", w: 104 },
+  { id: "actions", w: 48 },
 ];
 
 /*
   The state only when it asks for something — a column of "Valid" is noise.
-  Its one action shows on hover.
+  Its action is the first item in the row's ⋯ menu.
 */
-function StatusCell({ row, state, onAction, locked }) {
+function StatusCell({ state }) {
   if (!state || state.id === "valid") return null;
-  const action = stateActionOf(state);
+  return <StateChip state={state} />;
+}
+StatusCell.propTypes = { state: PropTypes.object };
+
+/* Every row action in one ⋯ menu: the state's fix first, then edit,
+   archive or restore, remove. */
+function RowMenu({
+  row,
+  state,
+  archived,
+  locked,
+  onEdit,
+  onStateAction,
+  onRemove,
+}) {
+  const [menuEl, setMenuEl] = useState(null);
+  const [archiveEl, setArchiveEl] = useState(null);
+  const fix = state && state.id !== "valid" ? stateActionOf(state) : null;
+  const close = () => setMenuEl(null);
+  const item = (key, icon, label, onClick, disabled) => (
+    <MenuItem
+      key={key}
+      disabled={disabled}
+      onClick={() => {
+        close();
+        onClick();
+      }}
+      sx={{ typography: "s2" }}
+    >
+      <ListItemIcon sx={{ minWidth: 28 }}>
+        <Iconify icon={icon} width={16} />
+      </ListItemIcon>
+      <ListItemText
+        primary={label}
+        primaryTypographyProps={{ sx: { typography: "s2" } }}
+      />
+    </MenuItem>
+  );
   return (
-    <Stack direction="row" alignItems="center" spacing={1}>
-      <StateChip state={state} />
-      {action && onAction && !locked && (
-        <Box className="row-hover-action">
-          <TextAction
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction(action, row);
-            }}
-          >
-            {STATE_ACTION_LABEL[action]}
-          </TextAction>
-        </Box>
-      )}
-    </Stack>
+    <>
+      <IconButton
+        size="small"
+        aria-label="Row actions"
+        onClick={(e) => setMenuEl(e.currentTarget)}
+        sx={{ color: "text.subtitle" }}
+      >
+        <Iconify icon="solar:menu-dots-bold" width={16} />
+      </IconButton>
+      <Menu anchorEl={menuEl} open={!!menuEl} onClose={close}>
+        {fix &&
+          onStateAction &&
+          item(
+            "fix",
+            "solar:refresh-linear",
+            STATE_ACTION_LABEL[fix],
+            () => onStateAction(fix, row),
+            locked,
+          )}
+        {item(
+          "edit",
+          "solar:pen-new-square-linear",
+          "Edit scenario",
+          () => onEdit(row),
+          locked,
+        )}
+        {archived
+          ? item(
+              "restore",
+              "solar:restart-linear",
+              "Restore",
+              () => onStateAction?.("restore", row),
+              locked,
+            )
+          : item(
+              "archive",
+              "solar:archive-linear",
+              "Archive…",
+              () => setArchiveEl(menuEl),
+              locked,
+            )}
+        {item(
+          "remove",
+          "solar:trash-bin-trash-linear",
+          "Remove from environment",
+          () => onRemove(row.id),
+          locked,
+        )}
+      </Menu>
+      <ArchivePopover
+        anchorEl={archiveEl}
+        onClose={() => setArchiveEl(null)}
+        onArchive={(note) => onStateAction?.("archive", row, note)}
+      />
+    </>
   );
 }
-StatusCell.propTypes = {
+RowMenu.propTypes = {
   row: PropTypes.object.isRequired,
   state: PropTypes.object,
-  onAction: PropTypes.func,
+  archived: PropTypes.bool,
   locked: PropTypes.bool,
+  onEdit: PropTypes.func,
+  onStateAction: PropTypes.func,
+  onRemove: PropTypes.func,
 };
 
 /* A proposed scenario waits for someone to add it — the review step. */
@@ -696,12 +780,7 @@ export default function ScenarioTable({
                             onClick={stop}
                             sx={{ display: "inline-flex", flexShrink: 0 }}
                           >
-                            <StatusCell
-                              row={row}
-                              state={stateOf(row)}
-                              onAction={onStateAction}
-                              locked={locked}
-                            />
+                            <StatusCell state={stateOf(row)} />
                           </Box>
                         )}
                       </Stack>
@@ -797,90 +876,21 @@ export default function ScenarioTable({
                       />
                     </TableCell>
 
-                    {/* Edit · archive · delete, on hover. */}
+                    {/* Every row action, in the ⋯ menu. */}
                     <TableCell
                       align="right"
                       sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
                       onClick={stop}
                     >
-                      <Box className="row-hover-action">
-                        <Tooltip
-                          arrow
-                          title={
-                            locked
-                              ? "Fork this environment to edit."
-                              : "Edit scenario"
-                          }
-                        >
-                          <span>
-                            <IconButton
-                              size="small"
-                              disabled={locked}
-                              onClick={() => onEdit(row)}
-                            >
-                              <Iconify
-                                icon="solar:pen-new-square-linear"
-                                width={16}
-                                sx={{ color: "text.tertiary" }}
-                              />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                        {archived ? (
-                          <Tooltip
-                            arrow
-                            title={
-                              locked
-                                ? "Read-only."
-                                : "Restore — run and count it again"
-                            }
-                          >
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={locked}
-                                onClick={() => onStateAction?.("restore", row)}
-                                aria-label="Restore scenario"
-                              >
-                                <Iconify
-                                  icon="solar:restart-linear"
-                                  width={16}
-                                  sx={{ color: "text.tertiary" }}
-                                />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        ) : (
-                          <ArchiveControl
-                            disabled={locked}
-                            onArchive={(note) =>
-                              onStateAction?.("archive", row, note)
-                            }
-                          />
-                        )}
-                        <Tooltip
-                          arrow
-                          title={
-                            locked
-                              ? "Fork this environment to edit."
-                              : "Remove from this environment"
-                          }
-                        >
-                          <span>
-                            <IconButton
-                              size="small"
-                              disabled={locked}
-                              onClick={() => onRemove(row.id)}
-                            >
-                              <Iconify
-                                icon="solar:trash-bin-trash-linear"
-                                width={16}
-                                sx={{ color: "text.tertiary" }}
-                              />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                      </Box>
+                      <RowMenu
+                        row={row}
+                        state={stateOf ? stateOf(row) : null}
+                        archived={archived}
+                        locked={locked}
+                        onEdit={onEdit}
+                        onStateAction={onStateAction}
+                        onRemove={onRemove}
+                      />
                     </TableCell>
                   </TableRow>
                 );

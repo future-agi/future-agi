@@ -165,9 +165,9 @@ export default function CloudAgentConnectDialog({ open, onClose, agent }) {
               <Typography
                 sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}
               >
-                Its change comes back through submit_candidate. Future AGI runs
-                it next to today&apos;s version and computes the verdict — the
-                agent never grades its own work.
+                Its change comes back as a candidate; Future AGI tests it
+                against today&apos;s version — the agent never grades its own
+                work.
               </Typography>
             </Step>
           </Stack>
@@ -245,7 +245,7 @@ export default function CloudAgentConnectDialog({ open, onClose, agent }) {
               </Stack>
             )}
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`Copy for coding agent now offers Dispatch to ${agent.label} on Error Feed issues, run diagnoses and improvements — for everyone in the workspace.`}
+              {`Everyone in the workspace can now dispatch issues, diagnoses and improvements to ${agent.label}.`}
             </Typography>
           </Stack>
         )}

@@ -1814,7 +1814,7 @@ function ConnectionTab({
         sub={
           <>
             Where it lives, and its key
-            <InfoTip text="Changing where the agent lives doesn't create a version. Replacing its key saves a credentials-only version (v5 → v5.1) — it behaves the same, so nothing is checked or rebuilt." />
+            <InfoTip text="Replacing the key saves a credentials-only version (v5 → v5.1); nothing is re-checked." />
           </>
         }
       >

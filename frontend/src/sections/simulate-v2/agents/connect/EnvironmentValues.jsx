@@ -230,7 +230,7 @@ export default function EnvironmentValues({
         component="div"
         sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}
       >
-        <HintLine hint="Secrets are references into your secret manager — the value is resolved inside the sandbox and never stored here, or written to runs, logs or pull requests. A key typed instead is stored encrypted under the reference shown.">
+        <HintLine hint="Secrets resolve inside the sandbox and are never stored, logged or put in pull requests.">
           {expectedNames.length
             ? "What this agent's code reads. Test credentials only — never a production key."
             : "Test credentials and settings our sandbox runs your code with — never a production key."}

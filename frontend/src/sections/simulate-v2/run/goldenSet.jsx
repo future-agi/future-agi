@@ -59,7 +59,7 @@ export function GoldenSetManager({ tasks, env }) {
           ? "Mark 10–15 ideal calls as ground truth. The divergence widgets below compare every losing call against them."
           : `${golden.length} golden calls · ${losing.length} losing calls compared against them`
       }
-      info="Ajeevansh's ask: designate the ~10–15 calls that reached the ideal outcome (sale, refund resolved, lead qualified). Everything else is then measured against them to find where the pitch breaks."
+      info="Mark the 10–15 calls with the ideal outcome; everything else is measured against them."
     >
       <Box sx={{ px: 3, py: 2 }}>
         {ids.length === 0 ? (
@@ -172,7 +172,7 @@ export function DropoffFunnel({ tasks, env }) {
     <Panel
       title="Drop-off funnel"
       subtitle="Share of calls still engaged at each turn — golden vs losing"
-      info="Each column is a conversation turn. The gap between the golden line (top) and the losing line (bottom) at any turn is where the pitch is losing people. The steepest cliff on the red line is the turn to look at first."
+      info="Golden vs losing calls by turn. The steepest drop is the turn to look at first."
     >
       <Box sx={{ px: 2, py: 2 }}>
         <Box
@@ -315,7 +315,7 @@ export function DivergenceTimeline({ tasks, env }) {
     <Panel
       title="Divergence timeline"
       subtitle={`${rows.length} losing calls · ordered by where they broke away from the golden pattern`}
-      info="One row per losing call. The red cells mark the turns where the call diverged from the golden pattern. Calls at the top of the list broke earliest — often the fastest fixes."
+      info="Red cells are where each losing call left the golden pattern."
     >
       <Box sx={{ px: 2, py: 1.5 }}>
         <Box
@@ -436,7 +436,7 @@ export function PitchBreakThemes({ tasks, env }) {
     <Panel
       title="Pitch-break themes"
       subtitle="Top clusters of losing calls — where fixing one prompt helps many tasks"
-      info="Losing calls auto-grouped by use case × persona. The top row is the highest-ROI prompt fix — a single change here recovers more losses than picking off individual tasks."
+      info="Losing calls by use case × persona. The top row is the best fix."
     >
       <Box sx={{ px: 2.5, py: 1.5 }}>
         <Box

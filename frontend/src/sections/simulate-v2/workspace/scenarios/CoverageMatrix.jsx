@@ -17,26 +17,13 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-/* Plain-English hint per axis — surfaces on hover of each axis row
-   so a non-technical reader can decode T/W/D/X/I/O without leaving
-   the panel. Kept in one place so tooltip text and future help
-   copy stay in sync. */
-const AXIS_HINTS = {
-  T: "What the customer is trying to do (look up, cancel, execute…)",
-  W: "Who the customer is (child, adult, senior, business user…)",
-  D: "What mood they're in (calm, urgent, angry, confused…)",
-  X: "Environment quality (clean call, noisy, dropped signal, interrupted)",
-  I: "How long the conversation runs (single-turn → long session)",
-  O: "Attack / trick attempts (prompt-injection, PII theft, jailbreak…)",
-};
+import { forcedCellsCoverage, ruleCoverage } from "../../_mock/coverage";
 import {
-  PRD_AXES,
-  buildPrdMatrix,
-  perAxisCoverage,
-  pairwiseCoverage,
-  forcedCellsCoverage,
-  ruleCoverage,
-} from "../../_mock/coverage";
+  COVERAGE_AXES,
+  axesCoverage,
+  pairsShare,
+  buildCoverageMatrix,
+} from "./coverageAxes";
 
 /**
  * Coverage — PRD Story 9 (six-axis framework).
@@ -51,31 +38,21 @@ import {
  *     the empty state is the fraction "0/5" and the item's own hollow dot.
  */
 export default function CoverageMatrix({ scenarios, env, onClose }) {
-  const [rowAxis, setRowAxis] = useState("T");
-  const [colAxis, setColAxis] = useState("O");
+  const [rowAxis, setRowAxis] = useState("task");
+  const [colAxis, setColAxis] = useState("attack");
   const m = useMemo(
-    () => buildPrdMatrix(scenarios, env, rowAxis, colAxis),
+    () => buildCoverageMatrix(scenarios, env, rowAxis, colAxis),
     [scenarios, env, rowAxis, colAxis],
   );
-  const perAxis = useMemo(
-    () => perAxisCoverage(scenarios, env),
-    [scenarios, env],
-  );
-  const pairs = useMemo(
-    () => pairwiseCoverage(scenarios, env),
-    [scenarios, env],
-  );
+  const perAxis = useMemo(() => axesCoverage(scenarios, env), [scenarios, env]);
+  const pairAvg = useMemo(() => pairsShare(scenarios, env), [scenarios, env]);
   const forced = useMemo(() => forcedCellsCoverage(scenarios), [scenarios]);
   const rules = useMemo(() => ruleCoverage(env, scenarios), [env, scenarios]);
   const uncovered = rules.filter((r) => r.count === 0);
 
-  const overall = perAxis.length
-    ? perAxis.reduce((sum, a) => sum + a.ratio, 0) / perAxis.length
-    : 0;
+  /* Axes the suite reaches at all — every scenario lands on some level. */
+  const axesHit = perAxis.filter((a) => a.levels.length > 0).length;
   const forcedMissing = forced.filter((f) => !f.present);
-  const pairAvg = pairs.length
-    ? pairs.reduce((sum, p) => sum + p.ratio, 0) / pairs.length
-    : 0;
 
   /* Rich hover explainer — mounted as a Tooltip title (any ReactNode
      works). Hover the (i) chip to reveal, no click required. */
@@ -130,14 +107,14 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
           <Box component="b" sx={{ color: "common.white" }}>
             Axes
           </Box>{" "}
-          — of all the kinds of situations, what fraction are covered.
+          — how many of the eight ways scenarios differ the suite reaches.
         </li>
         <li>
           <Box component="b" sx={{ color: "common.white" }}>
             Pairs
           </Box>{" "}
-          — of every two-way combination (e.g. task × attacker), what fraction
-          are covered.
+          — of every two-way combination (e.g. task × attack), the share the
+          suite has at least one scenario for.
         </li>
         <li>
           <Box component="b" sx={{ color: "common.white" }}>
@@ -158,7 +135,7 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
           mb: 0.75,
         }}
       >
-        The six axes
+        The eight axes
       </Typography>
       <Typography
         component="ul"
@@ -169,42 +146,14 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
           mb: 1.5,
         }}
       >
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            T
-          </Box>{" "}
-          — {AXIS_HINTS.T}
-        </li>
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            W
-          </Box>{" "}
-          — {AXIS_HINTS.W}
-        </li>
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            D
-          </Box>{" "}
-          — {AXIS_HINTS.D}
-        </li>
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            X
-          </Box>{" "}
-          — {AXIS_HINTS.X}
-        </li>
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            I
-          </Box>{" "}
-          — {AXIS_HINTS.I}
-        </li>
-        <li>
-          <Box component="b" sx={{ color: "common.white" }}>
-            O
-          </Box>{" "}
-          — {AXIS_HINTS.O}
-        </li>
+        {COVERAGE_AXES.map((x) => (
+          <li key={x.id}>
+            <Box component="b" sx={{ color: "common.white" }}>
+              {x.label}
+            </Box>{" "}
+            — {x.hint}
+          </li>
+        ))}
       </Typography>
 
       <Typography
@@ -281,8 +230,8 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
         </Box>
         <SummaryStat
           label="Axes"
-          value={`${Math.round(overall * 100)}%`}
-          color={toneText(overall)}
+          value={`${axesHit}/${perAxis.length}`}
+          color={toneText(axesHit / Math.max(1, perAxis.length))}
         />
         <SummaryStat
           label="Pairs"
@@ -312,6 +261,10 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
         <Table
           size="small"
           sx={{
+            /* Fixed columns: a long list of levels wraps inside its cell
+               instead of widening the table past the drawer. */
+            tableLayout: "fixed",
+            width: "100%",
             "& .MuiTableCell-root": {
               borderBottom: "1px solid",
               borderColor: "divider",
@@ -325,86 +278,69 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
                 "&:last-of-type .MuiTableCell-root": { borderColor: "divider" },
               }}
             >
-              <TableCell sx={headerCellSx} width={220}>
+              <TableCell sx={headerCellSx} width={170}>
                 Axis
               </TableCell>
-              <TableCell sx={headerCellSx} width={110} align="right">
-                Covered
+              <TableCell sx={headerCellSx} width={72} align="right">
+                Levels
               </TableCell>
-              <TableCell sx={headerCellSx}>Missing levels</TableCell>
+              <TableCell sx={headerCellSx}>Covered levels</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {perAxis.map((a) => (
               <TableRow key={a.id} hover>
                 <TableCell>
-                  <Tooltip
-                    arrow
-                    placement="right"
-                    title={AXIS_HINTS[a.id] || ""}
-                  >
-                    <Stack
-                      direction="row"
-                      alignItems="baseline"
-                      spacing={1}
-                      sx={{ cursor: "help", width: "fit-content" }}
-                    >
-                      <Typography
-                        sx={{
-                          typography: "s2",
-                          fontWeight: 600,
-                          color: "text.primary",
-                          width: 12,
-                        }}
-                      >
-                        {a.id}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s2", color: "text.primary" }}
-                      >
-                        {a.label}
-                      </Typography>
-                    </Stack>
-                  </Tooltip>
-                </TableCell>
-                <TableCell align="right">
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    justifyContent="flex-end"
-                  >
-                    <MicroBar ratio={a.ratio} />
+                  <Tooltip arrow placement="right" title={a.hint}>
                     <Typography
                       sx={{
                         typography: "s2",
-                        fontWeight: 600,
-                        fontVariantNumeric: "tabular-nums",
-                        color: toneText(a.ratio),
-                        minWidth: 36,
-                        textAlign: "right",
+                        color: "text.primary",
+                        cursor: "help",
+                        width: "fit-content",
                       }}
                     >
-                      {a.hit}/{a.total}
+                      {a.label}
                     </Typography>
-                  </Stack>
+                  </Tooltip>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {a.levels.length}
+                  </Typography>
                 </TableCell>
                 <TableCell>
-                  {a.missingLevels.length === 0 ? (
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      All levels covered
-                    </Typography>
-                  ) : (
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                      noWrap
-                      title={a.missingLevels.map((m) => m.label).join(" · ")}
-                    >
-                      {a.missingLevels.map((m) => m.label).join(" · ")}
-                    </Typography>
-                  )}
+                  {/* Each level the suite has, with how many scenarios sit on it. */}
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                    title={a.levels.map((l) => `${l.key} · ${l.n}`).join("   ")}
+                  >
+                    {a.levels.map((l, i) => (
+                      <Box
+                        component="span"
+                        key={l.key}
+                        sx={{
+                          whiteSpace: "nowrap",
+                          mr: i < a.levels.length - 1 ? 1.5 : 0,
+                        }}
+                      >
+                        {l.key}
+                        <Box
+                          component="span"
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {` · ${l.n}`}
+                        </Box>
+                      </Box>
+                    ))}
+                  </Typography>
                 </TableCell>
               </TableRow>
             ))}
@@ -432,7 +368,7 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
               Forced overlays
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              Always included, whatever the sample
+              Must be present regardless of sampling
             </Typography>
             <Box sx={{ flex: 1 }} />
             <Typography
@@ -813,9 +749,9 @@ function AxisPick({ label, value, onChange, exclude }) {
         "& .MuiInputBase-input": { typography: "s2", py: 0.5, fontSize: 12 },
       }}
     >
-      {PRD_AXES.filter((a) => a.id !== exclude).map((a) => (
+      {COVERAGE_AXES.filter((a) => a.id !== exclude).map((a) => (
         <MenuItem key={a.id} value={a.id} sx={{ typography: "s2" }}>
-          {a.id} · {a.label}
+          {a.label}
         </MenuItem>
       ))}
     </TextField>

@@ -1118,7 +1118,7 @@ export default function ImprovementSetup({
               <Row
                 label="Scenarios"
                 value={`${train} target · ${held} held back · ${mustPassAll} must-pass`}
-                note={`The search sees target scenarios in full and must-pass ones as pass or fail only. The headline number comes from the held-back scenarios, which are never shown while searching.${notCounted ? ` ${notCounted}` : ""}`}
+                note={`The headline number comes from held-back scenarios the search never sees.${notCounted ? ` ${notCounted}` : ""}`}
               />
               <Row
                 label="Cost"

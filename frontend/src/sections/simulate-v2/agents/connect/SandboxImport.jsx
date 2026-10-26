@@ -56,7 +56,7 @@ export default function SandboxImport({
             sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
           >
             <HintLine
-              hint={`We import a copy of the ${providerName || "platform"} assistant into our sandbox and run your tool code against the seeded world. Results carry the stronger Sealed proof.`}
+              hint={`We import a copy of the ${providerName || "platform"} assistant into our sandbox, so results carry Sealed proof.`}
             >
               Optional · import a copy and upload the code behind its tools —
               they answer from the seeded world
@@ -148,7 +148,7 @@ export default function SandboxImport({
             component="div"
             sx={{ typography: "s3", color: "text.secondary" }}
           >
-            <HintLine hint="Transfers, end call and voicemail aren't your code, so they still run for real in an imported copy. Scenarios that transfer place a real transfer.">
+            <HintLine hint="Transfers, end call and voicemail still run for real in an imported copy.">
               Built-in platform actions still run for real.
             </HintLine>
           </Typography>

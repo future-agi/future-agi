@@ -208,7 +208,7 @@ export default function SettingsPanel({
         {/* ── versions — reproducibility, which HUD does not surface ── */}
         <SectionCard
           title="Versions"
-          subtitle="One environment version covers the world, scenarios, sub-goals, evaluations, simulated caller and credentials. Every run pins one, so a result can always be traced to what produced it"
+          subtitle="A version covers the world, scenarios, evaluations, caller and credentials. Every run pins one."
           action={
             !locked && (
               <Tooltip
@@ -216,7 +216,7 @@ export default function SettingsPanel({
                 title={
                   pending.length
                     ? ""
-                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first. Scenario, sub-goal, evaluation and caller changes make a version on their own.`
+                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first.`
                 }
               >
                 <span>
@@ -753,7 +753,7 @@ function EnvVarsSection({ envState, patch, locked = false }) {
   return (
     <SectionCard
       title="Environment variables"
-      subtitle="Configuration passed into the environment. Secrets are references into your secret manager — the value is resolved inside the sandbox and never stored here. Pointing a secret somewhere else saves a credentials-only version of the environment — a minor one, like v7 → v7.1."
+      subtitle="Configuration passed into the environment. Secrets are references, resolved in the sandbox."
     >
       <Stack
         divider={
@@ -1405,9 +1405,8 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
         </DialogTitle>
         <DialogContent sx={{ p: 2.5, pt: 1 }} dividers>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            The current sandbox state is discarded and re-provisioned from the
-            current seed prompt. In-flight runs against this environment will
-            fail. Past runs remain in history.
+            The sandbox is rebuilt from the seed prompt. Runs in flight will
+            fail; past runs stay.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 1.5 }}>
@@ -1622,12 +1621,12 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
             >
               {atOnce > PARALLEL_MAX
-                ? `A run up to 200 conversations takes ${PARALLEL_MAX} at once; a bigger run takes all ${atOnce}, and you can leave the page while it runs.`
+                ? `Up to 200 conversations run ${PARALLEL_MAX} at once; bigger runs take all ${atOnce}.`
                 : atOnce === 1
                   ? "Every run takes one conversation at a time."
                   : `Every run takes up to ${atOnce} at once.`}
               {voice
-                ? " Your provider's concurrency limit still applies, and a live agent takes the calls at the same time."
+                ? " Your provider's concurrency limit still applies."
                 : " Results are the same; a run finishes sooner."}
             </Typography>
           </Box>
@@ -1692,7 +1691,7 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", mb: 1.25 }}
               >
-                {`A conversation stops at whichever comes first${voice ? " — a voice scenario's Max turns wins over Turns" : " — a scenario's own turn limit wins"}. Raise Time for agents that work for hours; Stuck after ends one that has stopped replying, so it doesn't hold the run.`}
+                {`A conversation stops at whichever comes first${voice ? "; a scenario's Max turns wins" : "; a scenario's own limit wins"}.`}
               </Typography>
               <Box
                 sx={{
@@ -1743,9 +1742,7 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {SIMULATOR_MODELS.find((m) => m.id === model)?.note ||
                 "The model that plays the caller in every scenario."}
-              {
-                " Part of the environment version a run holds fixed — changing it makes the next version, and runs before and after it don't compare."
-              }
+              {" Changing it makes the next environment version."}
             </Typography>
           </Box>
           <Select
@@ -1877,7 +1874,7 @@ function ProductionScenariosSection({ envState }) {
             }}
           >
             {on
-              ? "Error Feed issues and production conversations can become scenarios. Names, phone numbers, emails, addresses, account and card numbers are replaced with fake values before a scenario is saved; call audio is never reused."
+              ? "Error Feed and production conversations can become scenarios, with personal details replaced."
               : "The Error Feed and production conversations are unavailable as sources on Add scenarios. Scenarios already added stay."}
           </Typography>
           <Typography

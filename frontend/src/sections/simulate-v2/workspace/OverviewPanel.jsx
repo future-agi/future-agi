@@ -202,11 +202,20 @@ export default function OverviewPanel({
             alignItems={{ sm: "flex-start" }}
             spacing={2}
           >
-            <Typography
-              sx={{ typography: "s2", color: "text.secondary", maxWidth: 820 }}
-            >
-              {env.description}
-            </Typography>
+            {/* One line; the full description on hover. */}
+            <Tooltip arrow title={env.description || ""} enterDelay={400}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  minWidth: 0,
+                  flex: 1,
+                }}
+              >
+                {env.description}
+              </Typography>
+            </Tooltip>
           </Stack>
 
           {/* Labels, not content — a strip rather than a column of its own. */}

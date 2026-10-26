@@ -1,4 +1,5 @@
-import { perAxisCoverage, pairwiseCoverage, forcedCellsCoverage } from "../../_mock/coverage";
+import { forcedCellsCoverage } from "../../_mock/coverage";
+import { axesCoverage, pairsShare } from "./coverageAxes";
 
 /*
   The three numbers the Coverage drawer leads with — Axes, Pairs, Forced —
@@ -6,15 +7,13 @@ import { perAxisCoverage, pairwiseCoverage, forcedCellsCoverage } from "../../_m
   and the drawer's header never disagree.
 */
 export function coverageSummary(scenarios, env) {
-  const perAxis = perAxisCoverage(scenarios, env);
-  const pairs = pairwiseCoverage(scenarios, env);
+  const perAxis = axesCoverage(scenarios, env);
   const forced = forcedCellsCoverage(scenarios);
-  const axes = perAxis.length ? perAxis.reduce((sum, a) => sum + a.ratio, 0) / perAxis.length : 0;
-  const pairAvg = pairs.length ? pairs.reduce((sum, p) => sum + p.ratio, 0) / pairs.length : 0;
+  const axesHit = perAxis.filter((a) => a.levels.length > 0).length;
   const forcedHit = forced.filter((f) => f.present).length;
   return {
-    axes: `${Math.round(axes * 100)}%`,
-    pairs: `${Math.round(pairAvg * 100)}%`,
+    axes: `${axesHit}/${perAxis.length}`,
+    pairs: `${Math.round(pairsShare(scenarios, env) * 100)}%`,
     forced: `${forcedHit}/${forced.length}`,
   };
 }

@@ -136,7 +136,7 @@ export function ObserveProjectStep({
         component="div"
         sx={{ typography: "s2", color: "text.secondary" }}
       >
-        <HintLine hint="Error Feed groups failures by Observe project, and fixes find the agent through this link — for every issue from the project, today's and future ones.">
+        <HintLine hint="Fixes for this project's Error Feed issues find the agent through this link.">
           Where this agent&apos;s production traces land.
         </HintLine>
       </Typography>

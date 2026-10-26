@@ -240,10 +240,10 @@ export default function ErrorFeedImport({
           sx={{ typography: "s2", color: "text.tertiary", maxWidth: 520 }}
         >
           {!(agent || envAgent)
-            ? "This environment still tests its template baseline. Error Feed issues come from your agent's real calls, once it's connected and watched."
+            ? "Error Feed issues come from your agent's real calls, once it's connected."
             : projects.length
               ? `Nothing open in ${projects.join(", ")} right now. New issues from it show up here.`
-              : "Error Feed groups issues by the Observe project traces land in. Link the agent's project — or watch its production calls — and its issues show up here."}
+              : "Link the agent's Observe project and its Error Feed issues show up here."}
         </Typography>
         <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
           {envAgent && !projects.length && (
@@ -460,10 +460,8 @@ export default function ErrorFeedImport({
           flexShrink: 0,
         }}
       >
-        Each conversation is run three times on today&apos;s agent first. Only
-        reproduced ones become targets — inconclusive and not reproduced ones
-        are shown, not added. Names, numbers, emails and addresses are replaced
-        with fake values before saving; call audio is never reused.
+        Each runs three times on today&apos;s agent; only reproduced ones are
+        added, with personal details replaced.
       </Typography>
 
       {/* table — mirrors the Error Feed table shape (checkbox · issue · severity · evidence · traces · last seen · expand) */}
@@ -506,7 +504,7 @@ const COLUMNS = [
     label: "Scenarios",
     width: 92,
     align: "right",
-    hint: "One per distinct situation in the issue's traces. Traces that fail the same way in the same situation are the same test, so they become one scenario.",
+    hint: "One per distinct situation in the issue's traces.",
   },
   { id: "lastSeen", label: "Last seen", width: 110 },
 ];

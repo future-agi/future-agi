@@ -28,9 +28,8 @@ export default function DeleteEnvironmentDialog({ env, onCancel, onConfirm }) {
       </DialogTitle>
       <DialogContent>
         <DialogContentText sx={{ typography: "s2" }}>
-          <b>{env?.name}</b> and everything derived from it — scenarios,
-          evaluations and run history — will be removed from this workspace.
-          Personas stay in your library. This cannot be undone.
+          <b>{env?.name}</b>, its scenarios, evaluations and runs will be
+          removed. Personas stay. This cannot be undone.
         </DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>

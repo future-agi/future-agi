@@ -197,7 +197,7 @@ export default function RepoAgentScan({
           component="div"
           sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, mb: 1.25 }}
         >
-          <HintLine hint="We look for a supported framework's entry point, or code that calls the OpenAI, Anthropic or Gemini API. Code that starts somewhere else is read from the file you name.">
+          <HintLine hint="We look for a framework entry point or OpenAI, Anthropic or Gemini calls.">
             Name the file the agent starts in — Connect reads it from there.
           </HintLine>
         </Typography>

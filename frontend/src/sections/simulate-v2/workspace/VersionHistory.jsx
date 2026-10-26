@@ -171,10 +171,8 @@ export default function VersionHistoryMenu({
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
           >
-            One environment version covers the world, scenarios, sub-goals,
-            evaluations, simulated caller and credentials — any change to them
-            is the next version (a credentials-only change is a minor one, like
-            v7.1). An agent change never is.
+            Any change to the world, scenarios, evaluations, caller or
+            credentials is the next version. An agent change never is.
           </Typography>
         </Box>
 

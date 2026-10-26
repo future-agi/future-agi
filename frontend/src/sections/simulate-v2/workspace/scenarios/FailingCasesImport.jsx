@@ -342,7 +342,7 @@ export default function FailingCasesImport({ env, envState, onAdd, selected }) {
           flexShrink: 0,
         }}
       >
-        {`Each pick becomes ${VARIATIONS_PER_CASE} new variations — a different caller, wording and world values, the same goal and sub-goals — grouped under the scenario they came from. Each is run on ${agentNow ? `agent ${agentNow}` : "today's agent"} first; only the ones that still fail are proposed, for you to add.`}
+        {`Each pick becomes ${VARIATIONS_PER_CASE} variations with the same goal; only ones that still fail on ${agentNow ? `agent ${agentNow}` : "today's agent"} are proposed.`}
       </Typography>
 
       {shown.length === 0 ? (

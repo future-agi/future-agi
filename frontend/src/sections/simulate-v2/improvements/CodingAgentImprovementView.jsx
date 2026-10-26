@@ -118,7 +118,7 @@ export default function CodingAgentImprovementView({
         <Typography
           sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
         >
-          {`It makes each change and submits it for checking. We run it and today's agent on the same scenarios and send back a verdict — it never sees the held-back scenarios and can't edit the ones that judge it.${record.reproduce?.total ? ` Today: reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} of ${issueId || "the issue"}'s scenarios.` : ""}`}
+          {`It submits each change; we test it against today's agent and send back a verdict. It never sees the held-back scenarios.${record.reproduce?.total ? ` Reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total}.` : ""}`}
         </Typography>
       </Box>
 

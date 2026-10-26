@@ -62,14 +62,16 @@ export default function TrialsPicker({
     apply(n);
   };
 
-  const compact = size === "xs";
-
   return (
     <>
-      <Tooltip arrow title="How many times to repeat each scenario">
+      <Tooltip
+        arrow
+        title={`Repeats: each scenario runs ${k} time${k === 1 ? "" : "s"}`}
+      >
         <Button
           size="small"
           variant="outlined"
+          aria-label={`Repeats: ${k}`}
           onClick={(e) => setAnchor(e.currentTarget)}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
           startIcon={<Iconify icon="solar:repeat-linear" width={14} />}
@@ -84,7 +86,9 @@ export default function TrialsPicker({
             },
           }}
         >
-          Repeats: {k}
+          {/* "3×" — the word lives in the tooltip and the menu, so the
+              header doesn't spend width on it. */}
+          {`${k}×`}
         </Button>
       </Tooltip>
 

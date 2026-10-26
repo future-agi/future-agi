@@ -332,7 +332,7 @@ export default function AddVersionDialog({
             sx={{ typography: "m3", fontWeight: 600 }}
           >{`Add version ${next}`}</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`${intro} This saves an agent version only — environments following production test it on their next run (pinned ones stay put), and their scenarios stay as they are.`}
+            {`${intro} This saves an agent version only — environments following production test it on their next run.`}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose}>

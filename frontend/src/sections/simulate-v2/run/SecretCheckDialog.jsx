@@ -55,9 +55,8 @@ export default function SecretCheckDialog({
           : `${n} secrets failed their access check`}
       </Typography>
       <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
-        Calls that need {n === 1 ? "it" : "them"} will fail, so those
-        conversations come back as errors — they count neither for nor against
-        the agent. The rest of the run still tests it.
+        Calls that need {n === 1 ? "it" : "them"} come back as errors, which
+        don&apos;t count for or against the agent.
       </Typography>
       <Stack
         spacing={0.5}

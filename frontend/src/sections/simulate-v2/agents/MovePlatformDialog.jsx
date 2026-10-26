@@ -116,7 +116,7 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
         <Typography
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
-          {`For when ${agent.name} moves off ${fromLabel}, or is rebuilt under a new ID. It stays this agent — its versions, runs and environments carry on. Nothing is versioned now; the next Sync reads it from where it is.`}
+          {`For when ${agent.name} moves off ${fromLabel} or gets a new ID. Its versions, runs and environments carry on; the next Sync reads it from there.`}
         </Typography>
 
         <Stack spacing={2} sx={{ mt: 2.25 }}>

@@ -218,7 +218,7 @@ export default function FrameworkAgentFlow({
   return (
     <ConnectSteps
       title={title}
-      subtitle="Wrap your graph, pipeline, agents or crew with our adapter. It serves the agent for simulations and describes its structure — you confirm what it found."
+      subtitle="Wrap your graph, pipeline, agents or crew with our adapter. It serves the agent for simulations; you confirm what it found."
       steps={STEPS}
       active={0}
       next={next}
@@ -269,7 +269,7 @@ export default function FrameworkAgentFlow({
               on={local}
               onClick={() => setWhere("local")}
               short="Local code through our SDK · identified by commit"
-              hint="It checks in with the commit it's on plus a fingerprint of uncommitted changes. Your own coding agent makes changes there; we prove them with our scenarios and scoring."
+              hint="It reports its commit and uncommitted changes, so we can prove each change."
             />
           </Box>
         </Box>

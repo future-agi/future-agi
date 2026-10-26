@@ -152,10 +152,8 @@ export function TwinComposer({ preselect }) {
         "twin-backed envs", so a short reminder is enough.
       */}
       <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 2 }}>
-        Your agent calls the real SDKs — Slack, Notion, Salesforce — but the
-        calls land in a sandbox, seeded to your description and reset between
-        runs. Evaluations check what actually landed, not just which tools were
-        called.
+        Your agent calls the real SDKs, but the calls land in a seeded sandbox
+        that resets between runs.
       </Typography>
 
       <Box

@@ -190,8 +190,8 @@ export function TierDial({ setting, onChange, onAllowLive }) {
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
           >
             {setting.liveTarget
-              ? `It only reads, so a run may call the real tool instead of the world — at ${setting.liveTarget}${setting.viaGateway ? ", with the Gateway's rate limits and checks" : ""}. Answers aren't deterministic. Write tools never run live.`
-              : "It only reads, so a run may call the real tool instead of the world. Answers aren't deterministic, and you'll confirm a safe target before the first run. Write tools never run live."}
+              ? `It only reads, so a run may call the real tool instead of the world — at ${setting.liveTarget}${setting.viaGateway ? ", with the Gateway's rate limits and checks" : ""}. Write tools never run live.`
+              : "It only reads, so a run may call the real tool. Write tools never run live."}
           </Typography>
         </Box>
         <Stack

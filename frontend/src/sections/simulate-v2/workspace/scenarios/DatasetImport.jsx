@@ -235,7 +235,7 @@ export default function DatasetImport({ env, onAdd, selected }) {
                   {" · "}
                   <Tooltip
                     arrow
-                    title="Adding copies these rows into the environment. Later edits to the dataset don't change the scenarios; each one records the dataset version it came from."
+                    title="Copies these rows in; later dataset edits don't change the scenarios."
                   >
                     <Box
                       component="span"

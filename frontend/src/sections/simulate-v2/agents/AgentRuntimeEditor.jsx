@@ -116,7 +116,7 @@ export default function AgentRuntimeEditor({
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {variant === "embedded"
-              ? "A simulation calls the address our adapter's serve() answers on — runs stay blocked until it has one. It applies wherever this agent is tested."
+              ? "Simulations call the address our adapter's serve() answers on — runs stay blocked until it has one."
               : "Simulations call the address our adapter's serve() answers on. Until then it can be versioned and inspected, not run."}
           </Typography>
         </Box>

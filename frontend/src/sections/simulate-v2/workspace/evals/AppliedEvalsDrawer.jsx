@@ -295,9 +295,7 @@ export default function AppliedEvalsDrawer({
         </DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ typography: "s2" }}>
-            The selected evaluations will be removed from this environment. Runs
-            already scored against them will keep their scores; new runs
-            won&apos;t be graded on them.
+            New runs won&apos;t be graded on these; past scores stay.
           </DialogContentText>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

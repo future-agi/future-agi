@@ -476,23 +476,6 @@ export default function MyEnvironmentsTable({
         cell: ({ row }) => <LastRunCell last={row.original.lastRun} />,
       },
       {
-        id: "tools",
-        accessorKey: "tools",
-        header: "Tools",
-        size: 90,
-        cell: ({ getValue }) => (
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {getValue()}
-          </Typography>
-        ),
-      },
-      {
         id: "scenarios",
         accessorKey: "scenarios",
         header: "Scenarios",
@@ -565,7 +548,7 @@ export default function MyEnvironmentsTable({
         id: "actions",
         accessorKey: "id",
         header: "",
-        size: 112,
+        size: 48,
         enableSorting: false,
         cell: ({ row }) => (
           <Stack
@@ -574,28 +557,6 @@ export default function MyEnvironmentsTable({
             spacing={0.5}
             sx={{ width: "100%", justifyContent: "flex-end" }}
           >
-            {/* The one thing you do from the list: run it, on the agent version it tests. */}
-            {row.original.env.buildStatus !== "building" && (
-              <Button
-                size="small"
-                variant="outlined"
-                className="row-hover-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  runSimulation(row.original.env);
-                }}
-                sx={{
-                  minWidth: 0,
-                  color: "text.primary",
-                  borderColor: "divider",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {row.original.agentVersion
-                  ? `Run · ${row.original.agentVersion}`
-                  : "Run"}
-              </Button>
-            )}
             <IconButton
               size="small"
               aria-label="Row actions"

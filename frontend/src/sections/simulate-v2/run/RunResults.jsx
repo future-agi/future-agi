@@ -9,7 +9,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box,
   Stack,
@@ -24,6 +24,7 @@ import {
   ListItemIcon,
   ListItemText,
   Switch,
+  useMediaQuery,
 } from "@mui/material";
 import SideDrawer from "../components/SideDrawer";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
@@ -75,7 +76,7 @@ import { envAgentKey } from "../_mock/agentRegistry";
 import { membersOf, rereadFor } from "../_mock/improvementPolicy";
 import { recordOutsideChange } from "../_mock/nudgeEffects";
 import { runReportOf } from "../_mock/runReport";
-import RunSummaryChip, { HealthChip } from "./RunSummaryChip";
+import RunSummaryChip, { ProofKindChip } from "./RunSummaryChip";
 import { runViaOf, ciOf } from "../_mock/runVia";
 import { memberResultsOf } from "../_mock/memberAttribution";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -853,6 +854,8 @@ export default function RunResults({
      back across timestamp fields and yields null on a missing/bad date so the
      header shows nothing rather than "Invalid Date". */
   const finishedLabel = runFinishedLabel(identity);
+  /* Narrow screens: secondary header actions keep only their icons. */
+  const wideHeader = useMediaQuery(useTheme().breakpoints.up("lg"));
 
   /* ── Insights → the rest of the page ── */
   /* A claim on Insights filters the Scenarios tab to the scenarios behind it. */
@@ -1048,13 +1051,24 @@ export default function RunResults({
                 </Box>
               )
             )}
-            <Typography noWrap sx={{ typography: "m1", fontWeight: 600 }}>
-              {trialMeta
-                ? `Run ${trialMeta.trial.n}${named ? ` · ${named.label}` : ""}`
-                : identity
-                  ? `Run ${identity.ordinal} · ${named.label}`
-                  : "Run complete"}
-            </Typography>
+            <Tooltip arrow title={named?.label || ""}>
+              <Typography
+                noWrap
+                sx={{
+                  fontSize: 16,
+                  lineHeight: "24px",
+                  fontWeight: 600,
+                  flexShrink: 0,
+                  cursor: "default",
+                }}
+              >
+                {trialMeta
+                  ? `Run ${trialMeta.trial.n}`
+                  : identity
+                    ? `Run ${identity.ordinal}`
+                    : "Run complete"}
+              </Typography>
+            </Tooltip>
             {/*
               Failed means the run failed, not that something in it did. All
               seven scenarios failing is a failed run; three of seven failing
@@ -1073,12 +1087,8 @@ export default function RunResults({
             {/* Two indicators, apart: how the agent did (a report — pass^1,
                 pass^k — never a gate), and did our harness do its job. */}
             <RunSummaryChip summary={report.summary} />
-            {/* The harness only earns a chip when it wasn't healthy; Insights
-                carries its full read either way. */}
-            {report.summary?.health &&
-              report.summary.health.label !== "Healthy" && (
-                <HealthChip health={report.summary.health} />
-              )}
+            {/* Sealed · Live · Prompt only, as a mark — its words on hover. */}
+            <ProofKindChip proof={report.summary?.proofKind} compact />
             {/* A CI run's check result sits with the run's own status; where
                 it came from is on the line below. */}
             {sourceRun &&
@@ -1165,6 +1175,7 @@ export default function RunResults({
                 each scenario played `repeats` times — the context every
                 result on this page compares within. */}
             {env.name}
+            {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
             {named?.improvement && (
               <>
                 {" · "}
@@ -1202,19 +1213,17 @@ export default function RunResults({
                   </>
                 );
               })()}
-            {/* Sealed · Live · Prompt only — a word here; its meaning on hover. */}
-            {report.summary?.proofKind?.label && (
+            {/* Our harness's misses — never red; the reason on hover. */}
+            {report.summary?.health?.lost > 0 && (
               <>
                 {" · "}
                 <Tooltip
                   arrow
                   placement="bottom-start"
-                  title={report.summary.proofKind.note || ""}
+                  title={`${report.summary.health.note} A problem on our side, not your agent's.`}
                 >
                   <Box component="span" sx={{ cursor: "default" }}>
-                    {report.summary.proofKind.kind === "live"
-                      ? "Live · real systems"
-                      : report.summary.proofKind.label}
+                    {`${report.summary.health.lost} not scored`}
                   </Box>
                 </Tooltip>
               </>
@@ -1273,15 +1282,31 @@ export default function RunResults({
             </Tooltip>
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() => setAddingEvals(true)}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          sx={{ color: "text.primary", borderColor: "divider" }}
-        >
-          Add evals
-        </Button>
+        <Tooltip arrow title={wideHeader ? "" : "Add evals"}>
+          <Button
+            variant="outlined"
+            size="small"
+            aria-label="Add evals"
+            onClick={() => setAddingEvals(true)}
+            startIcon={
+              wideHeader ? (
+                <Iconify icon="solar:add-circle-linear" width={16} />
+              ) : undefined
+            }
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+              ...(!wideHeader && { minWidth: 0, px: 0.75 }),
+            }}
+          >
+            {wideHeader ? (
+              "Add evals"
+            ) : (
+              <Iconify icon="solar:add-circle-linear" width={16} />
+            )}
+          </Button>
+        </Tooltip>
         {/* Share replaces the old Export: a read-only link, or the report as PDF. */}
         {/* An improvement's run is shared from its improvement, not on its own. */}
         {identity && !trialMeta && (
@@ -1290,6 +1315,7 @@ export default function RunResults({
             envState={envState}
             identity={identity}
             report={report}
+            compact
           />
         )}
         {/* Re-run the whole run, in one of the two modes (§4.10.8). Selecting
@@ -1300,24 +1326,29 @@ export default function RunResults({
             /* What a reader re-runs after a failed run is the failures — one
              click; the whole-run modes sit behind the caret. */
             <Stack direction="row" sx={{ flexShrink: 0 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() =>
-                  rerun(failingScenarioIds, {
-                    mode: canSnapshot ? "snapshot" : "now",
-                  })
-                }
-                startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
-                sx={{
-                  color: "text.primary",
-                  borderColor: "divider",
-                  borderTopRightRadius: 0,
-                  borderBottomRightRadius: 0,
-                }}
+              <Tooltip
+                arrow
+                title={`Re-run the ${failingScenarioIds.length} scenario${failingScenarioIds.length === 1 ? "" : "s"} that didn't pass`}
               >
-                {`Re-run ${failingScenarioIds.length} failing`}
-              </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() =>
+                    rerun(failingScenarioIds, {
+                      mode: canSnapshot ? "snapshot" : "now",
+                    })
+                  }
+                  startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+                  sx={{
+                    color: "text.primary",
+                    borderColor: "divider",
+                    borderTopRightRadius: 0,
+                    borderBottomRightRadius: 0,
+                  }}
+                >
+                  Re-run failing
+                </Button>
+              </Tooltip>
               <Button
                 variant="outlined"
                 size="small"
@@ -2783,12 +2814,12 @@ function runFinishedLabel(run) {
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
   const s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-  if (s < 45) return "finished just now";
-  if (s < 90) return "finished a minute ago";
-  if (s < 3600) return `finished ${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `finished ${Math.round(s / 3600)}h ago`;
-  if (s < 604800) return `finished ${Math.round(s / 86400)}d ago`;
-  return `finished ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  if (s < 45) return "just now";
+  if (s < 90) return "a minute ago";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.round(s / 86400)}d ago`;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
 /* ── deterministic replay ────────────────────────────────────────────────── */
@@ -2891,10 +2922,8 @@ function ReplayDrawer({ task, seed, onClose }) {
             </Stack>
 
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Runs this one scenario again, on its own, with everything below
-              held identical. If it fails the same way, the failure is the
-              agent. If it does not, the failure was flaky — and that is worth
-              knowing before anyone fixes anything.
+              Runs this scenario again with everything held identical — same
+              failure means the agent; a pass means it was flaky.
             </Typography>
 
             <Stack spacing={1.25}>

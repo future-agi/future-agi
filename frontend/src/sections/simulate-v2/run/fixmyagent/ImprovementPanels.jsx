@@ -273,8 +273,8 @@ export function ContractNotice({
           >
             {approval
               ? approval.candidate
-                ? `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to} first: ${approval.baseline.train}% on the target scenarios, ${approval.baseline.held}% held back. Then the change, on ${approval.to} only: ${approval.candidate.train}% on the target scenarios (${signedPts(approval.candidate.train - approval.baseline.train)}), ${approval.candidate.held}% held back (${signedPts(approval.candidate.held - approval.baseline.held)}). Never compared against ${approval.from || "the old version"}.`
-                : `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to}: ${approval.baseline.train}% on the target scenarios, ${approval.baseline.held}% held back. A run with this change is compared there, never against ${approval.from}.`
+                ? `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. The baseline ran again on ${approval.to}: change ${approval.candidate.train}% vs baseline ${approval.baseline.train}% on targets (${signedPts(approval.candidate.train - approval.baseline.train)}).`
+                : `Approved environment ${approval.to} with the new contract — ${contract.tool} takes ${contract.param}. Baseline on ${approval.to}: ${approval.baseline.train}% on targets.`
               : contractMessage(contract, envVersion || "the frozen version")}
           </Typography>
           {contract.why && !approval && (
@@ -660,9 +660,7 @@ export function UnfitNotice({ result }) {
         ))}
       </Box>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-        Checked before any scenario ran, so none of them were scored or could
-        win. The environment was built from one commit — its image, install
-        steps, entry point and start command.
+        Checked before any scenario ran, so none were scored.
       </Typography>
     </Box>
   );

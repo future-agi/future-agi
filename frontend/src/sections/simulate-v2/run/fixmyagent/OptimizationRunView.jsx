@@ -35,7 +35,6 @@ import {
   noGainRunsOf,
 } from "../../_mock/optimizer";
 import {
-  heldSplitText,
   improverModelsText,
   staleSince,
   optimizationVerdict,
@@ -1177,7 +1176,7 @@ export default function OptimizationRunView({
                         ? "too few groups reproduced to hold any back"
                         : `${result.heldBase}% → ${outcome.heldScore}%${result.noise ? ` · noise ±${result.noise}` : ""}`
                     }
-                    hint={`Scenarios the search never saw — ${result.heldMeasured} here${heldSplitText(result.split) ? `: ${heldSplitText(result.split)}` : ""}.${result.confirm ? ` Measured on a re-run after the pick (${result.confirm.selectionScore}% when picked) — the run that picks a winner can't also prove it.` : ""} This is the number worth quoting; the target score is what the search was allowed to fit to. Noise is what two runs of the same agent differ by; a gain has to clear it.`}
+                    hint={`Scenarios the search never saw — the number worth quoting.${result.confirm ? ` Measured on a re-run after the pick.` : ""}`}
                   />
                   <Metric
                     label="Target"
@@ -1198,7 +1197,7 @@ export default function OptimizationRunView({
                         : undefined
                     }
                     sub="target minus held back"
-                    hint="How much more the change gained on the scenarios it was tuned on than on ones it never saw. A large gap means it fitted those scenarios rather than the task."
+                    hint="Gain on tuned scenarios minus gain on unseen ones. Large means it overfitted."
                   />
                   <Metric
                     label="Cost per conversation"
@@ -1417,7 +1416,7 @@ export default function OptimizationRunView({
                   {lifecycle?.key === "review"
                     ? lifecycle.awaitingRelease
                       ? `Landed as ${lifecycle.detail}. Mark it released once it's live — the Error Feed then watches for the issue.`
-                      : `${lifecycle.via || "The draft"} is waiting for someone to deploy it. Once it's live, mark it released below — the Error Feed then watches for the issue.`
+                      : `${lifecycle.via || "The draft"} is waiting to be deployed. Mark it released once it's live.`
                     : lifecycle?.key === "watching"
                       ? `Released as ${lifecycle.version} — the new baseline. The Error Feed is watching for the issue · ${lifecycle.detail}.`
                       : lifecycle?.key === "resolved"
@@ -1425,11 +1424,11 @@ export default function OptimizationRunView({
                         : lifecycle?.key === "reopened"
                           ? `Released, but the issue was ${lifecycle.detail}. Fix again from the issue starts a new fix, linked to this one.`
                           : !verified
-                            ? `You chose Run ${shipped?.n} over the search's pick. Only a passing verdict can mark a change verified, so it runs on the full suite — held-back and must-pass scenarios included — before it can be handed over.`
+                            ? `You chose Run ${shipped?.n} over the search's pick. It runs on the full suite before it can be handed over.`
                             : ending === "budget"
-                              ? `The best of a partial search — it stopped at the budget after ${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs. It passed every check; a bigger budget might find a better change. Nothing has been applied yet — it ships as a draft for someone to approve.`
+                              ? `Best of ${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs (budget reached); passed every check. Ships as a draft to approve.`
                               : ending === "stopped-early"
-                                ? `The best run, verified — the search stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs, once ${noGainRunsOf(result.stoppedEarly)} in a row didn't beat it. It passed every check. Nothing has been applied yet — it ships as a draft for someone to approve.`
+                                ? `Best run, verified — stopped after ${result.stoppedEarly.after} of ${result.stoppedEarly.of} runs with no further gain. Ships as a draft to approve.`
                                 : "Nothing has been applied yet — it ships as a draft for someone to approve."}
                 </Typography>
                 {!verified && !lifecycle ? (
@@ -1584,7 +1583,7 @@ function SuggestionBody({
             sx={{ typography: "s3", color: "text.tertiary", mb: 1.5 }}
           >
             {
-              "Nothing has been applied — we can't reach inside this agent. Apply the change where it runs, mark the new version released, and re-run on the same environment version."
+              "Nothing applied — apply the change where the agent runs, mark it released, then re-run."
             }
           </Typography>
           <OmegaHandoff

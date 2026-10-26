@@ -189,9 +189,8 @@ export default function QualityReviewPanel({
           <Typography
             sx={{ typography: "s2", color: "text.tertiary", mt: 0.25 }}
           >
-            How far the scenarios can be trusted: each passes the quality gate
-            before it joins the set, a person agrees a sample is realistic and
-            checked right, and every rule is tested.
+            How far the scenarios can be trusted: gated, spot-checked by a
+            person, every rule tested.
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose} aria-label="Close">
@@ -222,8 +221,8 @@ export default function QualityReviewPanel({
           figure={`${gate.admitted} of ${gate.total}`}
           sub={
             connect
-              ? "Ready, solvable, not vacuous (or positive evidence where declining is correct), mutation controls and exploit control — the world-only gates don't apply without a world."
-              : "Staged, solvable, not vacuous (or positive evidence where declining is correct), mutation controls, alternate valid paths, setup can't earn credit, and exploit control."
+              ? "Ready, solvable, not vacuous, mutation and exploit controls."
+              : "Staged, solvable, not vacuous, alternate paths, mutation and exploit controls."
           }
         >
           {gate.quarantined.length === 0 ? (

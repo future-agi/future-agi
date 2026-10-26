@@ -1167,7 +1167,7 @@ export default function ScenariosStep({
               >{`${c.n} ${c.label}`}</Box>
             </Fragment>
           )),
-        sub: `Checked against environment ${envDisplay}. Re-check ones need their proof re-run; Outdated ones need rewriting; Stale ones need a tool the agent no longer has — update or archive them. Until then they run but count toward no decision.`,
+        sub: `Checked against environment ${envDisplay}. Flagged ones run but don't count until fixed.`,
         actions: [
           {
             label: "Review",

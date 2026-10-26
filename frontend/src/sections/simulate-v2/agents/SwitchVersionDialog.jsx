@@ -5,7 +5,6 @@ import { toolFit } from "../_mock/toolFit";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import {
   agentVersions,
-  currentAgentVersion,
   isCredentialsVersion,
   productionAgentVersion,
   versionNumber,
@@ -32,7 +31,6 @@ export default function SwitchVersionDialog({
   if (!env || !envState || !label) return null;
   /* A code agent's versions read as commits — "main @ 3f9a2c1". */
   const nm = (l) => (l ? envVersionNameOf(envState, l, env?.id).main : l);
-  const from = nm(currentAgentVersion(envState)?.label);
   const name = nm(label);
   const fit = toolFit(env, envState, { agent: label });
   /* Production as the default moves with it; any other version is held until the default is production again. */
@@ -70,8 +68,8 @@ export default function SwitchVersionDialog({
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
           {follows
-            ? `It tests ${name}, the production version, and moves to each new production version from now on. Nothing runs now; earlier runs stay with ${from || "the version they ran"}. The change is recorded in its history.`
-            : `It stays on ${name} — new production versions won't move it until the default is production again. Nothing runs now; earlier runs stay with ${from || "the version they ran"}. The change is recorded in its history.`}
+            ? `It tests ${name}, the production version, and follows each new one from now on. Nothing runs now; earlier runs keep their version.`
+            : `It stays on ${name} — new production versions won't move it. Nothing runs now; earlier runs keep their version.`}
         </Typography>
         {!follows && newerKeys.length > 0 && (
           <Typography
@@ -90,7 +88,7 @@ export default function SwitchVersionDialog({
             <Box component="span" sx={{ fontFamily: MONO }}>
               {fit.missing.map((t) => t.name).join(", ")}
             </Box>
-            {`. Scenarios that need ${fit.missing.length === 1 ? "it" : "them"} come back Not measured until the world is updated from the environment's World tab.`}
+            {`. Scenarios that need ${fit.missing.length === 1 ? "it" : "them"} come back Not measured until the World tab adds ${fit.missing.length === 1 ? "it" : "them"}.`}
           </Alert>
         )}
       </Box>

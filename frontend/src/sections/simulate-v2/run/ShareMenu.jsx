@@ -9,6 +9,7 @@ import {
   Menu,
   MenuItem,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { shareTokenOf, sharedUrlOf } from "../_mock/runShare";
@@ -27,7 +28,13 @@ const itemText = {
  * Share a finished run (PRD v6 · AC-20.9): a read-only, provenance-stamped
  * link, or the same report as a PDF through the browser's print dialog.
  */
-export default function ShareMenu({ env, envState, identity, report }) {
+export default function ShareMenu({
+  env,
+  envState,
+  identity,
+  report,
+  compact = false,
+}) {
   const { enqueueSnackbar } = useSnackbar();
   const [anchor, setAnchor] = useState(null);
   const [printing, setPrinting] = useState(false);
@@ -57,22 +64,41 @@ export default function ShareMenu({ env, envState, identity, report }) {
 
   return (
     <>
-      <Button
-        variant="outlined"
-        size="small"
-        onClick={(e) => setAnchor(e.currentTarget)}
-        startIcon={<Iconify icon="solar:share-linear" width={16} />}
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.tertiary" }}
-          />
-        }
-        sx={{ color: "text.primary", borderColor: "divider" }}
-      >
-        Share
-      </Button>
+      {compact ? (
+        <Tooltip arrow title="Share">
+          <Button
+            variant="outlined"
+            size="small"
+            aria-label="Share"
+            onClick={(e) => setAnchor(e.currentTarget)}
+            sx={{
+              minWidth: 0,
+              px: 0.75,
+              color: "text.primary",
+              borderColor: "divider",
+            }}
+          >
+            <Iconify icon="solar:share-linear" width={16} />
+          </Button>
+        </Tooltip>
+      ) : (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={(e) => setAnchor(e.currentTarget)}
+          startIcon={<Iconify icon="solar:share-linear" width={16} />}
+          endIcon={
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={12}
+              sx={{ color: "text.tertiary" }}
+            />
+          }
+          sx={{ color: "text.primary", borderColor: "divider" }}
+        >
+          Share
+        </Button>
+      )}
       <Menu
         anchorEl={anchor}
         open={!!anchor}
@@ -182,6 +208,7 @@ export default function ShareMenu({ env, envState, identity, report }) {
 }
 
 ShareMenu.propTypes = {
+  compact: PropTypes.bool,
   env: PropTypes.object,
   envState: PropTypes.object,
   identity: PropTypes.object,

@@ -88,7 +88,7 @@ export default function PrVerifyCheck({ pr, now }) {
             <Tooltip
               arrow
               placement="top"
-              title="Visible, held-back and must-pass scenarios, frozen when the improvement ran — re-run on the PR's head commit and compared with the proof it was opened with."
+              title="The improvement's scenarios, re-run on the PR's head commit and compared with its proof."
             >
               <Typography
                 sx={{

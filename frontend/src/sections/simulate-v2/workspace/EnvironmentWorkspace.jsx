@@ -99,7 +99,7 @@ import { finishBuildPatch } from "../_mock/quickBuild";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { isConnectOnly } from "../_mock/envModel";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
-import { SurfaceIcon, EmptyState } from "../components/primitives";
+import { EmptyState } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
 import AssistantConsole from "../assistant/AssistantConsole";
 import BuilderRail from "./BuilderRail";
@@ -1087,14 +1087,14 @@ export default function EnvironmentWorkspace() {
         minHeight: 0,
       }}
     >
-      {/* ── environment header ── */}
+      {/* ── environment header: one row, nothing that wraps ── */}
       <Stack
         direction="row"
         alignItems="center"
-        spacing={2}
+        spacing={1.5}
         sx={{
           px: 3,
-          py: 2,
+          py: 1.25,
           borderBottom: "1px solid",
           borderColor: "divider",
           flexShrink: 0,
@@ -1102,15 +1102,14 @@ export default function EnvironmentWorkspace() {
       >
         <Tooltip title="Back" arrow>
           <IconButton
+            size="small"
             aria-label="Back"
             onClick={goBack}
             sx={{ color: "text.tertiary" }}
           >
-            <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+            <Iconify icon="solar:alt-arrow-left-linear" width={18} />
           </IconButton>
         </Tooltip>
-
-        <SurfaceIcon surface={env.surface} size={36} />
 
         <Box minWidth={0} flex={1}>
           {/* One line at any width: the name truncates but never disappears,
@@ -1121,17 +1120,25 @@ export default function EnvironmentWorkspace() {
             spacing={1}
             sx={{ minWidth: 0, flexWrap: "nowrap" }}
           >
-            <Typography
-              noWrap
-              sx={{
-                typography: "m1",
-                fontWeight: 600,
-                minWidth: 72,
-                flexShrink: 1,
-              }}
+            <Tooltip
+              arrow
+              title={[env.name, env.tagline].filter(Boolean).join(" — ")}
+              enterDelay={400}
             >
-              {env.name}
-            </Typography>
+              <Typography
+                noWrap
+                sx={{
+                  /* The page-title size every page uses (16/24, 600). */
+                  fontSize: 16,
+                  lineHeight: "24px",
+                  fontWeight: 600,
+                  minWidth: 72,
+                  flexShrink: 1,
+                }}
+              >
+                {env.name}
+              </Typography>
+            </Tooltip>
             {/*
               Env status pill. `Ready` = fully booted and accepting
               edits from the builder console + inline. When the env is
@@ -1415,9 +1422,6 @@ export default function EnvironmentWorkspace() {
               </Tooltip>
             )}
           </Stack>
-          <Typography noWrap sx={{ typography: "s2", color: "text.tertiary" }}>
-            {env.tagline}
-          </Typography>
         </Box>
 
         {/*
@@ -1482,17 +1486,16 @@ export default function EnvironmentWorkspace() {
             parallel: parallelOf(envState),
           });
           const batchAtOnce = atOnceOf(envState);
+          /* Short and steady — counts and who sits out live in the tooltip,
+             so the button never grows with the numbers. */
           const runLabel =
             selectedCount > 0
-              ? `Run simulation (${selectedCount})`
+              ? "Run selected"
               : groupWith.length
-                ? `Run in ${groupWith.length + 1} environments`
-                : partial
-                  ? /* The action, with the real count; who sits out is the caption beside it. */
-                    wide
-                    ? `Run ${meteredScenarios} scenario${meteredScenarios === 1 ? "" : "s"}`
-                    : `Run ${meteredScenarios}`
-                  : "Run simulation";
+                ? `Run in ${groupWith.length + 1}`
+                : wide
+                  ? "Run simulation"
+                  : "Run";
           const gapTip = !runEnabled
             ? runBlockedReason
             : partial && !selectedCount && !groupWith.length
@@ -1569,11 +1572,16 @@ export default function EnvironmentWorkspace() {
                 <Button
                   size="small"
                   variant="outlined"
+                  aria-label="Run from code"
                   onClick={() => setCodeOpen(true)}
                   startIcon={<Iconify icon="solar:code-linear" width={16} />}
-                  sx={{ whiteSpace: "nowrap" }}
+                  sx={{
+                    whiteSpace: "nowrap",
+                    minWidth: 0,
+                    ...(!wide && { "& .MuiButton-startIcon": { mx: 0 } }),
+                  }}
                 >
-                  Code
+                  {wide && "Code"}
                 </Button>
               </Tooltip>
               {/* Needs input — the count of what's open; red only when
@@ -1613,11 +1621,11 @@ export default function EnvironmentWorkspace() {
                 >
                   {openGaps > 0 && (
                     <>
-                      Needs input
+                      {wide && "Needs input"}
                       <Box
                         component="span"
                         sx={{
-                          ml: 0.75,
+                          ml: wide ? 0.75 : 0,
                           px: 0.625,
                           minWidth: 18,
                           height: 18,
@@ -1651,34 +1659,9 @@ export default function EnvironmentWorkspace() {
                     scenarioCount={meteredScenarios}
                     unit={env.surface === "voice" ? "call" : "conversation"}
                   />
-                  {/* Who the run leaves out — secondary to the action, and the way to them. */}
-                  {partial &&
-                    !selectedCount &&
-                    !groupWith.length &&
-                    !usageRefusal && (
-                      <Tooltip arrow title={gapTip}>
-                        <Typography
-                          {...clickable(
-                            () => setInbox({ open: true, focus: null }),
-                            { role: "link" },
-                          )}
-                          sx={{
-                            ...focusRing,
-                            typography: "s3",
-                            color: "text.tertiary",
-                            whiteSpace: "nowrap",
-                            fontVariantNumeric: "tabular-nums",
-                            cursor: "pointer",
-                            "&:hover": {
-                              color: "text.primary",
-                              textDecoration: "underline",
-                            },
-                          }}
-                        >
-                          {`${sitOut} sit${sitOut === 1 ? "s" : ""} out`}
-                        </Typography>
-                      </Tooltip>
-                    )}
+                  {/* Who the run leaves out is said in the Run tooltip, and
+                      Needs input carries the count — the header doesn't
+                      grow a caption. */}
                   {/* Refused at the pre-check: the standard limit message, at the button. */}
                   {runEnabled && usageRefusal && (
                     <Typography
@@ -1842,7 +1825,8 @@ export default function EnvironmentWorkspace() {
                                     mb: 1,
                                   }}
                                 >
-                                  {`Agent ${currentAgentVersion(envState)?.label || ""} in each — one run per environment, started together and read side by side. Picked ones join the next Run.`}
+                                  A change to the agent can fix one environment
+                                  and break another.
                                 </Typography>
                                 <AlsoRunIn
                                   variant="inline"

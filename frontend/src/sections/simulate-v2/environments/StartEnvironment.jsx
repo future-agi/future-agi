@@ -2373,7 +2373,7 @@ function PanelPhoneNumber() {
             value={instructions}
             onChange={setInstructions}
             helper={
-              <HintLine hint="We don't change the agent. A suggested fix is written against these, and a re-run on the same environment version proves it once you've applied it.">
+              <HintLine hint="We don't change the agent; a re-run proves a fix once you've applied it.">
                 Scenarios and the suggested fix are written against these.
               </HintLine>
             }
@@ -2637,7 +2637,7 @@ function PanelMcpServer() {
             onChange={setTarget}
             mono
             helper={
-              <HintLine hint="We list the tools the server exposes and build the agent's world from them. A stdio server is a command, so it only works for an environment that runs on your machine.">
+              <HintLine hint="We build the world from the server's tools. A stdio server only works on your machine.">
                 Its tools become the world the agent acts on.
               </HintLine>
             }
@@ -3881,8 +3881,7 @@ const OPTIONS = [
     group: "bring",
     title: "Hosted platform",
     icon: "solar:cloud-linear",
-    blurb:
-      "Connect an agent living on a managed voice or chat platform by its ID. We handle the auth and route every simulated turn through the platform's own API.",
+    blurb: "Connect an agent on a managed voice or chat platform by its ID.",
     preview: ["Vapi", "Retell", "ElevenLabs", "Bland", "Google CX"],
     setupSubtitle: "Point at an agent living on a managed platform.",
   },
@@ -3913,7 +3912,7 @@ const OPTIONS = [
     title: "From code",
     icon: "solar:code-linear",
     blurb:
-      "Build and run environments from your terminal, Python or your coding agent. The CLI can also build the world on your own machine over a secure tunnel, so nothing leaves your laptop.",
+      "Build and run environments from your terminal, Python or your coding agent.",
     preview: ["CLI", "Python", "Coding agent"],
     setupSubtitle:
       "From the CLI, Python or your coding agent. Environments made this way are managed in code.",
@@ -3926,7 +3925,7 @@ const OPTIONS = [
     title: "Agent endpoint",
     icon: "solar:global-linear",
     blurb:
-      "Only a URL to point at? We call it on every simulated turn — it can't be copied, so simulations drive the real agent once you say so. Link its repository too and we can read what it's made of.",
+      "Only a URL? We call it on every simulated turn — the real agent, once you allow it.",
     preview: ["HTTP", "WebSocket"],
     setupSubtitle: "Point us at the endpoint your agent answers on.",
   },

@@ -324,9 +324,8 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
           sx={{ color: "text.tertiary", flexShrink: 0 }}
         />
         <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1 }}>
-          Tools and guardrails are read from the source. Flows are derived from
-          them. Personas and actors are what you injected — the only part of the
-          graph that is authored.
+          Tools and guardrails are read from the source; personas and actors are
+          what you added.
         </Typography>
         <Button
           size="small"

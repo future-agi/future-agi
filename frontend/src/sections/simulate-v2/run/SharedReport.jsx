@@ -375,11 +375,7 @@ export function ReportBody({
           {identity.partial
             ? `A re-run of ${total} scenarios — every number below covers only these. `
             : "The whole run, not filtered. "}
-          Rates need at least 5 graded scenarios, else they read &quot;Not
-          enough data yet&quot;. Every conversation ends passed, failed,
-          inconclusive, test invalid or error; only passed and failed count for
-          or against the agent — the rest are left out of the rates and counted
-          by cause.
+          Only passed and failed count toward rates.
           {report.summary?.stale?.line ? ` ${report.summary.stale.line}.` : ""}
           {report.summary?.pulled?.count
             ? ` ${report.summary.pulled.count} pulled for review after testing invalid twice.`

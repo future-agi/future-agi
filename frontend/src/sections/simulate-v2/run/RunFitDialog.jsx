@@ -228,10 +228,9 @@ export default function RunFitDialog({
       >
         It calls <ToolList tools={fit.missing} />, which this world doesn&apos;t
         know how to answer. Scenarios where it calls {n === 1 ? "it" : "them"}{" "}
-        get no answer back, so they can&apos;t be scored and come back as{" "}
-        <b>not measured</b> — the rest of the run still tests {agent}.
+        come back <b>not measured</b>.
         {gap.missing.length > 0 &&
-          ` It also gets ${gapNames.join(", ")} from ${gapServers}, which this world doesn't answer — add ${gap.missing.length === 1 ? "it" : "them"} on the World tab.`}
+          ` Add ${gapNames.join(", ")} on the World tab.`}
       </Typography>
 
       <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>

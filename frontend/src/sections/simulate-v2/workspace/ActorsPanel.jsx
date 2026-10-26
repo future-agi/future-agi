@@ -99,9 +99,8 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           <Typography
             sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}
           >
-            Other parties in the world, each with a goal that is not the task.
-            They pull the conversation off-course, which is what makes them part
-            of the environment&apos;s dynamics rather than part of the task.
+            Other parties in the world, each with a goal that pulls the
+            conversation off the task.
           </Typography>
         </Box>
         {!locked && (
@@ -152,9 +151,8 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
             >
               Not the same as a persona.
             </Box>{" "}
-            The persona is who your agent is serving — the one whose goal the
-            task is. An actor is someone else: you are trying to book a cab, and
-            your colleague is saying let&apos;s get pizza instead.{" "}
+            The persona is who your agent serves; an actor is someone else — the
+            colleague who wants pizza instead.{" "}
             <Box
               component="span"
               {...clickable(

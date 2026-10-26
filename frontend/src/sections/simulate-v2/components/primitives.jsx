@@ -138,6 +138,8 @@ export const STATUS_META = {
   booting: { role: "info", label: "Provisioning" },
   running: { role: "info", label: "Running" },
   grading: { role: "info", label: "Grading" },
+  /* A live run holding on one scenario's clarifying question. */
+  needs_input: { role: "warning", label: "Needs input" },
   passed: { role: "success", label: "Passed" },
   /* Samples that disagreed with each other. Neither a pass nor a failure —
      it is the scenario, not the agent, that has been found out. */

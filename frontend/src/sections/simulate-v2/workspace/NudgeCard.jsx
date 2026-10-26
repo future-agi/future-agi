@@ -437,7 +437,7 @@ function RuleQuestion({ nudge, env, envState, patch, onNavigate }) {
   return (
     <Stack spacing={1.25}>
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-        {`${nudge.agentVersion} changed how the agent handles ${nudge.ruleId}. An agent that follows the new wording could fail the sub-goal written for the old one — a policy change, or not intended?`}
+        {`${nudge.agentVersion} changed how the agent handles ${nudge.ruleId}. A policy change, or not intended?`}
       </Typography>
 
       <Diff
@@ -680,7 +680,7 @@ function NewRuleQuestion({ nudge, env, envState, patch }) {
   return (
     <Stack spacing={1.25}>
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-        {`${nudge.agentVersion} added a rule that lets the agent do more than before, and nothing in this environment tests it — so if it wasn't meant, no run would catch it. A policy change, or not intended?`}
+        {`${nudge.agentVersion} lets the agent do more, and nothing here tests it. A policy change, or not intended?`}
       </Typography>
 
       <Diff
@@ -779,7 +779,7 @@ function RuleOutcome({ nudge, env, envState, patch, onNavigate }) {
       ) : (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {nudge.answer === "policy" &&
-            `${nudge.published} published as a policy change from agent ${nudge.agentVersion}. Compare reports it as criteria changed: ${nudge.prevVersion || "the old version"} under v1, ${nudge.agentVersion} under the new one.`}
+            `${nudge.published} published as a policy change from agent ${nudge.agentVersion}; Compare shows it as criteria changed.`}
           {nudge.answer === "not-intended" &&
             `Not intended — nothing changed. If ${nudge.agentVersion} fails the sub-goal, Compare lists it first as a regression.`}
         </Typography>
@@ -1248,7 +1248,7 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {nudge.status === "dismissed" &&
               (nudge.kind === "remove"
-                ? `The ${plural(rows.length, "scenario")} ${rows.length === 1 ? "is" : "are"} stale on versions without ${nudge.capability} — they still run, but count toward no decision until updated or archived.`
+                ? `The ${plural(rows.length, "scenario")} ${rows.length === 1 ? "is" : "are"} stale without ${nudge.capability} — they run but don't count.`
                 : "Dismissed earlier — the environment stays as it is.")}
             {nudge.status === "approved" &&
               nudge.kind === "add" &&
@@ -1257,7 +1257,7 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
                 : `Approved · environment ${envLabelOf(env, envState, nudge.envVersion)} has the handler · ${plural((nudge.addedIds || []).length, "new scenario")} added, in the New band until backfilled.`)}
             {nudge.status === "approved" &&
               nudge.kind === "remove" &&
-              `Stale on agent versions without ${nudge.capability} — they still run, but count toward no decision until you update or archive them. Nothing retired.`}
+              `Stale without ${nudge.capability} — they run but don't count until updated or archived.`}
             {nudge.status === "approved" &&
               nudge.kind === "behaviour" &&
               `Approved · environment ${envLabelOf(env, envState, nudge.envVersion)} follows the new ${nudge.capability} behaviour.`}

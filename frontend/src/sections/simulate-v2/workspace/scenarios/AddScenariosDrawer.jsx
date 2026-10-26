@@ -64,22 +64,19 @@ const ROUTES = [
   {
     id: "generate",
     label: "Generate",
-    blurb:
-      "Writes new scenarios across tasks, callers, moods and call quality.",
+    blurb: "New scenarios across tasks, callers, moods and lines.",
     Thumb: GenerateThumb,
   },
   {
     id: "error-feed",
     label: "From Error Feed",
-    blurb:
-      "Pick an Error Feed issue — the failures in its traces become scenarios.",
+    blurb: "Turn an issue's failing traces into scenarios.",
     Thumb: ProductionThumb,
   },
   {
     id: "failing",
     label: "From failing cases",
-    blurb:
-      "Scenarios that failed or came out flaky in this environment's runs, written to reproduce it.",
+    blurb: "Re-test what failed or was flaky in past runs.",
     Thumb: FailingCasesThumb,
   },
   {

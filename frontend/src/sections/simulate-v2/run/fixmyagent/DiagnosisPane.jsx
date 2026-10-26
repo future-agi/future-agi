@@ -686,10 +686,8 @@ export default function DiagnosisPane({
             Nothing to fix
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
-            Every measured scenario passed and no analyzer found a problem with
-            the measurement. Improving against this run would spend
-            conversations confirming the score it started from — add harder
-            scenarios to find the edges instead.
+            Every scenario passed — add harder scenarios before improving
+            against this run.
           </Typography>
         </Stack>
       )}

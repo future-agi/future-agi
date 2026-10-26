@@ -387,9 +387,8 @@ export default function AddMcpToolsDrawer({
                           borderColor: "divider",
                         }}
                       >
-                        A stdio server is a command, and a pasted command never
-                        runs in our sandbox. It works for an environment that
-                        runs on your machine — use HTTP or SSE here.
+                        A stdio command never runs in our sandbox — use HTTP or
+                        SSE here.
                       </Typography>
                     ) : (
                       <Field
@@ -511,7 +510,7 @@ export default function AddMcpToolsDrawer({
                     <Typography
                       sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}
                     >
-                      {`Each tool starts Simulated — the world answers it against its seeded data. Change it per tool on the World tab; only a tool that reads can go Live, once you allow it${viaGateway ? ", and Live calls go through your Gateway, with its rate limits and checks." : "."}`}
+                      {`Each tool starts Simulated; change it per tool on the World tab${viaGateway ? " — Live calls go through your Gateway." : "."}`}
                     </Typography>
                   </Box>
                 )}
@@ -774,7 +773,7 @@ function DoneState({ plan, server, onWrite }) {
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {plan.inPlace
               ? `In environment ${plan.versionLabel}. The world answers them during runs, Simulated to start.`
-              : "Waiting as an unsaved edit — save it as the next environment version from the bar at the top. Runs use the saved version until then."}
+              : "Unsaved — save it as the next environment version from the bar at the top."}
             {server.gateway ? " Live calls go through your Gateway." : ""}
           </Typography>
           {plan.renamed.length > 0 && (

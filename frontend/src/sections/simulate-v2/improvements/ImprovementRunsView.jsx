@@ -504,7 +504,7 @@ export default function ImprovementRunsView({
             (needsVerify ? (
               <Tooltip
                 arrow
-                title="Runs it on the full suite, held-back and must-pass scenarios included — the check the search's own pick already passed. Only a verified change can ship."
+                title="Runs it on the full suite — only a verified change can ship."
               >
                 <Button
                   size="small"
@@ -565,7 +565,7 @@ export default function ImprovementRunsView({
                   ? `main has moved on ${behind.since} commit${behind.since === 1 ? "" : "s"} since this fix started.`
                   : `${behind.prod} is in production now — ${behind.since} version${behind.since === 1 ? "" : "s"} after this fix started.`}
               </Box>
-              {` Its proof is on ${behind.base}; production is ${behind.prod}. Re-check it there before it ${behind.git ? "is merged" : "ships"} — a change that held then may not hold now.`}
+              {` Its proof is on ${behind.base}. Re-check it on ${behind.prod} before it ${behind.git ? "is merged" : "ships"}.`}
             </Typography>
           </Stack>
         )}

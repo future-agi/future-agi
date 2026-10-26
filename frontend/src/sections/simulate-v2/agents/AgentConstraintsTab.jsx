@@ -951,7 +951,7 @@ function AutomaticCard({ agent, schedule, onChange, onBuildEnv }) {
             }}
           >
             {canary
-              ? `Canary releases on ${provider} — a share of real calls on the draft — are started by a person from the improvement, never by a schedule.`
+              ? `Canary releases on ${provider} send some real calls to the draft — a person starts them, never a schedule.`
               : `${provider} can't split traffic between versions, so a canary release isn't available for this agent.`}
           </Typography>
         </Box>

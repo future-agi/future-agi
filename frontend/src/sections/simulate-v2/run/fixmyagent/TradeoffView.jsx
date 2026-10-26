@@ -53,7 +53,7 @@ export default function TradeoffView({ record, chosen, onChoose }) {
       <Typography
         sx={{ px: 2, pt: 1.5, typography: "s2", color: "text.secondary" }}
       >
-        {`Every run by target score and cost per conversation. The line joins the best trade-offs — nothing else is at least as good on quality, cost and latency.${costMeasured ? " Runs past the dashed line break the cost limit." : " This agent reports no cost, so the cost limit can't be checked."} Choosing a run other than the search's pick means verifying it before it can ship.`}
+        {`Every run by score and cost; the line joins the best trade-offs.${costMeasured ? " Past the dashed line breaks the cost limit." : " This agent reports no cost."}`}
       </Typography>
       <Box sx={{ px: 2, pt: 1 }}>
         <svg

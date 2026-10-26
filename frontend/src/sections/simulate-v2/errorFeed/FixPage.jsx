@@ -579,7 +579,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
           <Notice
             icon="solar:magic-stick-3-linear"
             title={`This issue already has a fix · ${status.label}`}
-            body="An issue has one fix at a time. Open it to follow or review it; if it ends without fixing the issue, or the issue comes back after release, Fix again starts a new one."
+            body="An issue has one fix at a time. If it doesn't fix the issue, or the issue comes back after release, Fix again starts a new one."
             action={
               <Button
                 variant="contained"

@@ -245,7 +245,7 @@ export default function AgentMembersCard({
             Constraints
           </Box>
           {
-            " — an improvement never changes it, and a change to a part every member shares names who it reaches. Analysis and Account belong to the whole agent."
+            " so an improvement never changes it. Analysis and Account belong to the whole agent."
           }
         </Typography>
       )}

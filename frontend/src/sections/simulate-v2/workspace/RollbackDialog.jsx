@@ -69,7 +69,7 @@ export default function RollbackDialog({
         <Typography
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
-          {`This makes environment ${plan.next} with everything as in ${targetLabel} — world, scenarios, sub-goals, evaluations and simulated caller. Nothing is deleted — every version stays in the history, and every run keeps the version it ran on.`}
+          {`This makes environment ${plan.next} as it was in ${targetLabel}. Nothing is deleted.`}
         </Typography>
       )}
       <Stack

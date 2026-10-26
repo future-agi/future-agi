@@ -5,14 +5,29 @@
   of it next to the hook; the seed reads it from here so it can build its
   Error Feed fixes the same way a press of Start fix does.
 */
-import { PER_CONVERSATION, REPEATS, improvementOutcome, improvementPhaseOf } from "../_mock/optimizationRuns";
-import { baseRunOf, buildImprovement, improvementEstimate, planSearch, COMPAT_CHECK } from "../_mock/improvementStart";
+import {
+  PER_CONVERSATION,
+  REPEATS,
+  improvementOutcome,
+  improvementPhaseOf,
+} from "../_mock/optimizationRuns";
+import {
+  baseRunOf,
+  buildImprovement,
+  improvementEstimate,
+  planSearch,
+  COMPAT_CHECK,
+} from "../_mock/improvementStart";
 import { improvementRunName } from "../_mock/optimizer";
 import { currentAgentVersion, productionAgentVersion } from "../_mock/versions";
 import { measureTodayRun, measuredSummaryOf } from "../_mock/measureToday";
 import { isComingSoon, needsLiveConsent } from "../_mock/rsiModel";
 import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
-import { connectedAgentsFrom, envAgentKey, needsFoundCheck } from "../_mock/agentRegistry";
+import {
+  connectedAgentsFrom,
+  envAgentKey,
+  needsFoundCheck,
+} from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
 import { prOfImprovement } from "../_mock/improvementPr";
@@ -180,7 +195,10 @@ const ISSUE_GROUPS = {
 
 const hash = (s) => {
   let h = 2166136261;
-  for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
   return h >>> 0;
 };
 
@@ -188,7 +206,8 @@ const hash = (s) => {
    last state seen, so a table of issues works them out once. */
 let agentsMemo = { state: null, agents: [] };
 const agentsOfState = (state) => {
-  if (agentsMemo.state !== state) agentsMemo = { state, agents: connectedAgentsFrom(state) };
+  if (agentsMemo.state !== state)
+    agentsMemo = { state, agents: connectedAgentsFrom(state) };
   return agentsMemo.agents;
 };
 
@@ -209,17 +228,25 @@ export const agentKeyForIssue = (issue, state, agents = []) => {
 };
 
 /** The issue's project and its agent link — see _mock/projectLinks.js. */
-export const issueProjectLinkOf = (issue, state, agents = []) => projectLinkOf(issueProjectOf(issue), state, agents);
+export const issueProjectLinkOf = (issue, state, agents = []) =>
+  projectLinkOf(issueProjectOf(issue), state, agents);
 
 /** The Error Feed projects an agent's issues come from — its own and any linked to it. */
 /* Read against every agent, not just this one: a project another agent
    watches, or a demo agent reports into, stays that agent's. */
-export const errorFeedProjectsOf = (agent, state) => projectsOfAgent(agent, state, agentsOfState(state)).map((l) => l.project);
+export const errorFeedProjectsOf = (agent, state) =>
+  projectsOfAgent(agent, state, agentsOfState(state)).map((l) => l.project);
 
 /** The environments that test an agent, main one first. */
 /* A fix is in flight from the moment it starts until it ends unfixed or the
    issue reopens — while it is, the issue opens that fix and never a second. */
-export const FIX_IN_FLIGHT = new Set(["fixing", "ready", "review", "watching", "resolved"]);
+export const FIX_IN_FLIGHT = new Set([
+  "fixing",
+  "ready",
+  "review",
+  "watching",
+  "resolved",
+]);
 
 export const envsForAgent = (agent, state) => {
   const list = (agent?.usedIn || [])
@@ -238,15 +265,37 @@ export const envsForAgent = (agent, state) => {
  *   { label, source: "production" | "traces" | "current", line }
  */
 export const productionVersionOf = (agent, state, issue, fallbackEs) => {
-  const traced = issue?.agent_version || ISSUE_TRACE_VERSIONS[issue?.cluster_id] || null;
-  const prod = (fallbackEs && productionAgentVersion(fallbackEs)?.label) || agent?.production || null;
+  const traced =
+    issue?.agent_version || ISSUE_TRACE_VERSIONS[issue?.cluster_id] || null;
+  const prod =
+    (fallbackEs && productionAgentVersion(fallbackEs)?.label) ||
+    agent?.production ||
+    null;
   if (prod) {
-    const also = traced && traced !== prod ? ` — this issue's traces were recorded on ${traced}` : "";
-    return { label: prod, source: "production", line: `${prod} · running in production${also}` };
+    const also =
+      traced && traced !== prod
+        ? ` — this issue's traces were recorded on ${traced}`
+        : "";
+    return {
+      label: prod,
+      source: "production",
+      line: `${prod} · running in production${also}`,
+    };
   }
-  if (traced) return { label: traced, source: "traces", line: `${traced} · the version this issue's traces were recorded on` };
-  const current = fallbackEs ? currentAgentVersion(fallbackEs)?.label : agent?.latest;
-  return { label: current || null, source: "current", line: `${current || "Current version"} · current version` };
+  if (traced)
+    return {
+      label: traced,
+      source: "traces",
+      line: `${traced} · the version this issue's traces were recorded on`,
+    };
+  const current = fallbackEs
+    ? currentAgentVersion(fallbackEs)?.label
+    : agent?.latest;
+  return {
+    label: current || null,
+    source: "current",
+    line: `${current || "Current version"} · current version`,
+  };
 };
 
 /**
@@ -259,13 +308,30 @@ export const fixGateOf = (agent, env) => {
   if (!agent) return null;
   const status = agentStatusFor(agent);
   if (status.key === "archived") {
-    return { key: "archived", title: `${agent.name} is archived`, body: status.reason || "New runs and improvements are stopped. Restore the agent to fix this issue." };
+    return {
+      key: "archived",
+      title: `${agent.name} is archived`,
+      body:
+        status.reason ||
+        "New runs and improvements are stopped. Restore the agent to fix this issue.",
+    };
   }
   if (status.key === "disconnected") {
-    return { key: "disconnected", title: `${agent.name} is disconnected`, body: status.reason || "Reconnect it on the agent's Connections tab to fix this issue.", action: "connections" };
+    return {
+      key: "disconnected",
+      title: `${agent.name} is disconnected`,
+      body:
+        status.reason ||
+        "Reconnect it on the agent's Connections tab to fix this issue.",
+      action: "connections",
+    };
   }
   if (isComingSoon(agent) || (env && isComingSoon(env))) {
-    return { key: "coming-soon", title: "Coming soon", body: "Browser and computer-use agents are coming soon. Improvements don't run on them yet." };
+    return {
+      key: "coming-soon",
+      title: "Coming soon",
+      body: "Browser and computer-use agents are coming soon. Improvements don't run on them yet.",
+    };
   }
   /* A newly connected code agent is fixed, like it's run, once what we read
      from its code is confirmed (RSI PRD Flow 1) — the same rule runs follow. */
@@ -273,7 +339,7 @@ export const fixGateOf = (agent, env) => {
     return {
       key: "found",
       title: "Confirm what we found in its code first",
-      body: `Check what we read from ${agent.name}'s code — entry point, prompts, tools and the tests every change must keep passing — on its Overview. Fixes, like runs, start once it's confirmed.`,
+      body: `Confirm what we read from ${agent.name}'s code on its Overview. Fixes and runs start once it's confirmed.`,
       action: "overview",
     };
   }
@@ -298,9 +364,12 @@ export const fixGateOf = (agent, env) => {
 export const evidenceGateOf = (issue) => {
   const e = issue?.evidence_state;
   if (!e || e === "confirmed") return null;
-  const why = e === "emerging"
-    ? `The pattern is still emerging (${issue.trace_count || "a few"} traces so far).`
-    : e === "dismissed" ? "This issue was dismissed once." : "The feed couldn't confirm it from its traces yet.";
+  const why =
+    e === "emerging"
+      ? `The pattern is still emerging (${issue.trace_count || "a few"} traces so far).`
+      : e === "dismissed"
+        ? "This issue was dismissed once."
+        : "The feed couldn't confirm it from its traces yet.";
   return {
     key: e,
     title: "Not confirmed yet",
@@ -338,14 +407,20 @@ export const issueScenarioDrafts = (issue, env, _envState) => {
     errorFeedIssue: {
       id,
       title: issue.error?.name,
-      traceIds: [0, 1, 2].map((k) => `tr_${hash(`${id}:${i}:${k}`).toString(16).slice(0, 7)}`),
+      traceIds: [0, 1, 2].map(
+        (k) => `tr_${hash(`${id}:${i}:${k}`).toString(16).slice(0, 7)}`,
+      ),
     },
     env: env?.id,
   }));
   /* Persona and sub-goals as the Error Feed import reads them — the import
      runs the same reading again, which lands on the same values. */
   const read = errorFeedScenarios(raw, issue);
-  return raw.map((d, i) => ({ ...d, persona: read[i]?.persona, subGoals: read[i]?.subGoals }));
+  return raw.map((d, i) => ({
+    ...d,
+    persona: read[i]?.persona,
+    subGoals: read[i]?.subGoals,
+  }));
 };
 
 /**
@@ -367,12 +442,26 @@ export const reproduceOf = (issue, drafts = []) => {
     const h = hash(`${issue.cluster_id}:${i}`) % 100;
     let fails;
     if (evidence === "unresolved") fails = i === 1 ? 1 : 0;
-    else if (evidence === "emerging") fails = i < Math.max(1, total - 2) ? (h < 50 ? 3 : 2) : i === total - 2 ? 1 : 0;
+    else if (evidence === "emerging")
+      fails =
+        i < Math.max(1, total - 2) ? (h < 50 ? 3 : 2) : i === total - 2 ? 1 : 0;
     else fails = i === total - 1 && h < 50 ? 1 : h < 60 ? 3 : 2;
-    perScenario[d.id] = { fails, of: REPEATS, state: fails >= 2 ? "reproduced" : fails === 1 ? "inconclusive" : "passed" };
+    perScenario[d.id] = {
+      fails,
+      of: REPEATS,
+      state:
+        fails >= 2 ? "reproduced" : fails === 1 ? "inconclusive" : "passed",
+    };
   });
-  const count = (st) => Object.values(perScenario).filter((x) => x.state === st).length;
-  return { reproduced: count("reproduced"), inconclusive: count("inconclusive"), passed: count("passed"), total, perScenario };
+  const count = (st) =>
+    Object.values(perScenario).filter((x) => x.state === st).length;
+  return {
+    reproduced: count("reproduced"),
+    inconclusive: count("inconclusive"),
+    passed: count("passed"),
+    total,
+    perScenario,
+  };
 };
 
 /* What went wrong in each issue's traces, as the call log shows it — which
@@ -380,11 +469,26 @@ export const reproduceOf = (issue, drafts = []) => {
 const ISSUE_MECHANISM = {
   "ISS-4501": { missing: "verify_identity", match: /verif|identity|auth/i },
   "ISS-4520": { unsupportedClaim: true },
-  "ISS-4478": { missing: "check_inventory", match: /inventory|stock|availability/i },
-  "ISS-4402": { missing: "cancel_order", match: /cancel/i, unsupportedClaim: true },
+  "ISS-4478": {
+    missing: "check_inventory",
+    match: /inventory|stock|availability/i,
+  },
+  "ISS-4402": {
+    missing: "cancel_order",
+    match: /cancel/i,
+    unsupportedClaim: true,
+  },
   "ISS-4366": { missing: "check_return_eligibility", match: /eligib/i },
-  "ISS-4431": { missing: "shipment_status", match: /shipment/i, unsupportedClaim: true },
-  "ISS-4536": { missing: "lookup_booking", match: /lookup_booking/i, unsupportedClaim: true },
+  "ISS-4431": {
+    missing: "shipment_status",
+    match: /shipment/i,
+    unsupportedClaim: true,
+  },
+  "ISS-4536": {
+    missing: "lookup_booking",
+    match: /lookup_booking/i,
+    unsupportedClaim: true,
+  },
   "ISS-4529": { missing: "modify_booking", match: /modify/i },
   "ISS-4552": { unsupportedClaim: true },
   "ISS-4557": { unsupportedClaim: true },
@@ -400,7 +504,8 @@ const ISSUE_MECHANISM = {
 };
 
 /** How the issue's traces fail — a skipped tool, a claim no tool backs, or both. */
-export const issueMechanismOf = (id) => ISSUE_MECHANISM[id] || { unsupportedClaim: true };
+export const issueMechanismOf = (id) =>
+  ISSUE_MECHANISM[id] || { unsupportedClaim: true };
 
 /**
  * The issue's scenarios as the search sees them, with what reproducing
@@ -410,9 +515,14 @@ export const issueMechanismOf = (id) => ISSUE_MECHANISM[id] || { unsupportedClai
  */
 export const issueTasks = (issue, drafts, repro, env) => {
   const m = ISSUE_MECHANISM[issue.cluster_id] || { unsupportedClaim: true };
-  const tool = m.missing ? ((env?.tools || []).find((t) => m.match?.test(t.name))?.name || m.missing) : null;
+  const tool = m.missing
+    ? (env?.tools || []).find((t) => m.match?.test(t.name))?.name || m.missing
+    : null;
   return drafts.map((d) => {
-    const r = repro?.perScenario?.[d.id] || { state: "reproduced", fails: REPEATS };
+    const r = repro?.perScenario?.[d.id] || {
+      state: "reproduced",
+      fails: REPEATS,
+    };
     const failing = r.state !== "passed";
     return {
       id: d.id,
@@ -421,25 +531,42 @@ export const issueTasks = (issue, drafts, repro, env) => {
       task: d.task,
       critical: !!d.critical,
       fromIssue: issue.cluster_id,
-      status: r.state === "reproduced" ? "failed" : r.state === "inconclusive" ? "flaky" : "passed",
+      status:
+        r.state === "reproduced"
+          ? "failed"
+          : r.state === "inconclusive"
+            ? "flaky"
+            : "passed",
       /* Only a reproduction is something the fix must fix. */
       target: r.state === "reproduced",
       ...(r.state === "inconclusive" && { inconclusive: true }),
       passShare: (REPEATS - r.fails) / REPEATS,
-      callLog: failing ? { missing: tool ? [tool] : [], unsupportedClaim: !!m.unsupportedClaim } : { missing: [] },
+      callLog: failing
+        ? {
+            missing: tool ? [tool] : [],
+            unsupportedClaim: !!m.unsupportedClaim,
+          }
+        : { missing: [] },
       evalResults: [{ name: "Task success", passed: !failing }],
       steps: [],
     };
   });
 };
 
-export const fixSeed = (es, issueId) => `fix-${issueId}-${(es?.optimizations || []).length}`;
+export const fixSeed = (es, issueId) =>
+  `fix-${issueId}-${(es?.optimizations || []).length}`;
 
 /* Measure today, for a fix: the environment's scenarios on the version in
    production, recorded as a run named for the issue (measureToday.js). */
-export const todayRunFor = (env, es, issueId, now = new Date()) => (issueId
-  ? measureTodayRun(env, es, { key: fixSeed(es, issueId), measuredFor: { kind: "fix", issueId }, startedBy: `Fix · ${issueId}`, now })
-  : null);
+export const todayRunFor = (env, es, issueId, now = new Date()) =>
+  issueId
+    ? measureTodayRun(env, es, {
+        key: fixSeed(es, issueId),
+        measuredFor: { kind: "fix", issueId },
+        startedBy: `Fix · ${issueId}`,
+        now,
+      })
+    : null;
 const summaryOf = measuredSummaryOf;
 
 /**
@@ -450,25 +577,56 @@ const summaryOf = measuredSummaryOf;
  * snapshot of the issue as it was when Fix was pressed.
  */
 export const issueFixRecord = ({
-  issue, env, es, drafts, limits, budget, regressionEnvIds, seed, state, reread, textSearch, targetMember, compatCheck = COMPAT_CHECK,
-  rootCause = null, diagnosis = null, lineage, today = null,
+  issue,
+  env,
+  es,
+  drafts,
+  limits,
+  budget,
+  regressionEnvIds,
+  seed,
+  state,
+  reread,
+  textSearch,
+  targetMember,
+  compatCheck = COMPAT_CHECK,
+  rootCause = null,
+  diagnosis = null,
+  lineage,
+  today = null,
 }) => {
   const issueId = issue.cluster_id;
   /* A production issue is fixed on the production version: the search
      starts from today's measurement of it (`today`, made as the fix starts)
      — else, for fixes written before that, the newest run on it. */
   const prodLabel = productionAgentVersion(es)?.label || null;
-  const base = today ? summaryOf(env, es, today) : baseRunOf(env, es, prodLabel) || baseRunOf(env, es);
+  const base = today
+    ? summaryOf(env, es, today)
+    : baseRunOf(env, es, prodLabel) || baseRunOf(env, es);
   const repro = reproduceOf(issue, drafts);
   return buildImprovement({
-    env, es, tasks: base ? [...base.tasks, ...issueTasks(issue, drafts, repro, env)] : null, seed: seed || fixSeed(es, issueId),
+    env,
+    es,
+    tasks: base
+      ? [...base.tasks, ...issueTasks(issue, drafts, repro, env)]
+      : null,
+    seed: seed || fixSeed(es, issueId),
     fromRunId: base?.id || null,
-    baseAgentVersion: prodLabel || base?.agentVersion || currentAgentVersion(es)?.label || null,
-    trigger: { kind: "error-feed", issueId, issueTitle: issue.error?.name, severity: issue.severity },
+    baseAgentVersion:
+      prodLabel || base?.agentVersion || currentAgentVersion(es)?.label || null,
+    trigger: {
+      kind: "error-feed",
+      issueId,
+      issueTitle: issue.error?.name,
+      severity: issue.severity,
+    },
     limits,
     budget,
     regressionEnvIds,
-    spentFirst: (drafts.length + (today?.scenarioIds?.length || 0)) * (today?.repeats || REPEATS) * PER_CONVERSATION[env.surface === "voice" ? "voice" : "chat"],
+    spentFirst:
+      (drafts.length + (today?.scenarioIds?.length || 0)) *
+      (today?.repeats || REPEATS) *
+      PER_CONVERSATION[env.surface === "voice" ? "voice" : "chat"],
     hold: !repro.reproduced,
     state,
     reread,
@@ -479,7 +637,13 @@ export const issueFixRecord = ({
     targetMember,
     compatCheck,
     /* Improvement-only until added from its page or the Scenarios tab. */
-    issueScenarios: drafts.map((d) => ({ ...d, source: "error-feed", ...(repro.perScenario?.[d.id]?.state === "reproduced" && { target: true }) })),
+    issueScenarios: drafts.map((d) => ({
+      ...d,
+      source: "error-feed",
+      ...(repro.perScenario?.[d.id]?.state === "reproduced" && {
+        target: true,
+      }),
+    })),
     extra: {
       reproduce: repro,
       scenarioIds: drafts.map((d) => d.id),
@@ -489,7 +653,9 @@ export const issueFixRecord = ({
         issueId,
         title: issue.error?.name,
         severity: issue.severity,
-        traceIds: [...new Set(drafts.flatMap((d) => d.errorFeedIssue?.traceIds || []))].slice(0, 5),
+        traceIds: [
+          ...new Set(drafts.flatMap((d) => d.errorFeedIssue?.traceIds || [])),
+        ].slice(0, 5),
         /* The root cause the issue page showed when Fix was pressed — the Root
            cause tab's finding when there is one, else the feed's own reading.
            Diagnose starts from it (RSI PRD). */
@@ -501,9 +667,15 @@ export const issueFixRecord = ({
         ...(diagnosis && { diagnosis }),
         fixLayer: issue.fix_layer || null,
         /* Reproduced ones only — an inconclusive one is checked, never a target. */
-        mustStartPassing: drafts.filter((d) => repro.perScenario?.[d.id]?.state === "reproduced").map((d) => d.id),
-        inconclusive: drafts.filter((d) => repro.perScenario?.[d.id]?.state === "inconclusive").map((d) => d.id),
-        mustKeepPassing: (base?.tasks || []).filter((t) => t.status === "passed").length,
+        mustStartPassing: drafts
+          .filter((d) => repro.perScenario?.[d.id]?.state === "reproduced")
+          .map((d) => d.id),
+        inconclusive: drafts
+          .filter((d) => repro.perScenario?.[d.id]?.state === "inconclusive")
+          .map((d) => d.id),
+        mustKeepPassing: (base?.tasks || []).filter(
+          (t) => t.status === "passed",
+        ).length,
       },
     },
   });
@@ -514,13 +686,34 @@ export const issueFixRecord = ({
  * a guess — on the environment's scenarios plus the issue's, as if every
  * issue scenario reproduces (the dearest case).
  */
-export const fixPreview = (env, es, issue, drafts, limits, { textSearch, state = null, regressionEnvIds = [] } = {}) => {
+export const fixPreview = (
+  env,
+  es,
+  issue,
+  drafts,
+  limits,
+  { textSearch, state = null, regressionEnvIds = [] } = {},
+) => {
   /* What measuring today will find — the same run Start records. */
   const today = env && issue ? todayRunFor(env, es, issue.cluster_id) : null;
   const base = summaryOf(env, es, today);
   if (!base || !issue) return { base, today, result: null };
   const tasks = [...base.tasks, ...issueTasks(issue, drafts, null, env)];
-  return { base, today, result: planSearch({ env, es, agentVersion: base.agentVersion || currentAgentVersion(es)?.label || null, tasks, limits, seed: fixSeed(es, issue.cluster_id), textSearch, state, regressionEnvIds }) };
+  return {
+    base,
+    today,
+    result: planSearch({
+      env,
+      es,
+      agentVersion: base.agentVersion || currentAgentVersion(es)?.label || null,
+      tasks,
+      limits,
+      seed: fixSeed(es, issue.cluster_id),
+      textSearch,
+      state,
+      regressionEnvIds,
+    }),
+  };
 };
 
 /**
@@ -528,10 +721,21 @@ export const fixPreview = (env, es, issue, drafts, limits, { textSearch, state =
  * of the search, the held-back check, and the other environments' regression
  * scenarios for the finalists — each repeated so a lucky run can't win.
  */
-export const fixEstimate = ({ preview, scenarioCount, regressionCount, surface }) => improvementEstimate({
-  /* Measuring today covers the issue's scenarios and the environment's. */
-  preview: preview?.result, surface, extraScenarios: regressionCount, firstConversations: (scenarioCount + (preview?.today?.scenarioIds?.length || 0)) * (preview?.today?.repeats || REPEATS),
-});
+export const fixEstimate = ({
+  preview,
+  scenarioCount,
+  regressionCount,
+  surface,
+}) =>
+  improvementEstimate({
+    /* Measuring today covers the issue's scenarios and the environment's. */
+    preview: preview?.result,
+    surface,
+    extraScenarios: regressionCount,
+    firstConversations:
+      (scenarioCount + (preview?.today?.scenarioIds?.length || 0)) *
+      (preview?.today?.repeats || REPEATS),
+  });
 
 /* How long a released fix is watched before the issue counts as resolved —
    the same 30 days fix survival is measured over. */
@@ -540,16 +744,23 @@ const DAY = 24 * 60 * 60 * 1000;
 
 /* "Fix in review · Vapi copy" — the draft's own name on its platform. */
 /* Vapi has no drafts — a change ships as a copy of the assistant (RSI PRD). */
-const draftLabel = (draft) => `${draft.where} ${draft.kind || (/vapi/i.test(draft.where || "") ? "copy" : "draft")}`;
+const draftLabel = (draft) =>
+  `${draft.where} ${draft.kind || (/vapi/i.test(draft.where || "") ? "copy" : "draft")}`;
 
 const HOUR = 60 * 60 * 1000;
 
 /* The releases of this issue's fixes in one environment, oldest first. A
    release names its issue; one recorded before releases did is matched
    through the improvement it released. */
-const fixReleasesOf = (es, issueId) => (es?.releases || [])
-  .filter((r) => (r.issueId || (es?.optimizations || []).find((o) => o.id === r.optId)?.trigger?.issueId) === issueId)
-  .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+const fixReleasesOf = (es, issueId) =>
+  (es?.releases || [])
+    .filter(
+      (r) =>
+        (r.issueId ||
+          (es?.optimizations || []).find((o) => o.id === r.optId)?.trigger
+            ?.issueId) === issueId,
+    )
+    .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
 
 /**
  * Did the issue come back after this release? Read per release, not per
@@ -562,11 +773,14 @@ const fixReleasesOf = (es, issueId) => (es?.releases || [])
 export const recurrenceOf = (record, es, now = Date.now()) => {
   const issueId = record?.trigger?.issueId;
   const landed = es?.handoffLandings?.[record?.id];
-  const release = landed ? (es?.releases || []).find((r) => r.version === landed) : null;
+  const release = landed
+    ? (es?.releases || []).find((r) => r.version === landed)
+    : null;
   if (!issueId || !release) return null;
   const seen = mockCluster(issueId)?.recurs_after || [];
   if (!seen.length) return null;
-  const nth = fixReleasesOf(es, issueId).findIndex((r) => r.version === landed) + 1;
+  const nth =
+    fixReleasesOf(es, issueId).findIndex((r) => r.version === landed) + 1;
   const hit = seen.find((x) => x.release === nth);
   if (!hit) return null;
   const at = (Date.parse(release.at) || 0) + (hit.after_hours || 0) * HOUR;
@@ -578,7 +792,8 @@ export const recurrenceOf = (record, es, now = Date.now()) => {
   wording for the PRD's Draft shipped, from Flow 3's chip), "In review · …"
   on any other improvement.
 */
-const inReview = (record, via) => `${record?.trigger?.issueId ? "Fix in review" : "In review"} · ${via}`;
+const inReview = (record, via) =>
+  `${record?.trigger?.issueId ? "Fix in review" : "In review"} · ${via}`;
 
 /**
  * Where a shipped proposal is (RSI PRD, Part 3 "Improvement states": Draft
@@ -590,23 +805,42 @@ const inReview = (record, via) => `${record?.trigger?.issueId ? "Fix in review" 
  * still forces Reopened, for older callers.
  *   { key: "review" | "watching" | "resolved" | "reopened", label, detail?, change? }
  */
-export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now(), envId = null } = {}) => {
+export const shippedStateOf = (
+  record,
+  es,
+  prs = [],
+  { recurs, now = Date.now(), envId = null } = {},
+) => {
   if (!record) return null;
   const landed = es?.handoffLandings?.[record.id];
   if (landed) {
     const release = (es?.releases || []).find((r) => r.version === landed);
     /* Saved but not released yet: still a shipped draft (RSI PRD states). */
-    if (!release) return { key: "review", label: inReview(record, `draft version ${landed}`), detail: landed, via: landed, awaitingRelease: true };
+    if (!release)
+      return {
+        key: "review",
+        label: inReview(record, `draft version ${landed}`),
+        detail: landed,
+        via: landed,
+        awaitingRelease: true,
+      };
     /* Seen again in production reopens it on its own; a person escalating a
        watched or resolved issue reopens it too (triageFixEffect). */
-    const byPerson = record.reopenedBy ? { at: record.reopenedBy.at, version: landed, by: record.reopenedBy.by } : null;
-    const back = recurrenceOf(record, es, now) || byPerson || (recurs === true ? { at: null, version: landed } : null);
+    const byPerson = record.reopenedBy
+      ? { at: record.reopenedBy.at, version: landed, by: record.reopenedBy.by }
+      : null;
+    const back =
+      recurrenceOf(record, es, now) ||
+      byPerson ||
+      (recurs === true ? { at: null, version: landed } : null);
     if (back) {
       /* Reopened links to the change that was meant to fix it. */
       const pr = prOfImprovement(prs, record.id, envId);
       const draft = es?.handoffDrafts?.[record.id];
       return {
-        key: "reopened", label: "Reopened", detail: back.by ? `by ${back.by}` : `seen again on ${landed}`,
+        key: "reopened",
+        label: "Reopened",
+        detail: back.by ? `by ${back.by}` : `seen again on ${landed}`,
         ...(back.by && { byPerson: true }),
         change: {
           version: landed,
@@ -620,15 +854,35 @@ export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now(),
     }
     const days = Math.floor((now - Date.parse(release.at)) / DAY);
     return days >= WATCH_DAYS
-      ? { key: "resolved", label: "Resolved", detail: `${landed} · ${WATCH_DAYS} days clean`, version: landed }
-      : { key: "watching", label: "Watching", detail: `${WATCH_DAYS - days} days left`, version: landed };
+      ? {
+          key: "resolved",
+          label: "Resolved",
+          detail: `${landed} · ${WATCH_DAYS} days clean`,
+          version: landed,
+        }
+      : {
+          key: "watching",
+          label: "Watching",
+          detail: `${WATCH_DAYS - days} days left`,
+          version: landed,
+        };
   }
   const pr = prOfImprovement(prs, record.id, envId, { open: true });
   /* One set of words for a fix's state on every surface: Ready for review →
      Fix in review → Watching → Resolved | Reopened (RSI PRD). */
-  if (pr) return { key: "review", label: inReview(record, `PR #${pr.number}`), via: `PR #${pr.number}` };
+  if (pr)
+    return {
+      key: "review",
+      label: inReview(record, `PR #${pr.number}`),
+      via: `PR #${pr.number}`,
+    };
   const draft = es?.handoffDrafts?.[record.id];
-  if (draft) return { key: "review", label: inReview(record, draftLabel(draft)), via: draftLabel(draft) };
+  if (draft)
+    return {
+      key: "review",
+      label: inReview(record, draftLabel(draft)),
+      via: draftLabel(draft),
+    };
   return null;
 };
 
@@ -638,7 +892,13 @@ export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now(),
  * another agent, a fix the previous one started is its history, not the new
  * agent's fix in flight. With no agent linked there is no fix to show.
  */
-export const fixStatusOf = (issue, state, prs = [], now = Date.now(), agents = agentsOfState(state)) => {
+export const fixStatusOf = (
+  issue,
+  state,
+  prs = [],
+  now = Date.now(),
+  agents = agentsOfState(state),
+) => {
   const issueId = issue?.cluster_id;
   const agentKey = agentKeyForIssue(issue, state, agents);
   if (!issueId || !agentKey) return null;
@@ -648,7 +908,11 @@ export const fixStatusOf = (issue, state, prs = [], now = Date.now(), agents = a
     if (!es?.agent || envAgentKey(es.agent, env.id) !== agentKey) return;
     (es?.optimizations || []).forEach((o) => {
       if (!issueId || o.trigger?.issueId !== issueId) return;
-      if (!found || Date.parse(o.createdAt) > Date.parse(found.record.createdAt)) found = { record: o, env, es };
+      if (
+        !found ||
+        Date.parse(o.createdAt) > Date.parse(found.record.createdAt)
+      )
+        found = { record: o, env, es };
     });
   });
   if (!found) return null;
@@ -660,34 +924,63 @@ export const fixStatusOf = (issue, state, prs = [], now = Date.now(), agents = a
     const shippedNow = shippedStateOf(record, es, prs, { now, envId: env.id });
     if (shippedNow) return { ...at, ...shippedNow };
     const coder = coderStatusOf(record, env.id, { now, surface: env.surface });
-    return { ...at, key: coder.key === "running" ? "fixing" : coder.key, label: coder.label, improver: coder.improver };
+    return {
+      ...at,
+      key: coder.key === "running" ? "fixing" : coder.key,
+      label: coder.label,
+      improver: coder.improver,
+    };
   }
   const { ending, beforeSearch } = improvementOutcome(record);
   /* While it runs, the PRD's own phases: Reproducing → Searching → Verifying. */
-  if (ending.key === "running") return { ...at, key: "fixing", label: improvementPhaseOf(record, now)?.label || "Searching" };
+  if (ending.key === "running")
+    return {
+      ...at,
+      key: "fixing",
+      label: improvementPhaseOf(record, now)?.label || "Searching",
+    };
   if (ending.key === "not-reproduced") {
     const inconclusive = record.reproduce?.inconclusive || 0;
-    return { ...at, key: "not-reproduced", label: "Could not reproduce", ...(inconclusive && { detail: `${inconclusive} inconclusive` }) };
+    return {
+      ...at,
+      key: "not-reproduced",
+      label: "Could not reproduce",
+      ...(inconclusive && { detail: `${inconclusive} inconclusive` }),
+    };
   }
-  if (ending.key === "failed") return { ...at, key: "no-fix", label: "Failed for infrastructure reasons" };
-  if (ending.key === "no-fix") return { ...at, key: "no-fix", label: "No safe improvement" };
+  if (ending.key === "failed")
+    return { ...at, key: "no-fix", label: "Failed for infrastructure reasons" };
+  if (ending.key === "no-fix")
+    return { ...at, key: "no-fix", label: "No safe improvement" };
   /* Stopped at budget before searching: no change was tried, so there's
      nothing to review — Fix again, with a bigger budget, is the way on. A
      stop mid-search keeps its best so far and reads Ready below. */
-  if (ending.key === "budget" && beforeSearch) return { ...at, key: "over-budget", label: "Stopped at budget", detail: "before searching" };
+  if (ending.key === "budget" && beforeSearch)
+    return {
+      ...at,
+      key: "over-budget",
+      label: "Stopped at budget",
+      detail: "before searching",
+    };
   /* Recurrence is the record's own (shippedStateOf reads it); a caller's
      explicit flag still forces Reopened. */
-  const shipped = shippedStateOf(record, es, prs, { now, envId: env.id, ...(issue?.recurs_after_fix === true && { recurs: true }) });
+  const shipped = shippedStateOf(record, es, prs, {
+    now,
+    envId: env.id,
+    ...(issue?.recurs_after_fix === true && { recurs: true }),
+  });
   if (shipped) return { ...at, ...shipped };
-  if (ending.key === "budget") return { ...at, key: "ready", label: "Stopped at budget" };
+  if (ending.key === "budget")
+    return { ...at, key: "ready", label: "Stopped at budget" };
   /* Stopped once two runs in a row didn't beat the best; the best was verified. */
-  if (ending.key === "stopped-early") return { ...at, key: "ready", label: "Stopped early" };
-  if (ending.key === "suggestion") return { ...at, key: "ready", label: "Suggestion only" };
+  if (ending.key === "stopped-early")
+    return { ...at, key: "ready", label: "Stopped early" };
+  if (ending.key === "suggestion")
+    return { ...at, key: "ready", label: "Suggestion only" };
   /* The PRD's name. It sits in its own Fix column on the Error Feed, apart
      from the issue's own triage status ("For review"). */
   return { ...at, key: "ready", label: "Ready for review" };
 };
-
 
 /**
  * An issue's fix, on the improvement's own page (RSI PRD, Flow 3: "Start.
@@ -709,8 +1002,14 @@ export const issueFixNav = (at, issueId) => [
  */
 export const triageFixEffect = (fix, status) => {
   if (!fix) return null;
-  if (status === "escalating" && (fix.key === "watching" || fix.key === "resolved")) {
-    return { reopen: true, note: `Reopens the fix on ${fix.version}. Fix again starts a new one; this fix keeps its page.` };
+  if (
+    status === "escalating" &&
+    (fix.key === "watching" || fix.key === "resolved")
+  ) {
+    return {
+      reopen: true,
+      note: `Reopens the fix on ${fix.version}. Fix again starts a new one; this fix keeps its page.`,
+    };
   }
   if (status === "resolved" && fix.key === "reopened" && fix.byPerson) {
     return { reopen: false, note: "Takes back the reopen." };

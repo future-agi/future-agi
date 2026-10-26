@@ -2092,9 +2092,7 @@ function Header({
           const totalCount = scenarioCount || envState?.scenarios?.length || 0;
           const runCount = selectionCount > 0 ? selectionCount : totalCount;
           const runLabel =
-            selectionCount > 0
-              ? `Run simulation (${selectionCount})`
-              : "Run simulation";
+            selectionCount > 0 ? "Run selected" : "Run simulation";
           return (
             <Stack direction="row" alignItems="center" spacing={1}>
               {/* No "Open environment" — this already is the environment; Back keeps it as it stands. */}
@@ -2993,9 +2991,7 @@ function SourcePicker({
               >
                 Nothing touches production.
               </Box>{" "}
-              We stand up a shadow copy of your agent in an isolated sandbox
-              with seeded data and test credentials. Your deployed agent is
-              never called.
+              We test a sandboxed copy — your deployed agent is never called.
             </Typography>
           </Stack>
         </Box>

@@ -289,7 +289,7 @@ export default function EvalsStep({
         }
         subtitle={
           appliedEvals.length
-            ? `Every task is scored against these · ${cappedCount} of ${MAX_APPLIED_EVALS}${toolCallEvalOn ? " plus the tool-call judge" : ""}${requiredCount ? ` · ${requiredCount} required` : ""}. Sub-goals decide pass or fail; a required one also fails the conversation when it fails, the rest score it.`
+            ? `Every task is scored against these · ${cappedCount} of ${MAX_APPLIED_EVALS}${toolCallEvalOn ? " plus the tool-call judge" : ""}${requiredCount ? ` · ${requiredCount} required` : ""}.`
             : undefined
         }
       >
@@ -308,7 +308,7 @@ export default function EvalsStep({
             body={
               needsScenarios
                 ? "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks."
-                : "Optional — sub-goals decide pass or fail without them. Add evaluations to score each conversation, and mark one required to let it fail one. Open the library to add some."
+                : "Optional — sub-goals decide pass or fail. Add evaluations to score each conversation."
             }
             action={
               <Stack direction="row" spacing={1}>

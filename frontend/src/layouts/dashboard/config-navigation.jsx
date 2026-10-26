@@ -53,6 +53,7 @@ const SOLAR_NAV_ICONS = {
   ic_chartsObserve: "solar:graph-up-linear",
   ic_gateway: "solar:server-square-linear",
   ic_environment: "solar:globus-linear",
+  ic_chat_nav: "solar:chat-round-line-linear",
 };
 
 const icon = (name) =>
@@ -83,6 +84,7 @@ const ICONS = {
   knowledge_base: icon("ic_knowledge_base"),
   alerts: icon("ic_alert"),
   falconAI: icon("ic_falcon_ai"),
+  chat: icon("ic_chat_nav"),
   simulate: icon("ic_experiment"),
   agentDefinition: icon("ic_project"),
   scenarios: icon("ic_sessions"),
@@ -325,9 +327,9 @@ export function useNavData() {
     sections.unshift({
       items: [
         {
-          title: "Falcon AI",
+          title: "Chat",
           path: paths.dashboard.falconAI,
-          icon: ICONS.falconAI,
+          icon: ICONS.chat,
         },
       ],
     });

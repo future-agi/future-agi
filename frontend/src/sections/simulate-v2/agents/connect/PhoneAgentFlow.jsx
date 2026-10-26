@@ -251,7 +251,7 @@ export default function PhoneAgentFlow({ title, onSave, initial = null }) {
               component="div"
               sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
             >
-              <HintLine hint="Each call is answered by a simulated customer from the scenario being run. The number stays this agent's while it's connected — change it on the agent's page.">
+              <HintLine hint="A simulated customer from the scenario answers each call.">
                 Point your agent&apos;s outbound calls here for a run.
               </HintLine>
             </Typography>
@@ -296,7 +296,7 @@ export default function PhoneAgentFlow({ title, onSave, initial = null }) {
               value={instructions}
               onChange={setInstructions}
               helper={
-                <HintLine hint="We can't read or change it. Scenarios and the suggested fix are written against these; once you apply the fix, a re-run on the same environment version proves it.">
+                <HintLine hint="Once you apply the fix, a re-run proves it.">
                   Scenarios and the suggested fix are written against these.
                 </HintLine>
               }

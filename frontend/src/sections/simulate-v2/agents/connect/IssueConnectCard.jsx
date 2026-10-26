@@ -219,9 +219,8 @@ export default function IssueConnectCard({
             minWidth: 0,
           }}
         >
-          Already in Agents? Connecting it the same way finds it and links this
-          project instead of the one it has — each agent has one Observe
-          project. Or change it on the agent&apos;s Connections tab.
+          Already in Agents? Connect it the same way to link this project, or
+          change it on the agent&apos;s Connections tab.
         </Typography>
         <TextLink onClick={() => navigate(paths.dashboard.agents)}>
           Open Agents

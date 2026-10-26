@@ -529,7 +529,7 @@ export default function RepoAgentFlow({
       on={viaGithub}
       onClick={() => setMode("github")}
       short="Pick from a list · private repositories · fixes as pull requests"
-      hint="Install the GitHub App once. Every repository it can see is listed, a merge on the branch is picked up at once, and fixes come back as pull requests."
+      hint="With the GitHub App, merges are picked up at once and fixes come back as pull requests."
     />
   );
   const linkOption = (
@@ -540,7 +540,7 @@ export default function RepoAgentFlow({
       on={!viaGithub}
       onClick={() => setMode("manual")}
       short="Start building now · public repositories"
-      hint="We read the code when you connect and check the branch once a day — Sync any time to pick up a change now. Without the GitHub App, fixes come back as a patch."
+      hint="We check the branch daily; Sync picks up a change now. Without the app, fixes come back as a patch."
     />
   );
 
@@ -786,7 +786,7 @@ export default function RepoAgentFlow({
                         on={privateVia === "app"}
                         onClick={() => setPrivateVia("app")}
                         short="Pick from a list · fixes as pull requests"
-                        hint="Install it once for the account; this repository is then picked from the list, a merge is seen at once, and fixes come back as pull requests."
+                        hint="Install once per account; merges are seen at once and fixes come back as pull requests."
                       />
                       <WhereOption
                         icon="solar:key-minimalistic-linear"
@@ -995,7 +995,7 @@ export default function RepoAgentFlow({
             value={entryPoint}
             onChange={setEntryPoint}
             helper={
-              <HintLine hint="Code that calls the OpenAI, Anthropic or Gemini API itself has no framework to find the agent by. Name the file and function a conversation starts in — we read the prompts and tools it reaches from there.">
+              <HintLine hint="With no framework, we read the prompts and tools reached from the function you name.">
                 {pickedAgent
                   ? `${pickedAgent.sdk || "Model API"} calls, no framework — check the function each conversation starts in.`
                   : "File and function each conversation starts in."}

@@ -157,9 +157,8 @@ export function SecretRefEditor({
         </Typography>
       ) : (
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          The key, or a path in your secret manager — vault://, aws-sm://,
-          gcp-sm://, azure-kv://, op:// or doppler://. Stored encrypted and used
-          only by Future AGI — never shown again, never sent to the improver.
+          The key, or a secret-manager path (vault://, aws-sm://…). Stored
+          encrypted, never shown again.
         </Typography>
       )}
     </Stack>

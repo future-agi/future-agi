@@ -116,10 +116,8 @@ export default function BuiltinAgentFlow({
               Steps, branches, loops or several agents?
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Build it as a graph in Agent Playground — prompt nodes chained
-              together, agents nested inside agents. A long-running or
-              background agent is connected where it runs instead — its
-              repository, our SDK or its endpoint.
+              Build it as a graph in Agent Playground. A long-running or
+              background agent is connected where it runs instead.
             </Typography>
           </Box>
           <Button

@@ -71,8 +71,8 @@ export default function ReopenedBanner({ issue, onFixAgain }) {
           : `Reopened — seen again on agent ${c.version}, released ${ago(c.releasedAt)}`}
       </AlertTitle>
       {c.reopenedBy
-        ? `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Fix again starts a new improvement from the version in production; this one keeps its page.`
-        : `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Its scenarios passed in simulation, so production is doing something they don't capture.`}
+        ? `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Fix again starts a new one from production.`
+        : `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Its scenarios passed, so production does something they don't cover.`}
     </Alert>
   );
 }

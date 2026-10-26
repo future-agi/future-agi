@@ -436,8 +436,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
                 : "failing scenarios were"}{" "}
               never fixed by any run.
             </Box>{" "}
-            No wording gets there — these need a tool, a memory or an
-            architecture change, which is what the hand-off changes are for.
+            These need a tool, memory or architecture change.
           </Note>
         )}
         {pair && (

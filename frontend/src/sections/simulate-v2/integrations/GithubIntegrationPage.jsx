@@ -69,12 +69,12 @@ const CAPABILITIES = [
   {
     icon: "solar:layers-minimalistic-linear",
     title: "A version for every change",
-    body: "We re-read the agent whenever its release branch moves and once a day — every change to its prompts, tools or config becomes a version you can test, tied to its commit.",
+    body: "We re-read the agent when its release branch moves, and daily — each change becomes a version you can test, tied to its commit.",
   },
   {
     icon: "solar:code-square-linear",
     title: "Fixes as draft pull requests",
-    body: "A fix from an improvement opens as a draft PR — prompts and tool code — with the diagnosis and before/after results. Write access is asked for at the first one; we push only to branches we create, and you review and merge.",
+    body: "A fix opens as a draft PR with the diagnosis and before/after results. We push only to branches we create; you review and merge.",
   },
   {
     icon: "solar:chart-2-linear",
@@ -281,7 +281,7 @@ export default function GithubIntegrationPage() {
         >
           {justConnected.usedIn?.length
             ? `It's tested in ${justConnected.usedIn.map((u) => u.envName).join(", ")}. Fixes for it open as draft pull requests here.`
-            : "Next, build an environment for it. Improvements, including fixes for Error Feed issues, prove every change in simulation first, so they need one — the first you build becomes its main environment."}
+            : "Next, build an environment for it — every fix is proved in simulation first. The first one you build becomes its main environment."}
         </Notice>
       )}
       {buildFor && (
@@ -372,10 +372,8 @@ export default function GithubIntegrationPage() {
           <Typography
             sx={{ typography: "s3", color: "text.subtitle", mt: 2.5 }}
           >
-            You choose the repositories on GitHub. We only read your code.
-            We&apos;ll ask for write access when you open your first draft pull
-            request — and then write only to branches we create, never to main
-            or your branches.
+            You choose the repositories on GitHub. We only read code until your
+            first draft PR, then write only to branches we create.
           </Typography>
         </Section>
       )}
@@ -479,7 +477,7 @@ export default function GithubIntegrationPage() {
               >{`Uninstall from ${uninstalling}?`}</DialogTitle>
               <DialogContent>
                 <DialogContentText sx={{ typography: "s2" }}>
-                  {`Agents from ${uninstalling} keep their versions and history. Re-reads and pull requests stop until the app is installed again. To also remove the app on GitHub's side, uninstall it from ${uninstalling}'s GitHub settings.`}
+                  {`Agents from ${uninstalling} keep their versions and history; re-reads and pull requests stop. To remove the app itself, uninstall it in GitHub settings.`}
                 </DialogContentText>
               </DialogContent>
               <DialogActions sx={{ px: 3, pb: 2 }}>

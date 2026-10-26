@@ -423,7 +423,7 @@ export function EndpointConsent({
             component="div"
             sx={{ typography: "s2", fontWeight: 600 }}
           >
-            <HintLine hint="Its real tools will execute, and runs are rate-limited. We only see a URL, so there is nothing to copy — point it at a staging deployment if real tools shouldn't run.">
+            <HintLine hint="Its real tools run — point it at staging if they shouldn't.">
               Simulations drive your real agent and its tools
             </HintLine>
           </Typography>

@@ -279,7 +279,7 @@ export default function ScenarioEditor({
           {/* ─── Directly editable ─── */}
           <SectionHeader
             title="Directly editable"
-            hint="These parts don't touch the verification proof, so we let you save them straight to the row. Saving still makes a new version — never an edit in place."
+            hint="These don't affect verification, so they save directly — as a new version."
           />
 
           <TextField
@@ -326,7 +326,7 @@ export default function ScenarioEditor({
           {/* ─── Sub-goals ─── */}
           <SectionHeader
             title="Sub-goals"
-            hint={`${SUBGOAL_MIN}–${SUBGOAL_MAX} per scenario. Sub-goals decide pass or fail: it passes when every critical one holds. A new one is critical unless you mark it supporting — supporting is reported, doesn't fail it. Any change here means it can't be graded until re-proved.`}
+            hint={`${SUBGOAL_MIN}–${SUBGOAL_MAX} per scenario. It passes when every critical one holds; supporting ones are only reported.`}
           />
           <SubGoalsEditor
             draft={draft}
@@ -691,7 +691,7 @@ export default function ScenarioEditor({
             <>
               <SectionHeader
                 title="Starting state override"
-                hint="Optional. Override the world's starting state for this scenario only — e.g. Slack starts with a specific DM thread, Notion starts with a specific page. Leave blank to use the environment's default."
+                hint="Optional. This scenario's own starting state; blank uses the environment's default."
               />
               <TextField
                 size="small"
@@ -710,7 +710,7 @@ export default function ScenarioEditor({
           {/* ─── Edit via the builder ─── */}
           <SectionHeader
             title="Edit through the builder"
-            hint="These parts are locked to the verification proof. Ask the builder on the left to change them — it'll re-run the checks and tell you if the change broke the scenario."
+            hint="Locked to the verification proof — ask the builder on the left to change them."
           />
 
           {/* Clicking any of these hands the suggestion to the builder
@@ -773,11 +773,8 @@ export default function ScenarioEditor({
               }}
             />
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              Every scenario got pre-verified before it landed: the world was
-              set up, a known-correct run had to pass, and the checks had to
-              fail when nothing was done. Free-text edits to the task, setup or
-              checks would silently break that proof — that&apos;s why they move
-              through the builder, which re-runs the check on save.
+              Scenarios are verified before they land, so edits go through the
+              builder, which re-checks on save.
             </Typography>
           </Stack>
         </Stack>
@@ -971,9 +968,7 @@ function SetMarks({ row, onMustPass }) {
           Must-pass
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          An improvement that breaks it is rejected however much else it lifts.
-          Results are reported; nothing here blocks a release. Moves the
-          scenario set, not this scenario&apos;s version.
+          An improvement that breaks it is rejected, however much else it lifts.
         </Typography>
       </Box>
       <Switch

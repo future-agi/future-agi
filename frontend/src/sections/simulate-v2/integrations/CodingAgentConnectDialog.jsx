@@ -67,7 +67,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
   const mcp = mcpConfigFor(agent.id);
   const signIn = (
     <Step n={via === "plugin" ? 2 : 3} title="Sign in when it asks">
-      {`The first time ${agent.label} calls Future AGI it opens your browser to link this workspace, and gets its own scoped improver token. This dialog updates when it does.`}
+      {`The first time ${agent.label} calls Future AGI, it opens your browser to link this workspace. This dialog updates when it does.`}
     </Step>
   );
 
@@ -296,7 +296,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
               </Stack>
             )}
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`For you, Copy for coding agent now reads Open in ${agent.label} on Error Feed issues, run diagnoses and improvements. ${agent.label} fetches the brief when you ask it to. Teammates connect their own.`}
+              {`Open in ${agent.label} now shows on Error Feed issues, diagnoses and improvements — for you. Teammates connect their own.`}
             </Typography>
           </Stack>
         )}

@@ -12,7 +12,6 @@ import {
   Button,
   IconButton,
   Tooltip,
-  LinearProgress,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -347,7 +346,7 @@ function LiveRun() {
         })()
       : size.voice?.line;
 
-  const player = useRunPlayer({
+  const playerArgs = {
     seed: replaySeed || runId,
     scenarios,
     stage: surface.stage,
@@ -356,7 +355,14 @@ function LiveRun() {
     concurrency: parallel,
     staleIds,
     ...inputs,
-  });
+  };
+  /* Once the run starts, it plays what it started with. Recording the run
+     re-reads its pins from the record — equal values, new objects — and the
+     player would take that as a new run and boot it a second time. */
+  const startedWith = useRef(null);
+  if (startedWith.current && startedWith.current.runId !== runId)
+    startedWith.current = null;
+  const player = useRunPlayer(startedWith.current?.args || playerArgs);
 
   const {
     phase,
@@ -374,6 +380,13 @@ function LiveRun() {
     answer,
     clarifications,
   } = player;
+  /* Declared before the effect that records the run, so the freeze lands
+     first. */
+  useEffect(() => {
+    if (phase === "running" && !startedWith.current)
+      startedWith.current = { runId, args: playerArgs };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   /* A secret that failed its access check, said before the run starts. */
   const failedSecrets = useMemo(
@@ -1221,14 +1234,19 @@ function LiveRun() {
           flexShrink: 0,
         }}
       >
+        {/* Two short lines at any width: what's running and how it's going.
+            Repeats, the expected length and the over-200 note sit in the
+            subtitle's tooltip; outcome counts show only once they're above 0
+            (Running, Passed and Failed always). */}
         <Stack
           direction="row"
           alignItems="center"
-          spacing={2}
-          sx={{ px: 3, py: 1.75 }}
+          spacing={1.5}
+          sx={{ px: 3, py: 1.25 }}
         >
           <IconButton
             size="small"
+            aria-label="Back"
             onClick={() => {
               /* Go back to the surface that opened this run — Improvements L2,
                  the env workspace's Runs tab, or wherever else. Falls back to
@@ -1242,154 +1260,148 @@ function LiveRun() {
           >
             <Iconify
               icon="solar:alt-arrow-left-linear"
-              width={20}
+              width={18}
               sx={{ color: "text.tertiary" }}
             />
           </IconButton>
 
           <Box minWidth={0} flex={1}>
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography noWrap sx={{ typography: "m1", fontWeight: 600 }}>
-                Run {ordinal} · {named.label}
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ minWidth: 0, flexWrap: "nowrap" }}
+            >
+              <Typography
+                noWrap
+                sx={{
+                  fontSize: 16,
+                  lineHeight: "24px",
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                Run {ordinal}
               </Typography>
-              <StatusChip status="running" />
-              {partial && (
-                <Chip
-                  label={`Re-run · ${scenarios.length} of ${poolSize} scenarios`}
-                />
-              )}
-              {/* The isolation claim, where a viewer is most likely to doubt it —
-                  not on a Live run, whose tools reach real systems. */}
-              {liveProof?.kind !== "live" && (
-                <Tooltip arrow title={SHADOW_SUMMARY}>
-                  <Box sx={{ display: "flex" }}>
-                    <Chip icon="solar:shield-keyhole-linear" label="Sandbox" />
-                  </Box>
-                </Tooltip>
-              )}
-              {/* Sealed · Live · Prompt only — what this run's proof is. */}
-              <ProofKindChip proof={liveProof} />
+              {/* Waiting on an answer is the run's state, not another
+                  line — the question itself is the card below. */}
+              <StatusChip status={blocked ? "needs_input" : "running"} />
+              {/* What the run proves, as a mark — the words on hover. */}
+              <ProofKindChip proof={liveProof} compact />
               {/* The candidate came from a code snapshot, not a version. */}
               {candidate && (
-                <Tooltip arrow title={candidate.detail}>
-                  <Box sx={{ display: "flex" }}>
-                    <Chip
-                      icon="solar:code-square-linear"
-                      label={candidate.label}
-                    />
+                <Tooltip
+                  arrow
+                  title={`${candidate.label} — ${candidate.detail}`}
+                >
+                  <Box
+                    component="span"
+                    aria-label={candidate.label}
+                    sx={{
+                      display: "inline-flex",
+                      color: "text.tertiary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Iconify icon="solar:code-square-linear" width={16} />
                   </Box>
                 </Tooltip>
               )}
             </Stack>
-            <Typography
-              noWrap
-              sx={{ typography: "s2", color: "text.tertiary" }}
-            >
-              {env.name}
-              {named.improvement && (
-                <>
-                  {" · "}
-                  <FromImprovement improvement={named.improvement} />
-                </>
-              )}
-              {" · "}
-              {stats.done} of {stats.total} scenarios done
-              {repeats > 1 ? ` · ${repeats} repeats each` : ""} ·{" "}
-              {formatMs(elapsed)} elapsed
-              {/* Voice runs in real time — the expected length, said up front. */}
-              {size.voice ? ` · expected ${voiceLine}` : ""}
-              {overCap
-                ? ` · ${parallel} at once · you can leave this page; the run is saved in Runs`
-                : ""}
-            </Typography>
-            {/*
-              Slow and stalled look identical on a progress bar, and telling
-              them apart is the only question anyone has while waiting. So the
-              heartbeat is stated: how long since anything moved, and a warning
-              once that gap stops being normal.
-            */}
-            {phase === "running" && blocked && (
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.625}
-                sx={{ mt: 0.25 }}
-              >
-                <Iconify
-                  icon="solar:chat-round-dots-linear"
-                  width={12}
-                  sx={{ color: "text.tertiary" }}
-                />
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  Waiting on your answer for one scenario · the rest keep
-                  running
-                </Typography>
-              </Stack>
-            )}
-            {phase === "running" && !blocked && (
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.625}
-                sx={{ mt: 0.25 }}
-              >
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    flexShrink: 0,
-                    bgcolor: stalled
-                      ? "status.danger.solid"
-                      : "status.success.solid",
-                    animation: stalled
-                      ? "none"
-                      : `${pulse} 1.6s ease-in-out infinite`,
-                  }}
-                />
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: stalled ? "status.danger.fg" : "text.tertiary",
-                  }}
-                >
-                  {stalled
+            <Tooltip
+              arrow
+              placement="bottom-start"
+              title={[
+                `${named.label}`,
+                partial
+                  ? `Re-run · ${scenarios.length} of ${poolSize} scenarios`
+                  : null,
+                liveProof?.kind !== "live" ? SHADOW_SUMMARY : null,
+                `${stats.done} of ${stats.total} scenarios done${repeats > 1 ? ` · ${repeats} repeats each` : ""}`,
+                outcomeLines(stats).join(" · "),
+                `${formatMs(elapsed)} elapsed${size.voice ? ` · expected ${voiceLine}` : ""}`,
+                overCap
+                  ? `${parallel} at once · you can leave this page; the run is saved in Runs`
+                  : null,
+                phase === "running" && !blocked
+                  ? stalled
                     ? `No heartbeat for ${sinceLastEvent}s — the run may be stalled`
-                    : `Healthy · last event ${sinceLastEvent}s ago`}
+                    : `Healthy · last event ${sinceLastEvent}s ago`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join("\n")}
+              slotProps={{ tooltip: { sx: { whiteSpace: "pre-line" } } }}
+            >
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+                sx={{ minWidth: 0, cursor: "default" }}
+              >
+                {phase === "running" && !blocked && (
+                  <Box
+                    aria-hidden
+                    sx={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      bgcolor: stalled
+                        ? "status.danger.solid"
+                        : "status.success.solid",
+                      animation: stalled
+                        ? "none"
+                        : `${pulse} 1.6s ease-in-out infinite`,
+                    }}
+                  />
+                )}
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
+                >
+                  {/* The numbers lead, so a narrow screen clips the where,
+                      not the outcome. */}
+                  {`${stats.done}/${stats.total} done · `}
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 600,
+                      color: stats.passed ? "status.success.fg" : "inherit",
+                    }}
+                  >
+                    {stats.passed}
+                  </Box>
+                  {" passed · "}
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 600,
+                      color: stats.failed ? RED : "inherit",
+                    }}
+                  >
+                    {stats.failed}
+                  </Box>
+                  {` failed · ${formatMs(elapsed)} · ${env.name}`}
+                  {named.improvement && (
+                    <>
+                      {" · "}
+                      <FromImprovement improvement={named.improvement} />
+                    </>
+                  )}
+                  {` · agent ${runAgent}`}
+                  {phase === "running" && !blocked && stalled && (
+                    <Box component="span" sx={{ color: "status.danger.fg" }}>
+                      {` · No heartbeat for ${sinceLastEvent}s`}
+                    </Box>
+                  )}
                 </Typography>
               </Stack>
-            )}
+            </Tooltip>
           </Box>
 
-          <LiveCounter
-            label="Passed"
-            value={stats.passed}
-            color="status.success.fg"
-          />
-          <LiveCounter label="Failed" value={stats.failed} color={RED} />
-          <LiveCounter
-            label="Flaky"
-            value={stats.flaky}
-            color={FLAKY}
-            hint="Repeats disagreed — passed some, failed others."
-          />
-          {["inconclusive", "test-invalid", "error"].map((o) => (
-            <LiveCounter
-              key={o}
-              label={OUTCOMES[o].label}
-              value={stats.notCounted?.[o] || 0}
-              color={UNMEASURED}
-              hint={OUTCOMES[o].note}
-            />
-          ))}
-          <LiveCounter
-            label="Running"
-            value={stats.active}
-            color="status.info.fg"
-          />
-
           <Tooltip title="Stop run" arrow>
-            <IconButton size="small" onClick={finishNow}>
+            <IconButton size="small" aria-label="Stop run" onClick={finishNow}>
               <Iconify
                 icon="solar:stop-circle-linear"
                 width={20}
@@ -1399,18 +1411,8 @@ function LiveRun() {
           </Tooltip>
         </Stack>
 
-        <LinearProgress
-          variant="determinate"
-          value={stats.progress}
-          sx={{
-            height: 3,
-            bgcolor: "transparent",
-            "& .MuiLinearProgress-bar": {
-              bgcolor: "primary.main",
-              transition: "transform .4s ease",
-            },
-          }}
-        />
+        {/* Progress is the header's bottom edge, coloured by outcome. */}
+        <OutcomeBar stats={stats} />
       </Box>
 
       {/* ── the run group it was started with, if any ── */}
@@ -1778,34 +1780,50 @@ function Chip({ icon, label }) {
   );
 }
 
-function LiveCounter({ label, value, color, hint }) {
-  const counter = (
-    <Stack
-      alignItems="center"
-      sx={{ px: 1, display: { xs: "none", sm: "flex" } }}
-    >
-      <Typography
-        sx={{
-          typography: "s1",
-          fontWeight: 600,
-          lineHeight: 1.1,
-          fontVariantNumeric: "tabular-nums",
-          color: value ? color : "text.disabled",
-        }}
-      >
-        {value}
-      </Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-        {label}
-      </Typography>
-    </Stack>
+const outcomeLines = (stats) => [
+  `${stats.active || 0} running`,
+  `${stats.passed} passed`,
+  `${stats.failed} failed`,
+  `${stats.flaky} flaky`,
+  ...Object.entries(stats.notCounted || {})
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${v} ${(OUTCOMES[k]?.label || k).toLowerCase()}`),
+  `${Math.max(0, (stats.total || 0) - (stats.done || 0))} left`,
+];
+
+/* The run's progress as a 3px edge under the header, filled by outcome —
+   passed, flaky, failed, not counted — over the whole run. */
+function OutcomeBar({ stats }) {
+  const total = Math.max(1, stats.total || 0);
+  const other = Object.values(stats.notCounted || {}).reduce(
+    (n, v) => n + (v || 0),
+    0,
   );
-  return hint ? (
-    <Tooltip arrow title={hint}>
-      {counter}
-    </Tooltip>
-  ) : (
-    counter
+  const parts = [
+    { key: "passed", n: stats.passed, color: "status.success.solid" },
+    { key: "flaky", n: stats.flaky, color: "status.warning.solid" },
+    { key: "failed", n: stats.failed, color: "status.danger.solid" },
+    { key: "other", n: other, color: "text.disabled" },
+  ];
+  return (
+    <Box
+      role="img"
+      aria-label={outcomeLines(stats).join(", ")}
+      sx={{ display: "flex", height: 3 }}
+    >
+      {parts
+        .filter((p) => p.n > 0)
+        .map((p) => (
+          <Box
+            key={p.key}
+            sx={{
+              width: `${(p.n / total) * 100}%`,
+              bgcolor: p.color,
+              transition: "width .4s ease",
+            }}
+          />
+        ))}
+    </Box>
   );
 }
 
@@ -2377,12 +2395,7 @@ function formatMs(ms) {
 ColumnLabel.propTypes = { children: PropTypes.node, sticky: PropTypes.bool };
 Chip.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
-LiveCounter.propTypes = {
-  label: PropTypes.string,
-  value: PropTypes.node,
-  color: PropTypes.string,
-  hint: PropTypes.string,
-};
+OutcomeBar.propTypes = { stats: PropTypes.object.isRequired };
 
 TaskRow.propTypes = {
   task: PropTypes.object,

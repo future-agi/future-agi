@@ -42,7 +42,7 @@ export function ProtectionLine({ tally }) {
       {tally.open > 0 && (
         <Tooltip
           arrow
-          title="They failed or passed only some repeats in the latest run, or haven't run yet, so an improvement may change how they do. Mark the ones that must never break as must-pass."
+          title="Not reliably passing yet — mark the ones that must never break as must-pass."
         >
           <Typography
             sx={{

@@ -528,7 +528,6 @@ export default function TraceTable({
   onOpenEval,
   /* Opens the scenario's trace waterfall — the voice drawer has no trace
      tab, so this is how a voice row reaches it. Shown on row hover. */
-  onOpenTrace,
   groupBy = "useCase",
   columns,
   env,
@@ -828,25 +827,6 @@ export default function TraceTable({
                   <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
                     {variantLabel(t.id)}
                   </Typography>
-                  {onOpenTrace && t.status !== "unmeasured" && (
-                    <Tooltip arrow title="Open trace">
-                      <IconButton
-                        className="row-hover-action"
-                        size="small"
-                        aria-label={`Open trace for ${variantLabel(t.id)}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenTrace(t);
-                        }}
-                      >
-                        <Iconify
-                          icon="solar:align-left-linear"
-                          width={14}
-                          sx={{ color: "text.tertiary" }}
-                        />
-                      </IconButton>
-                    </Tooltip>
-                  )}
                   {t.critical &&
                     (() => {
                       /* Red only when this critical scenario failed — the same

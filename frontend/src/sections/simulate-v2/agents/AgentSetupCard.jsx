@@ -302,7 +302,7 @@ export default function AgentSetupCard({
       id: "consent",
       done: false,
       title: "Let us call your agent for tests",
-      body: `We place simulated calls to your ${PROVIDER_LABELS[v.provider] ? `${PROVIDER_LABELS[v.provider]} ` : ""}agent; nothing is changed in your account. What it does on a call — like issuing a refund — really happens, so approve this once before the first run.`,
+      body: `We place simulated calls to your ${PROVIDER_LABELS[v.provider] ? `${PROVIDER_LABELS[v.provider]} ` : ""}agent. What it does on a call — like issuing a refund — really happens, so approve this once before the first run.`,
       action: { label: "Review", onClick: () => onTab("connections") },
     },
     platformTestingOf(agent)?.needsVersioning && {

@@ -236,8 +236,8 @@ export default function CodingAgentsIntegrationPage() {
             title="Cloud agents"
             sub={
               clouds.length
-                ? `Copy for coding agent offers Dispatch to ${clouds.map((c) => c.short || c.label).join(" or ")} for everyone. It works in its own sandbox against the agent's repository; its change comes back as a candidate Future AGI checks.`
-                : "Connected once for the workspace. Dispatch an issue to one in one click — it works in its own sandbox against the agent's repository, and its change comes back as a candidate Future AGI checks."
+                ? `Copy for coding agent offers Dispatch to ${clouds.map((c) => c.short || c.label).join(" or ")} for everyone. Each change comes back as a candidate Future AGI checks.`
+                : "Connect once for the workspace. A dispatched issue is worked on in a sandbox and comes back as a candidate Future AGI checks."
             }
           />
           {CLOUD_CODING_AGENTS.map((a, i) => {
@@ -331,7 +331,7 @@ export default function CodingAgentsIntegrationPage() {
         <Section variant="panel">
           <SectionHead
             title="How its changes are tested"
-            sub="Whatever your agent is built on, the coding agent changes what defines it and submits that as a candidate. Future AGI runs it next to today's version on the same scenarios — never on the live agent — and computes the verdict."
+            sub="The coding agent changes what defines your agent and submits it as a candidate. Future AGI tests it against today's version — never the live agent."
           />
           <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
             <Stack

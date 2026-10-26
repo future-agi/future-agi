@@ -172,8 +172,15 @@ HealthChip.propTypes = { health: PropTypes.object };
  * were handled — beside the harness chip, with the note on hover. Live says
  * so on the chip: its tools reached real systems.
  */
-export function ProofKindChip({ proof }) {
+export function ProofKindChip({ proof, compact = false }) {
   if (!proof?.label) return null;
+  const icon =
+    proof.kind === "live"
+      ? "solar:global-linear"
+      : proof.kind === "prompt-only"
+        ? "solar:document-text-linear"
+        : "solar:box-linear";
+  const label = proof.kind === "live" ? "Live · real systems" : proof.label;
   return (
     <Tooltip
       classes={{ tooltip: "ds-hovercard" }}
@@ -191,42 +198,50 @@ export function ProofKindChip({ proof }) {
         </Stack>
       }
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          px: 0.75,
-          height: 22,
-          borderRadius: "4px",
-          flexShrink: 0,
-          cursor: "default",
-          color: "text.tertiary",
-          border: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Iconify
-          icon={
-            proof.kind === "live"
-              ? "solar:global-linear"
-              : proof.kind === "prompt-only"
-                ? "solar:document-text-linear"
-                : "solar:box-linear"
-          }
-          width={12}
-        />
-        <Typography
-          noWrap
-          sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+      {/* Compact: just the mark, the words on hover — for headers that
+          must stay one line. */}
+      {compact ? (
+        <Box
+          component="span"
+          aria-label={label}
+          sx={{
+            display: "inline-flex",
+            color: "text.tertiary",
+            cursor: "default",
+            flexShrink: 0,
+          }}
         >
-          {proof.kind === "live" ? "Live · real systems" : proof.label}
-        </Typography>
-      </Stack>
+          <Iconify icon={icon} width={16} />
+        </Box>
+      ) : (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.5}
+          sx={{
+            px: 0.75,
+            height: 22,
+            borderRadius: "4px",
+            flexShrink: 0,
+            cursor: "default",
+            color: "text.tertiary",
+            border: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Iconify icon={icon} width={12} />
+          <Typography
+            noWrap
+            sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+          >
+            {label}
+          </Typography>
+        </Stack>
+      )}
     </Tooltip>
   );
 }
-ProofKindChip.propTypes = { proof: PropTypes.object };
+ProofKindChip.propTypes = { proof: PropTypes.object, compact: PropTypes.bool };
 
 const linkSx = (on) => ({
   color: "text.primary",

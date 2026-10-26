@@ -607,7 +607,7 @@ export default function ImprovementSourcesList({ agent }) {
           {deletable.length > 0 && (
             <DialogContentText sx={{ typography: "s2" }}>
               {
-                "Their runs and results go with them, and so does any draft they recorded that wasn't released. Their ids aren't reused. The environments and the environments' own runs stay as they are."
+                "Their runs, results and unreleased drafts go with them. The environments and their own runs stay as they are."
               }
             </DialogContentText>
           )}

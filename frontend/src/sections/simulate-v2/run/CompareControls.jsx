@@ -599,7 +599,7 @@ export function CompareSearchBar({ query, onQuery, view, onView }) {
         </Typography>
         <Tooltip
           arrow
-          title="Replaces each run's outcome with what it did differently from the baseline — tools it stopped calling, turns it added, where the conversation first diverged."
+          title="Shows what each run did differently from the baseline."
         >
           <Box sx={{ display: "flex" }}>
             <Iconify
