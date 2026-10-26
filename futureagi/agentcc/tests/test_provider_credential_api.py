@@ -5,10 +5,10 @@ import pytest
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from conftest import WorkspaceAwareAPIClient
-from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.views.provider_credential import _join_api_endpoint
+from conftest import WorkspaceAwareAPIClient
+from integrations.services.credentials import CredentialManager
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -126,6 +126,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             provider_name="openai",
             display_name="Org B OpenAI",
             encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-b"}),
+            base_url="https://api.org-b.example/v1",
             api_format="openai",
         )
 
@@ -140,10 +141,40 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             )
 
         assert response.status_code == 200, response.json()
-        args, _ = mock_fetch.call_args
         # Signature: (provider_name, base_url, api_key, api_format, api_path_prefix)
-        assert args[0] == "openai"
-        assert args[2] == "sk-org-b"
+        mock_fetch.assert_called_once_with(
+            "openai",
+            "https://api.org-b.example/v1",
+            "sk-org-b",
+            "openai",
+            None,
+        )
+
+    def test_fetch_models_forwards_raw_values_without_provider_name(
+        self, secondary_org_client
+    ):
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=["gemini-custom"],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {
+                    "base_url": "https://models.example.com/",
+                    "api_key": "custom-key",
+                    "api_format": "google",
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        mock_fetch.assert_called_once_with(
+            None,
+            "https://models.example.com",
+            "custom-key",
+            "google",
+            None,
+        )
 
     def test_fetch_models_returns_bad_request_when_saved_credential_cannot_decrypt(
         self, secondary_org_context, secondary_org_client
@@ -188,9 +219,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
 
         assert response.status_code == 200, response.json()
         data = response.json()["result"]
@@ -216,9 +245,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
         assert response.status_code == 404
 
     def test_update_writes_safe_fields_and_pushes_config(
@@ -229,7 +256,9 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             organization=org_b,
             provider_name="openai",
             display_name="Old Display",
-            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-untouched"}),
+            encrypted_credentials=CredentialManager.encrypt(
+                {"api_key": "sk-untouched"}
+            ),
             api_format="openai",
             models_list=["gpt-4o-mini"],
         )
@@ -644,6 +673,74 @@ class TestFetchModelsKeepsTheSavedKeyOnItsBaseURL:
             )
             assert response.status_code == 200, response.json()
             assert mock_fetch.call_args[0][2] == "sk-typed"
+
+    def test_saved_key_is_not_moved_to_google_by_a_request_api_format(
+        self, secondary_org_context, secondary_org_client
+    ):
+        # The google branch sends the key as ?key=, so a request api_format of
+        # "google" must not reformat a saved OpenAI key's discovery call.
+        org_b, _ = secondary_org_context
+        AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="OpenAI",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-saved"}),
+            api_format="openai",
+            base_url="https://api.openai.com/v1",
+        )
+        session = MagicMock()
+        session.get.return_value.json.return_value = {"data": [{"id": "gpt-4o"}]}
+
+        with (
+            patch("agentcc.views.provider_credential.ensure_public_http_url"),
+            patch(
+                "agentcc.views.provider_credential.build_ssrf_safe_session",
+                return_value=session,
+            ),
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "openai", "api_format": "google"},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["models"] == ["gpt-4o"]
+        session.get.assert_called_once_with(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": "Bearer sk-saved"},
+            timeout=15,
+        )
+
+    def test_a_callers_own_key_still_takes_the_requested_api_format(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="OpenAI",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-saved"}),
+            api_format="openai",
+            base_url="https://api.openai.com/v1",
+        )
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=[],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {
+                    "provider_name": "openai",
+                    "api_key": "sk-typed",
+                    "api_format": "google",
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        assert mock_fetch.call_args[0][2:4] == ("sk-typed", "google")
 
 
 @pytest.mark.integration
