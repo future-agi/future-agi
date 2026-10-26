@@ -64,9 +64,13 @@ type rejection struct {
 	tooLarge bool // a permanent refusal for size (413), not a bad request (400)
 	msg      string
 	// status and code, when set, replace the status the kind maps to.
-	status int
-	code   codes.Code
+	status     int
+	code       codes.Code
+	retryAfter string // optional override for existing simulation-routing refusals
+	logged     bool   // the simulation router owns its own severity/rate-limited log
 }
+
+func (r *rejection) Error() string { return r.msg }
 
 func (r *rejection) httpStatus() int {
 	if r.status != 0 {
@@ -175,11 +179,20 @@ func (s *Server) logRejection(transport, code string, r *rejection, held int64) 
 // when it is not one of them (writeHTTPRefusal).
 func (s *Server) rejectHTTP(w http.ResponseWriter, ct string, r *rejection) {
 	st := r.httpStatus()
-	if ok, held := s.countRejection("http", strconv.Itoa(st), r); ok {
+	if ok, held := s.countRejection("http", strconv.Itoa(st), r); ok && !r.logged {
 		s.logRejection("http", strconv.Itoa(st), r, held)
 	}
 	if r.kind != rejectPermanent && st != http.StatusTooManyRequests {
-		w.Header().Set("Retry-After", "1")
+		retryAfter := r.retryAfter
+		if retryAfter == "" {
+			retryAfter = "1"
+		}
+		w.Header().Set("Retry-After", retryAfter)
+	}
+	// A failed internal reauthentication is already counted above, unlike
+	// the middleware's pre-body 401. Do not count it again in the wrapper.
+	if counted, ok := w.(*authStatusWriter); ok {
+		counted.counted = true
 	}
 	writeHTTPRefusal(w, ct, st, r.grpcCode(), r.msg)
 }
@@ -219,7 +232,7 @@ var errNoOTLPMediaType = errors.New("not an OTLP media type")
 // rejectGRPC is the status for an OTLP/gRPC call the pipeline refuses.
 func (s *Server) rejectGRPC(r *rejection) error {
 	code := r.grpcCode()
-	if ok, held := s.countRejection("grpc", code.String(), r); ok {
+	if ok, held := s.countRejection("grpc", code.String(), r); ok && !r.logged {
 		s.logRejection("grpc", code.String(), r, held)
 	}
 	return status.Error(code, r.msg)
@@ -235,11 +248,12 @@ func (s *Server) countAuthRefusals(next http.Handler) http.Handler {
 
 type authStatusWriter struct {
 	http.ResponseWriter
-	s *Server
+	s       *Server
+	counted bool
 }
 
 func (w *authStatusWriter) WriteHeader(code int) {
-	if code == http.StatusUnauthorized {
+	if code == http.StatusUnauthorized && !w.counted {
 		w.s.countRejection("http", "401", &rejection{reason: "auth"})
 	}
 	w.ResponseWriter.WriteHeader(code)

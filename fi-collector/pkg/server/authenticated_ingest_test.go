@@ -132,6 +132,9 @@ func TestAuthenticatedProjectTimeoutRecovery(t *testing.T) {
 			if len(s.pend) != 0 || usage.calls.Load() != 0 {
 				t.Fatal("failed resolution enqueued or billed data")
 			}
+			if r.creates.Load() != 1 {
+				t.Fatal("persistence failure was internally retried as an auth change")
+			}
 			r.transient.Store(false)
 			if err := attempt(); err != nil {
 				t.Fatalf("recovery: %v", err)

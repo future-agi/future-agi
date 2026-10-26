@@ -469,65 +469,39 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 // export serves a decoded Export request; enqueued reports whether any of its
 // rows went to the pending batch.
 func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) (resp ptraceotlp.ExportResponse, enqueued bool, err error) {
-	// x-project-name metadata only fills ResourceSpans that do not name a
-	// project (auth.ProjectNameHeader).
+	// The in-process API has no wire body. Preserve the caller's input; the
+	// production stream uses exportDecoded and decodes its leased bytes instead.
+	return h.exportDecoded(ctx, func() (ptraceotlp.ExportRequest, error) {
+		copy := ptraceotlp.NewExportRequest()
+		req.Traces().CopyTo(copy.Traces())
+		return copy, nil
+	})
+}
+
+func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder) (ptraceotlp.ExportResponse, bool, error) {
+	ctx, cancel := ingestContext(ctx)
+	defer cancel()
 	md, _ := metadata.FromIncomingContext(ctx)
-	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameMetadataValues(md)); err != nil {
-		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: err.Error()})
+	prepared, rej := h.s.prepareExport(ctx, decode, auth.ProjectNameMetadataValues(md))
+	if rej != nil {
+		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
 	}
-
-	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
-	// the existing org/project behavior but deliberately does not add a
-	// workspace attribute to the canonical span payload.
-	var rejectedSpans int64
-	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
-	var routed auth.RouteOutcome
-	if result := auth.FromContext(ctx); result != nil {
-		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
-		ck := auth.CacheKeyFromContext(ctx)
-		var err error
-		routed, err = h.s.routeSimulation(ctx, result, req.Traces())
-		if err != nil {
-			return ptraceotlp.NewExportResponse(), false, status.Error(codes.Unavailable, "simulation routing temporarily unavailable")
-		}
-		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
-			// Nothing of the request is stored, so nothing of it is metered.
-			return partialSuccessResponse(routed), false, nil
-		}
-		beforeStamp := req.Traces().SpanCount()
-		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
-		rejectedSpans = int64(beforeStamp - req.Traces().SpanCount())
-		if errors.Is(err, auth.ErrProjectResolutionUnavailable) {
-			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
-		}
-		if errors.Is(err, auth.ErrTooManyNewProjects) {
-			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectNewProjects)
-		}
-		if err != nil {
-			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: "auth stamp: " + err.Error()})
-		}
-		if dropped > 0 {
-			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
-		}
-		var scoped bool
-		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
-		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
-		if !scoped {
-			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
-		}
+	ctx, req := prepared.ctx, prepared.req
+	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+		return partialSuccessResponse(prepared.routed), false, nil
 	}
-
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), false, err
 	}
-	h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
-
+	if ctx.Err() != nil {
+		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
+	}
+	h.s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden)
 	h.s.emitUsage(ctx, req.Traces())
 
-	resp = ptraceotlp.NewExportResponse()
-	setProjectPartialSuccess(resp, rejectedSpans)
+	resp := ptraceotlp.NewExportResponse()
+	setProjectPartialSuccess(resp, prepared.rejectedSpans)
 	return resp, len(rows) > 0, nil
 }
 
@@ -549,6 +523,9 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 // field. We always return the fully-successful response since our pipeline
 // is at-least-once + dead-letter for failed inserts.
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := ingestContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		s.rejectHTTP(w, "", &rejection{reason: "method", status: http.StatusMethodNotAllowed, msg: "method not allowed"})
@@ -611,89 +588,46 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	enqueued := false
 	defer func() { s.settleRows(rowsLease, enqueued) }()
 
-	req := ptraceotlp.NewExportRequest()
-	switch ct {
-	case "application/x-protobuf":
-		if err := req.UnmarshalProto(body); err != nil {
-			s.rejectHTTP(w, ct, &rejection{reason: "malformed", msg: "decode protobuf: " + err.Error()})
-			return
+	prepared, rej := s.prepareExport(r.Context(), func() (ptraceotlp.ExportRequest, error) {
+		req := ptraceotlp.NewExportRequest()
+		if ct == "application/json" {
+			if err := req.UnmarshalJSON(body); err != nil {
+				return req, fmt.Errorf("decode json: %w", err)
+			}
+		} else if err := req.UnmarshalProto(body); err != nil {
+			return req, fmt.Errorf("decode protobuf: %w", err)
 		}
-	case "application/json":
-		if err := req.UnmarshalJSON(body); err != nil {
-			s.rejectHTTP(w, ct, &rejection{reason: "malformed", msg: "decode json: " + err.Error()})
-			return
-		}
-	}
-
-	// X-Project-Name only fills ResourceSpans that do not name a project.
-	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
-		s.rejectHTTP(w, ct, &rejection{reason: "project", msg: err.Error()})
+		return req, nil
+	}, auth.ProjectNameHTTPValues(r.Header))
+	if rej != nil {
+		s.rejectHTTP(w, ct, rej)
 		return
 	}
-
-	// Keep the authenticated workspace out-of-band; see the gRPC path above.
-	var rejectedSpans int64
-	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
-	var routed auth.RouteOutcome
-	if result := auth.FromContext(r.Context()); result != nil {
-		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
-		ck := auth.CacheKeyFromContext(r.Context())
-		var err error
-		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
-		if err != nil {
-			w.Header().Set("Retry-After", "5")
-			writeHTTPRefusal(w, ct, http.StatusServiceUnavailable, codes.Unavailable, "simulation routing temporarily unavailable")
-			return
-		}
-		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
-			// Nothing of the request is stored, so nothing of it is metered.
-			writeExportResponse(w, ct, partialSuccessResponse(routed))
-			return
-		}
-		beforeStamp := req.Traces().SpanCount()
-		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
-		rejectedSpans = int64(beforeStamp - req.Traces().SpanCount())
-		if errors.Is(err, auth.ErrProjectResolutionUnavailable) {
-			s.rejectHTTP(w, ct, rejectProjectUnavailable)
-			return
-		}
-		if errors.Is(err, auth.ErrTooManyNewProjects) {
-			s.rejectHTTP(w, ct, rejectNewProjects)
-			return
-		}
-		if err != nil {
-			s.rejectHTTP(w, ct, &rejection{reason: "project", msg: "auth stamp: " + err.Error()})
-			return
-		}
-		if dropped > 0 {
-			s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
-		}
-		var scoped bool
-		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
-		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
-		if !scoped {
-			s.rejectHTTP(w, ct, &rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
-			return
-		}
+	ctx, req := prepared.ctx, prepared.req
+	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
+		return
 	}
-
-	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
+	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		s.rejectHTTP(w, ct, &rejection{reason: "convert", msg: "convert: " + err.Error()})
 		return
 	}
-	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
+	if ctx.Err() != nil {
+		s.rejectHTTP(w, ct, rejectProjectUnavailable)
+		return
+	}
+	s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden)
 	enqueued = len(rows) > 0
 
-	s.emitUsage(r.Context(), req.Traces())
+	s.emitUsage(ctx, req.Traces())
 
 	// ExportTraceServiceResponse — same wire shape, encoded to match the
 	// request's content-type. The spec requires the response media type to
 	// match the request.
 	resp := ptraceotlp.NewExportResponse()
-	setProjectPartialSuccess(resp, rejectedSpans)
+	setProjectPartialSuccess(resp, prepared.rejectedSpans)
 	writeExportResponse(w, ct, resp)
 }
 

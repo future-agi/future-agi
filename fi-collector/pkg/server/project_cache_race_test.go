@@ -121,8 +121,12 @@ func TestAuthenticatedProjectCacheRaceRecovery(t *testing.T) {
 					release.Do(func() { close(r.release) })
 					select {
 					case err := <-done:
-						if status.Code(err) != codes.Unavailable {
-							t.Fatalf("cache change must be retryable: %v", err)
+						want := codes.OK
+						if change == "revoke" {
+							want = codes.Unauthenticated
+						}
+						if status.Code(err) != want {
+							t.Fatalf("internal restart: got %v, want %v", err, want)
 						}
 					case <-ctx.Done():
 						t.Fatal("interrupted request did not finish")
@@ -140,16 +144,16 @@ func TestAuthenticatedProjectCacheRaceRecovery(t *testing.T) {
 							t.Fatal("failed attempt reached storage")
 						}
 					}
-					assertEmpty()
 					if change == "revoke" {
+						assertEmpty()
 						if err := attempt(); status.Code(err) != codes.Unauthenticated {
 							t.Fatalf("revoked key must fail closed on retry: %v", err)
 						}
 						assertEmpty()
 						r.revoked.Store(false)
-					}
-					if err := attempt(); err != nil {
-						t.Fatalf("retry with fresh authentication: %v", err)
+						if err := attempt(); err != nil {
+							t.Fatalf("re-enabled key: %v", err)
+						}
 					}
 					if r.validations.Load() < 2 {
 						t.Fatal("recovery reused stale authentication without revalidating key")

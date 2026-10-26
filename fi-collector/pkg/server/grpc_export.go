@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -202,7 +203,9 @@ func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 	if rej, ok := stream.Context().Value(grpcBusyKey{}).(*rejection); ok {
 		return s.rejectGRPC(rej)
 	}
-	ctx, err := s.grpcAuth(stream.Context())
+	requestCtx, cancel := ingestContext(stream.Context())
+	defer cancel()
+	ctx, err := s.grpcAuth(requestCtx)
 	if err != nil {
 		code := status.Code(err)
 		s.countRejection("grpc", code.String(), &rejection{reason: "auth"})
@@ -231,12 +234,13 @@ func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 		return s.rejectGRPC(rej)
 	}
 	defer work.release()
-	req := ptraceotlp.NewExportRequest()
-	if err := req.UnmarshalProto(raw); err != nil {
-		rows.release()
-		return s.rejectGRPC(&rejection{reason: "malformed", msg: "decode protobuf: " + err.Error()})
-	}
-	resp, enqueued, err := h.export(ctx, req)
+	resp, enqueued, err := h.exportDecoded(ctx, func() (ptraceotlp.ExportRequest, error) {
+		req := ptraceotlp.NewExportRequest()
+		if err := req.UnmarshalProto(raw); err != nil {
+			return req, fmt.Errorf("decode protobuf: %w", err)
+		}
+		return req, nil
+	})
 	s.settleRows(rows, enqueued)
 	if err != nil {
 		return err

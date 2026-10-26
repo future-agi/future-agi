@@ -200,6 +200,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 		return nil, nil // auth disabled
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ck := CacheKey(apiKey, secretKey)
 
 	entry, status := a.cache.get(ck)
@@ -217,16 +220,27 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	}
 
 	// cache miss — resolve from PG
-	val, err, _ := a.sfKey.Do(ck, func() (any, error) {
+	lookup := a.sfKey.DoChan(ck, func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return a.keyResolver().ValidateKey(sfCtx, apiKey, secretKey)
 	})
-	if err != nil {
-		return nil, fmt.Errorf("auth resolve: %w", err)
+	// The shared lookup has its own bounded lifetime, but each waiter must
+	// respect its original request deadline, including an internal restart.
+	var resolved singleflight.Result
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case resolved = <-lookup:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if resolved.Err != nil {
+		return nil, fmt.Errorf("auth resolve: %w", resolved.Err)
 	}
 
-	result, _ := val.(*ResolveResult)
+	result, _ := resolved.Val.(*ResolveResult)
 	if result == nil {
 		// Don't cache invalid keys — avoids unbounded memory from scanners.
 		// Trade-off: invalid keys always hit PG, but singleflight deduplicates.

@@ -20,6 +20,33 @@ func FromContext(ctx context.Context) *ResolveResult {
 
 type cacheKeyCtxKey struct{}
 
+type credentialsContextKey struct{}
+type requestCredentials struct{ apiKey, secretKey string }
+
+// withRequestCredentials retains only the credentials this request actually
+// authenticated, not credentials supplied by an in-process resolved context.
+func withRequestCredentials(ctx context.Context, apiKey, secretKey string) context.Context {
+	return context.WithValue(ctx, credentialsContextKey{}, requestCredentials{apiKey, secretKey})
+}
+
+// Reauthenticate restarts an in-flight request against the current key result.
+// It does not revive the old entry or infer validity from matching tenant IDs.
+// Contexts constructed only with WithResolvedContext cannot reauthenticate.
+func (a *Authenticator) Reauthenticate(ctx context.Context) (context.Context, error) {
+	creds, ok := ctx.Value(credentialsContextKey{}).(requestCredentials)
+	if a == nil || !ok || CacheKey(creds.apiKey, creds.secretKey) != CacheKeyFromContext(ctx) {
+		return nil, &ProjectAuthChangedError{}
+	}
+	result, err := a.Authenticate(ctx, creds.apiKey, creds.secretKey)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.OrgID == "" || result.WorkspaceID == "" {
+		return nil, ErrUnauthenticated
+	}
+	return WithResolvedContext(ctx, result, CacheKey(creds.apiKey, creds.secretKey)), nil
+}
+
 // WithResolvedContext carries an already authenticated result across an
 // in-process boundary. Callers must verify the key and project/workspace
 // membership first; this helper does not authenticate untrusted request data.
@@ -77,6 +104,7 @@ func (a *Authenticator) AuthenticateGRPC(ctx context.Context) (context.Context, 
 		return nil, status.Error(codes.Unavailable, "service temporarily unavailable")
 	}
 
+	ctx = withRequestCredentials(ctx, apiKey, secretKey)
 	return WithResolvedContext(ctx, result, CacheKey(apiKey, secretKey)), nil
 }
 
