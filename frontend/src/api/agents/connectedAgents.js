@@ -54,6 +54,7 @@ export const mapConnectedAgent = (raw) => ({
   environments: raw.environments,
   environmentCount: raw.environment_count,
   createdAt: raw.created_at ?? null,
+  updatedAt: raw.updated_at ?? null,
 });
 
 // The generated client types this response as a bare array, but the server

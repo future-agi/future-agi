@@ -5,7 +5,7 @@ import { enqueueSnackbar } from "notistack";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
-import { format } from "date-fns";
+import { relativeTime } from "src/utils/format-time";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -126,17 +126,23 @@ const columns = [
     },
   },
   {
-    id: "createdAt",
-    accessorKey: "createdAt",
-    header: "Created at",
-    size: 180,
+    id: "updatedAt",
+    accessorKey: "updatedAt",
+    header: "Last updated",
+    size: 150,
     enableSorting: false,
     cell: ({ row }) => (
-      <CellText>
-        {row.original.createdAt
-          ? format(new Date(row.original.createdAt), "dd-MM-yyyy, h:mm a")
-          : "—"}
-      </CellText>
+      <CellText>{relativeTime(row.original.updatedAt)}</CellText>
+    ),
+  },
+  {
+    id: "createdAt",
+    accessorKey: "createdAt",
+    header: "Connected on",
+    size: 150,
+    enableSorting: false,
+    cell: ({ row }) => (
+      <CellText>{relativeTime(row.original.createdAt)}</CellText>
     ),
   },
 ];
