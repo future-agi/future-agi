@@ -60,7 +60,10 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
 
   const stateOf = (index) => {
     if (completed || done.has(DESIGN_STEPS[index].key)) return "done";
-    if (index === currentIndex) return failed ? "failed" : "active";
+    if (index === currentIndex) {
+      if (failure?.code === "design_waiting") return "active";
+      return failed ? "failed" : "active";
+    }
     return "pending";
   };
 

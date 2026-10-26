@@ -26,6 +26,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import { STATUS_TYPES } from "src/utils/statusUtils";
 import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
@@ -442,6 +443,8 @@ export default function HarnessDetail() {
   const answeredIds = answeredMessageIds(current?.conversation?.messages);
   const isAdaptation = Boolean(current?.job?.metadata?.adaptation);
   const isDesign = Boolean(current?.job?.metadata?.design);
+  // A design that stopped on an unanswered question is waiting, not broken: Continue resumes it.
+  const parked = isDesign && status?.failure?.code === "design_waiting";
 
   // Only the finished prefix folds away, so the stage a run failed or stopped on is never
   // hidden by collapsing — it is the first row still on screen.
@@ -798,8 +801,12 @@ export default function HarnessDetail() {
 
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <StatusChip
-                label={readable(status?.stage)}
-                status={stageStatus(status?.stage)}
+                label={
+                  parked ? "Waiting for your answer" : readable(status?.stage)
+                }
+                status={
+                  parked ? STATUS_TYPES.UNSET : stageStatus(status?.stage)
+                }
                 showIcon={false}
               />
               {canViewSimulation && (
@@ -1627,7 +1634,8 @@ export default function HarnessDetail() {
               )}
             </Box>
 
-            {current && (
+            {/* A finished design's chat is closed and has no saved world to add scenarios to. */}
+            {current && !(isDesign && isTerminal) && (
               <Box
                 sx={{
                   flexShrink: 0,
