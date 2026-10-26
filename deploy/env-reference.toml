@@ -643,6 +643,18 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "Extra domains a sandbox may reach, comma-separated."
 
     [[part.section.row]]
+    keys = ["ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Sandbox snapshot names, comma-separated, that carry the SDK able to apply a run's observability export. Empty means no run exports. List a snapshot only once it carries agent-learning-kit #162, #172 and #173 together: without #173 the exporter never sends the agent's key."
+
+    [[part.section.row]]
+    keys = ["HARNESS_OBSERVABILITY", "FI_HARNESS_PROJECT"]
+    default = "empty (off)"
+    setups = ["S", "D", "H"]
+    text = "`on` (also `1`, `true`, `yes`) lets the harness in hosted sandboxes trace itself into Observe with the backend's `FI_API_KEY` and `FI_SECRET_KEY`, into the project `FI_HARNESS_PROJECT` (default `hosted-harness`); anything else turns that tracing off. The keys reach the sandboxes either way, for the platform evals. Whatever the flag, those keys must belong to the collector the sandboxes reach (`ALK_HOSTED_FI_BASE_URL`, else `HARNESS_PUBLIC_BASE_URL`, else `FI_BASE_URL`): the platform evals call it with them, so keys of another deployment fail every hosted voice run's grading, and with the flag on its traces are refused too."
+
+    [[part.section.row]]
     keys = ["ALK_HOSTED_WEBRTC_EGRESS_CIDRS"]
     default = "empty"
     setups = ["S", "D", "H"]
@@ -1026,6 +1038,13 @@ a Mixpanel token.
     default = "`1000000`"
     setups = ["S", "D", "H"]
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
+
+    [[part.section.row]]
+    keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
+    default = "empty: no organization restricted"
+    setups = ["S", "D", "H"]
+    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. A value without a zone is UTC. The app refuses to start on a value that is not a date and time, including a date alone. Set it to the start of the deploy that turns the restriction on, the same value in every region."
+    audience = "internal"
 
   [[part.section]]
   heading = "Sign-up and sign-in"

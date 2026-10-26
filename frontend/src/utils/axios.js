@@ -1524,6 +1524,10 @@ export const endpoints = {
   },
   agentDefinitions: {
     list: apiPath("/simulate/agent-definitions/"),
+    edit: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/edit/", {
+        agent_id: id,
+      }),
     create: apiPath("/simulate/agent-definitions/create/"),
     versions: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/versions/", {
@@ -1545,6 +1549,15 @@ export const endpoints = {
       ),
     detail: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/", { agent_id: id }),
+    runs: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/runs/", {
+        agent_id: id,
+      }),
+    storedAgent: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
+        { agent_id: id, version_id: version },
+      ),
     delete: apiPath("/simulate/agent-definitions/"),
     getTestAnalytics: (agent, version) =>
       apiPath(
@@ -1739,6 +1752,10 @@ export const endpoints = {
     callDetail: (id) =>
       apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
         call_execution_id: id,
+      }),
+    traces: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/traces/", {
+        test_execution_id: id,
       }),
     analytics: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {

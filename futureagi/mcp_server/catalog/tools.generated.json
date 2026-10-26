@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "5a65154db85de24de454e493d07f262ff4c7dc57f407c58ae686f353ede59b57",
+  "source_contract_sha256": "6e8772ff979be41f435b0a066a824965c83c484182d35c107bbd8d38d0284be1",
   "tool_count": 105,
   "tools": [
     {
@@ -3724,6 +3724,16 @@
           "id": {
             "type": "string"
           },
+          "test_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
+          "call_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
           "project_id": {
             "type": "string",
             "format": "uuid",
@@ -3749,6 +3759,8 @@
             "id"
           ],
           "query": [
+            "test_execution_id",
+            "call_execution_id",
             "project_id"
           ],
           "body": []
@@ -3857,6 +3869,16 @@
           "id": {
             "type": "string"
           },
+          "test_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
+          "call_execution_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "A run the caller can read; opens the hidden simulation project of that run's agent."
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -3903,6 +3925,8 @@
             "id"
           ],
           "query": [
+            "test_execution_id",
+            "call_execution_id",
             "project_id",
             "trace_id",
             "start_hour",
@@ -7648,13 +7672,17 @@
     },
     {
       "name": "update_agent",
-      "description": "Edit an agent definition. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.",
+      "description": "Edit an agent definition. Leave observability_enabled out to keep observability as it is; send true or false to turn it on or off. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
         "properties": {
           "agent_id": {
             "type": "string"
+          },
+          "observability_enabled": {
+            "title": "Observability enabled",
+            "type": "boolean"
           },
           "agent_name": {
             "title": "Agent name",
@@ -7926,6 +7954,7 @@
           ],
           "query": [],
           "body": [
+            "observability_enabled",
             "agent_name",
             "agent_type",
             "description",
@@ -8170,8 +8199,7 @@
           },
           "observability_enabled": {
             "title": "Observability enabled",
-            "type": "boolean",
-            "default": false
+            "type": "boolean"
           }
         },
         "additionalProperties": false,

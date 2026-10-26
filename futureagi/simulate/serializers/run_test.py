@@ -31,6 +31,7 @@ from simulate.services.harness_evals import (
     is_harness_run_test,
     regrade_mapping,
 )
+from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
 
@@ -327,7 +328,9 @@ class RunTestSerializer(serializers.ModelSerializer):
                     agent_version_data = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
-                        "configuration_snapshot": snapshot,
+                        "configuration_snapshot": snapshot_as_shown(
+                            snapshot, instance.agent_definition
+                        ),
                     }
                     try:
                         creds = instance.agent_version.credentials
@@ -361,7 +364,9 @@ class RunTestSerializer(serializers.ModelSerializer):
                         agent_version_data = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
-                            "configuration_snapshot": snapshot,
+                            "configuration_snapshot": snapshot_as_shown(
+                                snapshot, instance.agent_definition
+                            ),
                         }
                         try:
                             creds = latest_version.credentials

@@ -25,6 +25,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessStageOutput,
+    RunTest,
     TestExecution,
 )
 from simulate.services.hosted_harness_conversation import serialize_conversation
@@ -241,6 +242,23 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         ) from exc
 
 
+def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
+    metadata = job.payload.get("metadata", {})
+    if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
+        return metadata
+    if not job.run_test_id:
+        return metadata
+    # The saved refusal is a snapshot; the page must follow the agent's current switch.
+    enabled = (
+        RunTest.no_workspace_objects.filter(id=job.run_test_id)
+        .values_list("agent_definition__observability_provider__enabled", flat=True)
+        .first()
+    )
+    if enabled is not True:
+        return metadata
+    return {k: v for k, v in metadata.items() if k != "observability_refusal"}
+
+
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     from simulate.services.harness_usage import harness_consumption
 
@@ -398,7 +416,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "job_id": str(job.id),
             "run_id": str(job.run_id),
             "source": job.payload["source"],
-            "metadata": job.payload.get("metadata", {}),
+            "metadata": _metadata_for_read(job),
             "runtime": {
                 "parallelism": _requested_parallelism,
                 "cpu_units": _runtime.get("cpu_units"),
@@ -1568,7 +1586,11 @@ class HostedHarnessProvider:
                 client_request_id=data["client_request_id"],
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
-                payload=data.get("payload"),
+                payload={
+                    key: value
+                    for key, value in (data.get("payload") or {}).items()
+                    if key != "from_platform"
+                },
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

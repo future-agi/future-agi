@@ -1276,7 +1276,7 @@
 ### OBS-E2E-027 — trace list pager windows forward without an endless page count
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:311`  
+**Spec:** `flows/observe/list-pagination.spec.ts:220`  
 **Tags:** —
 
 **User steps:**
@@ -1297,7 +1297,7 @@
 ### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
-**Spec:** `flows/observe/list-pagination.spec.ts:537`  
+**Spec:** `flows/observe/list-pagination.spec.ts:446`  
 **Tags:** —
 
 **User steps:**
@@ -1315,7 +1315,7 @@
 ### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
-**Spec:** `flows/observe/list-pagination.spec.ts:629`  
+**Spec:** `flows/observe/list-pagination.spec.ts:538`  
 **Tags:** —
 
 **User steps:**
@@ -1332,7 +1332,7 @@
 ### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
-**Spec:** `flows/observe/list-pagination.spec.ts:683`  
+**Spec:** `flows/observe/list-pagination.spec.ts:592`  
 **Tags:** —
 
 **User steps:**
@@ -1350,7 +1350,7 @@
 ### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
-**Spec:** `flows/observe/list-pagination.spec.ts:762`  
+**Spec:** `flows/observe/list-pagination.spec.ts:671`  
 **Tags:** —
 
 **User steps:**
@@ -1368,7 +1368,7 @@
 ### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
-**Spec:** `flows/observe/list-pagination.spec.ts:828`  
+**Spec:** `flows/observe/list-pagination.spec.ts:737`  
 **Tags:** —
 
 **User steps:**
@@ -1387,7 +1387,7 @@
 ### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
-**Spec:** `flows/observe/list-pagination.spec.ts:897`  
+**Spec:** `flows/observe/list-pagination.spec.ts:806`  
 **Tags:** —
 
 **User steps:**
@@ -1404,7 +1404,7 @@
 ### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
 
 **Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
-**Spec:** `flows/observe/list-pagination.spec.ts:937`  
+**Spec:** `flows/observe/agent-call-log-pager.spec.ts:11`  
 **Tags:** —
 
 **User steps:**
@@ -1423,7 +1423,7 @@
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:995`  
+**Spec:** `flows/observe/list-pagination.spec.ts:846`  
 **Tags:** —
 
 **User steps:**
@@ -1441,7 +1441,7 @@
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:1082`  
+**Spec:** `flows/observe/list-pagination.spec.ts:933`  
 **Tags:** —
 
 **User steps:**
@@ -1808,3 +1808,55 @@
 - PG mcp_server_mcptoolgroupconfig.enabled_groups equals that exact set for the actor connection
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
+
+## simulate
+
+### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
+
+**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links  
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. open /dashboard/simulate
+2. open the old Harness list, new and job links
+3. open the old Simulator Agent link
+4. open the old Personas link
+5. open the Personas tab
+6. open the Prebuilt template links
+7. read the Simulate menu
+8. open the old Agent Definition link
+9. open the Scenarios, Run Simulation and Agent Definition links directly
+
+**Browser observations:**
+
+- /dashboard/simulate lands on Environments
+- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- simulator-agent lands on Environments
+- personas lands on the Environments Personas tab
+- the Personas tab is selected and shows the persona search
+- both template URLs stay on their URL and open their page by title
+- agent-definitions lands on Connected agents
+- the Simulate menu is exactly Environment
+- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+
+### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
+
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu  
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`  
+**Tags:** —
+
+**User steps:**
+
+1. read the Simulate menu
+2. open Scenarios and Run Simulation from the menu
+
+**Backend state verified:**
+
+- user-info for the actor's org reports restrict_simulate_to_environments: false
+
+**Browser observations:**
+
+- the Simulate menu is exactly Environment, Scenarios, Run Simulation
+- each of those two items opens its page by URL and title, never /404

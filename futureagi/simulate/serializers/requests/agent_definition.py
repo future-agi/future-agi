@@ -291,6 +291,7 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     All fields are optional to support partial updates.
     """
 
+    observability_enabled = serializers.BooleanField(required=False)
     agent_name = serializers.CharField(max_length=255, required=False)
     agent_type = serializers.ChoiceField(
         choices=AgentTypeChoices.choices, required=False
@@ -425,6 +426,12 @@ class AgentDefinitionFilterSerializer(serializers.Serializer):
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1)
+
+
+class AgentRunsQuerySerializer(serializers.Serializer):
+    limit = serializers.IntegerField(
+        required=False, default=5, min_value=1, max_value=20
+    )
 
 
 class FetchAssistantRequestSerializer(serializers.Serializer):

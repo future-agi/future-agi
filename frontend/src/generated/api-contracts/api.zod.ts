@@ -1732,6 +1732,7 @@ export const AccountsUserInfoListResponse = zod.object({
     .optional(),
   org_2fa_required: zod.boolean().optional(),
   org_2fa_grace_ends_at: zod.string().datetime({ offset: true }).optional(),
+  restrict_simulate_to_environments: zod.boolean(),
 });
 
 /**
@@ -31621,6 +31622,18 @@ export const SimulateAgentDefinitionsListResponseItem = zod.object({
     .optional()
     .describe("Details of the model"),
   model: zod.string().min(1).optional().describe("Model of the agent"),
+  agent_kind: zod.string().min(1).optional(),
+  source: zod.string().min(1).optional(),
+  version_count: zod.number().optional(),
+  environment_count: zod.number().optional(),
+  environments: zod
+    .array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+      }),
+    )
+    .optional(),
 });
 export const SimulateAgentDefinitionsListResponse = zod.array(
   SimulateAgentDefinitionsListResponseItem,
@@ -31849,6 +31862,13 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   livekit_agent_name: zod.string().optional(),
   livekit_config_json: zod.string().optional(),
   livekit_max_concurrency: zod.string().optional(),
+  versions: zod.array(zod.string()).optional(),
+  active_version: zod.record(zod.string(), zod.string()).optional(),
+  version_count: zod.number().optional(),
+  agent_kind: zod.string().min(1).optional(),
+  source: zod.string().min(1).optional(),
+  environment_count: zod.number().optional(),
+  observability_enabled: zod.boolean().optional(),
 });
 
 /**
@@ -31876,6 +31896,7 @@ export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
+  observability_enabled: zod.boolean().optional(),
   agent_name: zod
     .string()
     .min(1)
@@ -32064,6 +32085,49 @@ export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
     .optional(),
 });
 
+export const SimulateAgentDefinitionsRunsListParams = zod.object({
+  agent_id: zod.string(),
+});
+
+export const simulateAgentDefinitionsRunsListQueryLimitDefault = 5;
+export const simulateAgentDefinitionsRunsListQueryLimitMax = 20;
+
+export const SimulateAgentDefinitionsRunsListQueryParams = zod.object({
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateAgentDefinitionsRunsListQueryLimitMax)
+    .default(simulateAgentDefinitionsRunsListQueryLimitDefault),
+});
+
+export const SimulateAgentDefinitionsRunsListResponse = zod.object({
+  results: zod
+    .array(
+      zod.object({
+        kind: zod.enum(["environment", "simulate"]),
+        test_execution_id: zod.string().uuid(),
+        run_test_id: zod.string().uuid(),
+        run_test_name: zod.string(),
+        run_number: zod.number(),
+        status: zod.string().min(1),
+        environment: zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+        }),
+        agent_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        outcome_passed: zod.number(),
+        outcome_failed: zod.number(),
+        outcome_skipped: zod.number(),
+        started_at: zod.string().datetime({ offset: true }),
+        completed_at: zod.string().datetime({ offset: true }),
+      }),
+    )
+    .optional(),
+});
+
 /**
  * Get all versions of a specific agent definition.
  */
@@ -32132,8 +32196,6 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
-export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
-  false;
 
 export const SimulateAgentDefinitionsVersionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -32184,11 +32246,7 @@ export const SimulateAgentDefinitionsVersionsCreateCreateBody = zod.object({
     .default(
       simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault,
     ),
-  observability_enabled: zod
-    .boolean()
-    .default(
-      simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault,
-    ),
+  observability_enabled: zod.boolean().optional(),
 });
 
 /**
@@ -32254,6 +32312,8 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
     .describe("Snapshot of agent configuration at this version"),
   is_active: zod.string().optional(),
   is_latest: zod.string().optional(),
+  agent_kind: zod.string().min(1).optional(),
+  api_key: zod.string().min(1).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -32335,11 +32395,79 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
           .describe("Snapshot of agent configuration at this version"),
         is_active: zod.string().optional(),
         is_latest: zod.string().optional(),
+        agent_kind: zod.string().min(1).optional(),
+        api_key: zod.string().min(1).optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
       .optional(),
   });
+
+export const SimulateAgentDefinitionsVersionsAgentListParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
+  agent: zod.object({
+    schema_version: zod.string().min(1),
+    type: zod.string().min(1),
+    kind: zod.string().min(1),
+    name: zod.string().min(1),
+    provider_ref: zod.object({
+      provider: zod.string().min(1),
+      id: zod.string().min(1),
+      version: zod.string().min(1),
+    }),
+    behaviour: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        shape: zod.string().min(1),
+        instructions: zod.string().min(1),
+        tools: zod.array(zod.string().min(1)),
+        transitions: zod.array(zod.string().min(1)),
+      }),
+    ),
+    tools: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        description: zod.string().min(1),
+        kind: zod.string().min(1),
+        parameters: zod.object({}).passthrough(),
+        endpoint: zod.object({
+          url: zod.string().min(1),
+        }),
+      }),
+    ),
+    model: zod.object({
+      provider: zod.string().min(1),
+      name: zod.string().min(1),
+      temperature: zod.number(),
+      max_tokens: zod.number(),
+    }),
+    voice: zod.object({
+      provider: zod.string().min(1),
+      voice_id: zod.string().min(1),
+      language: zod.string().min(1),
+      speed: zod.number(),
+    }),
+    telephony: zod.array(
+      zod.object({
+        number: zod.string().min(1),
+        provider: zod.string().min(1),
+        direction_supported: zod.array(zod.string().min(1)),
+      }),
+    ),
+    supports: zod.array(zod.string().min(1)),
+    direction_answer: zod.string().min(1),
+    gaps: zod.array(zod.string().min(1)),
+    instrumentation: zod.string().min(1),
+    setup_hash: zod.string().min(1),
+  }),
+  sdk_version: zod.string().min(1),
+  stored_at: zod.string().datetime({ offset: true }),
+  setup_stale: zod.boolean(),
+});
 
 /**
  * Get the call executions of an agent version.
@@ -32771,6 +32899,8 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
           .describe("Snapshot of agent configuration at this version"),
         is_active: zod.string().optional(),
         is_latest: zod.string().optional(),
+        agent_kind: zod.string().min(1).optional(),
+        api_key: zod.string().min(1).optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -35288,6 +35418,7 @@ export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
     .min(1)
     .max(simulateApiHarnessEnvironmentsListQueryLimitMax)
     .optional(),
+  agent_definition_id: zod.string().uuid().optional(),
 });
 
 export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
@@ -35312,6 +35443,27 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       runs_count: zod.number(),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
+      last_run: zod.object({
+        kind: zod.enum(["environment", "simulate"]),
+        test_execution_id: zod.string().uuid(),
+        run_test_id: zod.string().uuid(),
+        run_test_name: zod.string(),
+        run_number: zod.number(),
+        status: zod.string().min(1),
+        environment: zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+        }),
+        agent_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        outcome_passed: zod.number(),
+        outcome_failed: zod.number(),
+        outcome_skipped: zod.number(),
+        started_at: zod.string().datetime({ offset: true }),
+        completed_at: zod.string().datetime({ offset: true }),
+      }),
     }),
   ),
 });
@@ -36282,7 +36434,10 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -36764,7 +36919,10 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
     .max(simulateApiHarnessJobsCreateBodyPlatformRunIdMax)
     .optional(),
   metadata: zod
-    .record(zod.string(), zod.string())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .default(simulateApiHarnessJobsCreateBodyMetadataDefault),
 });
 
@@ -37109,7 +37267,10 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     .max(simulateApiHarnessJobsPreflightBodyPlatformRunIdMax)
     .optional(),
   metadata: zod
-    .record(zod.string(), zod.string())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .default(simulateApiHarnessJobsPreflightBodyMetadataDefault),
   credential_values: zod
     .record(
@@ -37219,7 +37380,10 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -37433,7 +37597,10 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -38245,6 +38412,7 @@ export const SimulateApiHarnessAttemptsScenariosBody = zod.object({
         .max(simulateApiHarnessAttemptsScenariosBodyChosenEvalsItemMax),
     )
     .optional(),
+  agent: zod.record(zod.string(), zod.string()).optional(),
   run_test_id: zod.string().uuid().optional(),
   scenario_keys: zod
     .array(
@@ -48469,6 +48637,28 @@ export const SimulateV3TestExecutionExportBody = zod.object({
       "-outcome",
     ])
     .default(simulateV3TestExecutionExportBodyOrderingDefault),
+});
+
+export const SimulateV3TestExecutionTracesParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionTracesQueryParams = zod.object({
+  call_execution_id: zod.string().uuid(),
+});
+
+export const SimulateV3TestExecutionTracesResponse = zod.object({
+  project_id: zod.string().uuid(),
+  traces: zod.array(
+    zod.object({
+      trace_id: zod.string().min(1),
+      name: zod.string(),
+      start_time: zod.string().datetime({ offset: true }),
+      status: zod.string(),
+      latency_ms: zod.number(),
+      call_execution_id: zod.string().uuid(),
+    }),
+  ),
 });
 
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
@@ -60326,6 +60516,20 @@ export const TracerObservationSpanReadParams = zod.object({
 });
 
 export const TracerObservationSpanReadQueryParams = zod.object({
+  test_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
+  call_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
   project_id: zod.string().uuid().optional(),
   trace_id: zod.string().min(1).optional(),
   start_hour: zod.string().datetime({ offset: true }).optional(),
@@ -66165,6 +66369,20 @@ export const TracerTraceListVoiceCallsCreateResponse =
   TracerTraceListVoiceCallsResponse;
 
 export const TracerTraceVoiceCallDetailQueryParams = zod.object({
+  test_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
+  call_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
   trace_id: zod
     .string()
     .uuid()
@@ -66301,6 +66519,9 @@ export const TracerTraceVoiceCallDetailResponse = zod.object({
 /**
  * Query params:
 - project_id (optional) — the project the trace was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Retrieve a trace by its ID.
  */
 export const TracerTraceReadParams = zod.object({
@@ -66308,6 +66529,20 @@ export const TracerTraceReadParams = zod.object({
 });
 
 export const TracerTraceReadQueryParams = zod.object({
+  test_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
+  call_execution_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A run the caller can read; opens the hidden simulation project of that run's agent.",
+    ),
   project_id: zod
     .string()
     .uuid()

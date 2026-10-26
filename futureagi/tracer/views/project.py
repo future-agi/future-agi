@@ -8,6 +8,7 @@ from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -83,6 +84,10 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 from tracer.services.project_deletion import soft_delete_projects
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
@@ -266,7 +271,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return queryset.order_by(sort_query)
 
     def perform_update(self, serializer):
-        """Override to invalidate PII cache when project metadata changes."""
+        """Refuse a reserved name; invalidate the PII cache on a metadata change."""
+        if (
+            agent_id_in_simulation_project_name(serializer.validated_data.get("name"))
+            is not None
+        ):
+            raise ValidationError({"name": [RESERVED_PROJECT_NAME_MESSAGE]})
         instance = serializer.save()
         try:
             from tracer.utils.pii_settings import invalidate_pii_cache
@@ -342,6 +352,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             serializer = self.get_serializer(data=request.data)
 
             if serializer.is_valid():
+                if (
+                    agent_id_in_simulation_project_name(
+                        serializer.validated_data.get("name")
+                    )
+                    is not None
+                ):
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
                 serializer.save(
                     organization=getattr(self.request, "organization", None)
                     or self.request.user.organization,
@@ -459,6 +476,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 project_id = validated_data["project_id"]
                 new_name = validated_data["name"]
                 sampling_rate = validated_data.get("sampling_rate")
+
+                if agent_id_in_simulation_project_name(new_name) is not None:
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
 
                 project = self._get_project_in_scope(project_id)
 

@@ -136,6 +136,10 @@ function envelope(draft, name) {
     Math.max(1, Math.trunc(Number(draft.parallelism) || 1)),
   );
   if (parallelism > 1) payload.runtime = { parallelism };
+  // Only code sources have an agent the platform can observe once it reads it.
+  if (draft.observabilityEnabled === true && (draft.kind === "repo" || draft.kind === "upload")) {
+    payload.metadata.observability_enabled = true;
+  }
   const domains = parseEgressDomains(draft.egress);
   if (domains.length) {
     payload.security = {

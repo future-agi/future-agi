@@ -7,9 +7,11 @@ import functools
 import json
 import uuid
 from collections.abc import Iterator
+from dataclasses import asdict
 from itertools import islice
 from typing import Any
 
+import structlog
 from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -46,6 +48,7 @@ from simulate.services.run_results_v3_queries import (
     run_call_rows_queryset,
     run_calls_queryset,
 )
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
 from simulate.services.scoring_status import (
@@ -57,6 +60,11 @@ from simulate.services.scoring_status import (
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 
 class JsonObjectField(serializers.JSONField):
@@ -365,6 +373,24 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     evaluation_columns = EvaluationColumnSerializer(many=True)
 
 
+class RunTraceSerializer(serializers.Serializer):
+    trace_id = serializers.CharField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    latency_ms = serializers.IntegerField(allow_null=True)
+    call_execution_id = serializers.UUIDField(allow_null=True)
+
+
+class RunTracesV3QuerySerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField()
+
+
+class RunTracesV3ResponseSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(allow_null=True)
+    traces = RunTraceSerializer(many=True)
+
+
 class AnalyticsExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
@@ -577,6 +603,42 @@ def _execution_payload(
         "trials": execution.trials or 1,
         "summary": summary,
     }
+
+
+class RunTracesV3View(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=RunTracesV3QuerySerializer,
+        responses={
+            200: RunTracesV3ResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+        operation_id="simulate_v3_test_execution_traces",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        try:
+            result = list_run_traces(
+                execution,
+                call_execution_id=request.validated_query_data["call_execution_id"],
+            )
+        except CallNotInRun:
+            return GeneralMethods(request=request).bad_request(
+                "call_execution_id is not a call of this run."
+            )
+        except (CHError, TimeoutError) as exc:
+            logger.warning(
+                "run_traces_read_failed",
+                test_execution_id=str(execution.id),
+                error=type(exc).__name__,
+            )
+            return GeneralMethods(request=request).custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Traces are unavailable right now",
+                code="run_traces_unavailable",
+            )
+        return Response(RunTracesV3ResponseSerializer(asdict(result)).data)
 
 
 def _facet_rows(

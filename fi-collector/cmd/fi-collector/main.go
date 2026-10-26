@@ -177,9 +177,9 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, srv, log)
+	go runAdmin(":9464", writer, authenticator, srv, log)
 
-	go authenticator.WatchRevocations(ctx)
+	startAuthWatchers(ctx, authenticator)
 
 	logStarting(log, cfg)
 	runErr := srv.Run(ctx)
@@ -392,26 +392,65 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	return nil
 }
 
+// authWatchers is the part of the authenticator that runs in the background.
+type authWatchers interface {
+	WatchRevocations(context.Context)
+	WatchRoutingColumns(context.Context)
+}
+
+// startAuthWatchers runs the loops that keep the authenticator current until
+// ctx is cancelled: cache eviction on revocation, and the check for the
+// columns sandbox-key routing needs. Without the second, no sandbox key is
+// ever routed.
+func startAuthWatchers(ctx context.Context, a authWatchers) {
+	go a.WatchRevocations(ctx)
+	go a.WatchRoutingColumns(ctx)
+}
+
+// routingReporter is the part of the authenticator /healthz reads.
+type routingReporter interface {
+	RoutingSnapshot() auth.RoutingSnapshot
+}
+
+// healthBody is the /healthz body. The simulation routing counters are in the
+// body only; they never change the status code.
+func healthBody(status string, stats chwriter.Stats, router routingReporter) map[string]any {
+	body := map[string]any{"status": status, "stats": stats}
+	if router != nil {
+		body["simulation_routing"] = router.RoutingSnapshot().Body()
+	}
+	return body
+}
+
 // ingestReporter is the part of the server /healthz reads.
 type ingestReporter interface {
 	IngestStats() server.IngestStats
 }
 
+// withIngest adds the ingest budget's use and the refused OTLP requests to a
+// /healthz body.
+func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
+	if ingest != nil {
+		body["ingest"] = ingest.IngestStats()
+	}
+	return body
+}
+
 // runAdmin serves /healthz for container health checks. The ingest budget's
 // use and the OTLP requests refused, by transport, reason and code, are in
 // the body only; they never change the status code.
-func runAdmin(addr string, w *chwriter.Writer, ingest ingestReporter, log *slog.Logger) {
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, ingest ingestReporter, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s, "ingest": ingest.IngestStats()})
+			_ = json.NewEncoder(rw).Encode(withIngest(healthBody("unhealthy", s, router), ingest))
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s, "ingest": ingest.IngestStats()})
+		_ = json.NewEncoder(rw).Encode(withIngest(healthBody("ok", s, router), ingest))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
