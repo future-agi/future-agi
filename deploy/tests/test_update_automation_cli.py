@@ -1324,4 +1324,3 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertEqual(fixture.env_bytes(), fixture.original)
         self.assertIsNone(fixture.state.read_journal())
         self.assertEqual(fixture.state.receipts(), [])
-

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SLOT = "a" * 32
@@ -27,6 +28,42 @@ OVERLAYS = {
 
 def clean_environment():
     return {key: value for key, value in os.environ.items() if key in ("PATH", "HOME")}
+
+
+def normalize_service_environments(model):
+    """Compare Compose's map/list encodings without discarding keys or values."""
+    normalized = copy.deepcopy(model)
+    for name, service in normalized["services"].items():
+        if "environment" not in service:
+            continue
+        environment = service["environment"]
+        if isinstance(environment, dict):
+            pairs = environment.items()
+        elif isinstance(environment, list):
+            pairs = []
+            for entry in environment:
+                if not isinstance(entry, str):
+                    raise ValueError(f"non-string environment entry for {name}")
+                key, separator, value = entry.partition("=")
+                # A bare KEY is passthrough/unset, not the empty value KEY=.
+                pairs.append((key, value if separator else None))
+        else:
+            raise ValueError(f"environment must be a map or list for {name}")
+        values = {}
+        for key, value in pairs:
+            if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
+                raise ValueError(f"invalid environment key for {name}")
+            if key in values:
+                raise ValueError(f"duplicate environment key for {name}")
+            # Compose 2.24.7 keeps unquoted integer ports in maps, but emits
+            # their decimal strings in lists. Never coerce booleans or containers.
+            if type(value) is int:
+                value = str(value)
+            if value is not None and (not isinstance(value, str) or "\x00" in value):
+                raise ValueError(f"invalid environment value for {name}")
+            values[key] = value
+        service["environment"] = values
+    return normalized
 
 
 class StatusPreparationTests(unittest.TestCase):
@@ -243,6 +280,128 @@ class StatusMountSemanticsTests(StatusMountAssertions, unittest.TestCase):
         for overlay in OVERLAYS.values():
             with self.subTest(overlay=overlay):
                 self.assertIn("\n        bind:\n          create_host_path: false\n", (ROOT / overlay).read_text())
+                self.assertIn("\n        read_only: true\n", (ROOT / overlay).read_text())
+
+
+class StatusEnvironmentSemanticsTests(unittest.TestCase):
+    def test_map_and_list_preserve_values_null_and_all_services(self):
+        expected = {"EQUALS": "left=right==", "EMPTY": "", "PASSTHROUGH": None,
+                    "SPACES": "  unchanged  ", "MULTILINE": "first\nsecond",
+                    "PORT": "5432", "ZERO": "0", "NEGATIVE": "-12"}
+        entries = [key if value is None else key + "=" + value for key, value in expected.items()]
+        model = {"services": {
+            "app": {"environment": {**expected, "PORT": 5432, "ZERO": 0, "NEGATIVE": -12}},
+            "worker": {"environment": entries},
+            "sandbox": {"environment": []}, "no-environment": {"command": ["keep=unchanged"]},
+        }}
+        original = copy.deepcopy(model)
+        normalized = normalize_service_environments(model)
+        self.assertEqual(normalized, {"services": {
+            "app": {"environment": expected}, "worker": {"environment": expected},
+            "sandbox": {"environment": {}}, "no-environment": {"command": ["keep=unchanged"]},
+        }})
+        self.assertEqual(model, original)
+        self.assertEqual(normalize_service_environments(normalized), normalized)
+
+    def test_missing_null_empty_and_changed_values_are_not_conflated(self):
+        environments = ({}, {"KEY": None}, {"KEY": ""}, {"KEY": "a=b"}, {"KEY": "a=c"},
+                        {"KEY": 5432}, {"KEY": "05432"}, {"KEY": 5433})
+        for first in environments:
+            for second in environments:
+                if first == second:
+                    continue
+                with self.subTest(first=first, second=second):
+                    model = {"services": {
+                        "app": {"environment": first}, "worker": {"environment": [
+                            key if value is None else key + "=" + str(value) for key, value in second.items()
+                        ]},
+                    }}
+                    services = normalize_service_environments(model)["services"]
+                    self.assertNotEqual(services["app"]["environment"], services["worker"]["environment"])
+
+    def test_malformed_environment_and_duplicate_keys_on_any_service_are_rejected(self):
+        cases = (None, "KEY=value", 1, [None], [False], [1], [{}], [""], ["=value"],
+                 ["KEY\x00=value"], ["KEY=value\x00"], {"": "value"}, {1: "value"},
+                 {"KEY=OTHER": "value"}, {"KEY\x00": "value"}, {"KEY": "value\x00"},
+                 {"KEY": False}, {"KEY": []}, {"KEY": {}}, {"KEY": float("nan")},
+                 {"KEY": float("inf")}, {"KEY": float("-inf")},
+                 ["KEY=first", "KEY=second"], ["KEY=same", "KEY=same"],
+                 ["KEY", "KEY="], ["KEY=", "KEY"], ["KEY", "KEY"])
+        for name in ("app", "worker", "sandbox"):
+            for environment in cases:
+                model = {"services": {service: {"environment": {}} for service in ("app", "worker", "sandbox")}}
+                model["services"][name]["environment"] = environment
+                with self.subTest(service=name, environment=environment), self.assertRaises(ValueError):
+                    normalize_service_environments(model)
+
+    def check_overlay_fixture(self, *, as_list, change=None, profiled=False):
+        """Feed synthetic JSON through the real render helper and overlay assertions."""
+        case = StatusOverlayComposeTests()
+        temporary = tempfile.TemporaryDirectory(prefix="fagi-compose-fixture-")
+        self.addCleanup(temporary.cleanup)
+        case.source = Path(temporary.name) / SLOT
+        case.environment = {}
+
+        def render(args, **kwargs):
+            consumer = "backend" if str(ROOT / "docker-compose.distributed.yml") in args else "app"
+            service = {"environment": {"KEPT": "left=right==", "PASSTHROUGH": None, "PORT": 5432}}
+            worker = {"environment": {"WORKER_ONLY": "untouched=="}, "profiles": ["worker"]}
+            if any(str(ROOT / path) in args for path in OVERLAYS.values()):
+                service["environment"].update(FI_HOST_UPDATE_STATUS_FILE=TARGET + "/status.json",
+                                              FI_HOST_UPDATE_STATUS_SLOT=SLOT)
+                service["volumes"] = [{"type": "bind", "source": str(case.source), "target": TARGET,
+                                       "read_only": True, "bind": {"create_host_path": False}}]
+                if change:
+                    change(service, worker)
+            if as_list:
+                for current in (service, worker):
+                    current["environment"] = [key if value is None else key + "=" + str(value)
+                                              for key, value in current["environment"].items()]
+            return subprocess.CompletedProcess(args, 0, json.dumps({"services": {consumer: service, "worker": worker}}), "")
+
+        with mock.patch.object(subprocess, "run", side_effect=render):
+            if profiled:
+                case.test_profiled_workers_and_sandboxes_never_receive_status()
+            else:
+                case.test_only_intended_service_changes_and_default_model_is_unchanged()
+
+    def test_both_encodings_pass_the_actual_overlay_assertions(self):
+        for as_list in (False, True):
+            for profiled in (False, True):
+                with self.subTest(as_list=as_list, profiled=profiled):
+                    self.check_overlay_fixture(as_list=as_list, profiled=profiled)
+
+    def test_environment_leaks_to_nonconsumers_fail_in_both_encodings(self):
+        for as_list in (False, True):
+            for profiled in (False, True):
+                for key in ("FI_HOST_UPDATE_STATUS_DIR", "FI_HOST_UPDATE_STATUS_FILE", "FI_HOST_UPDATE_STATUS_SLOT"):
+                    for value in ("leaked=value", "", None):
+                        with self.subTest(as_list=as_list, profiled=profiled, key=key, value=value), \
+                                self.assertRaises(AssertionError):
+                            self.check_overlay_fixture(as_list=as_list, profiled=profiled,
+                                change=lambda service, worker: worker["environment"].update({key: value}))
+
+    def test_wrong_slot_file_and_changed_values_fail_in_both_encodings(self):
+        for as_list in (False, True):
+            for key, value in (("FI_HOST_UPDATE_STATUS_SLOT", "b" * 32),
+                               ("FI_HOST_UPDATE_STATUS_SLOT", SLOT + "=changed"),
+                               ("FI_HOST_UPDATE_STATUS_SLOT", None), ("FI_HOST_UPDATE_STATUS_SLOT", ""),
+                               ("FI_HOST_UPDATE_STATUS_FILE", TARGET + "/wrong.json"),
+                               ("FI_HOST_UPDATE_STATUS_FILE", TARGET + "/status.json=changed"),
+                               ("FI_HOST_UPDATE_STATUS_FILE", None), ("FI_HOST_UPDATE_STATUS_FILE", ""),
+                               ("KEPT", "left=changed=="), ("PASSTHROUGH", ""),
+                               ("PORT", 5433), ("PORT", "05432")):
+                with self.subTest(as_list=as_list, key=key, value=value), self.assertRaises(AssertionError):
+                    self.check_overlay_fixture(as_list=as_list,
+                        change=lambda service, worker: service["environment"].update({key: value}))
+
+    def test_unsafe_mounts_still_fail_after_environment_normalization(self):
+        for as_list in (False, True):
+            for changes in ({"bind": {"create_host_path": True}}, {"read_only": False},
+                            {"target": "/wrong"}, {"source": "/wrong"}, {"type": "volume"}):
+                with self.subTest(as_list=as_list, changes=changes), self.assertRaises(AssertionError):
+                    self.check_overlay_fixture(as_list=as_list,
+                        change=lambda service, worker: service["volumes"][0].update(changes))
 
 
 @unittest.skipUnless(shutil.which("docker"), "Docker CLI required for daemon-free Compose rendering")
@@ -282,7 +441,8 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
             self.assertIn(missing, result.stderr)
             return None
         self.assertEqual(result.returncode, 0, result.stderr)
-        return json.loads(result.stdout)
+        self.assertFalse(self.source.exists(), "config created host source")
+        return normalize_service_environments(json.loads(result.stdout))
 
     def test_only_intended_service_changes_and_default_model_is_unchanged(self):
         for topology, production in (("standalone", False), ("distributed", False), ("distributed", True)):
@@ -305,6 +465,7 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
                 for name, other in original["services"].items():
                     self.assertNotIn("FI_HOST_UPDATE_STATUS_DIR", other.get("environment", {}))
                     if name != consumer:
+                        self.assertNotIn("FI_HOST_UPDATE_STATUS_FILE", other.get("environment", {}))
                         self.assertNotIn("FI_HOST_UPDATE_STATUS_SLOT", other.get("environment", {}))
                         self.assertNotIn(TARGET, [v["target"] for v in other.get("volumes", [])])
                 self.assertFalse(self.source.exists(), "config created host source")
@@ -316,6 +477,7 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
             for name, service in rendered["services"].items():
                 if name == consumer:
                     continue
+                self.assertNotIn("FI_HOST_UPDATE_STATUS_DIR", service.get("environment", {}))
                 self.assertNotIn("FI_HOST_UPDATE_STATUS_FILE", service.get("environment", {}))
                 self.assertNotIn("FI_HOST_UPDATE_STATUS_SLOT", service.get("environment", {}))
                 self.assertNotIn(TARGET, [v["target"] for v in service.get("volumes", [])])
