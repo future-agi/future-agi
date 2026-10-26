@@ -471,6 +471,158 @@ class SerializerTests(unittest.TestCase):
         )
 
 
+# These expected wire values intentionally do not call the envelope builder: a
+# change to its aliases or classification must fail this endpoint's contract.
+ERROR_CASES = (
+    (
+        400,
+        "invalid",
+        "This endpoint accepts no query parameters or body.",
+        "validation_error",
+    ),
+    (401, "not_authenticated", "Authentication required.", "authentication_error"),
+    (
+        403,
+        "permission_denied",
+        "Host update status is not authorized.",
+        "permission_error",
+    ),
+    (403, "2fa_required", "2FA required", "permission_error"),
+    (
+        403,
+        "saml_scope_conflict",
+        "Organization selection is not authorized.",
+        "permission_error",
+    ),
+    (404, "not_found", "Not found.", "not_found"),
+    (405, "method_not_allowed", "Method not allowed.", "api_error"),
+    (503, "service_unavailable", "Status service unavailable.", "service_unavailable"),
+)
+
+
+def error_body(code):
+    _, _, detail, error_type = next(row for row in ERROR_CASES if row[1] == code)
+    return {
+        "status": False,
+        "type": error_type,
+        "code": code,
+        "detail": detail,
+        "message": detail,
+        "error": detail,
+        "result": detail,
+    }
+
+
+class ErrorContractTests(unittest.TestCase):
+    def test_exact_safe_envelopes_use_shared_builder_and_rollback(self):
+        from rest_framework.exceptions import APIException
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.views import set_rollback
+
+        from tfc.utils.api_errors import build_error_envelope
+        from tfc.views.host_update_status import HostUpdateStatusView
+
+        canary = "CANARY credential=secret /private/host postgres://user:password@db"
+        cases = []
+        for http_status, code, _, _ in ERROR_CASES:
+            exc = APIException(canary, code=code)
+            exc.status_code = http_status
+            cases.append((exc, http_status, code))
+        for http_status in (400, 401, 403, 404, 405, 503, 500, 418):
+            exc = APIException({"request_body": [canary]}, code=canary)
+            exc.status_code = http_status
+            expected = next(
+                (row for row in ERROR_CASES if row[0] == http_status), ERROR_CASES[-1]
+            )
+            cases.append((exc, expected[0], expected[1]))
+        cases.append((RuntimeError(canary), 503, "service_unavailable"))
+        for exc, http_status, code in cases:
+            view = HostUpdateStatusView()
+            view.request = view.initialize_request(
+                APIRequestFactory().get("/api/host-update-status/")
+            )
+            with (
+                self.subTest(status=http_status, code=code, exc=type(exc).__name__),
+                patch(
+                    "tfc.views.host_update_status.build_error_envelope",
+                    wraps=build_error_envelope,
+                    create=True,
+                ) as build,
+                patch(
+                    "tfc.views.host_update_status.set_rollback", wraps=set_rollback
+                ) as rollback,
+            ):
+                response = view.handle_exception(exc)
+                expected = error_body(code)
+                self.assertEqual(response.status_code, http_status)
+                self.assertEqual(response.data, expected)
+                self.assertTrue(response.exception)
+                self.assertNotIn("CANARY", json.dumps(response.data))
+                build.assert_called_once_with(
+                    expected["detail"], status_code=http_status, code=code
+                )
+                rollback.assert_called_once_with()
+                if http_status == 401:
+                    self.assertEqual(
+                        response["WWW-Authenticate"],
+                        view.get_authenticate_header(view.request),
+                    )
+                else:
+                    self.assertNotIn("WWW-Authenticate", response)
+
+    def test_error_serializer_and_documentation_match_exact_wire(self):
+        from jsonschema import Draft4Validator
+
+        from tfc.host_updates.serializers import HostUpdateStatusErrorSerializer
+
+        schema = HostUpdateStatusErrorSerializer.Meta.swagger_schema_fields
+        keys = set(error_body("invalid"))
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(set(schema["required"]), keys)
+        self.assertEqual(set(schema["properties"]), keys)
+        self.assertEqual(
+            schema["properties"]["status"], {"type": "boolean", "enum": [False]}
+        )
+        self.assertEqual(
+            set(schema["properties"]["type"]["enum"]), {row[3] for row in ERROR_CASES}
+        )
+        self.assertEqual(
+            set(schema["properties"]["code"]["enum"]), {row[1] for row in ERROR_CASES}
+        )
+        validator = Draft4Validator(schema)
+        for _, code, _, _ in ERROR_CASES:
+            with self.subTest(code=code):
+                expected = error_body(code)
+                serializer = HostUpdateStatusErrorSerializer(data=expected)
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                self.assertEqual(serializer.validated_data, expected)
+                self.assertEqual(serializer.data, expected)
+                validator.validate(expected)
+
+    def test_error_serializer_rejects_extra_missing_and_non_wire_types(self):
+        from tfc.host_updates.serializers import HostUpdateStatusErrorSerializer
+
+        body = error_body("service_unavailable")
+        invalid = [
+            {**body, "details": {"private": ["CANARY"]}},
+            {**body, "status": True},
+        ]
+        for key in body:
+            invalid.append({k: v for k, v in body.items() if k != key})
+            for value in (None, [], {"secret": "CANARY"}, 0):
+                invalid.append({**body, key: value})
+        for key in ("type", "code"):
+            invalid.append({**body, key: "CANARY"})
+        for key in ("detail", "message", "error", "result"):
+            for value in ("", "x" * 129):
+                invalid.append({**body, key: value})
+        for value in invalid:
+            with self.subTest(value=value):
+                serializer = HostUpdateStatusErrorSerializer(data=value)
+                self.assertFalse(serializer.is_valid())
+                self.assertNotIn("CANARY", str(serializer.errors))
+
+
 # Do not require Django merely to run the stdlib reader suite. Selecting the
 # endpoint suite without Django still fails at setUp; it is not silently skipped.
 try:
@@ -544,6 +696,89 @@ class EndpointTests(DatabaseTestCase):
         mode.start()
         self.addCleanup(mode.stop)
         self.mode_patch = mode
+
+    def assert_error_response(self, response, http_status, code, *, head=False):
+        from tfc.host_updates.serializers import HostUpdateStatusErrorSerializer
+
+        self.assertEqual(response.status_code, http_status)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertIn("Authorization", response["Vary"])
+        self.assertIn("X-Organization-Id", response["Vary"])
+        if http_status == 401:
+            self.assertIn("WWW-Authenticate", response)
+        if head:
+            self.assertEqual(response.content, b"")
+            self.assertIsNone(response.data)
+            self.assertNotIn("X-2FA-Required", response)
+            self.assertNotIn("X-2FA-Grace-Ends", response)
+        else:
+            self.assertEqual(response.json(), error_body(code))
+            serializer = HostUpdateStatusErrorSerializer(data=response.json())
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            self.assertEqual(serializer.validated_data, response.json())
+
+    def test_rejected_requests_and_metadata_have_exact_common_errors(self):
+        from django.test import override_settings
+
+        with patch.object(
+            status, "_read_file", side_effect=AssertionError("must not read")
+        ):
+            for method in ("get", "head", "options"):
+                with self.subTest(method=method):
+                    send = getattr(self.client, method)
+                    self.assert_error_response(
+                        send(self.url + "?path=/private/CANARY"),
+                        400,
+                        "invalid",
+                        head=method == "head",
+                    )
+                    self.assert_error_response(
+                        self.client.generic(
+                            method.upper(),
+                            self.url,
+                            b'{"credential":"CANARY"}',
+                            content_type="application/json",
+                        ),
+                        400,
+                        "invalid",
+                        head=method == "head",
+                    )
+                    with override_settings(EE_LICENSE_KEY="CANARY"):
+                        self.assert_error_response(
+                            send(self.url), 404, "not_found", head=method == "head"
+                        )
+                    self.assert_error_response(
+                        send(self.url, HTTP_X_API_KEY="CANARY"),
+                        403,
+                        "permission_denied",
+                        head=method == "head",
+                    )
+                    self.client.credentials()
+                    self.assert_error_response(
+                        send(self.url), 401, "not_authenticated", head=method == "head"
+                    )
+                    self.client.credentials(HTTP_AUTHORIZATION="Bearer " + self.bearer)
+            for method in ("post", "put", "patch", "delete"):
+                self.assert_error_response(
+                    getattr(self.client, method)(self.url), 405, "method_not_allowed"
+                )
+
+    def test_auth_database_and_transport_failures_are_sanitized_for_metadata(self):
+        from django.db import OperationalError
+
+        for exc in (
+            OperationalError("CANARY postgres://user:password@db"),
+            RuntimeError("CANARY /private/host"),
+        ):
+            with patch("tfc.host_updates.permissions.decode_token", side_effect=exc):
+                for method in ("get", "head", "options"):
+                    with self.subTest(exc=type(exc).__name__, method=method):
+                        self.assert_error_response(
+                            getattr(self.client, method)(self.url),
+                            503,
+                            "service_unavailable",
+                            head=method == "head",
+                        )
 
     def new_human_session(self):
         """Issue a real fresh fixture token after lifecycle signals revoke one."""
@@ -789,6 +1024,13 @@ class EndpointTests(DatabaseTestCase):
             response = self.client.get(self.url)
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json()["code"], "2fa_required")
+            self.assert_error_response(response, 403, "2fa_required")
+            self.assert_error_response(
+                self.client.options(self.url), 403, "2fa_required"
+            )
+            self.assert_error_response(
+                self.client.head(self.url), 403, "2fa_required", head=True
+            )
             self.org.require_2fa_enforced_at = django_timezone.now()
             self.org.save()
             response = self.client.get(self.url)
@@ -840,6 +1082,16 @@ class EndpointTests(DatabaseTestCase):
         ):
             self.assertEqual(response.status_code, 403)
             self.assertEqual(response.json()["code"], "saml_scope_conflict")
+            self.assert_error_response(response, 403, "saml_scope_conflict")
+        for method in ("head", "options"):
+            self.assert_error_response(
+                getattr(self.client, method)(
+                    self.url, HTTP_X_ORGANIZATION_ID=str(other.pk)
+                ),
+                403,
+                "saml_scope_conflict",
+                head=method == "head",
+            )
         idp.is_enabled = False
         idp.save(update_fields=["is_enabled"])
         self.assertEqual(self.client.get(self.url).status_code, 401)
@@ -1096,20 +1348,34 @@ class EndpointTests(DatabaseTestCase):
             self.assertEqual(response.status_code, 503)
             self.assertEqual(
                 response.json(),
-                {
-                    "status": False,
-                    "code": "service_unavailable",
-                    "detail": "Status service unavailable.",
-                },
+                error_body("service_unavailable"),
             )
             self.assertEqual(response["Cache-Control"], "private, no-store")
             self.assertEqual(self.client.get("/api/deployment-info/").status_code, 200)
             self.assertEqual(self.client.get("/health/").status_code, 200)
 
     def test_real_oss_mode_with_ee_package_and_both_compose_topologies(self):
+        from django.test import override_settings
+
         from tfc.host_updates.permissions import supported_installation
 
         self.mode_patch.stop()
+        if importlib.util.find_spec("ee") is not None:
+            from ee.usage.deployment import DeploymentMode, _detect_mode
+
+            self.addCleanup(_detect_mode.cache_clear)
+            # Reproduce CI ordering with the actual process-lifetime cache, not
+            # a mocked OSS result. Changing settings must not change that cache.
+            with override_settings(
+                CLOUD_DEPLOYMENT="", EE_LICENSE_KEY="test-license-key"
+            ):
+                _detect_mode.cache_clear()
+                self.assertEqual(DeploymentMode.get_mode(), "ee")
+            self.assertEqual(DeploymentMode.get_mode(), "ee")
+            self.assertIsNone(supported_installation())
+            # Like the EE deployment tests, isolate the cache when the fixture
+            # changes settings. Cleanup leaves ambient settings free to redetect.
+            _detect_mode.cache_clear()
         for embedded, expected in (("false", "distributed"), ("true", "standalone")):
             with patch.dict(os.environ, {"FI_EMBEDDED_TEMPORAL_WORKER": embedded}):
                 self.assertEqual(supported_installation(), expected)

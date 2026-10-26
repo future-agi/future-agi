@@ -21,6 +21,7 @@ from tfc.host_updates.serializers import (
 )
 from tfc.host_updates.status import read_public_status
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 
 ERROR_RESPONSES = dict.fromkeys(
     (400, 401, 403, 404, 405, 503), HostUpdateStatusErrorSerializer
@@ -101,12 +102,18 @@ class HostUpdateStatusView(APIView):
         if status_code == 403 and getattr(exc, "get_codes", None):
             special = exc.get_codes()
             if special == "2fa_required":
-                code, detail = special, "2FA required"
+                code, detail = "2fa_required", "2FA required"
             elif special == "saml_scope_conflict":
-                code, detail = special, "Organization selection is not authorized."
+                code, detail = (
+                    "saml_scope_conflict",
+                    "Organization selection is not authorized.",
+                )
         set_rollback()
+        # Only these constant messages/codes enter the common envelope. Never
+        # pass exc or its detail/structured payload to the shared builder.
         response = Response(
-            {"status": False, "code": code, "detail": detail}, status=status_code
+            build_error_envelope(detail, status_code=status_code, code=code),
+            status=status_code,
         )
         if status_code == 401:
             response["WWW-Authenticate"] = self.get_authenticate_header(self.request)

@@ -4446,6 +4446,18 @@ export interface HostUpdateStatusResponseApi {
   result: HostUpdateStatusResponseApiResult;
 }
 
+export type HostUpdateStatusErrorApiType =
+  (typeof HostUpdateStatusErrorApiType)[keyof typeof HostUpdateStatusErrorApiType];
+
+export const HostUpdateStatusErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  api_error: "api_error",
+  service_unavailable: "service_unavailable",
+} as const;
+
 export type HostUpdateStatusErrorApiCode =
   (typeof HostUpdateStatusErrorApiCode)[keyof typeof HostUpdateStatusErrorApiCode];
 
@@ -4461,10 +4473,29 @@ export const HostUpdateStatusErrorApiCode = {
 } as const;
 
 export interface HostUpdateStatusErrorApi {
-  status: boolean;
+  status: false;
+  type: HostUpdateStatusErrorApiType;
   code: HostUpdateStatusErrorApiCode;
-  /** @minLength 1 */
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
   detail: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  message: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  error: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  result: string;
 }
 
 export type LangfuseHealthResponseApiStatus =

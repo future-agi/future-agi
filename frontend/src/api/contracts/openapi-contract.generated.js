@@ -65107,15 +65107,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HostUpdateStatusError: {
-      required: ["status", "code", "detail"],
+      required: [
+        "status",
+        "type",
+        "code",
+        "detail",
+        "message",
+        "error",
+        "result",
+      ],
       type: "object",
       properties: {
         status: {
-          title: "Status",
           type: "boolean",
+          enum: [false],
+        },
+        type: {
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "permission_error",
+            "not_found",
+            "api_error",
+            "service_unavailable",
+          ],
         },
         code: {
-          title: "Code",
           type: "string",
           enum: [
             "invalid",
@@ -65129,9 +65147,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
         },
         detail: {
-          title: "Detail",
           type: "string",
           minLength: 1,
+          maxLength: 128,
+        },
+        message: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        error: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        result: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
         },
       },
       additionalProperties: false,

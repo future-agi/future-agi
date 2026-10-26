@@ -40,8 +40,12 @@ describe("host reporting through the real shared Axios transport", () => {
       .mockImplementationOnce((config) =>
         reject(config, 401, {
           status: false,
+          type: "authentication_error",
           code: "not_authenticated",
           detail: "Authentication required.",
+          message: "Authentication required.",
+          error: "Authentication required.",
+          result: "Authentication required.",
         }),
       )
       .mockImplementationOnce(async (config) => ({
@@ -69,8 +73,12 @@ describe("host reporting through the real shared Axios transport", () => {
       axios.defaults.adapter = (config) =>
         reject(config, 403, {
           status: false,
+          type: "permission_error",
           code: "2fa_required",
           detail: "2FA required",
+          message: "2FA required",
+          error: "2FA required",
+          result: "2FA required",
         });
       const data = await fetchHostUpdateStatus({ organizationId: "org-a" });
       expect(data).toMatchObject({ availability: "forbidden", snapshot: null });
@@ -80,6 +88,47 @@ describe("host reporting through the real shared Axios transport", () => {
     } finally {
       window.removeEventListener("2fa-enforcement-block", event);
     }
+  });
+  it("keeps SAML scope refusal closed with the common error aliases", async () => {
+    const detail = "Organization selection is not authorized.";
+    const adapter = vi.fn((config) =>
+      reject(config, 403, {
+        status: false,
+        type: "permission_error",
+        code: "saml_scope_conflict",
+        detail,
+        message: detail,
+        error: detail,
+        result: detail,
+      }),
+    );
+    axios.defaults.adapter = adapter;
+    expect(
+      await fetchHostUpdateStatus({ organizationId: "org-a" }),
+    ).toMatchObject({ availability: "forbidden", snapshot: null });
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(auth.refresh).not.toHaveBeenCalled();
+  });
+  it("never exposes server error aliases as report data or transport text", async () => {
+    const detail = "CANARY postgres://user:password@db /private/host";
+    const adapter = vi.fn((config) =>
+      reject(config, 503, {
+        status: false,
+        type: "service_unavailable",
+        code: "service_unavailable",
+        detail,
+        message: detail,
+        error: detail,
+        result: detail,
+      }),
+    );
+    axios.defaults.adapter = adapter;
+    await expect(
+      fetchHostUpdateStatus({ organizationId: "org-a" }),
+    ).rejects.toThrow(/^Host update reporting is unavailable\.$/);
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(auth.refresh).not.toHaveBeenCalled();
+    expect(auth.clear).not.toHaveBeenCalled();
   });
   it("handles an old backend's untyped 404 without a mutation fallback", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});

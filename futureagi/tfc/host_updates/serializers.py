@@ -129,26 +129,48 @@ HostUpdateStatusResponseSerializer = _serializer(
 )
 
 
-class HostUpdateStatusErrorSerializer(serializers.Serializer):
-    """Closed string-only errors, including the existing 2FA/refresh codes."""
-
-    status = serializers.BooleanField()
-    code = serializers.ChoiceField(
-        choices=(
-            "invalid",
-            "not_authenticated",
-            "permission_denied",
-            "2fa_required",
-            "saml_scope_conflict",
-            "not_found",
-            "method_not_allowed",
-            "service_unavailable",
-        )
-    )
-    detail = serializers.CharField()
-
-    class Meta:
-        swagger_schema_fields = {"additionalProperties": False}
+# The shared envelope receives only the view's constant strings, so it never
+# emits structured result/details/attr here. Keep all seven fields required and
+# reject unknown keys and DRF scalar coercions just as for the success contract.
+HostUpdateStatusErrorSerializer = _serializer(
+    {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["status", "type", "code", "detail", "message", "error", "result"],
+        "properties": {
+            "status": {"type": "boolean", "const": False},
+            "type": {
+                "type": "string",
+                "enum": [
+                    "validation_error",
+                    "authentication_error",
+                    "permission_error",
+                    "not_found",
+                    "api_error",
+                    "service_unavailable",
+                ],
+            },
+            "code": {
+                "type": "string",
+                "enum": [
+                    "invalid",
+                    "not_authenticated",
+                    "permission_denied",
+                    "2fa_required",
+                    "saml_scope_conflict",
+                    "not_found",
+                    "method_not_allowed",
+                    "service_unavailable",
+                ],
+            },
+            **{
+                key: {"type": "string", "minLength": 1, "maxLength": 128}
+                for key in ("detail", "message", "error", "result")
+            },
+        },
+    },
+    "HostUpdateStatusError",
+)
 
 
 class HostUpdateStatusOptionsSerializer(serializers.Serializer):
