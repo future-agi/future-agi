@@ -69,6 +69,10 @@ export const DELETE_DIALOG_COPY = {
 // The delete button's red — kept out of JSX so it never drifts (see C7).
 export const DELETE_TONE = { main: "#DC2626", hover: "#B91C1C" };
 
+// A field the list API doesn't send at all (not even as null). Cells draw a
+// "Coming soon" chip for it; a field sent as null draws a dash instead.
+export const NOT_PROVIDED = Symbol("not provided");
+
 export const EMPTY_MESSAGE = "No environments yet";
 export const ROW_HEIGHT = 52;
 export const DEFAULT_PAGE_SIZE = 25;

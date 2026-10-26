@@ -136,7 +136,7 @@ describe("EnvironmentsHome", () => {
     const user = userEvent.setup();
     renderHome("/dashboard/simulate/environments");
 
-    await user.click(screen.getByRole("tab", { name: "My Environments" }));
+    await user.click(screen.getByRole("tab", { name: /^My Environments/ }));
     expect(lastSearch).toContain("tab=my-environments");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
 
@@ -152,18 +152,16 @@ describe("EnvironmentsHome", () => {
   it("renders the three tabs in order", () => {
     renderHome("/dashboard/simulate/environments");
 
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "Build environment",
-      "My Environments",
-      "Personas",
-    ]);
+    expect(
+      screen.getAllByRole("tab").map((t) => t.textContent.replace(/\d+$/, "")),
+    ).toEqual(["Build environment", "My Environments", "Personas"]);
   });
 
   it("tracks a Personas tab click with the personas navigation event", async () => {
     const user = userEvent.setup();
     renderHome("/dashboard/simulate/environments");
 
-    await user.click(screen.getByRole("tab", { name: "My Environments" }));
+    await user.click(screen.getByRole("tab", { name: /^My Environments/ }));
     expect(trackEvent).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("tab", { name: "Personas" }));
@@ -241,5 +239,11 @@ describe("EnvironmentsHome", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();
     expect(screen.queryByLabelText("Back to environments")).toBeNull();
+  });
+
+  it("shows how many environments there are on the My Environments tab", async () => {
+    renderHome("/dashboard/simulate/environments");
+    const tab = screen.getByRole("tab", { name: /^My Environments/ });
+    expect(await within(tab).findByText("1")).toBeInTheDocument();
   });
 });

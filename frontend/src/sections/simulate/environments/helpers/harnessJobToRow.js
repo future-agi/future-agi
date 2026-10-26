@@ -4,7 +4,7 @@ import {
   HARNESS_STAGE,
   terminalStages,
 } from "src/pages/dashboard/harness/harnessShared";
-import { ENV_STATUS, BUILD_STATUS } from "../myEnvironments.constants";
+import { ENV_STATUS, BUILD_STATUS, NOT_PROVIDED } from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
 // credentials.detected_connectors (see `agentTypeIcon` in harnessShared). A
@@ -102,11 +102,30 @@ const ENV_AGENT_TYPE = {
   chat: AGENT_TYPES.CHAT,
 };
 
+// The value the API sent for `key`, null included, or NOT_PROVIDED when the
+// key isn't in the payload at all.
+const sent = (obj, key) => (obj && Object.hasOwn(obj, key) ? obj[key] : NOT_PROVIDED);
+
+// The last run's pass rate on the scenarios it scored (skipped ones don't
+// count), and how it moved against the run before it. Null when nothing was
+// scored, so the cell reads "-" rather than 0%.
+const lastRunOf = (run) => {
+  const passed = run?.outcome_passed ?? 0;
+  const failed = run?.outcome_failed ?? 0;
+  if (!run || passed + failed === 0) return null;
+  const rate = Math.round((passed / (passed + failed)) * 100);
+  const previous = sent(run, "previous_pass_rate");
+  const delta =
+    previous === NOT_PROVIDED || previous === null
+      ? previous
+      : Math.round(rate - previous);
+  return { rate, delta };
+};
+
 // Map one harness-environments list row to the flat row the My Environments
 // table reads. Unlike the harness-jobs projection, this payload carries the
 // real description and the tool / scenario counts, and its `status` is already
-// the four-state pill value. Sub-goals and total runs have no field in the list
-// yet, so they stay null and their columns keep a placeholder header.
+// the four-state pill value.
 export function harnessEnvToRow(item) {
   return {
     id: item?.id,
@@ -121,13 +140,21 @@ export function harnessEnvToRow(item) {
     domain: item?.domain ?? null,
     tools: item?.tools_count ?? null,
     scenarios: item?.scenario_count ?? null,
-    // §1 (updated contract) adds sub_goals_count / runs_count. They are read
-    // defensively: null until the backend actually serves them, at which point
-    // the real values flow through and the "coming soon" column headers can be
-    // dropped (Phase B). buildProgress feeds the status pill's inline "n/m
-    // steps" and the list carries no live progress, so it stays absent.
+    // buildProgress feeds the status pill's inline "n/m steps"; the list
+    // carries no live progress, so it stays absent.
     subgoals: item?.sub_goals_count ?? null,
     runsTotal: item?.runs_count ?? null,
     buildProgress: null,
+    agent: sent(item, "agent"),
+    owner: sent(item, "owner"),
+    // No environment versions, nor an agent's Main / Live / Sealed tags, in
+    // the backend yet.
+    envVersion: NOT_PROVIDED,
+    agentTags: NOT_PROVIDED,
+    // An older backend doesn't send last_run at all; null means never run.
+    lastRun:
+      sent(item, "last_run") === NOT_PROVIDED
+        ? NOT_PROVIDED
+        : lastRunOf(item.last_run),
   };
 }
