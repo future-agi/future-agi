@@ -391,10 +391,13 @@ def first_signup(data, mode=None, telemetry_source="web"):
             )
         # Demo data is needed for every signup, including user-set passwords.
         # Dispatch only after the worker can see the committed account.
+        # Installers can create the owner before Temporal starts. Log a failed
+        # dispatch without reporting the already-created account as a failure.
         transaction.on_commit(
             lambda user_id=user.id, password=generated_password: (
                 process_post_registration(user_id, password)
-            )
+            ),
+            robust=True,
         )
 
         transaction.on_commit(
