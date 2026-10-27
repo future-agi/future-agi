@@ -76,13 +76,16 @@ const NavItem = forwardRef(
         }}
         {...other}
         sx={{
-          backgroundColor: "transparent",
+          /* Design system: the current item is grey (bg.selected), never purple. */
+          backgroundColor: active ? "action.selected" : "transparent",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-
-          color: active ? "primary.main" : "text.secondary",
+          color: active ? "text.primary" : "text.secondary",
+          "&:hover": {
+            backgroundColor: active ? "action.selected" : "action.hover",
+          },
         }}
       >
         {icon && (
@@ -143,7 +146,7 @@ const NavItem = forwardRef(
           placement="right"
           arrow
         >
-          <Box sx={{ width: 1, minHeight: "30px", height: "30px" }}>
+          <Box sx={{ width: 1, minHeight: "32px", height: "32px" }}>
             {renderContent}
           </Box>
         </CustomTooltip>
@@ -161,8 +164,8 @@ const NavItem = forwardRef(
             underline="none"
             sx={{
               width: 1,
-              minHeight: "30px",
-              height: "30px",
+              minHeight: "32px",
+              height: "32px",
               ...(disabled && {
                 cursor: "default",
               }),
@@ -182,8 +185,8 @@ const NavItem = forwardRef(
           underline="none"
           sx={{
             width: 1,
-            minHeight: "30px",
-            height: "30px",
+            minHeight: "32px",
+            height: "32px",
             ...(disabled && {
               cursor: "default",
             }),
@@ -300,7 +303,7 @@ const StyledNavItem = styled(ListItemButton, {
     ...(subItem && {
       ...baseStyles.item,
       ...theme.typography.body2,
-      minHeight: 34,
+      minHeight: 32,
       padding: theme.spacing(0, 1),
       fontWeight: theme.typography.fontWeightBold,
       "& .icon": {

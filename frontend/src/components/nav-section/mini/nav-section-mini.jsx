@@ -19,13 +19,13 @@ function NavSectionMini({ data, slotProps, ...other }) {
             <Divider
               orientation="horizontal"
               sx={{
-                width: "20px",
+                width: "28px",
                 height: "1px",
                 mx: "auto",
-                backgroundColor: "action.hover",
+                backgroundColor: "divider",
                 opacity: 1,
-                mt: "30px",
-                mb: 0.5,
+                mt: "8px",
+                mb: "8px",
               }}
             />
           )}

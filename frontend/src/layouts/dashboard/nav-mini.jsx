@@ -19,6 +19,7 @@ import {
 } from "./config-navigation";
 import { Divider, IconButton, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
+import Logo from "src/components/logo";
 import { useSettingsContext } from "src/components/settings";
 import WorkspaceSwitcher from "./WorkspaceSwitcher/WorkspaceSwitcher";
 import { useSettingsOpen } from "./states";
@@ -79,15 +80,18 @@ export default function NavMini() {
         alignItems={"center"}
         height={"100%"}
       >
-        <Box sx={{ pt: "12px", pb: "6px" }}>
+        <Box sx={{ pt: "8px", pb: "8px" }}>
           <Stack
             display={"flex"}
             flexDirection={"column"}
-            gap={"6px"}
+            gap={"8px"}
             justifyContent={"center"}
             alignItems={"center"}
           >
+            {/* Design system: the logo mark on top, then expand. */}
+            <Logo collapsed />
             <IconButton
+              size="small"
               onClick={() =>
                 settings.onUpdate(
                   "themeLayout",
@@ -97,7 +101,7 @@ export default function NavMini() {
               sx={{ color: "text.primary" }}
             >
               <SvgColor
-                sx={{ height: "25px", width: "25px" }}
+                sx={{ height: "16px", width: "16px" }}
                 src="/assets/icons/navbar/ic_nav_close_toggle.svg"
               />
             </IconButton>
@@ -106,19 +110,19 @@ export default function NavMini() {
               data={navDashboardData}
               slotProps={{
                 currentRole: user?.role,
-                gap: 2,
+                gap: 0,
               }}
             />
           </Stack>
           <Divider
             orientation="horizontal"
             sx={{
-              width: "20px",
+              width: "28px",
               height: "1px",
-              mt: "24px",
-              backgroundColor: "action.hover",
+              mt: "8px",
+              backgroundColor: "divider",
               opacity: 1,
-              mb: 0.5,
+              mb: "8px",
               mx: "auto",
             }}
           />
@@ -128,7 +132,7 @@ export default function NavMini() {
           data={navData}
           slotProps={{
             currentRole: user?.role,
-            gap: 2,
+            gap: 0,
           }}
         />
         <Box sx={{ flexGrow: 1 }} />
@@ -137,18 +141,18 @@ export default function NavMini() {
           <Divider
             orientation="horizontal"
             sx={{
-              width: "20px",
+              width: "28px",
               height: "1px",
-              backgroundColor: "action.hover",
+              backgroundColor: "divider",
               opacity: 1,
-              mb: 1,
+              mb: "8px",
             }}
           />
           <NavSectionMini
             data={navUpgradeData}
             slotProps={{
               currentRole: user?.role,
-              gap: 2,
+              gap: 0,
             }}
           />
         </Stack>
