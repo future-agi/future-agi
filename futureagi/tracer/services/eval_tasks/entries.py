@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from tracer.models.eval_task import RowType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
+from tracer.queries.eval_clustering import retire_eval_memberships
 from tracer.selectors.eval_tasks.row_resolver import (
     EvalTaskSelectionRejected,
     TraceFilterWitness,
@@ -29,6 +30,8 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
@@ -324,10 +327,21 @@ def _iter_materialize_batches(row_ids: Iterable[str]) -> Iterator[list[str]]:
         yield batch
 
 
+def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
+    """Soft-delete eval results. Every EvalLogger delete goes through here.
+
+    Their Error Feed memberships are retired in the same transaction, so an
+    issue never keeps a trace whose eval no longer exists. Returns the count.
+    """
+    with transaction.atomic():
+        retire_eval_memberships(results)
+        return results.update(deleted=True, deleted_at=timezone.now())
+
+
 def soft_delete_live(task: EvalTask) -> int:
     """Soft-delete every live entry of the task (Delete & rerun). Returns count."""
-    return EvalLogger.objects.filter(eval_task_id=str(task.id)).update(
-        deleted=True, deleted_at=timezone.now()
+    return soft_delete_eval_results(
+        EvalLogger.objects.filter(eval_task_id=str(task.id))
     )
 
 

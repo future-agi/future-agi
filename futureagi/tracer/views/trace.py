@@ -162,6 +162,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -1185,8 +1186,8 @@ def _soft_delete_trace_tree(traces):
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
-        deleted=True, deleted_at=now
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation

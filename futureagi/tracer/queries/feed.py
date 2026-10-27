@@ -1172,6 +1172,7 @@ def _tfidf_distinctive_terms(
     Empty list on degenerate inputs (corpus <2 docs, empty vocab, etc).
     """
     from sklearn.feature_extraction.text import TfidfVectorizer  # lazy
+
     if not target_doc or len(corpus) < 2:
         return []
     try:
@@ -1340,6 +1341,7 @@ def _log_odds_distinctive(
         z     = delta / sqrt(1/(y_f+a) + 1/(y_b+a))
     """
     from sklearn.feature_extraction.text import CountVectorizer  # lazy
+
     if not fail_docs or not base_docs:
         return []
     try:
@@ -1582,6 +1584,7 @@ def _insight_distribution_shift(
     ``project_id`` (single tenant — both corpora belong to the cluster's
     project) pins the totals reads so they prune by primary-key prefix."""
     from scipy.stats import ks_2samp  # lazy
+
     if not baseline_ids:
         return None
     fail_tot = _get_trace_totals_batch(trace_ids, project_id)
@@ -1864,6 +1867,31 @@ def _get_trace_totals_batch(
         )
 
 
+_SPAN_EVAL_SCORE_Q = Q(target_type=EvalTargetType.SPAN)
+# Shown for a metric with nothing to measure, so an empty window is not read as 0.
+_NO_DATA = "—"
+
+
+def _cluster_eval_score_q(cluster: TraceErrorGroup | None) -> Q:
+    """Which EvalLogger rows score a cluster's member traces.
+
+    Scanner and Omega issues average span-level evals. An eval issue is scored
+    by its own eval at its own unit; a span-only read gives a trace-target eval
+    issue no score at all. Session issues keep the span read and fall back to
+    ``_avg_session_eval_score``.
+    """
+    if (
+        cluster is None
+        or cluster.source != ClusterSource.EVAL
+        or cluster.eval_target_type not in (EvalTargetType.TRACE, EvalTargetType.SPAN)
+    ):
+        return _SPAN_EVAL_SCORE_Q
+    score_q = Q(target_type=cluster.eval_target_type)
+    if cluster.eval_config_id:
+        score_q &= Q(custom_eval_config_id=cluster.eval_config_id)
+    return score_q
+
+
 def _get_trace_score(trace_id: str) -> float | None:
     """Average EvalLogger score across span-level evals on the trace.
 
@@ -1879,12 +1907,14 @@ def _get_trace_score(trace_id: str) -> float | None:
     )["avg"]
 
 
-def _get_trace_scores_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: avg eval score} — span-level evals; bool counted as 0/1."""
+def _get_trace_scores_batch(
+    trace_ids: list[str], score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> dict:
+    """Return {trace_id_str: avg eval score}; bool counted as 0/1."""
     if not trace_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids, target_type="span")
+        EvalLogger.objects.filter(score_q, trace_id__in=trace_ids)
         .values("trace_id")
         .annotate(avg=Avg(EVAL_SCORE_EXPR))
         .filter(avg__isnull=False)
@@ -2556,6 +2586,7 @@ def _fetch_representative_traces(
     *,
     pass_reel: list[dict] | None = None,
     highlight_terms: list[str] | None = None,
+    score_q: Q = _SPAN_EVAL_SCORE_Q,
 ) -> list[RepresentativeTrace]:
     """
     Failing traces in the cluster (Overview tab's "Traces affected" list).
@@ -2641,7 +2672,7 @@ def _fetch_representative_traces(
     trace_ids = [str(t.id) for t in deduped]
     roots = _get_root_spans_batch(trace_ids, project_id)
     totals = _get_trace_totals_batch(trace_ids, project_id)
-    scores = _get_trace_scores_batch(trace_ids)
+    scores = _get_trace_scores_batch(trace_ids, score_q)
     reports = _get_investigation_reports_batch(trace_ids, project_id)
     findings_by_trace = (
         _cluster_findings_by_trace(cluster_id, project_id, trace_ids)
@@ -2749,6 +2780,7 @@ def get_overview(
             limit=rep_limit,
             pass_reel=pass_reel,
             highlight_terms=highlight_terms,
+            score_q=_cluster_eval_score_q(cluster),
         ),
         representative_total=member_total or 0,
     )
@@ -2772,8 +2804,14 @@ def _percentile(values: list[int], pct: float) -> int:
     return int(values[lo] + (values[hi] - values[lo]) * (k - lo))
 
 
-def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregates:
-    """Compute per-cluster aggregates for the Traces tab stat bar."""
+def _fetch_traces_aggregates(
+    cluster_id: str, project_id: str, *, score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> TracesAggregates:
+    """Compute per-cluster aggregates for the Traces tab stat bar.
+
+    ``avg_score`` and ``avg_turns`` are ``None`` when nothing was measured, so
+    the UI can show "no data" instead of a fake zero.
+    """
     member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
     trace_ids = list(member_trace_ids)
     if member_session_ids:
@@ -2796,15 +2834,11 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     failing = sum(1 for v in has_issues_map.values() if v is True)
     passing = sum(1 for v in has_issues_map.values() if v is False)
 
-    # PR3: span-only via _avg_eval_score — keeps the avg comparable to
-    # pre-row_type semantics. Trace-level evals (PR4) surface elsewhere.
-    # Helper uses EVAL_SCORE_EXPR for bool-aware avg (sim/voice clusters).
     # Session clusters have no span evals on their member traces — their
     # score lives on the session-target rows instead.
-    avg_score = _avg_eval_score(trace_ids)
+    avg_score = _avg_eval_score(trace_ids, score_q)
     if avg_score is None and member_session_ids:
         avg_score = _avg_session_eval_score(member_session_ids)
-    avg_score = avg_score or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
     totals_by_trace = _get_trace_totals_batch(trace_ids, project_id)
@@ -2824,16 +2858,16 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
             turn_count__isnull=False,
         ).values_list("turn_count", flat=True)
     )
-    avg_turns = statistics.fmean(turn_counts) if turn_counts else 0.0
+    avg_turns = round(statistics.fmean(turn_counts), 2) if turn_counts else None
 
     return TracesAggregates(
         total_traces=total_traces,
         failing_traces=failing,
         passing_traces=passing,
-        avg_score=round(avg_score, 4),
+        avg_score=round(avg_score, 4) if avg_score is not None else None,
         p50_latency=p50,
         p95_latency=p95,
-        avg_turns=round(avg_turns, 2),
+        avg_turns=avg_turns,
     )
 
 
@@ -2842,7 +2876,12 @@ _COST_PER_TOKEN = 0.0000037
 
 
 def _fetch_trace_rows(
-    cluster_id: str, project_id: str, limit: int, offset: int
+    cluster_id: str,
+    project_id: str,
+    limit: int,
+    offset: int,
+    *,
+    score_q: Q = _SPAN_EVAL_SCORE_Q,
 ) -> tuple[list[TracesListRow], int]:
     """Paginated list of traces in the cluster for the AG Grid."""
     base = (
@@ -2910,7 +2949,7 @@ def _fetch_trace_rows(
 
     # Pre-batch CH/PG lookups: one round-trip each.
     totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
-    scores_by_trace = _get_trace_scores_batch(page_trace_ids)
+    scores_by_trace = _get_trace_scores_batch(page_trace_ids, score_q)
     roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
     reports_by_trace = _get_investigation_reports_batch(page_trace_ids, project_id)
 
@@ -2968,8 +3007,11 @@ def get_traces_tab(
         return None
 
     project_id = str(cluster.project_id)
-    aggregates = _fetch_traces_aggregates(cluster_id, project_id)
-    rows, total = _fetch_trace_rows(cluster_id, project_id, limit=limit, offset=offset)
+    score_q = _cluster_eval_score_q(cluster)
+    aggregates = _fetch_traces_aggregates(cluster_id, project_id, score_q=score_q)
+    rows, total = _fetch_trace_rows(
+        cluster_id, project_id, limit=limit, offset=offset, score_q=score_q
+    )
     return TracesTabResponse(aggregates=aggregates, traces=rows, total=total)
 
 
@@ -3016,18 +3058,19 @@ def _users_affected_in_window(
     return len(all_users)
 
 
-def _avg_eval_score(trace_ids: list[str]) -> float | None:
-    """Average eval score over span-level evals on a list of traces.
+def _avg_eval_score(
+    trace_ids: list[str], score_q: Q = _SPAN_EVAL_SCORE_Q
+) -> float | None:
+    """Average eval score over a list of traces; ``None`` when nothing scored.
 
-    PR3: span-only filter. Trace-level evals (PR4) surface elsewhere.
     Uses EVAL_SCORE_EXPR so bool-only eval clusters (sim/voice) don't
     silently return 0 when output_bool is the only populated column.
     """
     if not trace_ids:
         return None
-    return EvalLogger.objects.filter(
-        trace_id__in=trace_ids, target_type="span"
-    ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
+    return EvalLogger.objects.filter(score_q, trace_id__in=trace_ids).aggregate(
+        avg=Avg(EVAL_SCORE_EXPR)
+    )["avg"]
 
 
 def _project_scope_total(
@@ -3111,13 +3154,16 @@ def _fetch_trend_metrics(
     cur_err_rate = (100.0 * cur_numerator / cur_total) if cur_total else 0.0
     prev_err_rate = (100.0 * prev_numerator / prev_total) if prev_total else 0.0
 
-    # Session clusters score on session-target eval rows, not span evals.
-    cur_score = (
-        _avg_eval_score(cur_traces) or _avg_session_eval_score(cur_sessions) or 0.0
-    )
-    prev_score = (
-        _avg_eval_score(prev_traces) or _avg_session_eval_score(prev_sessions) or 0.0
-    )
+    # Session clusters score on session-target eval rows, not span evals. A real
+    # 0.0 average is a score, so fall back only on None.
+    score_q = _cluster_eval_score_q(cluster)
+
+    def _window_score(traces: list[str], sessions: list[str]) -> float | None:
+        score = _avg_eval_score(traces, score_q)
+        return _avg_session_eval_score(sessions) if score is None else score
+
+    cur_score = _window_score(cur_traces, cur_sessions)
+    prev_score = _window_score(prev_traces, prev_sessions)
 
     cur_users = _users_affected_in_window(cur_traces, project_id)
     prev_users = _users_affected_in_window(prev_traces, project_id)
@@ -3131,8 +3177,12 @@ def _fetch_trend_metrics(
         ),
         TrendMetric(
             label="Avg eval score",
-            value=f"{cur_score:.2f}",
-            delta=round(cur_score - prev_score, 2),
+            value=f"{cur_score:.2f}" if cur_score is not None else _NO_DATA,
+            delta=(
+                round(cur_score - prev_score, 2)
+                if cur_score is not None and prev_score is not None
+                else 0.0
+            ),
         ),
         TrendMetric(
             label="Affected users",
@@ -3435,12 +3485,13 @@ def _fetch_sidebar_ai_metadata(
     # When a trace is explicitly selected, report THAT trace's score.
     # Otherwise show the cluster-wide average (current no-selection default).
     # Session clusters score on session-target eval rows, not span evals.
+    score_q = _cluster_eval_score_q(cluster)
     if selected_trace_id:
-        eval_score = _avg_eval_score([selected_trace_id])
+        eval_score = _avg_eval_score([selected_trace_id], score_q)
         if eval_score is None and selected_session_id:
             eval_score = _avg_session_eval_score([selected_session_id])
     else:
-        eval_score = _avg_eval_score(trace_ids)
+        eval_score = _avg_eval_score(trace_ids, score_q)
         if eval_score is None and session_ids:
             eval_score = _avg_session_eval_score(session_ids)
     if eval_score is not None:

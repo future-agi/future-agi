@@ -84,7 +84,10 @@ from tracer.serializers.eval_task import (
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
-from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.eval_tasks.entries import (
+    soft_delete_eval_results,
+    soft_delete_live,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -1870,9 +1873,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now
         )
-        EvalLogger.objects.filter(eval_task_id=instance.id).update(
-            deleted=True, deleted_at=now
-        )
+        soft_delete_eval_results(EvalLogger.objects.filter(eval_task_id=instance.id))
         instance.delete()
 
     @validated_request(
@@ -2749,8 +2750,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
                 deleted=True, deleted_at=timezone.now()
             )
-            EvalLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
-                deleted=True, deleted_at=timezone.now()
+            soft_delete_eval_results(
+                EvalLogger.objects.filter(eval_task_id__in=eval_task_ids)
             )
 
             return self._gm.success_response(
