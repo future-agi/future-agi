@@ -52,6 +52,23 @@ func (w *countedResponseWriter) Write(b []byte) (int, error) {
 }
 func (w *countedResponseWriter) Flush() { w.writes.Add(1); w.ResponseRecorder.Flush() }
 
+func TestReflexionAccountingMetadataCannotBeSpoofed(t *testing.T) {
+	for _, key := range []string{"reflexion_debug", "reflexion_attempts", "Reflexion_Summary", "provider_attempts", "provider_attempt_usage", "usage_incomplete"} {
+		if !isBlockedMetadataKey(key) {
+			t.Errorf("caller can spoof %q", key)
+		}
+	}
+}
+
+func TestReflexionOverflowStillSettlesReportedUsage(t *testing.T) {
+	b := newBufferedCandidate()
+	text := strings.Repeat("x", maxReflexionStreamBytes)
+	err := b.add(models.StreamChunk{Choices: []models.StreamChoice{{Delta: models.Delta{Content: &text}}}, Usage: &models.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}})
+	if err == nil || b.response().Usage == nil || b.response().Usage.TotalTokens != 30 || len(b.frames) != 0 {
+		t.Fatalf("error=%v candidate=%+v", err, b)
+	}
+}
+
 func TestReflexionStreamWritesNothingUntilValidated(t *testing.T) {
 	u := &reflectionUpstream{blocked: 1}
 	upstream := httptest.NewServer(http.HandlerFunc(u.serve))

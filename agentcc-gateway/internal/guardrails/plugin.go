@@ -232,12 +232,16 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
 		case ActionLog:
+			message := cr.Message
+			if stage == StagePost {
+				message = "response check triggered"
+			}
 			slog.Info("guardrail triggered (log mode)",
 				"guardrail", name,
 				"org_id", orgID,
 				"score", cr.Score,
 				"threshold", threshold,
-				"message", cr.Message,
+				"message", message,
 			)
 		}
 	}

@@ -193,11 +193,15 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", rule.guardrail.Name(), checkResult.Message))
 		case ActionLog:
+			message := checkResult.Message
+			if input.Response != nil {
+				message = "response check triggered"
+			}
 			slog.Info("guardrail triggered (log mode)",
 				"guardrail", rule.guardrail.Name(),
 				"score", checkResult.Score,
 				"threshold", effectiveThreshold,
-				"message", checkResult.Message,
+				"message", message,
 			)
 		}
 	}

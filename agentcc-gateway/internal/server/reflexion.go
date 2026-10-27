@@ -63,6 +63,12 @@ func newBufferedCandidate() *bufferedCandidate {
 }
 
 func (b *bufferedCandidate) add(chunk models.StreamChunk) error {
+	// Even a frame that exceeds the body limit may carry measured usage. Keep
+	// its scalar counters for settlement, without retaining its rejected body.
+	if chunk.Usage != nil {
+		u := chunk.Usage
+		b.usage = &models.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	}
 	// Refuse large payloads before JSON encoding can allocate another full copy.
 	if streamChunkFloor(chunk) > maxReflexionStreamBytes-b.bytes || len(b.frames) >= maxReflexionStreamChunks {
 		return models.ErrGuardrailBlocked("reflection_buffer_exceeded", "Response exceeds the guarded streaming buffer limit")

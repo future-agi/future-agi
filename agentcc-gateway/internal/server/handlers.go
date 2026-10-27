@@ -2263,7 +2263,7 @@ func isBlockedMetadataKey(key string) bool {
 	lower := strings.ToLower(key)
 	for _, prefix := range []string{
 		"auth_", "key_", "org_", "budget_", "ratelimit_",
-		"cache_", "guardrail_", "credit_", "credits_",
+		"cache_", "guardrail_", "credit_", "credits_", "reflexion_",
 	} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
@@ -2276,7 +2276,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", "provider_attempts", "provider_attempt_usage", "usage_incomplete":
 		return true
 	}
 	return false
