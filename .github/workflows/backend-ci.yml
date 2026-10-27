@@ -243,9 +243,10 @@ jobs:
         id: run-shard
         run: |
           set +e
-          # Record each active node instead of inferring a stall from buffered
-          # per-module progress. Keep deadlines, retries and selection unchanged.
-          uv run pytest -vv -ra --ignore=tests/stress \
+          # pytest.ini adds -v; -q restores compact module progress. Verbose
+          # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
+          # processing after the tests have passed. Keep full JUnit results.
+          uv run pytest -q -ra --ignore=tests/stress \
             --splits "$SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
             --durations-path .test_durations \
