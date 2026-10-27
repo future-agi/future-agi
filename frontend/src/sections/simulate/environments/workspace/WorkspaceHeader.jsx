@@ -23,6 +23,7 @@ import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import ForkMenu from "./ForkMenu";
 import NeedsInputButton from "./gaps/NeedsInputButton";
+import RunFromCodeButton from "./code/RunFromCodeButton";
 import RunButton from "./run/RunButton";
 import useRunRepeats from "./run/useRunRepeats";
 import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
@@ -142,6 +143,7 @@ export default function WorkspaceHeader({
           Repeats pill + Run to keep one primary action at a time. */}
       {!selectionActive && (
         <Stack direction="row" alignItems="center" spacing={1}>
+          <RunFromCodeButton env={env} repeats={repeats} />
           <NeedsInputButton onGo={onGo} />
           {canRun && (
             <TrialsPicker
