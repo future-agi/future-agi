@@ -20,6 +20,14 @@ export function requestOnlyGuardrail(name, config = {}) {
   );
 }
 
+export function withoutGuardrailRetries(config = {}) {
+  const next = { ...config };
+  if (next.on_block !== undefined) next.on_block = "reject";
+  delete next.reflect_max_attempts;
+  delete next.reflect_debug;
+  return next;
+}
+
 export function guardrailStage(name, check = {}) {
   const config = check?.config || {};
   if (config.stage) return config.stage;

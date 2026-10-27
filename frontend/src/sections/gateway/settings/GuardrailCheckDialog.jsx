@@ -27,6 +27,7 @@ import {
   guardrailStage,
   RESPONSE_ONLY_CHECKS,
   requestOnlyGuardrail,
+  withoutGuardrailRetries,
 } from "./guardrailOptions";
 
 const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
@@ -268,12 +269,8 @@ const GuardrailCheckDialog = ({
       cfg.on_block = "reflect";
       cfg.reflect_max_attempts = attempts;
       cfg.reflect_debug = form.reflect_debug;
-    } else {
-      if (cfg.on_block !== undefined) cfg.on_block = "reject";
-      delete cfg.reflect_max_attempts;
-      delete cfg.reflect_debug;
     }
-    data.config = cfg;
+    data.config = reflects ? cfg : withoutGuardrailRetries(cfg);
 
     onSave(checkName, data);
     onClose();

@@ -13,9 +13,15 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateGuardrail } from "../providers/hooks/useGatewayConfig";
+import {
+  guardrailStage,
+  RESPONSE_ONLY_CHECKS,
+  requestOnlyGuardrail,
+  withoutGuardrailRetries,
+} from "../settings/guardrailOptions";
 
 const ACTIONS = ["block", "warn", "log"];
-const STAGES = ["pre", "post", "both"];
+const STAGES = ["pre", "post"];
 
 function resolveExecutionMode(guardrail) {
   return guardrail?.mode === "async" ? "async" : "sync";
@@ -31,7 +37,7 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
   useEffect(() => {
     if (guardrail && open) {
       setAction(guardrail.action || "block");
-      setStage(guardrail.stage || guardrail.phase || "pre");
+      setStage(guardrailStage(guardrail.name, guardrail));
       setThreshold(guardrail.threshold ?? "");
     }
   }, [guardrail, open]);
@@ -44,6 +50,23 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
       mode: resolveExecutionMode(guardrail),
     };
     if (threshold !== "") config.threshold = Number(threshold);
+
+    if (
+      guardrail.config?.stage !== undefined ||
+      guardrail.config?.on_block === "reflect" ||
+      stage !== guardrailStage(guardrail.name, guardrail)
+    ) {
+      // Keep the resolved stage when removing retry's legacy stage inference.
+      config.config = { ...guardrail.config, stage };
+    }
+    if (
+      config.config &&
+      (action !== "block" ||
+        guardrailStage(guardrail.name, config) !== "post" ||
+        config.mode !== "sync")
+    ) {
+      config.config = withoutGuardrailRetries(config.config);
+    }
 
     updateGuardrail.mutate(
       { gatewayId, name: guardrail.name, config },
@@ -87,7 +110,18 @@ const EditGuardrailDialog = ({ open, onClose, guardrail, gatewayId }) => {
             onChange={(e) => setStage(e.target.value)}
           >
             {STAGES.map((item) => (
-              <MenuItem key={item} value={item}>
+              <MenuItem
+                key={item}
+                value={item}
+                disabled={
+                  item === "pre"
+                    ? RESPONSE_ONLY_CHECKS.has(guardrail?.name)
+                    : requestOnlyGuardrail(
+                        guardrail?.name,
+                        guardrail?.config || {},
+                      )
+                }
+              >
                 {item}
               </MenuItem>
             ))}
