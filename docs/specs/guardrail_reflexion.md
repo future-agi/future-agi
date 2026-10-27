@@ -57,6 +57,15 @@ execution-mode switch. Prompt injection, topic restriction, language detection
 and system-prompt protection currently inspect only requests, so response-stage
 settings are rejected for those checks rather than pretending to validate output.
 
+The native text scanners (input validation, keyword blocklist, PII detection,
+content moderation and secret detection) normally read request and response text
+together. When a tenant runs one at the response stage, or a static rule with
+repair enabled runs one there, it receives the candidate answer without the
+prompt, so a prompt cannot satisfy a required pattern or fail every repair.
+Expressions, webhooks, tool permissions and external evaluators keep the full
+request because they may compare it with the answer. Static rules without repair
+keep their existing input.
+
 ## Execution and safety
 
 When the gateway has a control-plane URL, it initializes the managed guardrail
@@ -77,7 +86,14 @@ control-plane URL, the plugin stays off.
    validators, final logs or asynchronous observers see.
 5. Recheck admission before the additional generation. Stop at the first passing
    candidate, exhaustion, denial, deadline, cancellation or provider error.
+   A provider error on a repair request can quote the private answer and
+   feedback, so the client, request log and observers receive only its status
+   with gateway-generated type, code and message.
 6. Run final observers once. Never cache a rejected candidate.
+
+A post-stage rejection, with or without repair, also replaces the messages of
+that stage's check results and restores the earlier warning metadata, so a
+warning that quotes the blocked answer is not logged.
 
 Repair supports single-choice text answers. Blocked tool-call, reasoning and
 multi-choice answers fail closed without constructing synthetic tool results or
@@ -92,7 +108,8 @@ replayed, followed by the final usage/metadata chunk and `[DONE]`. This adds
 latency and removes incremental delivery while the model generates.
 
 Each candidate is bounded to **2 MiB of encoded chunks and 8,192 frames**.
-Overflow, incomplete streams and cancellation fail closed. Usage that the
+Overflow, incomplete streams, in-band error frames and cancellation fail closed;
+an error frame is never replayed. Usage that the
 provider did not report is marked incomplete, not guessed. Ordinary streams
 without a reflection rule retain their existing streaming path; enabling this
 feature is not a claim that unbuffered streams can retract already delivered text.
@@ -105,15 +122,20 @@ must occur before discarding blocked content, and a denied repair must not charg
 the previous attempt a second time. This corrects the old loss of blocked-call
 accounting; it does not change pricing rates or introduce budget reservations.
 
-Aggregate usage and spend include observed attempts, priced using each actual
-serving model, including model fallback. Missing provider usage is flagged with
-`usage_incomplete` and `x-agentcc-usage-incomplete`; cancellation or transport
-failure can make the total a lower bound.
+Aggregate usage and spend include observed attempts. Each attempt is priced by
+the model the provider reported, or by the upstream request model when the
+response omits one, with the caller's requested model as the fallback, as in
+ordinary accounting. Budgets and repair admission use the caller's requested
+model, including when routing or model fallback changes the upstream model.
+Missing provider usage is flagged with `usage_incomplete` and
+`x-agentcc-usage-incomplete`; cancellation or transport failure can make the
+total a lower bound.
 
 Request metadata records bounded, body-free attempt accounting. Debug opt-in adds
 retry diagnostics and headers; it does not persist raw rejected answers, check
 messages that may quote them, or credentials. Existing request-log metadata
-rendering displays these controls without a new database column.
+rendering displays these controls without a new database column. Provider stream
+and error logs record identifiers and status, not upstream payload text.
 
 ## Verification
 
@@ -122,12 +144,19 @@ Production tests live in:
 - `agentcc-gateway/internal/server/reflexion*_test.go`: actual HTTP handlers and
   deterministic provider adapters, buffered streaming, exhaustion and accounting.
 - `agentcc-gateway/internal/guardrails/reflexion_test.go`: rule policy and tenant
-  isolation.
+  isolation; `post_input*_test.go`: response-only input for native scanners and
+  full context for evaluators that compare request and response.
+- `agentcc-gateway/internal/pipeline/reflexion_error_test.go`: repair-error
+  sanitizing and attempt model identity.
+- `agentcc-gateway/internal/providers/provider_logging_test.go`: provider logs
+  without upstream payloads.
 - `agentcc-gateway/internal/reflexion/policy_test.go`: strict configuration bounds.
 - `futureagi/agentcc/tests/test_guardrail_reflexion.py`: serializers, activation,
   credential-safe persistence and the existing strict gateway contract.
 - `frontend/src/sections/gateway/settings/GuardrailCheckDialog.test.jsx`: real
-  dialog controls, invalid limits and provider-config preservation.
+  dialog controls, invalid limits and provider-config preservation;
+  `guardrails/GuardrailManagementSection.test.jsx`: Overview edits that clear
+  retry settings when a rule is no longer eligible.
 
 The earlier copied retry models and standalone proof workflow were removed:
 proving a separate toy loop does not verify the production handler. Test files
