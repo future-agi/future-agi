@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, Collapse, Stack } from "@mui/material";
-import UiOnlyFlag from "../../UiOnlyFlag";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { Field } from "../formBits";
 import TextLink from "../shared/TextLink";
 

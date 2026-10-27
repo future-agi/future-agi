@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-import MockBadge from "../../components/MockBadge";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { ENV_SHAPE, OVERVIEW_COPY, worldTables } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -19,7 +19,7 @@ export function SeededDataCard({ env }) {
     <SectionCard
       title={OVERVIEW_COPY.seededTitle}
       subtitle={OVERVIEW_COPY.seedBlurb(totalRows)}
-      action={env.provenance?.seedTables === "mock" ? <MockBadge /> : null}
+      action={env.provenance?.seedTables === "mock" ? <UiOnlyFlag /> : null}
     >
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
         {tables.map((t) => (

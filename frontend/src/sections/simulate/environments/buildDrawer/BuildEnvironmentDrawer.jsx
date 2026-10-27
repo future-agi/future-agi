@@ -31,7 +31,7 @@ import {
   connectTitleFor,
 } from "./connectNewAgent";
 import LogoTile from "./LogoTile";
-import UiOnlyFlag from "./UiOnlyFlag";
+import UiOnlyFlag from "../components/UiOnlyFlag";
 import { worldsFrom } from "./worlds";
 import { BTN_SX, T12, T14 } from "./drawerStyles";
 import RepoForm from "./forms/RepoForm";

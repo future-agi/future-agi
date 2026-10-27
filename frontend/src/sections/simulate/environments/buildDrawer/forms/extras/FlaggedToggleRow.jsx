@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Switch, Typography } from "@mui/material";
-import UiOnlyFlag from "../../UiOnlyFlag";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { ROW_BOX_SX, T12 } from "../../drawerStyles";
 import { HintLine } from "../formBits";
 

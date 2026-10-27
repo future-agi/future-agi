@@ -4,6 +4,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { MODALITY, UNIDENTIFIED_MODALITY } from "../agentTypes";
 import { NOT_PROVIDED } from "../myEnvironments.constants";
+import SoonChip from "./SoonChip";
 
 const NUM_SX = {
   typography: "s2",
@@ -60,30 +61,6 @@ const Dash = () => (
   </Typography>
 );
 
-/* Stands in for a field the list API doesn't send yet. The chip names what's
-   coming ("Owner soon"), dashed so it never reads as data; the tooltip says
-   it in full. `plural` for a name like "Status counts", so it reads "aren't". */
-export const ComingSoonChip = ({ label, what, plural = false }) => (
-  <CustomTooltip
-    show
-    size="small"
-    arrow
-    title={`${what} ${plural ? "aren't" : "isn't"} in the API yet`}
-  >
-    <Chip
-      label={`${label} soon`}
-      size="small"
-      variant="outlined"
-      sx={{ flexShrink: 0, borderStyle: "dashed", color: "text.secondary" }}
-    />
-  </CustomTooltip>
-);
-ComingSoonChip.propTypes = {
-  label: PropTypes.string.isRequired,
-  what: PropTypes.string.isRequired,
-  plural: PropTypes.bool,
-};
-
 /* The name with its version beside it, and what it is on the line below. */
 export const NameCell = ({ row }) => {
   const { name, description, envVersion } = row?.original || {};
@@ -106,7 +83,7 @@ export const NameCell = ({ row }) => {
           {name}
         </Typography>
         {envVersion === NOT_PROVIDED && (
-          <ComingSoonChip label="Version" what="Environment version" />
+          <SoonChip label="Version" what="Environment version" />
         )}
       </Stack>
       {description && (
@@ -133,8 +110,7 @@ NameCell.propTypes = { row: PropTypes.object };
 /* The agent it tests, and its Main / Live / Sealed tags. */
 export const AgentCell = ({ row }) => {
   const { agent, agentTags } = row?.original || {};
-  if (agent === NOT_PROVIDED)
-    return <ComingSoonChip label="Agent" what="Agent" />;
+  if (agent === NOT_PROVIDED) return <SoonChip label="Agent" what="Agent" />;
   if (!agent) return <Dash />;
   return (
     <Stack
@@ -150,11 +126,7 @@ export const AgentCell = ({ row }) => {
         {agent.name}
       </Typography>
       {agentTags === NOT_PROVIDED && (
-        <ComingSoonChip
-          label="Tags"
-          what="Main and Live / Sealed tags"
-          plural
-        />
+        <SoonChip label="Tags" what="Main and Live / Sealed tags" plural />
       )}
     </Stack>
   );
@@ -165,7 +137,7 @@ AgentCell.propTypes = { row: PropTypes.object };
 export const LastRunCell = ({ row }) => {
   const lastRun = row?.original?.lastRun;
   if (lastRun === NOT_PROVIDED) {
-    return <ComingSoonChip label="Last run" what="Last run" />;
+    return <SoonChip label="Last run" what="Last run" />;
   }
   if (!lastRun) return <Dash />;
   const { rate, delta } = lastRun;
@@ -193,7 +165,7 @@ export const LastRunCell = ({ row }) => {
         </Typography>
       )}
       {delta === NOT_PROVIDED && (
-        <ComingSoonChip label="Trend" what="Change from the previous run" />
+        <SoonChip label="Trend" what="Change from the previous run" />
       )}
     </Stack>
   );
@@ -214,8 +186,7 @@ const initialsOf = (name) => {
 /* Who owns it: their initials, their name on hover. */
 export const OwnerCell = ({ getValue }) => {
   const owner = getValue?.();
-  if (owner === NOT_PROVIDED)
-    return <ComingSoonChip label="Owner" what="Owner" />;
+  if (owner === NOT_PROVIDED) return <SoonChip label="Owner" what="Owner" />;
   if (!owner) return <Dash />;
   return (
     <CustomTooltip show size="small" arrow title={owner.name || ""}>

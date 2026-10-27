@@ -2,15 +2,23 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import { UI_ONLY_FEATURES } from "../uiOnlyFeatures";
 
 export const UI_ONLY_TOOLTIP =
   "UI only: this flow isn't wired to the API yet. It runs on sample data and builds nothing.";
 
-// A muted "UI only" pill, sibling to the list's grey "Dummy" pill, on every way
-// in that is the design without its API yet.
-export default function UiOnlyFlag({ sx }) {
+// A muted "UI only" pill on every part of the design that has no API yet.
+// `feature` names its UI_ONLY_FEATURES entry, so the tooltip says what the
+// backend needs to wire it.
+export default function UiOnlyFlag({ feature, sx }) {
+  const ask = UI_ONLY_FEATURES[feature]?.ask;
   return (
-    <CustomTooltip show arrow size="small" title={UI_ONLY_TOOLTIP}>
+    <CustomTooltip
+      show
+      arrow
+      size="small"
+      title={ask ? `${UI_ONLY_TOOLTIP} Needs: ${ask}.` : UI_ONLY_TOOLTIP}
+    >
       <Box
         component="span"
         aria-label="UI only"
@@ -35,4 +43,4 @@ export default function UiOnlyFlag({ sx }) {
     </CustomTooltip>
   );
 }
-UiOnlyFlag.propTypes = { sx: PropTypes.object };
+UiOnlyFlag.propTypes = { feature: PropTypes.string, sx: PropTypes.object };

@@ -4,7 +4,7 @@ import { Box, ButtonBase, InputBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SoonTag from "../components/SoonTag";
 import LogoTile from "./LogoTile";
-import UiOnlyFlag from "./UiOnlyFlag";
+import UiOnlyFlag from "../components/UiOnlyFlag";
 import {
   CATALOG_ITEMS,
   CATALOG_TABS,

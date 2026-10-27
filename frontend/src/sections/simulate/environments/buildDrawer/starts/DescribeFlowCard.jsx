@@ -14,7 +14,7 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
 import { formatFileSize } from "src/utils/utils";
-import UiOnlyFlag from "../UiOnlyFlag";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, T12, T13, focusRing } from "../drawerStyles";
 import { uiOnlyToast } from "./startUtils";
 

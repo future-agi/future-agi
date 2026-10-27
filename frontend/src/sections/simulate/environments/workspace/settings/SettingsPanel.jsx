@@ -316,12 +316,12 @@ EnvVarsBody.propTypes = {
   restoring the matching block below plus the props/state/imports it needs
   (`envState`, `patch`; the version/restore state + handlers; `useState`,
   `alpha`, `Slider`, `Switch`, `IconButton`, `Tooltip`, `MenuItem`, `Iconify`,
-  `ConfirmDialog`, `MockBadge`, and the `envConfig` / `versions` fixtures). Full
+  `ConfirmDialog`, `UiOnlyFlag`, and the `envConfig` / `versions` fixtures). Full
   original wiring is in git history for this file.
 
   --- Run defaults (fixture: DEFAULT_RUNTIME / ISOLATION_OPTIONS, REGION_OPTIONS)
   <SectionCard title="Run defaults"
-    subtitle="Every run inherits these unless it overrides them" action={<MockBadge />}>
+    subtitle="Every run inherits these unless it overrides them" action={<UiOnlyFlag />}>
     ... isolation picker, concurrency / task-timeout / step-budget / retries
     sliders, region select, file-tracking + record-video toggles ...
   </SectionCard>
@@ -329,7 +329,7 @@ EnvVarsBody.propTypes = {
   --- Build arguments (fixture: DEFAULT_BUILD_ARGS)
   <SectionCard title="Build arguments"
     subtitle="Passed at image build time, not at runtime. One per line: KEY=value"
-    action={<MockBadge />}>
+    action={<UiOnlyFlag />}>
     ... multiline KEY=value TextField ...
   </SectionCard>
 

@@ -4,7 +4,7 @@ import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
-import UiOnlyFlag from "./UiOnlyFlag";
+import UiOnlyFlag from "../components/UiOnlyFlag";
 import ConnectSection from "./ConnectSection";
 import { featuredWorlds, worldsFrom } from "./worlds";
 import {

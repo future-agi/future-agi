@@ -3,7 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import UiOnlyFlag from "../UiOnlyFlag";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { PANEL_SX, T12, T13, focusRing } from "../drawerStyles";
 import { SANDBOX_APPS } from "./sandboxApps";
 import { AppMark } from "./SandboxForm";

@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
-import UiOnlyFlag from "../UiOnlyFlag";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
 import { envNameFor } from "./startUtils";
 

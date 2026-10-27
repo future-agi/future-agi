@@ -9,7 +9,7 @@ import { HOSTED_PLATFORMS_BY_TYPE } from "../../hostedPlatforms";
 import useDrawerForm from "./useDrawerForm";
 import { useConnectMode } from "../connectNewAgent";
 import VoiceContact, { contactNumberError } from "./VoiceContact";
-import UiOnlyFlag from "../UiOnlyFlag";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import {
   ChipToggle,
   Field,

@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "src/utils/test-utils";
 import {
   AgentTypeCell,
-  ComingSoonChip,
   NameCell,
   AgentCell,
   LastRunCell,
@@ -41,29 +40,6 @@ const rowCell = (Cell, original) =>
   render(<Cell row={{ original }} getValue={() => undefined} />);
 const valueCell = (Cell, value) =>
   render(<Cell row={{ original: {} }} getValue={() => value} />);
-
-describe("ComingSoonChip", () => {
-  it("names what's coming in the chip", () => {
-    render(<ComingSoonChip label="Owner" what="Owner" />);
-    expect(screen.getByText("Owner soon")).toBeInTheDocument();
-  });
-
-  it("explains a missing field in the singular", async () => {
-    render(<ComingSoonChip label="Owner" what="Owner" />);
-    fireEvent.mouseOver(screen.getByText("Owner soon"));
-    expect(
-      await screen.findByText("Owner isn't in the API yet"),
-    ).toBeInTheDocument();
-  });
-
-  it("explains missing fields in the plural", async () => {
-    render(<ComingSoonChip label="Count" what="Status counts" plural />);
-    fireEvent.mouseOver(screen.getByText("Count soon"));
-    expect(
-      await screen.findByText("Status counts aren't in the API yet"),
-    ).toBeInTheDocument();
-  });
-});
 
 describe("NameCell", () => {
   it("shows the name, the description under it and a placeholder version", () => {

@@ -16,7 +16,7 @@ import {
   hasActiveFilters,
 } from "src/api/simulate-environments/environmentListParams";
 import { NOT_PROVIDED } from "../myEnvironments.constants";
-import { ComingSoonChip } from "./environmentTableCells";
+import SoonChip from "./SoonChip";
 
 // The list endpoint's own status values; "completed" reads as Ready.
 const STATUS_OPTIONS = [
@@ -135,7 +135,7 @@ export default function EnvironmentFilters({ value, onChange, statusCounts }) {
     if (statusCounts === NOT_PROVIDED) {
       return (
         <Box component="span" sx={{ ml: "auto", pl: 1.5 }}>
-          <ComingSoonChip label="Count" what="Status counts" plural />
+          <SoonChip label="Count" what="Status counts" plural />
         </Box>
       );
     }

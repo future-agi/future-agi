@@ -10,7 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import UiOnlyFlag from "../../UiOnlyFlag";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { BTN_SX, INPUT_SX, T12, T13 } from "../../drawerStyles";
 import { HintLine, Label, MONO } from "../formBits";
 import RepoAgentScan from "./RepoAgentScan";
