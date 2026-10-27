@@ -274,13 +274,18 @@ type exportWork struct {
 // leaseWork scans and leases before decoding. rows goes to the pending batch;
 // work covers the handler. Final authenticated additions are checked before
 // conversion by pricePreparedExport, under these same leases and wait budget.
-func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (*exportWork, *rejection) {
+func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool, headers ...auth.ProjectNameValues) (*exportWork, *rejection) {
+	var values auth.ProjectNameValues
+	if len(headers) != 0 {
+		values = headers[0]
+	}
+	stamps := resourceStamps(ctx, values)
 	var shape otlpShape
 	var err error
 	if jsonBody {
-		shape, err = scanOTLPJSON(body)
+		shape, err = scanOTLPJSON(body, stamps)
 	} else {
-		shape, err = scanOTLPProto(body)
+		shape, err = scanOTLPProto(body, stamps)
 	}
 	if err != nil {
 		var se *scanError

@@ -104,6 +104,13 @@ func ApplyProjectNameHeader(traces ptrace.Traces, values ProjectNameValues) (int
 	return applied, nil
 }
 
+// ProjectNameHeaderValue validates the shared header/metadata value without
+// mutating a request. The scanner uses it only to bound a possible addition;
+// ApplyProjectNameHeader still decides whether the resource needs the header.
+func ProjectNameHeaderValue(values ProjectNameValues) (string, error) {
+	return projectNameFromHeaderValues(values)
+}
+
 func projectNameFromHeaderValues(values ProjectNameValues) (string, error) {
 	canonical, err := projectNameFromHeader(ProjectNameHeader, values.Canonical)
 	if err != nil {

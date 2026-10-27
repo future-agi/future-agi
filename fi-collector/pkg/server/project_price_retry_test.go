@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,6 +58,10 @@ func TestProjectAuthRestartAfterFinalPriceWait(t *testing.T) {
 					s.work.onBlock = func() { blockOnce.Do(func() { close(blocked) }) }
 					s.router = restartRouter(func(ctx context.Context, key string, td ptrace.Traces, result *auth.ResolveResult) (auth.RouteOutcome, error) {
 						if calls.Add(1) == 1 {
+							// Production's four scalar stamps are reserved up front.
+							// Force the fallback final-shape guard with an additional
+							// test-only router field, then prove it cannot survive retry.
+							td.ResourceSpans().At(0).Resource().Attributes().PutStr("unpriced_test_shape", strings.Repeat("x", 2048))
 							originalBudget = leaseBudgetFrom(ctx)
 							var err error
 							blocker, err = s.work.acquire(ctx, s.work.size-s.work.inUse.Load())
@@ -122,6 +127,9 @@ func TestProjectAuthRestartAfterFinalPriceWait(t *testing.T) {
 				}
 				if pending[0]["org_id"] != calOrg || pending[0]["project_id"] != calProject || properties[0].WorkspaceID != calWS || properties[0].OrganizationID != calOrg {
 					t.Fatal("old tenant stamps survived final-shape wait")
+				}
+				if _, stale := pending[0]["resource_attrs"].(map[string]any)["unpriced_test_shape"]; stale {
+					t.Fatal("partially mutated old request survived repricing retry")
 				}
 				if calls.Load() != 2 || r.validations.Load() != 2 {
 					t.Fatalf("expected one restart, routing=%d validations=%d", calls.Load(), r.validations.Load())

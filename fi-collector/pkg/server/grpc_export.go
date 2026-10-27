@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/experimental"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/mem"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/tap"
@@ -229,7 +230,8 @@ func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 	}
 	defer wire.release()
 
-	held, rej := s.leaseWork(ctx, raw, false)
+	md, _ := metadata.FromIncomingContext(ctx)
+	held, rej := s.leaseWork(ctx, raw, false, auth.ProjectNameMetadataValues(md))
 	if rej != nil {
 		return s.rejectGRPC(rej)
 	}

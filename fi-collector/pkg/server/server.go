@@ -582,7 +582,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, s.bodyRejection(err))
 		return
 	}
-	held, rej := s.leaseWork(r.Context(), body, ct == "application/json")
+	held, rej := s.leaseWork(r.Context(), body, ct == "application/json", auth.ProjectNameHTTPValues(r.Header))
 	if rej != nil {
 		s.rejectHTTP(w, ct, rej)
 		return

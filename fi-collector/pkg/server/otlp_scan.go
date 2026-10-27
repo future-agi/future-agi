@@ -89,6 +89,7 @@ var (
 // otlpShape is what the scan measured. Element counts drive the heap price;
 // the JSON byte counts drive the flush price and the limit on stored bytes.
 type otlpShape struct {
+	stamps                                          resourceStampBudget
 	resourceSpans, scopeSpans, spans, events, links int64
 
 	keyValues   int64 // every KeyValue: resource, scope, span, event, link and nested
@@ -284,6 +285,8 @@ const numberJSON = 24
 // rsAccum gathers one ResourceSpans. Its resource attributes are written into
 // every one of its spans' rows, and they may come before or after the spans.
 type rsAccum struct {
+	stampSeen     [5]bool
+	stampValues   [5]valueInfo
 	resourceJSON  int64 // resource_attrs plus the columns taken from it
 	resourceBytes int64 // payload bytes, for maxResourceAttrBytes
 	spans         int64
@@ -295,6 +298,7 @@ func (s *otlpShape) endResourceSpans(a *rsAccum) error {
 	if a.resourceBytes > maxResourceAttrBytes {
 		return errResourceTooLarge
 	}
+	s.reserveResourceStamps(a)
 	perRow := rowFixedJSON + a.resourceJSON
 	s.rowJSONBytes += a.spanJSON + a.spans*perRow
 	if a.spans > 0 {
@@ -348,6 +352,7 @@ type kvInfo struct {
 	keyRaw   int64
 	class    keyClass
 	promoted int // final key, not an earlier overwritten key field
+	stampKey int
 	val      valueInfo
 }
 
@@ -368,6 +373,9 @@ const (
 func (s *otlpShape) addKV(ctx kvContext, kv kvInfo, rs *rsAccum, sp *spanAccum) {
 	switch ctx {
 	case kvResource:
+		if k := kv.stampKey; k != 0 && !rs.stampSeen[k] {
+			rs.stampSeen[k], rs.stampValues[k] = true, kv.val
+		}
 		// The value may also be copied into a column of its own (service
 		// name, project, org, semconv), so it is counted twice.
 		rs.resourceJSON += 2 * (kv.keyJSON + 4 + kv.val.asResourceColumn())
@@ -399,8 +407,11 @@ func (s *otlpShape) addKV(ctx kvContext, kv kvInfo, rs *rsAccum, sp *spanAccum) 
 // ── protobuf ───────────────────────────────────────────────────────────────
 
 // scanOTLPProto measures a protobuf ExportTraceServiceRequest.
-func scanOTLPProto(b []byte) (otlpShape, error) {
+func scanOTLPProto(b []byte, stamps ...resourceStampBudget) (otlpShape, error) {
 	var s otlpShape
+	if len(stamps) != 0 {
+		s.stamps = stamps[0]
+	}
 	for len(b) > 0 {
 		num, typ, val, rest, err := nextField(b)
 		if err != nil {
@@ -674,6 +685,7 @@ func (s *otlpShape) protoKeyValue(b []byte, depth int) (kvInfo, error) {
 			kv.keyJSON, kv.keyHTML = s.protoString(val)
 			kv.keyRaw = int64(len(val))
 			kv.promoted = promotedStringKey(val)
+			kv.stampKey = resourceStampKey(val)
 			if c := classifyKey(val); c != keyPlain {
 				keyAny = c
 			}

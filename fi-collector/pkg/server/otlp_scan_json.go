@@ -13,8 +13,11 @@ import (
 // repeated keys appended, unknown keys skipped. String lengths are those of
 // the decoded strings. Anything malformed that the scan can see past is left
 // to the decoder, which refuses it.
-func scanOTLPJSON(b []byte) (otlpShape, error) {
+func scanOTLPJSON(b []byte, stamps ...resourceStampBudget) (otlpShape, error) {
 	j := jsonScan{b: b}
+	if len(stamps) != 0 {
+		j.s.stamps = stamps[0]
+	}
 	err := j.request()
 	return j.s, err
 }
@@ -561,9 +564,10 @@ func (j *jsonScan) keyValue(depth int) (kvInfo, error) {
 			j.s.strings++
 			j.s.stringBytes += info.decoded
 			kv.keyJSON, kv.keyHTML, kv.keyRaw = info.plain, info.html, info.decoded
-			kv.promoted = 0
+			kv.promoted, kv.stampKey = 0, 0
 			if j.keyN >= 0 {
 				kv.promoted = promotedStringKey(j.key[:j.keyN])
+				kv.stampKey = resourceStampKey(j.key[:j.keyN])
 				if c := classifyKey(j.key[:j.keyN]); c != keyPlain {
 					kv.class = c
 				}
