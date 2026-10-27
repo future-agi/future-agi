@@ -1,5 +1,7 @@
 package server
 
+import "github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
+
 // The price of a request is the heap it makes live, in two parts with
 // different lifetimes (see ingest_limits.go):
 //
@@ -69,7 +71,9 @@ func (s otlpShape) price() ingestPrice {
 		sizeClassBound(s.bytesValues, 0) + // pdata's copy of bytes values
 		sizeClassBound(s.transientBytes, 0) +
 		stackPrice(s.depth)
-	rows := int64(priceRows) +
+	// Synchronous catalog Merge keeps its bounded sort scratch under this same
+	// row lease until canonical AND sidecar work finishes. No nested acquisition.
+	rows := int64(priceRows+observedcatalog.MergeSortScratchBytes) +
 		s.spans*priceRow +
 		s.keyValues*priceRowKeyValue +
 		(s.arrayValues+s.containers)*priceRowNested +
