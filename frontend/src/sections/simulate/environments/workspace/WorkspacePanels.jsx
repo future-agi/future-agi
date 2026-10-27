@@ -121,7 +121,7 @@ export default function WorkspacePanels({
           />
         );
       case "world":
-        return <WorldPanel env={env} envState={envState} />;
+        return <WorldPanel env={env} envState={envState} onGo={go} graphData={graphData} />;
       case "runs":
         if (noRuns)
           return (

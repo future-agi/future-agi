@@ -32,6 +32,7 @@ const toWorldTool = (tool) =>
         args: tool?.args || [],
         desc: tool?.description || tool?.name || "",
         argTypes: tool?.arg_types || undefined,
+        argValues: tool?.arg_values || undefined,
         requires: tool?.requires || undefined,
       };
 

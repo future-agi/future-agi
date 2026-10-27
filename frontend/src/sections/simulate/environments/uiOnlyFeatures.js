@@ -46,6 +46,10 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "MCP tools",
     ask: "adding, refreshing and removing tools from MCP servers",
   },
+  scenarioChecks: {
+    label: "Scenario checks",
+    ask: "the checks that prove each scenario, with their code",
+  },
   contractEdits: {
     label: "Contract edits",
     ask: "editing rules, use cases and argument limits",
