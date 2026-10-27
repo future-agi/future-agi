@@ -97,8 +97,13 @@ def test_sentry_scrubs_outbound_telemetry_request_breadcrumb_body():
 # The router serves every harness route with an optional format suffix too, so a sensitive
 # endpoint is reachable as `secret-values/`, `secret-values.json` and `secret-values.json/`.
 _SENSITIVE_HARNESS_PATHS = [
-    f"/simulate/api/harness-jobs/{endpoint}{suffix}"
-    for endpoint in ("sources", "secret-files", "secret-values")
+    f"/simulate/api/{endpoint}{suffix}"
+    for endpoint in (
+        "harness-jobs/sources",
+        "harness-jobs/secret-files",
+        "harness-jobs/secret-values",
+        "harness-environment-designs/documents",
+    )
     for suffix in ("/", ".json", ".json/")
 ]
 

@@ -1041,12 +1041,16 @@ holds at most 10,000 members and expands to at most 200 MiB (and 100 times its
 size), or UTF-8 text for CSV, TSV, JSON, JSONL, TXT and MD. Upload bodies are
 never captured by telemetry. Documents are parsed only inside the design's
 sandbox, each in a child process with an allow-listed environment and CPU,
-memory and output limits; the platform never parses them.
+memory and output limits; the platform never parses them. A design's documents
+must have distinct names, since each is staged under its name; a repeated name
+is refused with 400 `design_documents_duplicate_name`.
 
 **Launch.** The gateway stages, as for a composition, the template's archives
 under `/work/releases`, the documents extracted read-only under
 `/work/documents`, and, for a continued design, the previous job's last
-workspace checkpoint extracted into `/work/authoring`. The job's command is
+workspace checkpoint extracted into `/work/authoring`, without the previous
+attempt's terminal state (`design-output/` and `.futureagi-build-finished.json`),
+which a later turn's checkpoint can carry. The job's command is
 the control process, `python -m fi.alk.harness.design hosted --job /work/job.json
 --releases /work/releases --workspace /work/authoring --documents /work/documents`,
 and the conversation's builder is asked to design (or to carry on). The chat's

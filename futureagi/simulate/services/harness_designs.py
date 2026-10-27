@@ -57,6 +57,9 @@ DOCUMENTS_ARCHIVE = "/work/documents.tar.gz"
 # Codes a design that can be continued ends with: it parked at an unanswered question, or ran
 # out of its authoring time with its last checkpoint kept.
 CONTINUABLE = frozenset({"design_waiting", "design_unfinished"})
+# What one attempt leaves when it ends, relative to the workspace. A later turn's checkpoint
+# can carry it, and a continued design would read it as its own result and stop at once.
+ATTEMPT_TERMINAL = ("design-output", ".futureagi-build-finished.json")
 
 DOCUMENT_MAX_BYTES = 25 * 1024 * 1024
 DESIGN_DOCUMENTS_MAX = 100
@@ -189,6 +192,13 @@ def _documents(organization, ids: list[Any]) -> list[HarnessDesignDocument]:
             "document_not_found", f"documents not found: {', '.join(missing)}", 404
         )
     documents = [found[one] for one in wanted]
+    names = [one.name for one in documents]
+    if repeated := sorted({name for name in names if names.count(name) > 1}):
+        # The sandbox stages each document under its name, so one would replace the other.
+        raise _error(
+            "design_documents_duplicate_name",
+            f"documents share a name: {', '.join(repeated)}; rename one and upload it again",
+        )
     if sum(one.size for one in documents) > DESIGN_DOCUMENTS_MAX_BYTES:
         raise _error(
             "design_invalid", "a design's documents may total at most 200 MiB", 413
@@ -332,6 +342,23 @@ def _documents_archive(organization, listed: list[dict[str, Any]]) -> bytes:
     return raw.getvalue()
 
 
+def _without_terminal_state(checkpoint: bytes) -> bytes:
+    """The checkpoint with the previous attempt's result and finished marker left out."""
+    raw = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as source,
+        tarfile.open(fileobj=raw, mode="w:gz") as target,
+    ):
+        for member in source.getmembers():
+            top = member.name.removeprefix("./").split("/", 1)[0]
+            if top in ATTEMPT_TERMINAL:
+                continue
+            target.addfile(
+                member, source.extractfile(member) if member.isfile() else None
+            )
+    return raw.getvalue()
+
+
 def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
     design = design_of(job)
     if design is None:
@@ -377,7 +404,7 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
                 "design_checkpoint_missing", "the design's checkpoint is gone", 409
             )
         # The gateway extracts /work/authoring.tar.gz into the workspace before anything runs.
-        uploads.append(("/work/authoring.tar.gz", checkpoint))
+        uploads.append(("/work/authoring.tar.gz", _without_terminal_state(checkpoint)))
     return DesignLaunch(
         uploads=tuple(uploads),
         prepare_command=" && ".join(prepare) or "true",
