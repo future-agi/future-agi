@@ -2,11 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { render } from "src/utils/test-utils";
+import { render, renderWithRouter } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import OverviewPanel from "../OverviewPanel";
 import AgentRefreshBanner from "../AgentRefreshBanner";
-import NextStepsChecklist from "../NextStepsChecklist";
 import SourceToSandboxMap from "../SourceToSandboxMap";
 
 const REFRESH_HEADING = "Agent v2 is newer than this environment";
@@ -82,16 +81,18 @@ describe("AgentRefreshBanner inside OverviewPanel", () => {
     scenarios: [],
   };
 
-  it("renders the refresh banner on an unlocked env that moved ahead", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected />
+  it("renders the refresh banner on an unlocked env that moved ahead, with ?uiSample=agentchange", () => {
+    renderWithRouter(
+      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected />,
+      { route: "/x?uiSample=agentchange" },
     );
     expect(screen.getByText(REFRESH_HEADING)).toBeInTheDocument();
   });
 
   it("never renders the refresh banner on a locked env", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected locked />
+    renderWithRouter(
+      <OverviewPanel env={MOCK_WORLD} envState={movedAhead} patch={vi.fn()} onGo={vi.fn()} agentConnected locked />,
+      { route: "/x?uiSample=agentchange" },
     );
     expect(screen.queryByText(REFRESH_HEADING)).not.toBeInTheDocument();
   });
@@ -105,82 +106,21 @@ describe("Overview extras wired into OverviewPanel", () => {
     scenarios: [],
   };
 
-  it("no longer renders the source-to-sandbox map on an env with a derived world", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
+  it("renders the source-to-sandbox map without guessed origins and targets", () => {
+    renderWithRouter(
+      <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />,
+      { route: "/x" },
     );
-    // The map's origin chips and sandbox targets were derived by position and
-    // keyword rather than reported by ALK, so the panel dropped it.
-    expect(screen.queryByText("How the world was built")).toBeNull();
-  });
-
-  it("renders the next-steps checklist only when there is no agent and no derived world", () => {
-    render(
-      <OverviewPanel
-        env={{ ...MOCK_WORLD, tools: [], rules: [], seed: { tables: [] } }}
-        envState={{ scenarios: [] }}
-        patch={vi.fn()}
-        onGo={vi.fn()}
-        agentConnected={false}
-      />
-    );
-    expect(screen.getByText("Next steps")).toBeInTheDocument();
-  });
-
-  it("hides the checklist once the env carries a derived world", () => {
-    render(
-      <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
-    );
-    expect(screen.queryByText("Next steps")).not.toBeInTheDocument();
-  });
-});
-
-describe("NextStepsChecklist", () => {
-  const renderChecklist = (props = {}) =>
-    render(<NextStepsChecklist env={MOCK_WORLD} envState={{}} onGo={vi.fn()} {...props} />);
-
-  it("lists every setup step, keyed off its body copy", () => {
-    // The scenario/eval step titles collide with their empty-state CTA labels,
-    // so each step is identified by its unique body prose.
-    renderChecklist();
-    expect(screen.getByText(/is set up and ready for configuration/)).toBeInTheDocument();
-    expect(screen.getByText(/Wire your agent so it can act/)).toBeInTheDocument();
-    expect(screen.getByText(/Tasks the agent has to complete/)).toBeInTheDocument();
-    expect(screen.getByText(/Graders that decide whether each run passed/)).toBeInTheDocument();
-    expect(screen.getByText(/Kick off a run/)).toBeInTheDocument();
-  });
-
-  it("routes the live step CTAs through onGo; the deferred connect-agent step is disabled", async () => {
-    const user = userEvent.setup();
-    const onGo = vi.fn();
-    renderChecklist({ onGo });
-
-    // Connecting an agent is deferred (no Agents tab) — the CTA is disabled
-    // behind the coming-soon tooltip rather than a button that no-ops.
-    expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: /add scenarios/i }));
-    expect(onGo).toHaveBeenCalledWith("scenarios");
-
-    await user.click(screen.getByRole("button", { name: /add evaluations/i }));
-    expect(onGo).toHaveBeenCalledWith("evals");
-
-    // The disabled connect-agent CTA never fires onGo.
-    expect(onGo).not.toHaveBeenCalledWith("agent");
-  });
-
-  it("counts completed steps and retires their CTAs as progress is made", () => {
-    renderChecklist({ envState: { scenarios: [{}, {}], evals: [{}] } });
-    // created + scenarios + evals are done; agent + run remain.
-    expect(screen.getByText("3 of 5 complete, 2 left to run your first simulation")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /connect agent/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /add scenarios/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /add evaluations/i })).not.toBeInTheDocument();
+    // Origins and targets were derived by position and keyword rather than
+    // reported by ALK, so a real environment shows soon chips in their place.
+    expect(screen.getByText("How the world was built")).toBeInTheDocument();
+    expect(screen.getByText("Origin soon")).toBeInTheDocument();
   });
 });
 
 describe("SourceToSandboxMap", () => {
-  const renderMap = (props = {}) => render(<SourceToSandboxMap env={MOCK_WORLD} {...props} />);
+  // The sample fills origins and targets the way Vel's prototype does.
+  const renderMap = (props = {}) => render(<SourceToSandboxMap env={MOCK_WORLD} sample {...props} />);
 
   it("renders the source and sandbox columns for the env", () => {
     renderMap();

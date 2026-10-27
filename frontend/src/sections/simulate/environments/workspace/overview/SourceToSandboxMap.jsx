@@ -3,6 +3,8 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import OriginChip from "../../components/OriginChip";
+import SoonChip from "../../components/SoonChip";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { ENV_SHAPE } from "./overview.constants";
 import {
   MAP_COPY,
@@ -29,13 +31,20 @@ const MAP_PX = 3;
 // a Contract override: a resolved tool shows the overridden target and a "you
 // confirmed" mark. This is the artifact someone returns to weeks later to see
 // which decisions a human made and which the reader made itself.
-export default function SourceToSandboxMap({ env, envState, stores }) {
-  const toolRows = toolMapRows(env, envState);
-  const ruleRows = ruleMapRows(env);
+export default function SourceToSandboxMap({ env, envState, stores, sample = false }) {
+  // Where each fact was read from and what it became aren't in the API, so a
+  // real environment lists its real tools, rules and stores without them; the
+  // sample fills them the way Vel's prototype does.
+  const blank = (r) => (sample ? r : { ...r, origin: null, target: null });
+  const toolRows = toolMapRows(env, envState).map(blank);
+  const ruleRows = ruleMapRows(env).map(blank);
   // A backed env passes its real §6 world.stores (may be empty); otherwise fall
   // back to the client/fixture seed tables. Actors were removed — they were a
   // hardcoded 4-row stub, not backed by world.personas.
-  const storeRows = stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
+  const storeRows = (stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env)).map((r) =>
+    sample ? r : { ...r, origin: null },
+  );
+  const hint = (g) => (sample && g.sampleHint) || g.hint;
 
   return (
     <Box
@@ -45,7 +54,10 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
       }}
     >
       <Box sx={{ px: MAP_PX, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{MAP_COPY.title}</Typography>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{MAP_COPY.title}</Typography>
+          {sample && <UiOnlyFlag feature="toolFidelity" />}
+        </Stack>
         <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, maxWidth: 720 }}>
           {MAP_COPY.subtitle}
         </Typography>
@@ -59,18 +71,25 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
           bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
         }}
       >
-        <ColHead>{MAP_COPY.readHead}</ColHead>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <ColHead>{MAP_COPY.readHead}</ColHead>
+          {!sample && <SoonChip label="Origin" what="Where each fact was read from" size="tiny" />}
+        </Stack>
         <Box />
         <Box />
-        <ColHead>{MAP_COPY.sandboxHead}</ColHead>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <ColHead>{MAP_COPY.sandboxHead}</ColHead>
+          {!sample && <SoonChip label="Target" what="What each tool and rule became in the sandbox" size="tiny" />}
+        </Stack>
       </Box>
 
       <MapGroup
         label={MAP_COPY.groups.tools.label}
-        hint={MAP_COPY.groups.tools.hint}
+        hint={hint(MAP_COPY.groups.tools)}
         right={MAP_COPY.toolsRight(toolRows.length)}
         first
       >
+        {toolRows.length === 0 && <EmptyRow>{MAP_COPY.toolsEmpty}</EmptyRow>}
         {toolRows.map((r, i) => (
           <MapRow
             key={r.key}
@@ -86,9 +105,10 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
 
       <MapGroup
         label={MAP_COPY.groups.rules.label}
-        hint={MAP_COPY.groups.rules.hint}
+        hint={hint(MAP_COPY.groups.rules)}
         right={MAP_COPY.rulesRight(ruleRows.length)}
       >
+        {ruleRows.length === 0 && <EmptyRow>{MAP_COPY.rulesEmpty}</EmptyRow>}
         {ruleRows.map((r, i) => (
           <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono />
         ))}
@@ -96,7 +116,7 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
 
       <MapGroup
         label={MAP_COPY.groups.stores.label}
-        hint={MAP_COPY.groups.stores.hint}
+        hint={hint(MAP_COPY.groups.stores)}
         right={MAP_COPY.storesRight(storeRows.length)}
       >
         {storeRows.length === 0 ? (
@@ -107,6 +127,14 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
           ))
         )}
       </MapGroup>
+
+      {sample && (
+        <MapGroup label={MAP_COPY.groups.others.label} hint={MAP_COPY.groups.others.hint} right={MAP_COPY.othersRight}>
+          {MAP_COPY.sampleOthers.map((r, i) => (
+            <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono derived={r.derived} />
+          ))}
+        </MapGroup>
+      )}
     </Box>
   );
 }
@@ -116,6 +144,8 @@ SourceToSandboxMap.propTypes = {
   // Real §6 world.stores for a backed env (may be []); undefined = use the
   // client/fixture seed tables.
   stores: PropTypes.array,
+  // Fill origins, targets and Other parties with Vel's sample (?uiSample=world).
+  sample: PropTypes.bool,
 };
 
 // A muted full-width row for a group the backend returned empty.
@@ -152,8 +182,7 @@ function ColHead({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: "fontWeightBold",
-        textTransform: "uppercase", letterSpacing: 0.6, color: "text.subtitle",
+        typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.subtitle",
       }}
     >
       {children}

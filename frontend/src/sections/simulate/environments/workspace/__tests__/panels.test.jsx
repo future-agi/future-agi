@@ -6,7 +6,6 @@ import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspacePanels from "../WorkspacePanels";
-import NextStepsChecklist from "../overview/NextStepsChecklist";
 import useWorkspaceTab from "../helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "../helpers/workspaceGaps";
 
@@ -17,19 +16,12 @@ import { gapsByTab, counts } from "../helpers/workspaceGaps";
 function echoEvals(label, envState) {
   return `${label}:${(envState?.evals || []).map((e) => e.name || e.id).join(",")}`;
 }
-// The Overview stub mounts the REAL next-steps checklist, because the
-// checklist's "Add evaluations" step and its CTA count are the thing that
-// regressed when this panel was handed the raw store: a stub echoing the prop
-// would pass against a checklist that read something else entirely.
-function OverviewPanelStub({ envState, onGo }) {
-  return (
-    <div>
-      {echoEvals("overview-body", envState)}
-      <NextStepsChecklist env={ENV} envState={envState} onGo={onGo} />
-    </div>
-  );
+// The Overview stub echoes the eval names it was handed: a backed
+// environment's real applied evals overlaid on the store, not the raw store.
+function OverviewPanelStub({ envState }) {
+  return <div>{echoEvals("overview-body", envState)}</div>;
 }
-OverviewPanelStub.propTypes = { envState: PropTypes.object, onGo: PropTypes.func };
+OverviewPanelStub.propTypes = { envState: PropTypes.object };
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
@@ -269,12 +261,7 @@ describe("WorkspacePanels", () => {
     expect(onTabChange).toHaveBeenCalledWith("contract");
   });
 
-  // The Overview's next-steps checklist counts applied evals for its "Add
-  // evaluations" step. On a backed environment that set is the server's, so
-  // handing this panel the raw store let the checklist still ask for
-  // evaluations, and count the remaining steps as though there were none,
-  // while the Evaluations tab listed the server's two.
-  it("hands the Overview the server's eval set too, so its checklist counts what the Evaluations tab lists", () => {
+  it("hands the Overview the server's eval set too, the same one the Evaluations tab lists", () => {
     const serverEvals = [
       { id: "cfg-1", name: "no_misselling" },
       { id: "cfg-2", name: "no_pii_leak" },
@@ -286,27 +273,6 @@ describe("WorkspacePanels", () => {
     });
 
     expect(screen.getByText("overview-body:no_misselling,no_pii_leak")).toBeInTheDocument();
-    // The step is satisfied by the server's evals: no "Add evaluations" ask,
-    // and it counts towards the remaining-steps line.
-    expect(screen.queryByRole("button", { name: "Add evaluations" })).toBeNull();
-    expect(
-      screen.getByText("3 of 5 complete, 2 left to run your first simulation"),
-    ).toBeInTheDocument();
-  });
-
-  // The same render with only the store, to show the case above is a genuine
-  // difference and not something the checklist does regardless.
-  it("still asks for evaluations when neither the store nor the server has any", () => {
-    renderPanels({
-      tab: "overview",
-      envState: baseEnvState({ evals: [] }),
-      serverEnvState: baseEnvState({ evals: [] }),
-    });
-
-    expect(screen.getByRole("button", { name: "Add evaluations" })).toBeInTheDocument();
-    expect(
-      screen.getByText("2 of 5 complete, 3 left to run your first simulation"),
-    ).toBeInTheDocument();
   });
 
   it("falls back to envState for the Overview when no server state is passed (the build page)", () => {

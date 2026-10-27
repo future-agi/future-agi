@@ -7,6 +7,14 @@ import { useRenameEnvironment } from "src/api/simulate-environments/environments
 import SectionCard from "../../components/SectionCard";
 import CopyField from "../../components/CopyField";
 import { validateEnvName, MAX_ENV_NAME } from "../renameEnvironment";
+import {
+  CONNECTOR_LABEL,
+  MODE_LABEL,
+  OVERVIEW_COPY,
+  sourceLabel,
+} from "../overview/overview.constants";
+import { Fact } from "../overview/OverviewPrimitives";
+import { PARALLELISM_COPY } from "../../parallelism.constants";
 import { envVarGroups } from "./envVarGroups";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -27,7 +35,7 @@ const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
  * commented, at the foot of this file so they can be revived field by field if
  * the contract ever grows them.
  */
-export default function SettingsPanel({ env, backed = false, locked = false }) {
+export default function SettingsPanel({ env, envState, backed = false, locked = false }) {
   // §6 detail is the source of truth for a backed env's settings. Shares the
   // ["harness-environment", id] cache the Evals tab already populates.
   const detailQuery = useQuery(harnessEnvironmentQuery(env.id, { enabled: backed }));
@@ -133,6 +141,8 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
             </Stack>
           </SectionCard>
 
+          <BuildDetailsCard env={env} connector={envState?.agent?.typeId} />
+
           <SectionCard
             title="Environment variables"
             subtitle="Set when the environment was built. Read-only. Secret values are never shown."
@@ -200,6 +210,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
 }
 
 SettingsPanel.propTypes = {
+  envState: PropTypes.object,
   env: PropTypes.object.isRequired,
   backed: PropTypes.bool,
   locked: PropTypes.bool,
@@ -343,3 +354,28 @@ EnvVarsBody.propTypes = {
   </SectionCard>
   ────────────────────────────────────────────────────────────────────────────
 */
+
+// How the environment was built: the facts Vel's Overview leaves out
+// (connector, source, mode, parallel worlds), kept here so they stay visible.
+function BuildDetailsCard({ env, connector }) {
+  const facts = [
+    [OVERVIEW_COPY.facts.connector, connector ? CONNECTOR_LABEL[connector] || connector : null],
+    [OVERVIEW_COPY.facts.source, sourceLabel(env.source)],
+    [OVERVIEW_COPY.facts.mode, env.agentMode ? MODE_LABEL[env.agentMode] || env.agentMode : null],
+    [PARALLELISM_COPY.fact, env.parallelism?.requested ? PARALLELISM_COPY.factValue(env.parallelism) : null],
+  ].filter(([, value]) => value);
+  if (!facts.length) return null;
+  return (
+    <SectionCard title="Build details" subtitle="How this environment was built">
+      <Stack direction="row" flexWrap="wrap" sx={{ columnGap: 4, rowGap: 1.5 }}>
+        {facts.map(([label, value]) => (
+          <Fact key={label} label={label} value={value} />
+        ))}
+      </Stack>
+    </SectionCard>
+  );
+}
+BuildDetailsCard.propTypes = {
+  env: PropTypes.object.isRequired,
+  connector: PropTypes.string,
+};

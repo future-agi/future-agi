@@ -29,17 +29,34 @@ const DETAIL = {
 
 const env = { id: "env-1", name: "job-derived-name" };
 
-function renderPanel({ backed = true, locked = false, seedDetail = true } = {}) {
+function renderPanel({ backed = true, locked = false, seedDetail = true, envOverride = {}, envState } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (seedDetail) client.setQueryData(harnessEnvironmentKey("env-1"), DETAIL);
   render(
     <QueryClientProvider client={client}>
-      <SettingsPanel env={env} backed={backed} locked={locked} />
+      <SettingsPanel env={{ ...env, ...envOverride }} envState={envState} backed={backed} locked={locked} />
     </QueryClientProvider>,
   );
 }
 
 beforeEach(() => mutate.mockClear());
+
+describe("SettingsPanel — build details", () => {
+  it("lists the connector, source, mode and parallel worlds that left the Overview", () => {
+    renderPanel({
+      envOverride: {
+        source: { kind: "github", repository: "acme/agent", ref: "main" },
+        agentMode: "connect_only",
+        parallelism: { requested: 2, effective: 2 },
+      },
+      envState: { agent: { typeId: "phone" } },
+    });
+    expect(screen.getByText("Build details")).toBeInTheDocument();
+    expect(screen.getByText("Connector")).toBeInTheDocument();
+    expect(screen.getByText("acme/agent@main")).toBeInTheDocument();
+    expect(screen.getByText("Connect only")).toBeInTheDocument();
+  });
+});
 
 describe("SettingsPanel — layout", () => {
   it("opens on its content, with no heading repeating the tab", () => {

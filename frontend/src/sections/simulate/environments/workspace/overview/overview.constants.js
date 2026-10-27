@@ -14,6 +14,8 @@ export const OVERVIEW_COPY = {
     direction: "Direction",
     source: "Source",
     mode: "Mode",
+    transports: "Transports",
+    packs: "Scenario packs",
   },
   capabilities: "Capabilities",
   world: "The world",
@@ -86,22 +88,6 @@ export const MODE_LABEL = {
 
 // Inbound / outbound, for a voice agent's call direction.
 export const DIRECTION_LABEL = { inbound: "Inbound", outbound: "Outbound" };
-
-export const AGENT_SUMMARY_COPY = {
-  label: "Test subject",
-  viewAgent: "View agent",
-  versions: (n) => `${n} ${n === 1 ? "version" : "versions"}`,
-  connected: "Connected",
-  noAgentTitle: "No agent attached",
-  agentTitle: (name, label) => [name || "Agent", label].filter(Boolean).join(" "),
-  lockedBody:
-    "Seeded baseline shipped with this template. Fork the environment to add your own agent versions.",
-  portableBody:
-    "This environment is portable. Attach an agent as the test subject; you can swap in different agents later without rebuilding the env.",
-  fork: "Fork to edit",
-  manage: "Manage versions",
-  attach: "Attach agent",
-};
 
 // The environment shape Overview reads. Local PropTypes.shape (Phase-2 owns the
 // shared workspace.shapes.js, which this task does not touch).
