@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1073,
+  endpointCount: 1076,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -32155,7 +32155,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/ErrorResponse",
+          },
           500: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ErrorResponse",
           },
           default: {
@@ -32329,6 +32335,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/reliability/": {
+      get: {
+        operationId: "simulate_v3_test_execution_reliability",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/Reliability",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -38510,6 +38533,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/SharedLinkResolveResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/shared/{token}/sidebar/": {
+      get: {
+        operationId: "tracer_shared_sidebar_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          trace_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedSidebarApiResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/shared/{token}/traces/{trace_id}/": {
+      get: {
+        operationId: "tracer_shared_traces_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/TraceDetailResponse",
           },
           401: {
             $ref: "#/definitions/SharedLinkResolveError",
@@ -73708,6 +73797,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    Reliability: {
+      required: [
+        "trials",
+        "scenarios",
+        "consistent_pass",
+        "passed_at_least_once",
+        "repeated",
+        "flaky",
+        "flip_rate",
+        "k",
+        "inconclusive",
+        "pass_hat_1",
+        "pass_hat_k",
+        "pass_hat_k_scenarios",
+        "pass_hat_k_passed",
+        "pass_hat_k_excluded",
+        "trials_passed",
+        "trials_evaluated",
+        "pass_rate_interval",
+        "rows",
+      ],
+      type: "object",
+      properties: {
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        consistent_pass: {
+          title: "Consistent pass",
+          type: "integer",
+        },
+        passed_at_least_once: {
+          title: "Passed at least once",
+          type: "integer",
+        },
+        repeated: {
+          title: "Repeated",
+          type: "integer",
+        },
+        flaky: {
+          title: "Flaky",
+          type: "integer",
+        },
+        flip_rate: {
+          title: "Flip rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        k: {
+          title: "K",
+          type: "integer",
+          "x-nullable": true,
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        pass_hat_1: {
+          title: "Pass hat 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k: {
+          title: "Pass hat k",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k_scenarios: {
+          title: "Pass hat k scenarios",
+          type: "integer",
+        },
+        pass_hat_k_passed: {
+          title: "Pass hat k passed",
+          type: "integer",
+        },
+        pass_hat_k_excluded: {
+          title: "Pass hat k excluded",
+          type: "integer",
+        },
+        trials_passed: {
+          title: "Trials passed",
+          type: "integer",
+        },
+        trials_evaluated: {
+          title: "Trials evaluated",
+          type: "integer",
+        },
+        pass_rate_interval: {
+          $ref: "#/definitions/ReliabilityInterval",
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReliabilityRow",
+          },
+        },
+      },
+    },
     RenewGroupingFeature: {
       required: ["lease_token", "action"],
       type: "object",
@@ -76645,7 +76836,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         resource_type: {
           title: "Resource type",
           type: "string",
-          enum: ["trace", "dashboard", "project", "call_execution"],
+          enum: [
+            "trace",
+            "dashboard",
+            "project",
+            "call_execution",
+            "error_feed_issue",
+          ],
         },
         resource_id: {
           title: "Resource id",
@@ -76696,6 +76893,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -76774,6 +76972,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -76918,6 +77117,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
         },
         resource_id: {
@@ -100187,6 +100387,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReliabilityInterval: {
+      required: ["low", "high", "effective_n", "scenarios", "evaluated"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+        effective_n: {
+          title: "Effective n",
+          type: "number",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    ReliabilityRow: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "scenario",
+        "scenario_key",
+        "runs",
+        "evaluated",
+        "pass_rate",
+        "verdict",
+        "call_ids",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+        call_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     AgentDefinitionNested: {
       required: ["agent_name", "description"],
       type: "object",
@@ -100756,60 +101062,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Provider",
           type: "string",
           minLength: 1,
-        },
-      },
-    },
-    Reliability: {
-      required: [
-        "trials",
-        "scenarios",
-        "consistent_pass",
-        "passed_at_least_once",
-        "repeated",
-        "flaky",
-        "flip_rate",
-        "pass_rate_interval",
-        "rows",
-      ],
-      type: "object",
-      properties: {
-        trials: {
-          title: "Trials",
-          type: "integer",
-        },
-        scenarios: {
-          title: "Scenarios",
-          type: "integer",
-        },
-        consistent_pass: {
-          title: "Consistent pass",
-          type: "integer",
-        },
-        passed_at_least_once: {
-          title: "Passed at least once",
-          type: "integer",
-        },
-        repeated: {
-          title: "Repeated",
-          type: "integer",
-        },
-        flaky: {
-          title: "Flaky",
-          type: "integer",
-        },
-        flip_rate: {
-          title: "Flip rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        pass_rate_interval: {
-          $ref: "#/definitions/ReliabilityInterval",
-        },
-        rows: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/ReliabilityRow",
-          },
         },
       },
     },
@@ -103220,6 +103472,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         widget_count: {
           title: "Widget count",
           type: "integer",
+        },
+        issue: {
+          $ref: "#/definitions/FeedDetailCore",
+        },
+        overview: {
+          $ref: "#/definitions/OverviewResponse",
+        },
+        traces: {
+          $ref: "#/definitions/TracesTabResponse",
+        },
+        trends: {
+          $ref: "#/definitions/TrendsTabResponse",
+        },
+        sidebar: {
+          $ref: "#/definitions/FeedSidebar",
         },
       },
     },
@@ -114689,104 +114956,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls: {
           title: "Calls",
           type: "integer",
-        },
-      },
-    },
-    ReliabilityInterval: {
-      required: ["low", "high", "effective_n", "evaluated", "clusters"],
-      type: "object",
-      properties: {
-        low: {
-          title: "Low",
-          type: "number",
-        },
-        high: {
-          title: "High",
-          type: "number",
-        },
-        effective_n: {
-          title: "Effective n",
-          type: "number",
-        },
-        evaluated: {
-          title: "Evaluated",
-          type: "integer",
-        },
-        clusters: {
-          title: "Clusters",
-          type: "integer",
-        },
-      },
-      "x-nullable": true,
-    },
-    ReliabilityRow: {
-      required: [
-        "queued",
-        "in_progress",
-        "passed",
-        "failed",
-        "error",
-        "inconclusive",
-        "scenario",
-        "scenario_key",
-        "runs",
-        "evaluated",
-        "pass_rate",
-        "verdict",
-      ],
-      type: "object",
-      properties: {
-        queued: {
-          title: "Queued",
-          type: "integer",
-        },
-        in_progress: {
-          title: "In progress",
-          type: "integer",
-        },
-        passed: {
-          title: "Passed",
-          type: "integer",
-        },
-        failed: {
-          title: "Failed",
-          type: "integer",
-        },
-        error: {
-          title: "Error",
-          type: "integer",
-        },
-        inconclusive: {
-          title: "Inconclusive",
-          type: "integer",
-        },
-        scenario: {
-          title: "Scenario",
-          type: "string",
-          minLength: 1,
-        },
-        scenario_key: {
-          title: "Scenario key",
-          type: "string",
-          minLength: 1,
-        },
-        runs: {
-          title: "Runs",
-          type: "integer",
-        },
-        evaluated: {
-          title: "Evaluated",
-          type: "integer",
-        },
-        pass_rate: {
-          title: "Pass rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        verdict: {
-          title: "Verdict",
-          type: "string",
-          enum: ["passed", "failed", "flaky", "not_evaluated"],
         },
       },
     },

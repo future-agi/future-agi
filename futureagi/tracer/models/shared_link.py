@@ -16,6 +16,7 @@ class ResourceType(models.TextChoices):
     DATASET = "dataset", "Dataset"
     PROJECT = "project", "Project"
     CALL_EXECUTION = "call_execution", "Call Execution"
+    ERROR_FEED_ISSUE = "error_feed_issue", "Error Feed Issue"
 
 
 class AccessType(models.TextChoices):

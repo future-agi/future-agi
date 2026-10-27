@@ -1021,6 +1021,7 @@ import type {
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
   RedisKeyRequestApi,
+  ReliabilityApi,
   RenewGroupingFeatureApi,
   ReplaySessionApi,
   ReplaySessionListApi,
@@ -1367,6 +1368,7 @@ import type {
   TracerSavedViewsListParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
+  TracerSharedSidebarListParams,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
   TracerTraceGetEvalNames200,
@@ -67561,14 +67563,24 @@ export type simulateTestExecutionsRerunCallsCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse409 = {
+  data: ErrorResponseApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponse500 = {
   data: ErrorResponseApi;
   status: 500;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse503 = {
+  data: ErrorResponseApi;
+  status: 503;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
@@ -67580,7 +67592,9 @@ export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
 export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse400
   | simulateTestExecutionsRerunCallsCreateResponse404
+  | simulateTestExecutionsRerunCallsCreateResponse409
   | simulateTestExecutionsRerunCallsCreateResponse500
+  | simulateTestExecutionsRerunCallsCreateResponse503
   | simulateTestExecutionsRerunCallsCreateResponseDefault
 ) & {
   headers: Headers;
@@ -67858,6 +67872,51 @@ export const simulateV3TestExecutionExport = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(runExportV3RequestApi),
+    },
+  );
+};
+
+export type simulateV3TestExecutionReliabilityResponse200 = {
+  data: ReliabilityApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionReliabilityResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionReliabilityResponseSuccess =
+  simulateV3TestExecutionReliabilityResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionReliabilityResponseError =
+  simulateV3TestExecutionReliabilityResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionReliabilityResponse =
+  | simulateV3TestExecutionReliabilityResponseSuccess
+  | simulateV3TestExecutionReliabilityResponseError;
+
+export const getSimulateV3TestExecutionReliabilityUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/reliability/`;
+};
+
+/**
+ * The reliability block alone, for the run header.
+ */
+export const simulateV3TestExecutionReliability = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionReliabilityResponse> => {
+  return apiMutator<simulateV3TestExecutionReliabilityResponse>(
+    getSimulateV3TestExecutionReliabilityUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -79035,6 +79094,169 @@ export const tracerSharedRead = async (
     ...options,
     method: "GET",
   });
+};
+
+export type tracerSharedSidebarListResponse200 = {
+  data: FeedSidebarApiResponseApi;
+  status: 200;
+};
+
+export type tracerSharedSidebarListResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedSidebarListResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedSidebarListResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedSidebarListResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedSidebarListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedSidebarListResponseSuccess =
+  tracerSharedSidebarListResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedSidebarListResponseError = (
+  | tracerSharedSidebarListResponse401
+  | tracerSharedSidebarListResponse403
+  | tracerSharedSidebarListResponse404
+  | tracerSharedSidebarListResponse410
+  | tracerSharedSidebarListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedSidebarListResponse =
+  | tracerSharedSidebarListResponseSuccess
+  | tracerSharedSidebarListResponseError;
+
+export const getTracerSharedSidebarListUrl = (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/shared/${token}/sidebar/?${stringifiedParams}`
+    : `/tracer/shared/${token}/sidebar/`;
+};
+
+/**
+ * Mirrors the issue page: AI metadata and evaluations follow the trace
+picked in Traces affected (``?trace_id=``).
+ * @summary A shared Error Feed issue's sidebar, scoped to one of its traces.
+ */
+export const tracerSharedSidebarList = async (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+  options?: RequestInit,
+): Promise<tracerSharedSidebarListResponse> => {
+  return apiMutator<tracerSharedSidebarListResponse>(
+    getTracerSharedSidebarListUrl(token, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSharedTracesReadResponse200 = {
+  data: TraceDetailResponseApi;
+  status: 200;
+};
+
+export type tracerSharedTracesReadResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedTracesReadResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedTracesReadResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedTracesReadResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedTracesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedTracesReadResponseSuccess =
+  tracerSharedTracesReadResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedTracesReadResponseError = (
+  | tracerSharedTracesReadResponse401
+  | tracerSharedTracesReadResponse403
+  | tracerSharedTracesReadResponse404
+  | tracerSharedTracesReadResponse410
+  | tracerSharedTracesReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedTracesReadResponse =
+  | tracerSharedTracesReadResponseSuccess
+  | tracerSharedTracesReadResponseError;
+
+export const getTracerSharedTracesReadUrl = (
+  token: string,
+  traceId: string,
+) => {
+  return `/tracer/shared/${token}/traces/${traceId}/`;
+};
+
+/**
+ * Only traces linked to the shared issue are readable through its token.
+ * @summary One trace of a shared Error Feed issue, under the issue link's rules.
+ */
+export const tracerSharedTracesRead = async (
+  token: string,
+  traceId: string,
+  options?: RequestInit,
+): Promise<tracerSharedTracesReadResponse> => {
+  return apiMutator<tracerSharedTracesReadResponse>(
+    getTracerSharedTracesReadUrl(token, traceId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type tracerTraceAnnotationGetAnnotationValuesResponse200 = {

@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1073,
+  endpointCount: 1076,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1035,6 +1035,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+      "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
     },
     telemetry: {
@@ -1208,6 +1209,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/shared-links/{id}/access/": ["post"],
       "/tracer/shared-links/{id}/access/{access_id}/": ["delete"],
       "/tracer/shared/{token}/": ["get"],
+      "/tracer/shared/{token}/sidebar/": ["get"],
+      "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
       "/tracer/trace-annotation/get_annotation_values/": ["get"],
       "/tracer/trace-error-analysis/{trace_id}/": ["get"],
       "/tracer/trace-error-task/{project_id}/": ["get", "post"],
@@ -2324,6 +2327,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+  "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
   "/telemetry/heartbeat/": ["post"],
   "/telemetry/register/": ["post"],
@@ -2493,6 +2497,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/shared-links/{id}/access/": ["post"],
   "/tracer/shared-links/{id}/access/{access_id}/": ["delete"],
   "/tracer/shared/{token}/": ["get"],
+  "/tracer/shared/{token}/sidebar/": ["get"],
+  "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
   "/tracer/trace-annotation/get_annotation_values/": ["get"],
   "/tracer/trace-error-analysis/{trace_id}/": ["get"],
   "/tracer/trace-error-task/{project_id}/": ["get", "post"],

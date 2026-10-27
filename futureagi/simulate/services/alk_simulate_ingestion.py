@@ -1276,6 +1276,33 @@ def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorA
     return simulator_agent
 
 
+# What a harness call carries from preallocation (`_build_call_execution` plus the
+# manifest identity added in `_build_manifest_call_executions`). Grading and the results
+# grid read these, so a call re-run in place keeps them while its result is cleared.
+PREALLOCATED_CALL_METADATA_KEYS = (
+    "call_channel",
+    "external_runner",
+    "row_data",
+    "dataset_id",
+    "base_prompt",
+    "agent_description",
+    "agent_prompt",
+    "dynamic_prompt",
+    "language",
+    "initial_message",
+    "voice_name",
+    "conversation_speed",
+    "interrupt_sensitivity",
+    "finished_speaking_sensitivity",
+    "max_call_duration_in_minutes",
+    "initial_message_delay",
+    "system_prompt",
+    "harness_execution_key",
+    "harness_scenario_key",
+    "harness_trial_index",
+)
+
+
 def _build_call_execution(
     *,
     test_execution: TestExecution,
