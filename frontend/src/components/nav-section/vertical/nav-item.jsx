@@ -170,8 +170,8 @@ const NavItem = forwardRef(
           color="inherit"
           underline="none"
           sx={{
-            height: "26px",
-            minHeight: "26px",
+            height: "24px",
+            minHeight: "24px",
             ...(disabled && {
               cursor: "default",
             }),
@@ -188,8 +188,8 @@ const NavItem = forwardRef(
         color="inherit"
         underline="none"
         sx={{
-          minHeight: "26px",
-          height: "26px",
+          minHeight: "24px",
+          height: "24px",
           ...(disabled && {
             cursor: "default",
           }),
@@ -260,7 +260,7 @@ const StyledNavItem = styled(ListItemButton, {
     },
     label: {
       ...noWrapStyles,
-      fontSize: "13px",
+      fontSize: "12px",
       lineHeight: "20px",
       fontWeight: 400,
       textTransform: "none",
@@ -286,7 +286,7 @@ const StyledNavItem = styled(ListItemButton, {
     // Root item
     ...(!subItem && {
       ...baseStyles.item,
-      minHeight: 26,
+      minHeight: 24,
       "& .icon": {
         ...baseStyles.icon,
         "& > span": {
@@ -337,7 +337,7 @@ const StyledNavItem = styled(ListItemButton, {
     // Sub item
     ...(subItem && {
       ...baseStyles.item,
-      minHeight: 26,
+      minHeight: 24,
       "& .icon": {
         ...baseStyles.icon,
 

@@ -151,6 +151,9 @@ export const STATUS_META = {
   failed: { role: "danger", label: "Failed" },
   error: { role: "danger", label: "Error" },
   cancelled: { role: "neutral", label: "Cancelled" },
+  /* The run's spending limit, or the person, stopped new scenarios starting. */
+  stopped_limit: { role: "warning", label: "Stopped at limit" },
+  stopped_early: { role: "neutral", label: "Stopped early" },
 };
 
 /**

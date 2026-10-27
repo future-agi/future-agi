@@ -17,8 +17,8 @@ export function textField(theme) {
   };
 
   const font = {
-    label: { fontSize: 13, lineHeight: "20px" },
-    value: { fontSize: 13, lineHeight: "20px" },
+    label: { fontSize: 12, lineHeight: "18px" },
+    value: { fontSize: 12, lineHeight: "18px" },
   };
 
   return {
@@ -28,7 +28,7 @@ export function textField(theme) {
         root: {
           marginTop: 6,
           marginLeft: 0,
-          fontSize: 12,
+          fontSize: 11,
           lineHeight: "16px",
           color: theme.palette.text.subtitle,
         },
@@ -213,8 +213,8 @@ export function textField(theme) {
             marginBottom: 6,
             padding: 0,
             maxWidth: "100%",
-            fontSize: 13,
-            lineHeight: "20px",
+            fontSize: 12,
+            lineHeight: "18px",
             fontWeight: 500,
             color: theme.palette.text.primary,
           },

@@ -6,7 +6,7 @@ export function tooltip(theme) {
         tooltip: {
           backgroundColor: theme.palette.background.inverse,
           color: theme.palette.mode === "dark" ? "#18181B" : "#FAFAFA",
-          fontSize: 12,
+          fontSize: 11,
           lineHeight: "16px",
           fontWeight: 400,
           padding: "4px 8px",

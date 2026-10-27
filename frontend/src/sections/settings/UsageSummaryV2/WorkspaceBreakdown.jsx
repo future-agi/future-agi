@@ -21,6 +21,7 @@ import {
 import { useState } from "react";
 
 import axios, { endpoints } from "src/utils/axios";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { fUsage } from "src/utils/format-number";
 
 WorkspaceBreakdown.propTypes = {
@@ -28,6 +29,8 @@ WorkspaceBreakdown.propTypes = {
   period: PropTypes.string,
   periodEnd: PropTypes.string,
   displayUnit: PropTypes.string,
+  /* Usage the backend doesn't see yet, in the current workspace. */
+  addUsage: PropTypes.number,
 };
 
 export default function WorkspaceBreakdown({
@@ -35,11 +38,17 @@ export default function WorkspaceBreakdown({
   period,
   periodEnd,
   displayUnit,
+  addUsage = 0,
 }) {
+  const {
+    currentWorkspaceId,
+    currentWorkspaceDisplayName,
+    currentWorkspaceName,
+  } = useWorkspace();
   const [orderBy, setOrderBy] = useState("usage");
   const [order, setOrder] = useState("desc");
 
-  const { data: workspaces, isLoading } = useQuery({
+  const { data: apiWorkspaces, isLoading } = useQuery({
     queryKey: ["v2-workspace-breakdown", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageWorkspaceBreakdown, {
@@ -52,6 +61,27 @@ export default function WorkspaceBreakdown({
     select: (res) => res.data?.result?.workspaces || [],
     enabled: !!dimension,
   });
+  /* The simulation meters also count this workspace's prototype runs. */
+  const workspaces = (() => {
+    const list = apiWorkspaces || [];
+    if (!addUsage) return list;
+    const mine = list.find((w) => w.workspace_id === currentWorkspaceId);
+    if (mine)
+      return list.map((w) =>
+        w === mine ? { ...w, usage: (w.usage || 0) + addUsage } : w,
+      );
+    return [
+      ...list,
+      {
+        workspace_id: currentWorkspaceId || "current",
+        workspace_name:
+          currentWorkspaceDisplayName ||
+          currentWorkspaceName ||
+          "This workspace",
+        usage: addUsage,
+      },
+    ];
+  })();
 
   const sortedWorkspaces = [...(workspaces || [])].sort((a, b) => {
     const multiplier = order === "desc" ? -1 : 1;

@@ -55,10 +55,10 @@ function Group({ subheader, items, slotProps }) {
       ),
   );
 
-  // Design system sidebar: sentence-case 12px/500 label in fg.tertiary, no
-  // divider rule, 12px between groups, rows 1px apart.
+  // Design system sidebar: sentence-case 11px/500 label in fg.tertiary on a
+  // 20px row, no divider rule, 8px between groups, 24px rows with no gap.
   return (
-    <Stack sx={{ mt: subheader ? 1.5 : 0 }}>
+    <Stack sx={{ mt: subheader ? 1 : 0 }}>
       {subheader ? (
         <>
           <ListSubheader
@@ -68,12 +68,12 @@ function Group({ subheader, items, slotProps }) {
             sx={{
               display: "flex",
               alignItems: "center",
-              height: 24,
+              height: 20,
               px: 1,
               mx: 0.5,
               bgcolor: "transparent",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: 11,
               lineHeight: "16px",
               fontWeight: 500,
               color: "text.subtitle",
@@ -97,7 +97,7 @@ function Group({ subheader, items, slotProps }) {
               width: "100%",
               display: "flex",
               flexDirection: "column",
-              gap: "1px",
+              gap: 0,
             }}
           >
             {renderContent}
@@ -105,7 +105,7 @@ function Group({ subheader, items, slotProps }) {
         </>
       ) : (
         <Box
-          sx={{ px: 0.5, display: "flex", flexDirection: "column", gap: "1px" }}
+          sx={{ px: 0.5, display: "flex", flexDirection: "column", gap: 0 }}
         >
           {renderContent}
         </Box>

@@ -13,6 +13,7 @@ import { InDrawerContext } from "../../environments/connectMode";
 import ConnectPreflight from "./ConnectPreflight";
 import { MAX_BUILD_SCENARIOS, useConnectBuild } from "./connectSubmit";
 import { buildCreditsCheck } from "../../_mock/metering";
+import useCreditBalance from "../../usage/useCreditBalance";
 
 /**
  * The frame every New agent flow walks through: where you are, the step
@@ -30,6 +31,7 @@ export default function ConnectSteps({
   preflight = null,
   children,
 }) {
+  const creditBalance = useCreditBalance();
   /* In a drawer the header already names the flow — just the steps here. */
   const inDrawer = useContext(InDrawerContext);
   /* Connecting for a new environment: the form also asks how many scenarios
@@ -40,7 +42,8 @@ export default function ConnectSteps({
     !build ||
     (Number.isInteger(count) && count >= 1 && count <= MAX_BUILD_SCENARIOS);
   /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
-  const credits = build && countOk ? buildCreditsCheck(count) : null;
+  const credits =
+    build && countOk ? buildCreditsCheck(count, creditBalance) : null;
   const waitsForPreflight = !!build && !!preflight && !preflight.state.ready;
   const next = asked.disabled
     ? asked
@@ -278,7 +281,7 @@ function ScenarioCount({ value, onChange, ok, credits = null }) {
             }}
           >
             {ok
-              ? `We'll generate ${n.toLocaleString()} scenario${n === 1 ? "" : "s"} when it builds. Set any number up to ${MAX_BUILD_SCENARIOS.toLocaleString()}.`
+              ? `We'll generate ${n.toLocaleString()} scenario${n === 1 ? "" : "s"} when it builds${credits?.need ? ` · ≈ ${credits.need.toLocaleString()} credits, once — running them is priced in the run plan` : ""}. Set any number up to ${MAX_BUILD_SCENARIOS.toLocaleString()}.`
               : `Between 1 and ${MAX_BUILD_SCENARIOS.toLocaleString()}.`}
           </Typography>
         </Box>

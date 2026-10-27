@@ -51,7 +51,10 @@ import {
   productionVersionOf,
   useIssueFix,
 } from "./issueFix";
-import { creditsLabel } from "../_mock/metering";
+import { creditsForUsd, creditsLabel } from "../_mock/metering";
+import useCreditBalance from "../usage/useCreditBalance";
+import CostPartsTable from "../improvements/CostPartsTable";
+import { RATE_PLAN } from "../_mock/rates";
 import { useSimStore, useConnectedAgents } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
 
@@ -273,6 +276,10 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const budgets = budgetsWithin(limits.budget.dollars);
   const spend = budget ?? budgets[budgets.length - 1];
   const overBudget = estimate.likely > spend;
+  /* The same monthly balance runs and builds draw on: a fix whose ceiling is
+     more than what's left is held, never started on credit it can't use. */
+  const creditBalance = useCreditBalance();
+  const overBalance = creditsForUsd(spend) > creditBalance.left;
   /* Minutes cap it the same way — the agent's time budget is the ceiling. */
   const minuteChoices = minutesWithin(
     limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
@@ -439,7 +446,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     ? "Build its environment first — then start the fix from here."
     : building
       ? "Its environment is still building — start the fix when it's done."
-      : "Nothing ships on its own — the fix ends as a draft for you to review.";
+      : overBalance
+        ? `Up to ${creditsLabel(spend)}, but ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month — lower the budget or ask an admin.`
+        : "Nothing ships on its own — the fix ends as a draft for you to review.";
   const startButton = needsEnv ? (
     <Button
       fullWidth
@@ -465,7 +474,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       fullWidth
       variant="contained"
       color="primary"
-      disabled={!chosen.length || !!hardGate || consentNeeded}
+      disabled={!chosen.length || !!hardGate || consentNeeded || overBalance}
       onClick={go}
       startIcon={<Iconify icon="solar:magic-stick-3-linear" width={16} />}
     >
@@ -1279,6 +1288,15 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} runs — you'll get the best it found. ${stopEarlyNote()}`
                             : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote()}`}
                         </Typography>
+                        {/* What the ceiling is made of, part by part. */}
+                        <Box sx={{ mt: 1.5 }}>
+                          <CostPartsTable
+                            parts={estimate.parts}
+                            totalLabel="Up to"
+                            totalUsd={estimate.likely}
+                            note={`At ${RATE_PLAN.name} · ${RATE_PLAN.version} rates. Stops at your budget; what it found by then is kept, and its spend is itemized on the improvement's page.`}
+                          />
+                        </Box>
                       </>
                     ) : (
                       <>
@@ -1354,7 +1372,6 @@ FixPage.propTypes = {
   issue: PropTypes.object,
   rootCause: PropTypes.object,
 };
-
 
 /* A step of the plan — numbered, titled, its rows inside one frame. */
 /*

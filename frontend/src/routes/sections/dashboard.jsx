@@ -627,7 +627,10 @@ export const dashboardRoutes = (
             "workspace_viewer",
           ]}
         >
-          <UsageSummary />
+          {/* Its Simulation section reads runs from the simulation store. */}
+          <SimStoreProvider>
+            <UsageSummary />
+          </SimStoreProvider>
         </RoleProtection>
       ),
     },

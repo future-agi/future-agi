@@ -52,7 +52,7 @@ export default function NavList({ data, depth, slotProps }) {
               sx={{
                 display: "flex",
                 alignItems: "center",
-                fontSize: "13px",
+                fontSize: "12px",
                 color: active ? "primary.main" : "text.secondary",
                 fontWeight: active ? 600 : 500,
               }}

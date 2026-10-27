@@ -29,23 +29,37 @@ const stageOf = (env) => {
 /* A tool's fidelity tier as the run pinned it. A connect-only world has no
    sandbox of ours — the agent's own systems answered. */
 const fidelityOf = (name, env, envState) => {
-  if (env?.worldMode === "connect-only") return { id: "agent", label: "Agent's own system" };
+  if (env?.worldMode === "connect-only")
+    return { id: "agent", label: "Agent's own system" };
   const known = (env?.tools || []).find((t) => t.name === name) || { name };
   const setting = toolSettingOf(known, envState);
-  return { id: setting.tier, label: tierOf(setting.tier).label, faults: setting.faults };
+  return {
+    id: setting.tier,
+    label: tierOf(setting.tier).label,
+    faults: setting.faults,
+  };
 };
 
 /* Which rule a scenario is about, when one is checked. */
 const ruleFor = (task, crux, env) => {
   const rules = env?.rules || [];
-  if (crux && /^holds the line:\s*/i.test(crux.text)) return crux.text.replace(/^holds the line:\s*/i, "");
-  if (crux && /^verify who/i.test(crux.text)) return "Verify the caller's identity before touching account state";
-  if (crux && /^refuse/i.test(crux.text)) return rules[hashSeed(String(task.id)) % Math.max(1, rules.length)] || crux.text;
-  if (task.critical && rules.length) return rules[hashSeed(`${task.id}:rule`) % rules.length];
+  if (crux && /^holds the line:\s*/i.test(crux.text))
+    return crux.text.replace(/^holds the line:\s*/i, "");
+  if (crux && /^verify who/i.test(crux.text))
+    return "Verify the caller's identity before touching account state";
+  if (crux && /^refuse/i.test(crux.text))
+    return (
+      rules[hashSeed(String(task.id)) % Math.max(1, rules.length)] || crux.text
+    );
+  if (task.critical && rules.length)
+    return rules[hashSeed(`${task.id}:rule`) % rules.length];
   return null;
 };
 
-const round = (n, d = 0) => { const k = 10 ** d; return Math.round(n * k) / k; };
+const round = (n, d = 0) => {
+  const k = 10 ** d;
+  return Math.round(n * k) / k;
+};
 
 /*
   Spread the call log over the agent's turns. The first agent turn is the
@@ -56,13 +70,20 @@ const assignCalls = (agentIdx, calls) => {
   if (!agentIdx.length || !calls.length) return out;
   const pool = agentIdx.length > 1 ? agentIdx.slice(1) : agentIdx;
   calls.forEach((c, j) => {
-    const at = pool[Math.min(pool.length - 1, Math.floor(((j + 1) * pool.length) / (calls.length + 1)))];
+    const at =
+      pool[
+        Math.min(
+          pool.length - 1,
+          Math.floor(((j + 1) * pool.length) / (calls.length + 1)),
+        )
+      ];
     out.set(at, [...(out.get(at) || []), c]);
   });
   return out;
 };
 
-const argsText = (args) => (args && Object.keys(args).length ? JSON.stringify(args) : "{}");
+const argsText = (args) =>
+  args && Object.keys(args).length ? JSON.stringify(args) : "{}";
 
 /**
  * The trace of one task. `{ spans, total, offendingId, sessionId, model }`.
@@ -83,15 +104,21 @@ export const traceOf = (task, env, envState) => {
 
   /* Where it went wrong — the step the run recorded, moved onto the agent's
      side when it landed on the caller's. */
-  let failAt = failedRun && typeof task.failStep === "number" ? Math.min(task.failStep, steps.length - 1) : null;
+  let failAt =
+    failedRun && typeof task.failStep === "number"
+      ? Math.min(task.failStep, steps.length - 1)
+      : null;
   if (failAt != null && conversational) {
     const next = steps.findIndex((s, i) => i >= failAt && s.role === "agent");
-    const prev = [...steps.keys()].reverse().find((i) => i < failAt && steps[i].role === "agent");
+    const prev = [...steps.keys()]
+      .reverse()
+      .find((i) => i < failAt && steps[i].role === "agent");
     failAt = next >= 0 ? next : prev ?? failAt;
   }
 
   const { items } = subGoalResultsOf(task, env, envState);
-  const crux = items.find((x) => x.mark === "critical" && x.status !== "met") || null;
+  const crux =
+    items.find((x) => x.mark === "critical" && x.status !== "met") || null;
   const rule = ruleFor(task, crux, env);
 
   const sessionId = `${task.id}::session`;
@@ -99,17 +126,23 @@ export const traceOf = (task, env, envState) => {
   let t = 0;
 
   /* A transport drop cuts the session short — the last turns never happened. */
-  const cut = fault.transport ? Math.max(2, Math.ceil(steps.length * 0.6)) : steps.length;
+  const cut = fault.transport
+    ? Math.max(2, Math.ceil(steps.length * 0.6))
+    : steps.length;
   const shown = steps.slice(0, cut);
 
   const agentIdx = conversational
     ? shown.map((s, i) => (s.role === "agent" ? i : -1)).filter((i) => i >= 0)
     : shown.map((s, i) => (s.role === "actor" ? -1 : i)).filter((i) => i >= 0);
   /* A browser agent drives one tool — the browser — one action at a time. */
-  const browserTool = stage === "browser"
-    ? ((env?.tools || []).find((x) => /browser/i.test(x.name))?.name || "browser")
-    : null;
-  const callsAt = conversational ? assignCalls(agentIdx, log.calls || []) : new Map();
+  const browserTool =
+    stage === "browser"
+      ? (env?.tools || []).find((x) => /browser/i.test(x.name))?.name ||
+        "browser"
+      : null;
+  const callsAt = conversational
+    ? assignCalls(agentIdx, log.calls || [])
+    : new Map();
   const lastAgent = agentIdx[agentIdx.length - 1];
 
   /* Tokens and cost are the task's own, spread over its LLM calls by time. */
@@ -126,10 +159,19 @@ export const traceOf = (task, env, envState) => {
 
     if ((conversational && st.role !== "agent") || st.role === "actor") {
       spans.push({
-        id: turnId, parentId: sessionId, depth: 1,
+        id: turnId,
+        parentId: sessionId,
+        depth: 1,
         kind: st.role === "actor" ? "actor" : "caller",
-        name: st.role === "actor" ? `${st.actorName || "Third party"} speaks` : "Caller turn",
-        start, end, status: "ok", output: st.text, evals: [],
+        name:
+          st.role === "actor"
+            ? `${st.actorName || "Third party"} speaks`
+            : "Caller turn",
+        start,
+        end,
+        status: "ok",
+        output: st.text,
+        evals: [],
       });
       return;
     }
@@ -139,23 +181,46 @@ export const traceOf = (task, env, envState) => {
       ? `Agent turn ${agentIdx.indexOf(i) + 1}`
       : `Step ${agentIdx.indexOf(i) + 1} · ${st.action || st.tool || st.kind || (st.cmd ? "shell" : "step")}`;
     spans.push({
-      id: turnId, parentId: sessionId, depth: 1, kind: "turn", name: label,
-      start, end, status: offendingTurn ? "error" : "ok", output: st.text || st.thought || st.note, evals: [],
+      id: turnId,
+      parentId: sessionId,
+      depth: 1,
+      kind: "turn",
+      name: label,
+      start,
+      end,
+      status: offendingTurn ? "error" : "ok",
+      output: st.text || st.thought || st.note,
+      evals: [],
     });
 
-    const calls = conversational ? (callsAt.get(i) || []) : [];
-    const stepTool = !conversational && (st.action || st.tool || st.cmd || st.kind);
-    const guardHere = rule && (offendingTurn || (!failedRun && i === agentIdx[Math.min(1, agentIdx.length - 1)]));
+    const calls = conversational ? callsAt.get(i) || [] : [];
+    const stepTool =
+      !conversational && (st.action || st.tool || st.cmd || st.kind);
+    const guardHere =
+      rule &&
+      (offendingTurn ||
+        (!failedRun && i === agentIdx[Math.min(1, agentIdx.length - 1)]));
     let cursor = start + d * 0.04;
 
     /* Plan — the model decides what to do (or, with no tools, what to say). */
-    const planEnd = calls.length || stepTool || guardHere ? start + d * 0.38 : end;
+    const planEnd =
+      calls.length || stepTool || guardHere ? start + d * 0.38 : end;
     const planId = `${turnId}::llm0`;
     spans.push({
-      id: planId, parentId: turnId, depth: 2, kind: "llm", name: calls.length || stepTool ? "LLM · plan" : "LLM · respond",
-      start: cursor, end: planEnd, status: "ok", model,
+      id: planId,
+      parentId: turnId,
+      depth: 2,
+      kind: "llm",
+      name: calls.length || stepTool ? "LLM · plan" : "LLM · respond",
+      start: cursor,
+      end: planEnd,
+      status: "ok",
+      model,
       input: conversational ? steps[i - 1]?.text : st.thought || st.note,
-      output: calls.length || stepTool ? `→ ${calls.map((c) => c.name).join(", ") || stepTool}` : st.text,
+      output:
+        calls.length || stepTool
+          ? `→ ${calls.map((c) => c.name).join(", ") || stepTool}`
+          : st.text,
       evals: [],
     });
     llmShare.push([planId, planEnd - cursor]);
@@ -165,10 +230,22 @@ export const traceOf = (task, env, envState) => {
     if (guardHere) {
       const gEnd = cursor + Math.min(160, d * 0.08);
       spans.push({
-        id: `${turnId}::guard`, parentId: turnId, depth: 2, kind: "guard",
-        name: "Guard · rule check", start: cursor, end: gEnd,
+        id: `${turnId}::guard`,
+        parentId: turnId,
+        depth: 2,
+        kind: "guard",
+        name: "Guard · rule check",
+        start: cursor,
+        end: gEnd,
         status: offendingTurn ? "error" : "ok",
-        guard: { rule, verdict: offendingTurn ? (task.status === "flaky" ? "unsure" : "breached") : "held" },
+        guard: {
+          rule,
+          verdict: offendingTurn
+            ? task.status === "flaky"
+              ? "unsure"
+              : "breached"
+            : "held",
+        },
         evals: [],
       });
       cursor = gEnd;
@@ -178,15 +255,31 @@ export const traceOf = (task, env, envState) => {
     calls.forEach((c, k) => {
       const ms = Math.max(30, c.ms || 120);
       const f = c.fault || st.fault || null;
-      const status = f?.kind === "timeout" || f?.kind === "error" || c.status === "error" ? "error" : "ok";
+      const status =
+        f?.kind === "timeout" || f?.kind === "error" || c.status === "error"
+          ? "error"
+          : "ok";
       spans.push({
-        id: `${turnId}::tool${k}`, parentId: turnId, depth: 2, kind: "tool", name: c.name,
-        start: cursor, end: cursor + ms, status,
+        id: `${turnId}::tool${k}`,
+        parentId: turnId,
+        depth: 2,
+        kind: "tool",
+        name: c.name,
+        start: cursor,
+        end: cursor + ms,
+        status,
         tool: {
-          name: c.name, args: argsText(c.args),
-          response: c.response || (status === "error" ? f?.message || "no response" : `${c.rows || 1} ${c.rows === 1 ? "row" : "rows"}${c.wrote ? " written" : ""}`),
-          latencyMs: ms, status: status === "error" ? (f?.kind || "error") : "ok",
-          fidelity: fidelityOf(c.name, env, envState), fault: f,
+          name: c.name,
+          args: argsText(c.args),
+          response:
+            c.response ||
+            (status === "error"
+              ? f?.message || "no response"
+              : `${c.rows || 1} ${c.rows === 1 ? "row" : "rows"}${c.wrote ? " written" : ""}`),
+          latencyMs: ms,
+          status: status === "error" ? f?.kind || "error" : "ok",
+          fidelity: fidelityOf(c.name, env, envState),
+          fault: f,
           wrote: !!c.wrote,
         },
         evals: [],
@@ -198,18 +291,41 @@ export const traceOf = (task, env, envState) => {
     if (stepTool) {
       const ms = Math.max(40, Math.round(st.ms || d * 0.35));
       const f = st.fault || null;
-      const name = browserTool ? `${browserTool}.${st.action || "act"}` : st.tool || st.action || (st.cmd ? "shell" : st.kind);
+      const name = browserTool
+        ? `${browserTool}.${st.action || "act"}`
+        : st.tool || st.action || (st.cmd ? "shell" : st.kind);
       const fidelityName = browserTool || name;
       const status = f ? "error" : "ok";
       spans.push({
-        id: `${turnId}::tool`, parentId: turnId, depth: 2, kind: "tool", name,
-        start: cursor, end: Math.min(end - 40, cursor + ms), status,
+        id: `${turnId}::tool`,
+        parentId: turnId,
+        depth: 2,
+        kind: "tool",
+        name,
+        start: cursor,
+        end: Math.min(end - 40, cursor + ms),
+        status,
         tool: {
           name,
-          args: st.args ? argsText(st.args) : st.cmd || [st.target, st.value && `= "${st.value}"`].filter(Boolean).join(" ") || st.subject || "{}",
-          response: st.result || st.out || st.obs || (st.subject ? st.note : null) || "ok",
-          latencyMs: ms, status: f ? (f.kind || "error") : "ok",
-          fidelity: fidelityOf(fidelityName, env, envState), fault: f, wrote: false,
+          args: st.args
+            ? argsText(st.args)
+            : st.cmd ||
+              [st.target, st.value && `= "${st.value}"`]
+                .filter(Boolean)
+                .join(" ") ||
+              st.subject ||
+              "{}",
+          response:
+            st.result ||
+            st.out ||
+            st.obs ||
+            (st.subject ? st.note : null) ||
+            "ok",
+          latencyMs: ms,
+          status: f ? f.kind || "error" : "ok",
+          fidelity: fidelityOf(fidelityName, env, envState),
+          fault: f,
+          wrote: false,
         },
         evals: [],
       });
@@ -221,9 +337,23 @@ export const traceOf = (task, env, envState) => {
     if (offendingTurn && (log.missing || []).length) {
       log.missing.forEach((name, k) => {
         spans.push({
-          id: `${turnId}::missing${k}`, parentId: turnId, depth: 2, kind: "missing",
-          name: `${name} — never called`, start: cursor, end: cursor, status: "error",
-          tool: { name, args: "—", response: "—", latencyMs: 0, status: "not called", fidelity: fidelityOf(name, env, envState), fault: null },
+          id: `${turnId}::missing${k}`,
+          parentId: turnId,
+          depth: 2,
+          kind: "missing",
+          name: `${name} — never called`,
+          start: cursor,
+          end: cursor,
+          status: "error",
+          tool: {
+            name,
+            args: "—",
+            response: "—",
+            latencyMs: 0,
+            status: "not called",
+            fidelity: fidelityOf(name, env, envState),
+            fault: null,
+          },
           evals: [],
         });
       });
@@ -234,11 +364,21 @@ export const traceOf = (task, env, envState) => {
       const replyId = `${turnId}::llm1`;
       const rs = Math.min(end - 60, cursor + 20);
       spans.push({
-        id: replyId, parentId: turnId, depth: 2, kind: "llm", name: "LLM · respond",
-        start: rs, end, status: offendingTurn ? "error" : "ok", model,
-        input: calls.length ? `${calls.length} tool result${calls.length === 1 ? "" : "s"}` : st.thought || null,
+        id: replyId,
+        parentId: turnId,
+        depth: 2,
+        kind: "llm",
+        name: "LLM · respond",
+        start: rs,
+        end,
+        status: offendingTurn ? "error" : "ok",
+        model,
+        input: calls.length
+          ? `${calls.length} tool result${calls.length === 1 ? "" : "s"}`
+          : st.thought || null,
         output: st.text || st.note || null,
-        note: offendingTurn && log.unsupportedClaim ? log.unsupportedClaim : null,
+        note:
+          offendingTurn && log.unsupportedClaim ? log.unsupportedClaim : null,
         evals: [],
       });
       llmShare.push([replyId, end - rs]);
@@ -249,14 +389,39 @@ export const traceOf = (task, env, envState) => {
     }
   });
 
+  /* A voice call's timeline runs at the call's real length (the one billed),
+     each step keeping its share of it. */
+  if (stage === "voice" && task.durationMs > t && t > 0) {
+    const k = task.durationMs / t;
+    spans.forEach((sp) => {
+      sp.start = Math.round(sp.start * k);
+      sp.end = Math.round(sp.end * k);
+    });
+    t = task.durationMs;
+  }
+
   /* The session wraps everything. */
   const total = Math.max(1, t);
   spans.unshift({
-    id: sessionId, parentId: null, depth: 0, kind: "session",
-    name: conversational ? (stage === "voice" ? "Call" : "Conversation") : "Session",
-    start: 0, end: total,
+    id: sessionId,
+    parentId: null,
+    depth: 0,
+    kind: "session",
+    name: conversational
+      ? stage === "voice"
+        ? "Call"
+        : "Conversation"
+      : "Session",
+    start: 0,
+    end: total,
     status: unmeasured ? "error" : failedRun ? "error" : "ok",
-    note: unmeasured ? (fault.environment || fault.transport || fault.simulator || fault.grading || "No verdict") : null,
+    note: unmeasured
+      ? fault.environment ||
+        fault.transport ||
+        fault.simulator ||
+        fault.grading ||
+        "No verdict"
+      : null,
     evals: [],
   });
 
@@ -266,7 +431,7 @@ export const traceOf = (task, env, envState) => {
   const cost = task.cost || 0;
   llmShare.forEach(([id, w], k) => {
     const s = spans.find((x) => x.id === id);
-    const jitter = 0.85 + ((hashSeed(`${id}:tok`) % 30) / 100);
+    const jitter = 0.85 + (hashSeed(`${id}:tok`) % 30) / 100;
     s.tokens = Math.max(40, Math.round((tokens * w * jitter) / llmTotal));
     s.cost = round((cost * w) / llmTotal, 4);
     s.inputTokens = Math.round(s.tokens * (0.7 + (k % 3) * 0.05));
@@ -275,37 +440,83 @@ export const traceOf = (task, env, envState) => {
   /* The offending span: the guard that broke, else the reply that went wrong. */
   const offendTurnId = failAt != null ? `${task.id}::t${failAt}` : null;
   const offending = offendTurnId
-    ? spans.find((s) => s.parentId === offendTurnId && s.kind === "guard" && s.status === "error")
-      || spans.find((s) => s.parentId === offendTurnId && s.kind === "llm" && s.status === "error")
-      || spans.find((s) => s.id === offendTurnId)
+    ? spans.find(
+        (s) =>
+          s.parentId === offendTurnId &&
+          s.kind === "guard" &&
+          s.status === "error",
+      ) ||
+      spans.find(
+        (s) =>
+          s.parentId === offendTurnId &&
+          s.kind === "llm" &&
+          s.status === "error",
+      ) ||
+      spans.find((s) => s.id === offendTurnId)
     : null;
   if (offending) offending.offending = true;
 
   /* Eval scores on the span they grade, where that can be told. */
   const guardSpan = spans.find((s) => s.kind === "guard");
-  const closing = lastAgent != null
-    ? spans.filter((s) => s.parentId === `${task.id}::t${lastAgent}` && s.kind === "llm").slice(-1)[0]
-    : null;
+  const closing =
+    lastAgent != null
+      ? spans
+          .filter(
+            (s) =>
+              s.parentId === `${task.id}::t${lastAgent}` && s.kind === "llm",
+          )
+          .slice(-1)[0]
+      : null;
   (task.evalResults || []).forEach((r) => {
     let target = null;
-    if (r.id === "policy_adherence") target = guardSpan || (!r.passed ? offending : null);
-    else if (r.id === "task_success") target = !r.passed && offending ? offending : closing;
+    if (r.id === "policy_adherence")
+      target = guardSpan || (!r.passed ? offending : null);
+    else if (r.id === "task_success")
+      target = !r.passed && offending ? offending : closing;
     else if (r.id === "pii_leakage") target = !r.passed ? offending : null;
     else if (!r.passed) target = offending;
-    (target || spans[0]).evals.push({ id: r.id, name: r.name, score: r.score, passed: r.passed, reason: r.reason });
+    (target || spans[0]).evals.push({
+      id: r.id,
+      name: r.name,
+      score: r.score,
+      passed: r.passed,
+      reason: r.reason,
+    });
   });
 
-  return { spans, total, offendingId: offending?.id || null, sessionId, model, unmeasured };
+  return {
+    spans,
+    total,
+    offendingId: offending?.id || null,
+    sessionId,
+    model,
+    unmeasured,
+  };
 };
 
 /** Children by parent, for drawing the tree in order. */
 export const spanTree = (spans) => {
   const kids = new Map();
-  spans.forEach((s) => { kids.set(s.parentId, [...(kids.get(s.parentId) || []), s]); });
+  spans.forEach((s) => {
+    kids.set(s.parentId, [...(kids.get(s.parentId) || []), s]);
+  });
   const out = [];
-  const walk = (pid) => (kids.get(pid) || []).forEach((s) => { out.push({ ...s, hasChildren: kids.has(s.id) }); walk(s.id); });
+  const walk = (pid) =>
+    (kids.get(pid) || []).forEach((s) => {
+      out.push({ ...s, hasChildren: kids.has(s.id) });
+      walk(s.id);
+    });
   walk(null);
   return out;
 };
 
-export const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s` : `${Math.round(ms)}ms`);
+/* "760ms", "8.6s", "15s", and a minute or more as "2m 33s". */
+export const fmtMs = (ms) => {
+  if (ms >= 60000) {
+    const sec = Math.round(ms / 1000);
+    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  }
+  return ms >= 1000
+    ? `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`
+    : `${Math.round(ms)}ms`;
+};

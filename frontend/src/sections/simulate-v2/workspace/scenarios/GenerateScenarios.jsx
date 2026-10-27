@@ -11,6 +11,8 @@ import {
   FormControlLabel,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { buildCreditsCheck } from "../../_mock/metering";
+import useCreditBalance from "../../usage/useCreditBalance";
 import { FORCED_O_CELLS, O_TYPES } from "../../_mock/coverage";
 import { generatedSubGoals } from "../../_mock/scenarioSubGoals";
 import { clickable, focusRing } from "../../components/clickable";
@@ -123,6 +125,8 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
      so users can see what "generate" is about to produce before they
      commit — a rough AC-10.9 budget hint. */
   const totalSize = size + forcedCount;
+  /* Writing drafts is its own charge, apart from running them later. */
+  const writeCost = buildCreditsCheck(totalSize, useCreditBalance());
 
   /* A short "writing and checking" beat, so the batch doesn't just appear. */
   const timer = useRef(null);
@@ -493,7 +497,7 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
           size="small"
           variant="contained"
           onClick={generate}
-          disabled={generating}
+          disabled={generating || !writeCost.ok}
           startIcon={<Iconify icon="solar:magic-stick-3-bold" width={14} />}
           sx={{
             bgcolor: "text.primary",
@@ -523,6 +527,9 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
           {
             " · they arrive as proposals and join the environment once you add them"
           }
+          {writeCost.ok
+            ? ` · ≈ ${writeCost.need.toLocaleString()} credits to write them; running them is priced in the run plan`
+            : ` · ${writeCost.message}`}
         </Typography>
       </Stack>
     </Box>

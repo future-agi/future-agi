@@ -2,9 +2,7 @@ import PropTypes from "prop-types";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { comparisonOf, PAIR_CLASSES } from "../_mock/pairs";
 import { runIdentityOf } from "../_mock/runIdentity";
-import { creditsForUsd } from "../_mock/metering";
 /* Spend is said in credits everywhere. */
-import { creditsText as fmtCredits } from "./runsTableFormat";
 import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DrilldownContext } from "./drilldownContext";
 import { useTheme, alpha } from "@mui/material/styles";
@@ -106,6 +104,14 @@ import { clickable, focusRing } from "../components/clickable";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { scenarioTitle } from "../_mock/scenarios";
+import { resolveEval } from "../_mock/evals";
+import { fmtMs as fmtDuration } from "../_mock/runTrace";
+import { judgeCreditsOf, judgesOf, usageOfTask } from "../_mock/pricing";
+
+/* Credits as the run's Cost tab counts them; the agent's own model spend is
+   dollars on the customer's key, never credits. */
+const creditsLabel = (n) => `${Math.round(n || 0).toLocaleString()} credits`;
+const keyUsd = (usd) => `≈ $${Number(usd || 0).toFixed(2)}`;
 
 /**
  * Analytics — enterprise density. Prioritises numbers and small
@@ -225,7 +231,7 @@ const passedCalls = (tasks) =>
   );
 
 /* Business outcomes the CEO reads, not the QA lens. */
-function deriveBusiness(tasks) {
+function deriveBusiness(tasks, billing = {}) {
   const measured = tasks.filter(isMeasured);
   const passed = measured.filter((t) => t.status === "passed");
   const failed = measured.filter((t) => t.status !== "passed");
@@ -254,6 +260,11 @@ function deriveBusiness(tasks) {
     .filter((t) => !t.costUnverified)
     .reduce((a, t) => a + (t.cost || 0), 0);
   const costUnverified = tasks.filter((t) => t.costUnverified).length;
+  /* What the run used in Future AGI credits — the Cost tab's own numbers. */
+  const credits = tasks.reduce(
+    (a, t) => a + usageOfTask(t, billing).credits,
+    0,
+  );
   const passedCount = passed.length;
   const durations = sortedNums(tasks, (t) => t.durationMs || 0);
   return {
@@ -269,6 +280,8 @@ function deriveBusiness(tasks) {
     complianceRate: pct(compliancePassed, measured.length),
     totalCost,
     costUnverified,
+    credits,
+    creditsPerPass: passedCalls(tasks) ? credits / passedCalls(tasks) : 0,
     /* Everything the run spent, divided by the calls that passed (a flaky
        scenario passed on some of its attempts, not none). */
     costPerPass: passedCalls(tasks) ? totalCost / passedCalls(tasks) : 0,
@@ -451,16 +464,16 @@ const FILTER_TABS = [
           return s > 5;
         },
       },
-      /* Spend in credits; an unverified cost matches no bucket. */
+      /* The agent's model cost, in dollars on the customer's key; an
+         unverified cost matches no bucket. */
       {
-        key: "Combined cost",
-        values: ["< 5 credits", "5–20 credits", "> 20 credits"],
+        key: "Model cost",
+        values: ["< $0.05", "$0.05–$0.20", "> $0.20"],
         test: (t, v) => {
           if (t.costUnverified || t.cost == null) return false;
-          const c = creditsForUsd(t.cost);
-          if (v === "< 5 credits") return c < 5;
-          if (v === "5–20 credits") return c >= 5 && c <= 20;
-          return c > 20;
+          if (v === "< $0.05") return t.cost < 0.05;
+          if (v === "$0.05–$0.20") return t.cost >= 0.05 && t.cost <= 0.2;
+          return t.cost > 0.2;
         },
       },
     ],
@@ -1053,7 +1066,7 @@ function KpiTileGrid({ tasks, biz, trend }) {
     },
     {
       label: "Avg duration",
-      value: `${biz.medHandleTimeS.toFixed(1)}s`,
+      value: fmtDuration(biz.medHandleTimeS * 1000),
       deltaPct: null,
     },
     {
@@ -1064,15 +1077,12 @@ function KpiTileGrid({ tasks, biz, trend }) {
     },
     {
       label: "Total cost",
-      value:
-        biz.costUnverified && !biz.totalCost
-          ? "unverified"
-          : fmtCredits(biz.totalCost),
+      value: creditsLabel(biz.credits),
       deltaPct: null,
     },
     {
       label: "Cost / pass",
-      value: biz.costPerPass ? fmtCredits(biz.costPerPass) : "—",
+      value: biz.creditsPerPass ? creditsLabel(biz.creditsPerPass) : "—",
       deltaPct: null,
     },
     {
@@ -2264,7 +2274,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
   return (
     <Panel
       title="Cost breakdown by pipeline stage"
-      subtitle={`${fmtCredits(totalCost)} total across ${series[0].data.length} calls — LLM / TTS / STT / Transport split`}
+      subtitle={`${keyUsd(totalCost)} on your keys across ${series[0].data.length} calls — LLM / TTS / STT / Transport split`}
       exportRows={exportRows}
       info="Per-call spend by voice-pipeline stage. The tallest stage is where to save."
     >
@@ -2315,7 +2325,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
                   colors: theme.palette.text.secondary,
                   fontSize: "12px",
                 },
-                formatter: (v) => fmtCredits(Number(v)),
+                formatter: (v) => keyUsd(Number(v)),
               },
             },
             grid: {
@@ -2327,7 +2337,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
               theme: theme.palette.mode,
               shared: true,
               intersect: false,
-              y: { formatter: (v) => fmtCredits(Number(v)) },
+              y: { formatter: (v) => keyUsd(Number(v)) },
             },
           }}
         />
@@ -2365,7 +2375,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({
                 <Box component="span" sx={{ color: "text.primary" }}>
                   {l.key}
                 </Box>{" "}
-                <b style={{ color: "inherit" }}>{fmtCredits(l.value)}</b> (
+                <b style={{ color: "inherit" }}>{keyUsd(l.value)}</b> (
                 {Math.round((l.value / totalCost) * 100)}%)
               </Typography>
             </Stack>
@@ -2522,8 +2532,8 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
       },
       {
         key: "cost",
-        label: "Cost per scenario",
-        fmt: (v) => fmtCredits(v),
+        label: "Model cost per scenario",
+        fmt: (v) => keyUsd(v),
         accessor: (t) => t.cost || 0,
         population: tasks.filter((t) => !t.costUnverified),
       },
@@ -2908,7 +2918,7 @@ function TaskDrilldownDrawer({
                     >
                       {t.costUnverified
                         ? "cost unverified"
-                        : fmtCredits(t.cost || 0)}
+                        : `${keyUsd(t.cost)} model`}
                     </Typography>
                     {t.persona?.name && (
                       <Typography
@@ -3105,7 +3115,8 @@ function KpiStrip({ tasks, biz, trend, env }) {
   /* Durations, turns and scores only mean something for calls that produced
      a verdict — an environment that never came up still has step timings. */
   const measured = measuredOnly(tasks);
-  const latencies = sortedNums(measured, (t) => latencyOf(t));
+  /* How long the calls lasted — the length that's billed, not latency. */
+  const latencies = sortedNums(measured, (t) => t.durationMs || latencyOf(t));
   const p90Lat = percentile(latencies, 90);
   const avgDurationS = latencies.length
     ? latencies.reduce((a, v) => a + v, 0) / latencies.length / 1000
@@ -3189,30 +3200,25 @@ function KpiStrip({ tasks, biz, trend, env }) {
     ...legacyCards,
     {
       label: "Avg duration",
-      value: `${avgDurationS.toFixed(1)}s`,
+      value: fmtDuration(avgDurationS * 1000),
       sub: `${latencies.length} timed tasks`,
     },
     {
       label: "Duration p90",
-      value: `${(p90Lat / 1000).toFixed(1)}s`,
-      sub: `median ${(percentile(latencies, 50) / 1000).toFixed(1)}s`,
+      value: fmtDuration(p90Lat),
+      sub: `median ${fmtDuration(percentile(latencies, 50))}`,
     },
     {
       label: "Cost / pass",
-      value: biz.costPerPass ? fmtCredits(biz.costPerPass) : "—",
+      value: biz.creditsPerPass ? creditsLabel(biz.creditsPerPass) : "—",
       sub: `per passed call`,
-      delta: deltaPct(biz.costPerPass, trend?.prevCostPerPass),
+      delta: deltaPct(biz.creditsPerPass, trend?.prevCostPerPass),
       goodUp: false,
     },
     {
       label: "Total cost",
-      value:
-        biz.costUnverified && !biz.totalCost
-          ? "unverified"
-          : fmtCredits(biz.totalCost),
-      sub: biz.costUnverified
-        ? `this run · ${biz.costUnverified} unverified`
-        : "this run",
+      value: creditsLabel(biz.credits),
+      sub: `+ your model ${keyUsd(biz.totalCost)}`,
     },
   ];
 
@@ -4313,7 +4319,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
   return (
     <Panel
       title="Most expensive tasks"
-      subtitle="Ranked by cost — hover to see the task"
+      subtitle="Ranked by your model's cost, on your key — hover to see the task"
       exportRows={exportRows}
       info="The eight costliest scenarios — trimming these usually saves the most."
     >
@@ -4323,7 +4329,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
           value: t.cost || 0,
           meta: `${t.tokens != null ? numFmt.format(t.tokens) : "—"} tokens · ${((t.durationMs || 0) / 1000).toFixed(1)}s`,
         }))}
-        formatter={(v) => fmtCredits(Number(v))}
+        formatter={(v) => keyUsd(Number(v))}
         // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         color="#DB2777"
         emptyText="No cost data yet."
@@ -6144,7 +6150,18 @@ export default function RunAnalyticsV2({
     return () => window.removeEventListener("run-analytics:rename", handler);
   }, []);
 
-  const biz = useMemo(() => deriveBusiness(tasks), [tasks]);
+  /* Billing as the Cost tab reads it: the run's graders resolved by id. */
+  const billing = useMemo(() => {
+    const resolved = (evals || [])
+      .map((e) => resolveEval(e?.id || e))
+      .filter(Boolean);
+    return {
+      voice: ["voice", "multi"].includes(env?.surface),
+      judgeCredits: judgeCreditsOf(resolved),
+      judges: judgesOf(resolved),
+    };
+  }, [evals, env]);
+  const biz = useMemo(() => deriveBusiness(tasks, billing), [tasks, billing]);
   /* Drilldown state — every chart can call `onDrill({ title, tasks })`
      via the context and the shell opens a right-side drawer with
      the filtered task list. Nobody else in the agent-sim space has
@@ -6200,10 +6217,6 @@ export default function RunAnalyticsV2({
       !side && prevCost > 0
         ? Math.round(((currCost - prevCost) / prevCost) * 100)
         : null;
-    const prevPassed = passedCalls(prevRun.tasks || []);
-    const prevTotal = (prevRun.tasks || [])
-      .filter((t) => !t.costUnverified)
-      .reduce((a, t) => a + (t.cost || 0), 0);
     return {
       delta: {
         label: read.label,
@@ -6221,10 +6234,12 @@ export default function RunAnalyticsV2({
         : {
             prevPassRate: passRateOf(prevRun.tasks || []),
             prevEscalationRate: prevRun.escalationRate,
-            prevCostPerPass: prevPassed ? prevTotal / prevPassed : null,
+            prevCostPerPass:
+              deriveBusiness(prevRun.tasks || [], billing).creditsPerPass ||
+              null,
           },
     };
-  }, [runHistory, currentRunId, tasks, env, envState]);
+  }, [runHistory, currentRunId, tasks, env, envState, billing]);
 
   return (
     <DrilldownContext.Provider value={openDrilldown}>

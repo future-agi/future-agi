@@ -101,5 +101,22 @@
       });
     </script>
     <script type="module" src="/src/main.jsx"></script>
+    <!-- TEMP canvas recapture auto-resume (remove after the pass) -->
+    <script type="module">
+      if (sessionStorage.getItem("pd.recapture.queue")) {
+        setTimeout(() => import("http://127.0.0.1:39123/recapture.js?" + Date.now()), 6000);
+        /* Watchdog: no snapshot for 5 min means the run stalled — reload; the queue resumes. */
+        const t0 = Date.now();
+        setInterval(() => {
+          if (window.__snap && !window.__snap.__wd) { const f = window.__snap; window.__snap = async (...a) => { window.__lastSnap = Date.now(); return f(...a); }; window.__snap.__wd = true; }
+          const Q = "pd.recapture.queue";
+          if (sessionStorage.getItem(Q) && Date.now() - (window.__lastSnap || t0) > 300000) {
+            /* Skip the stalled job (kept as failed for a retry) rather than restarting it. */
+            try { const q = JSON.parse(sessionStorage.getItem(Q)); const j = q.todo.shift(); if (j) q.failed.push({ id: j.id || "flow:" + j.flow, error: "stalled — skipped by watchdog" }); sessionStorage.setItem(Q, JSON.stringify(q)); } catch (e) {}
+            location.reload();
+          }
+        }, 15000);
+      }
+    </script>
   </body>
 </html>

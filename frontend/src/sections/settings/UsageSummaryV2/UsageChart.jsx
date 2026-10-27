@@ -11,6 +11,7 @@ import { Box, Typography, Skeleton, Stack } from "@mui/material";
 import ApexChart from "react-apexcharts";
 
 import axios, { endpoints } from "src/utils/axios";
+import { mergeSeries } from "src/sections/simulate-v2/usage/productUsage";
 
 UsageChart.propTypes = {
   dimension: PropTypes.string.isRequired,
@@ -18,6 +19,8 @@ UsageChart.propTypes = {
   periodEnd: PropTypes.string,
   freeAllowance: PropTypes.number,
   displayUnit: PropTypes.string,
+  /* Extra per-day usage to add to the backend's: [{ date, usage }]. */
+  addSeries: PropTypes.array,
 };
 
 export default function UsageChart({
@@ -26,10 +29,11 @@ export default function UsageChart({
   periodEnd,
   freeAllowance,
   displayUnit,
+  addSeries = null,
 }) {
   const theme = useTheme();
 
-  const { data: seriesData, isLoading } = useQuery({
+  const { data: apiSeries, isLoading } = useQuery({
     queryKey: ["v2-usage-time-series", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageTimeSeries, {
@@ -42,6 +46,11 @@ export default function UsageChart({
     select: (res) => res.data?.result?.series || [],
     enabled: !!dimension,
   });
+  /* Simulation meters also count the prototype's runs, day by day. */
+  const seriesData = useMemo(
+    () => (addSeries ? mergeSeries(apiSeries, addSeries) : apiSeries),
+    [apiSeries, addSeries],
+  );
 
   const maxUsage = useMemo(
     () =>

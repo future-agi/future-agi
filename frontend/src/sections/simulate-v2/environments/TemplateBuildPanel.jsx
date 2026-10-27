@@ -28,6 +28,8 @@ import {
   worldChannelOf,
 } from "./worldSource";
 import { generatedPool } from "../_mock/scenarios";
+import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
+import { resolveEval } from "../_mock/evals";
 import { replicationOf } from "../_mock/replication";
 
 /**
@@ -102,6 +104,13 @@ export default function TemplateBuildPanel({
   const sample = sampleAgentOf(template);
   const scenarioCount = generatedPool(template).length;
   const evalCount = (template.evalPreset || []).length;
+  /* What a first run of it costs — the run plan's estimate, at 3 attempts. */
+  const tryEstimate = estimateRunPlan({
+    env: { surface: template.surface },
+    scenarios: scenarioCount,
+    attempts: 3,
+    evals: (template.evalPreset || []).map(resolveEval).filter(Boolean),
+  });
 
   return (
     <Stack spacing={2}>
@@ -180,6 +189,11 @@ export default function TemplateBuildPanel({
               {
                 icon: "solar:play-circle-linear",
                 text: "Ready to run in seconds — nothing to connect, nothing to build.",
+              },
+              {
+                icon: "solar:wallet-money-linear",
+                text: `Opening it is free. A run of all ${scenarioCount} × 3 attempts ≈ ${rangeLabel(tryEstimate.platform.low, tryEstimate.platform.high, tryEstimate.platform.unknown)}.`,
+                hint: "Confirmed in the run plan before anything starts, with its limit. The sample agent's own model calls aren't charged to you.",
               },
             ].map((row) => (
               <Stack

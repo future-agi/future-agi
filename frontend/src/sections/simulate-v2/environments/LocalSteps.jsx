@@ -56,6 +56,7 @@ export default function LocalSteps({ steps }) {
             </Typography>
             {s.extra}
             <CopyField value={s.cmd} wrap onCopy={s.onCopy} />
+            {s.after}
           </Box>
         </Stack>
       ))}
@@ -63,6 +64,6 @@ export default function LocalSteps({ steps }) {
   );
 }
 LocalSteps.propTypes = {
-  /* [{ title, body, hint?, cmd, extra?, onCopy? }] — `extra` sits above the command (e.g. an OS picker). */
+  /* [{ title, body, hint?, cmd, extra?, after?, onCopy? }] — `extra` sits above the command (e.g. an OS picker), `after` below it (e.g. what it prints). */
   steps: PropTypes.arrayOf(PropTypes.object).isRequired,
 };

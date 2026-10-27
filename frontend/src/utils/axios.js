@@ -227,6 +227,11 @@ export default axiosInstance;
 
 // ----------------------------------------------------------------------
 
+/* A read request with query params. Insights (TH-8183) reads through this;
+   its PR adds a POST form for long queries — until then, a plain GET. */
+export const readQuery = (url, { params = {}, ...config } = {}) =>
+  axiosInstance.get(url, { params, ...config });
+
 export const fetcher = async (args) => {
   const [url, config] = Array.isArray(args) ? args : [args];
 

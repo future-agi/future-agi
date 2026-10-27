@@ -4,7 +4,7 @@ import { Helmet } from "react-helmet-async";
 import { Box, CircularProgress } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { useSimStore, useEnvState } from "../store";
-import { protoRunId } from "../_mock/executionAdapter";
+import { runPlanHref } from "../_mock/runPlanLink";
 import TemplateReviewLayout from "./TemplateReviewLayout";
 import TwinProvisioningView from "./TwinProvisioningView";
 
@@ -46,7 +46,8 @@ export default function TwinReviewPage() {
     return () => clearTimeout(t);
   }, [env]);
   useEffect(() => {
-    if (waited && !env) navigate(paths.dashboard.simulate.environments, { replace: true });
+    if (waited && !env)
+      navigate(paths.dashboard.simulate.environments, { replace: true });
   }, [waited, env, navigate]);
 
   if (!env) {
@@ -69,9 +70,13 @@ export default function TwinReviewPage() {
   return (
     <>
       <Helmet>
-        <title>{env.name} · {provisioning ? "Setting up" : "Review"} | Future AGI</title>
+        <title>
+          {env.name} · {provisioning ? "Setting up" : "Review"} | Future AGI
+        </title>
       </Helmet>
-      <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <Box
+        sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      >
         {provisioning ? (
           <TwinProvisioningView
             env={env}
@@ -108,9 +113,7 @@ export default function TwinReviewPage() {
               check passes and the tool fit is asked; a missing agent or
               evaluation opens the workspace on the gap instead.
             */
-            onFinish={() => navigate(
-              `${paths.dashboard.simulate.simulationRun(envId, protoRunId(envId, Date.now().toString(36)))}?trials=3`,
-            )}
+            onFinish={() => navigate(runPlanHref(envId, { trials: 3 }))}
           />
         )}
       </Box>

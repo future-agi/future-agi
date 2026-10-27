@@ -127,7 +127,7 @@ function Searchbar({ variant }) {
         bgcolor: "background.paper",
         color: "text.tertiary",
         font: "inherit",
-        fontSize: 13,
+        fontSize: 12,
         cursor: "text",
         textAlign: "left",
         "&:hover": { borderColor: (t) => t.palette.border.hover },

@@ -34,6 +34,13 @@ import axios, { endpoints } from "src/utils/axios";
 import { fCurrency, fUsage } from "src/utils/format-number";
 import UsageChart from "./UsageChart";
 import WorkspaceBreakdown from "./WorkspaceBreakdown";
+import SimulationUsage from "src/sections/simulate-v2/usage/SimulationUsage";
+import { useOptionalSimStore } from "src/sections/simulate-v2/store";
+import { simMeters } from "src/sections/simulate-v2/_mock/usageLedger";
+import {
+  SIM_METERS,
+  withSimulationUsage,
+} from "src/sections/simulate-v2/usage/productUsage";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -697,7 +704,7 @@ export default function UsageSummaryV2() {
     setIsRefreshing(false);
   }, [queryClient]);
 
-  const { data: overview, isLoading } = useQuery({
+  const { data: apiOverview, isLoading } = useQuery({
     queryKey: ["v2-usage-overview", periodParams],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageOverview, {
@@ -706,6 +713,34 @@ export default function UsageSummaryV2() {
     select: (res) => res.data?.result,
     refetchInterval: 60000,
   });
+
+  /* The simulation meters (Text Simulation, Voice Simulation, AI Credits)
+     also count the prototype's runs, from the same ledger as the Simulation
+     section and each run's Cost tab. Every other card is the backend's. */
+  const simStore = useOptionalSimStore();
+  const meters = useMemo(() => {
+    const now = new Date();
+    const months = periodMonthCount;
+    return simMeters(simStore?.state, {
+      since: new Date(
+        now.getFullYear(),
+        now.getMonth() - months + 1,
+        1,
+      ).getTime(),
+    });
+  }, [simStore?.state, periodMonthCount]);
+  const overview = useMemo(() => {
+    const now = new Date();
+    const daysInMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+    ).getDate();
+    return withSimulationUsage(apiOverview, meters, {
+      months: periodMonthCount,
+      projectBy: timeRange === "current" ? daysInMonth / now.getDate() : 1,
+    });
+  }, [apiOverview, meters, periodMonthCount, timeRange]);
 
   const { data: banners } = useQuery({
     queryKey: ["v2-notifications"],
@@ -998,12 +1033,16 @@ export default function UsageSummaryV2() {
         </Section>
       )}
 
+      {/* ── Simulation: runs priced as their Cost tabs, and limits ── */}
+      <SimulationUsage />
+
       {/* ── Dimension Detail (chart + workspace breakdown) ── */}
       {overview?.dimensions?.length > 0 && (
         <DimensionDetail
           dimensions={overview.dimensions}
           period={periodParams.period}
           periodEnd={periodParams.period_end}
+          simDaily={meters.daily}
         />
       )}
     </Box>
@@ -1016,9 +1055,11 @@ DimensionDetail.propTypes = {
   dimensions: PropTypes.arrayOf(dimensionPropType).isRequired,
   period: PropTypes.string,
   periodEnd: PropTypes.string,
+  /* Per-day usage of the simulation meters from the ledger, by key. */
+  simDaily: PropTypes.object,
 };
 
-function DimensionDetail({ dimensions, period, periodEnd }) {
+function DimensionDetail({ dimensions, period, periodEnd, simDaily = {} }) {
   const theme = useTheme();
   const [selectedDim, setSelectedDim] = useState(dimensions[0]?.key || "");
 
@@ -1088,6 +1129,9 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           periodEnd={periodEnd}
           freeAllowance={selected.free_allowance}
           displayUnit={selected.display_unit}
+          addSeries={
+            SIM_METERS.includes(selectedDim) ? simDaily[selectedDim] : null
+          }
         />
       </Section>
 
@@ -1101,6 +1145,11 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           period={period}
           periodEnd={periodEnd}
           displayUnit={selected.display_unit}
+          addUsage={
+            SIM_METERS.includes(selectedDim)
+              ? (simDaily[selectedDim] || []).reduce((a, d) => a + d.usage, 0)
+              : 0
+          }
         />
       </Section>
     </Box>

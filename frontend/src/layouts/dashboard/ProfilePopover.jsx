@@ -72,7 +72,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <Typography
                 variant="subtitle2"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 500,
                   color: "text.primary",
                   letterSpacing: "-0.2px",
@@ -92,7 +92,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <Typography
                 variant="subtitle2"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 400,
                   color: "text.secondary",
                   letterSpacing: "-0.2px",
@@ -123,7 +123,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <ListItemText
                 primary="Administration"
                 primaryTypographyProps={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 400,
                   paddingLeft: 0.4,
                   color: "text.primary",
@@ -155,7 +155,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
             <ListItemText
               primary="Profile"
               primaryTypographyProps={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 400,
                 paddingLeft: 0.4,
                 color: "text.primary",
@@ -185,7 +185,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 <ListItemText
                   primary="API Keys"
                   primaryTypographyProps={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 500,
                     paddingLeft: 0.4,
                     color: "grey",
@@ -214,7 +214,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 <ListItemText
                   primary="Manage Plans"
                   primaryTypographyProps={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 400,
                     paddingLeft: 0.4,
                     color: "text.primary",
@@ -245,7 +245,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
             <ListItemText
               primary="Logout"
               primaryTypographyProps={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 400,
                 color: "status.danger.fg",
               }}

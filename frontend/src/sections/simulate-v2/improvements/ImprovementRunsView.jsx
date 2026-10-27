@@ -41,7 +41,11 @@ import {
   IMPROVEMENT_PHASES,
   runsCountOf,
   searchSpend,
+  improvementSpendParts,
 } from "../_mock/optimizationRuns";
+import CostPartsTable from "./CostPartsTable";
+import { creditsLabel } from "../_mock/metering";
+import { RATE_PLAN } from "../_mock/rates";
 import RunsOverview from "../run/RunsOverview";
 import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
@@ -614,6 +618,7 @@ export default function ImprovementRunsView({
           <Tab value="runs" label={`Runs (${runs.length})`} />
           <Tab value="changes" label="Changes" />
           <Tab value="scenarios" label="Per scenario" />
+          <Tab value="cost" label="Cost" />
         </Tabs>
       )}
 
@@ -627,7 +632,28 @@ export default function ImprovementRunsView({
             bgcolor: "background.paper",
           }}
         >
-          {view === "changes" ? (
+          {view === "cost" ? (
+            /* What this improvement spent, part by part, on the versions in
+               its header; a stop at the budget keeps what it found. */
+            <Box sx={{ p: 2 }}>
+              <CostPartsTable
+                parts={improvementSpendParts(record, env?.surface)}
+                totalLabel="Spent"
+                note={[
+                  record.budget
+                    ? `Budget ${creditsLabel(record.budget)}`
+                    : null,
+                  record.stoppedAtBudget
+                    ? "stopped at its budget — the best it found is kept"
+                    : null,
+                  `${RATE_PLAN.name} · ${RATE_PLAN.version} rates`,
+                  "each part charged once; its runs' own Cost tabs list their calls",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              />
+            </Box>
+          ) : view === "changes" ? (
             <WinnerChanges
               env={env}
               winner={shipped}

@@ -5,7 +5,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useSnackbar } from "notistack";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import {
@@ -41,7 +42,10 @@ import { currentUser } from "../_mock/scenarioProvenance";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
-import { useSimStore, useEnvState } from "../store";
+import { useSimStore, useEnvState, useConnectedAgents } from "../store";
+import { envAgentKey, needsFoundCheck } from "../_mock/agentRegistry";
+import AgentFoundReview from "../agents/AgentFoundReview";
+import NextStepBanner from "./NextStepBanner";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import {
@@ -60,15 +64,7 @@ import SetupGapsPanel from "./SetupGapsPanel";
 import { runPlan } from "../_mock/proofs";
 import { runScopeOf } from "../_mock/runScope";
 import { resolveEval } from "../_mock/evals";
-import {
-  estimateRun,
-  checkUsage,
-  meterLine,
-  limitMessage,
-  budgetNotice,
-} from "../_mock/metering";
 import { runSizeOf, parallelOf } from "../_mock/runStream";
-import RunUsageBanner from "./RunUsageBanner";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
 import {
   subscribeBuilderPrompt,
@@ -83,11 +79,21 @@ import {
 } from "../_mock/scenarioSelectionBus";
 import { subscribeBuilderMode } from "../_mock/builderModeBus";
 import {
+  agentVersions,
   currentAgentVersion,
   currentEnvVersion,
   environmentVersions,
   scenariosInSet,
 } from "../_mock/versions";
+import {
+  defaultRunCap,
+  estimateRunPlan,
+  rangeLabel,
+  versionOptionsOf,
+} from "../_mock/pricing";
+import RunPlanDialog from "./RunPlanDialog";
+import { envOf } from "../_mock/runGroup";
+import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
 import {
   proofKindOf,
@@ -352,6 +358,21 @@ export default function EnvironmentWorkspace() {
      ("passed twice, failed once") rather than a coin flip read as a verdict. */
   /* …or the environment's own default, set in Settings → Simulation defaults. */
   const [codeOpen, setCodeOpen] = useState(false);
+  /* The run plan a Run button opened: { scenarioIds, trials, also }. */
+  const [runPlanReq, setRunPlanReq] = useState(null);
+  /* ?price=missing shows the held state a missing rate puts a run in. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const missingRate = searchParams.get("price") === "missing";
+  /* A Run or Re-run elsewhere links here with the plan prefilled. */
+  useEffect(() => {
+    const req = runPlanRequestOf(searchParams);
+    if (!req) return;
+    setRunPlanReq(req);
+    const next = new URLSearchParams(searchParams);
+    RUN_PLAN_PARAMS.forEach((k) => next.delete(k));
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [headerTrials, setHeaderTrials] = useState(
     () => runDefaultsOf(envState).repeats || 3,
   );
@@ -376,6 +397,10 @@ export default function EnvironmentWorkspace() {
   /* "Needs input" — the setup-gaps inbox, in a right drawer. Opened from
      the header count, or from the Overview tab's blocking list (via the bus). */
   const [inbox, setInbox] = useState({ open: false, focus: null });
+  /* "Check what we found" for a newly connected code agent, opened here. */
+  const [foundOpen, setFoundOpen] = useState(false);
+  const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
+  const { enqueueSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
   useEffect(
     () => subscribeGapsInbox((focus) => setInbox({ open: true, focus })),
@@ -592,7 +617,11 @@ export default function EnvironmentWorkspace() {
      tacked on as `?only=` (matching the existing subset convention
      LiveRunView already reads) so the run only exercises that
      subset — otherwise the run covers every scenario in the env. */
-  const launchRun = (scenarioIds, trials, { agent } = {}) => {
+  const launchRun = (
+    scenarioIds,
+    trials,
+    { agent, cap, alertAt, continues, snapshot, envVersion } = {},
+  ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
     let url = paths.dashboard.simulate.simulationRun(envId, runId);
     const params = new URLSearchParams();
@@ -610,6 +639,12 @@ export default function EnvironmentWorkspace() {
     if (Number.isFinite(k) && k >= 1) {
       params.set("trials", String(Math.min(20, Math.floor(k))));
     }
+    /* The run plan's spending limit and warning line. */
+    if (cap) params.set("cap", String(cap));
+    if (alertAt) params.set("warn", String(Math.round(alertAt * 100)));
+    if (continues) params.set("continues", continues);
+    if (snapshot) params.set("snapshot", snapshot);
+    if (envVersion) params.set("env", envVersion);
     const qs = params.toString();
     if (qs) url += `?${qs}`;
     navigate(url);
@@ -617,12 +652,32 @@ export default function EnvironmentWorkspace() {
   /* `also` — other environments to start alongside, as a run group. A
      group runs each environment's own full scenario set, so it never
      carries a selection. */
+  /* Every Run opens the run plan first — scope, estimate and limit are
+     confirmed before anything starts. */
   const runNow = (scenarioIds, trials, { also } = {}) =>
-    checkRunFit(() =>
-      also?.length && !scenarioIds?.length
-        ? runGroup.start(also, { trials: Number(trials) || 3 })
-        : launchRun(scenarioIds, trials),
-    );
+    checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
+  const startPlannedRun = ({ attempts, versions, cap, alertAt }) => {
+    const req = runPlanReq;
+    setRunPlanReq(null);
+    if (!req) return;
+    const current = currentAgentVersion(envState)?.label;
+    if (versions.length > 1)
+      return runGroup.startVersions(versions, {
+        trials: attempts,
+        cap,
+        alertAt,
+      });
+    if (req.also?.length && !req.scenarioIds?.length)
+      return runGroup.start(req.also, { trials: attempts, cap, alertAt });
+    return launchRun(req.scenarioIds, attempts, {
+      agent: versions[0] && versions[0] !== current ? versions[0] : undefined,
+      cap,
+      alertAt,
+      continues: req.continues,
+      snapshot: req.snapshot,
+      envVersion: req.envVersion,
+    });
+  };
   const startRun = (scenarioIds, trials, opts = {}) =>
     runNow(scenarioIds, trials, opts);
 
@@ -703,6 +758,60 @@ export default function EnvironmentWorkspace() {
     canRun && runnable > 0 && !firstBlockingGap && !viewingOlder;
 
   /*
+    The one thing standing between this environment and a run, as a banner
+    with the action that resolves it here — the disabled Run button's
+    tooltip alone left people not knowing where to click.
+  */
+  const agentKey = envAgentKey(envState.agent, envId);
+  const connectedAgent =
+    connectedAgents.find((a) => a.key === agentKey) || envState.agent;
+  const agentName = connectedAgent?.name || "the agent";
+  const nextStep = (() => {
+    if (viewingOlder) return null;
+    /* Sealed runs go ahead on what we read; the review is still worth doing. */
+    if (runEnabled)
+      return needsFoundCheck(envState.agent)
+        ? {
+            tone: "info",
+            title: "Runs use what we read from the agent's code.",
+            line: `Review ${agentName}'s tools, prompts and credentials to correct anything.`,
+            actionLabel: "Review what we found",
+            onAction: () => setFoundOpen(true),
+          }
+        : null;
+    if (!readiness.ready) {
+      if (readiness.foundCheck)
+        return {
+          title: "Confirm which tools must never run for real to run live.",
+          line: `Check what we found in ${agentName}'s code.`,
+          actionLabel: "Review what we found",
+          onAction: () => setFoundOpen(true),
+        };
+      return {
+        title: `${readiness.reason.replace(/ on Overview$/, "")} to run.`,
+        actionLabel: readiness.href ? "Open agent" : "Open Overview",
+        onAction: () =>
+          readiness.href ? navigate(readiness.href) : go("overview"),
+      };
+    }
+    if (firstBlockingGap)
+      return {
+        title: `Answer ${gapTally.blocking === 1 ? "1 question" : `${gapTally.blocking} questions`} to run.`,
+        line: firstBlockingGap.title,
+        actionLabel: "Open Needs input",
+        onAction: () => setInbox({ open: true, focus: firstBlockingGap.id }),
+      };
+    if (runnable === 0)
+      return {
+        title: "No scenario can run yet.",
+        line: runBlockedReason.replace(/ — see the Scenarios tab$/, ""),
+        actionLabel: "Open Scenarios",
+        onAction: () => go("scenarios"),
+      };
+    return null;
+  })();
+
+  /*
     What the next Run meters, and the pre-check at that paid boundary
     (AC-16.7, AC-16.8). Counted over exactly what Run will take — the
     selection, or the plan minus what sits out on an open optional gap —
@@ -723,21 +832,38 @@ export default function EnvironmentWorkspace() {
     runEnabled && gapTally.blocking === 0 && !headerSelCount && !headerGrouped
       ? scope.count
       : runnable;
+  /* A run group's other environments, priced in the plan with this one —
+     each runs its own runnable scenarios. */
+  const alsoScopes = (
+    runPlanReq?.scenarioIds?.length ? [] : runPlanReq?.also || []
+  )
+    .map((id) => {
+      const e = envOf(state, id);
+      const es = state.byEnv?.[id];
+      if (!e || !es) return null;
+      return {
+        env: e,
+        envState: es,
+        scenarios: runScopeOf(e, es).count,
+        evals: (es.evals || []).map(resolveEval).filter(Boolean),
+      };
+    })
+    .filter(Boolean);
+  /* Run from code previews the same estimate the run plan opens with. */
+  const codeEstimate = codeOpen
+    ? estimateRunPlan({
+        env,
+        envState,
+        scenarios: meteredScenarios,
+        attempts: Number(headerTrials) || 3,
+        versions: [currentAgentVersion(envState)?.label].filter(Boolean),
+        evals: (envState.evals || []).map(resolveEval).filter(Boolean),
+        runLocation: envState?.agent?.values?.runLocation || null,
+      })
+    : null;
   const sitOut = Math.max(0, runnable - meteredScenarios);
   /* How many open questions those wait on — counted, never named by gap id. */
   const sitOutGaps = scope.sitOutGaps;
-  const runEstimate = estimateRun({
-    env,
-    scenarios: meteredScenarios,
-    repeats: Number(headerTrials) || 3,
-    evals: (envState.evals || []).map(resolveEval).filter(Boolean),
-    runLocation: envState?.agent?.values?.runLocation || null,
-  });
-  const usageCheck = checkUsage(runEstimate);
-  const usageRefusal =
-    runnable > 0 ? limitMessage(usageCheck, runEstimate) : null;
-  const usageNotice =
-    runnable > 0 ? budgetNotice(usageCheck, runEstimate) : null;
 
   /* Leave first, then drop it: while this page is mounted, the adopt-on-open
      effect would put a missing environment straight back. */
@@ -1129,7 +1255,7 @@ export default function EnvironmentWorkspace() {
                 noWrap
                 sx={{
                   /* The page-title size every page uses (16/24, 600). */
-                  fontSize: 16,
+                  fontSize: 15,
                   lineHeight: "24px",
                   fontWeight: 600,
                   minWidth: 72,
@@ -1499,11 +1625,24 @@ export default function EnvironmentWorkspace() {
               ? `${sitOut} of the ${runnable} scenarios that can run sit out — they wait on ${sitOutGaps === 1 ? "1 open question" : `${sitOutGaps} open questions`} in Needs input. Answer or accept the defaults to run them all.`
               : "";
           /* The estimate rides on the tooltip; a refusal replaces it. */
-          const estimateLine = `≈ ${meterLine(runEstimate)}${groupWith.length ? " here, plus each other environment" : ""}`;
+          /* Credits, as the run plan says it — opening Run shows the breakdown. */
+          const planEstimate = estimateRunPlan({
+            env,
+            envState,
+            scenarios: selectedCount || meteredScenarios,
+            attempts: Number(headerTrials) || 3,
+            versions: [currentAgentVersion(envState)?.label].filter(Boolean),
+            evals: (envState.evals || []).map(resolveEval).filter(Boolean),
+            runLocation: envState?.agent?.values?.runLocation || null,
+            missingRate,
+          });
+          const estimateLine = `${
+            planEstimate.platform.unknown
+              ? "Can't estimate — a rate is missing"
+              : `≈ ${rangeLabel(planEstimate.platform.low, planEstimate.platform.high)}`
+          }${groupWith.length ? " here, plus each other environment" : ""}`;
           const runTip = !runEnabled ? (
             gapTip
-          ) : usageRefusal ? (
-            `${usageRefusal.title} — ${usageRefusal.line}`
           ) : (
             <Stack spacing={0.25} sx={{ py: 0.25 }}>
               <Typography
@@ -1521,13 +1660,6 @@ export default function EnvironmentWorkspace() {
                   </Typography>
                 );
               })()}
-              {usageNotice && (
-                <Typography
-                  sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}
-                >
-                  {usageNotice.line}
-                </Typography>
-              )}
               {gapTip && (
                 <Typography sx={{ typography: "s3", color: "inherit" }}>
                   {gapTip}
@@ -1661,31 +1793,6 @@ export default function EnvironmentWorkspace() {
                   {/* Who the run leaves out is said in the Run tooltip, and
                       Needs input carries the count — the header doesn't
                       grow a caption. */}
-                  {/* Refused at the pre-check: the standard limit message, at the button. */}
-                  {runEnabled && usageRefusal && (
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "status.danger.fg",
-                        whiteSpace: "nowrap",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {`${usageRefusal.short} · `}
-                      <Box
-                        component="a"
-                        href={paths.dashboard.settings.billing}
-                        sx={{
-                          color: "text.primary",
-                          fontWeight: 600,
-                          textDecoration: "none",
-                          "&:hover": { textDecoration: "underline" },
-                        }}
-                      >
-                        Upgrade
-                      </Box>
-                    </Typography>
-                  )}
                   {/* One button: Run, with its menu as the end of the same shape. */}
                   <Box
                     sx={{
@@ -1700,7 +1807,7 @@ export default function EnvironmentWorkspace() {
                           variant="contained"
                           color="primary"
                           size="small"
-                          disabled={!runEnabled || !!usageRefusal}
+                          disabled={!runEnabled}
                           onClick={() => {
                             const sel = scenarioSelection?.ids || [];
                             /* Run anyway: the scenarios resting on an open or skipped
@@ -1752,7 +1859,7 @@ export default function EnvironmentWorkspace() {
                               color="primary"
                               size="small"
                               aria-label="More ways to run"
-                              disabled={!runEnabled || !!usageRefusal}
+                              disabled={!runEnabled}
                               onClick={(e) => setRunMenu(e.currentTarget)}
                               sx={{
                                 minWidth: 0,
@@ -1896,8 +2003,46 @@ export default function EnvironmentWorkspace() {
           onCancel={() => setConfirmDelete(null)}
           onConfirm={deleteEnvironment}
         />
+        <RunPlanDialog
+          open={!!runPlanReq}
+          onClose={() => setRunPlanReq(null)}
+          onStart={startPlannedRun}
+          env={env}
+          envState={envState}
+          scenarioCount={runPlanReq?.scenarioIds?.length || meteredScenarios}
+          scopeNote={
+            runPlanReq?.scenarioIds?.length &&
+            runPlanReq.scenarioIds.length ===
+              (scenarioSelection?.ids?.length || 0)
+              ? `${runPlanReq.scenarioIds.length} selected`
+              : `${runPlanReq?.scenarioIds?.length || meteredScenarios} ready to run`
+          }
+          initialAttempts={Number(runPlanReq?.trials) || 3}
+          versionOptions={versionOptionsOf(
+            envState,
+            agentVersions(envState),
+            envId,
+          )}
+          evals={(envState.evals || []).map(resolveEval).filter(Boolean)}
+          runLocation={envState?.agent?.values?.runLocation || null}
+          parallel={parallelOf(envState)}
+          missingRate={missingRate}
+          alsoCount={runPlanReq?.also?.length || 0}
+          initialVersion={runPlanReq?.agent}
+          alsoScopes={alsoScopes}
+          scopeLead={
+            runPlanReq?.continues
+              ? `Continues run ${(envState.runs || []).find((r) => r.id === runPlanReq.continues)?.ordinal ?? ""} — only the scenarios its limit stopped from starting. The ones that finished aren't run or charged again.`
+              : runPlanReq?.snapshot
+                ? "Re-runs the exact snapshot — a new run, charged as its own."
+                : null
+          }
+        />
         <RunFromCodeDrawer
           open={codeOpen}
+          budget={defaultRunCap(codeEstimate)}
+          estimate={codeEstimate}
+          trainEvals={(envState.evals || []).map(resolveEval).filter(Boolean)}
           onClose={() => setCodeOpen(false)}
           env={env}
           agentName={currentAgentVersion(envState)?.label}
@@ -1916,6 +2061,58 @@ export default function EnvironmentWorkspace() {
           repo={managedRepoOf(env, envState)}
           onPulled={() => patch?.({ managedIn: "code" })}
         />
+        <SideDrawer
+          open={foundOpen}
+          onClose={() => setFoundOpen(false)}
+          width={{ xs: "100%", md: 640 }}
+        >
+          {foundOpen && connectedAgent && (
+            <Stack sx={{ height: "100%" }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={1}
+                sx={{
+                  px: 2.5,
+                  py: 1.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+                    Check what we found
+                  </Typography>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {`${agentName} · confirm it once and every environment testing it can run`}
+                  </Typography>
+                </Box>
+                <IconButton
+                  size="small"
+                  aria-label="Close"
+                  onClick={() => setFoundOpen(false)}
+                >
+                  <Iconify icon="solar:close-linear" width={18} />
+                </IconButton>
+              </Stack>
+              <Box sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}>
+                <AgentFoundReview
+                  agent={connectedAgent}
+                  onCancel={() => setFoundOpen(false)}
+                  onSave={(valuesPatch, message) => {
+                    setAgentValues(agentKey, valuesPatch);
+                    setFoundOpen(false);
+                    if (message)
+                      enqueueSnackbar(message, { variant: "success" });
+                  }}
+                />
+              </Box>
+            </Stack>
+          )}
+        </SideDrawer>
         <SideDrawer
           open={inbox.open}
           onClose={() => setInbox({ open: false, focus: null })}
@@ -2009,7 +2206,6 @@ export default function EnvironmentWorkspace() {
       <SystemBanners env={env} envState={envState} patch={patch} />
       {/* The run pre-check: a refusal holds Run until the estimate fits;
           a budget warning lets it go and says so quietly. */}
-      <RunUsageBanner refusal={usageRefusal} notice={usageNotice} />
       {/* Built from an Error Feed issue's Fix: the way back to it. */}
       <IssueReturnBanner envId={env.id} />
 
@@ -2021,6 +2217,11 @@ export default function EnvironmentWorkspace() {
         patch={patch}
         locked={isSeededTemplate}
       />
+      {nextStep && (
+        <Box sx={{ px: 3, pt: 1.5 }}>
+          <NextStepBanner {...nextStep} />
+        </Box>
+      )}
 
       {/* ── body: builder console (left) + tabbed panels (right) — one
             surface split by a single rule, the same as the build screen ── */}
@@ -2168,9 +2369,7 @@ export default function EnvironmentWorkspace() {
                   unit: env.surface === "voice" ? "call" : "conversation",
                   disabledReason: !runEnabled
                     ? runBlockedReason || "Not ready to run"
-                    : usageRefusal
-                      ? `${usageRefusal.title} — ${usageRefusal.line}`
-                      : null,
+                    : null,
                 }}
               />
             ) : panel === "evals" ? (

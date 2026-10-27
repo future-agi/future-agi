@@ -47,7 +47,7 @@ export function toggleButton(theme) {
           border: 0,
           borderRadius: 4,
           textTransform: "none",
-          fontSize: 12,
+          fontSize: 11,
           lineHeight: "24px",
           fontWeight: 500,
           color: theme.palette.text.secondary,

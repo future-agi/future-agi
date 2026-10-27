@@ -166,7 +166,7 @@ export default function NavGatewayPanel() {
                       </Box>
                       <Typography
                         sx={{
-                          fontSize: "13px",
+                          fontSize: "12px",
                           fontWeight: isActive ? 500 : 400,
                           whiteSpace: "nowrap",
                           lineHeight: "20px",

@@ -198,7 +198,7 @@ export function button(theme) {
       boxShadow: "none",
       ...(smallSize && {
         height: 28,
-        fontSize: 12,
+        fontSize: 11,
         lineHeight: "16px",
         paddingLeft: 10,
         paddingRight: 10,
@@ -208,8 +208,8 @@ export function button(theme) {
       }),
       ...(mediumSize && {
         height: 32,
-        fontSize: 13,
-        lineHeight: "20px",
+        fontSize: 12,
+        lineHeight: "18px",
         paddingLeft: 12,
         paddingRight: 12,
         paddingTop: 0,
@@ -218,8 +218,8 @@ export function button(theme) {
       }),
       ...(largeSize && {
         height: 36,
-        fontSize: 13,
-        lineHeight: "20px",
+        fontSize: 12,
+        lineHeight: "18px",
         paddingLeft: 14,
         paddingRight: 14,
         ...(textVariant && { paddingLeft: 10, paddingRight: 10 }),

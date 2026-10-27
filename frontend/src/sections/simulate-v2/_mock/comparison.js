@@ -35,11 +35,18 @@ import { scenarioTitle } from "./scenarios";
  * how you arrived at the screen is not an identity.
  */
 export const RUN_COLORS = [
-  "#7857FC", "#2563EB", "#16A34A", "#CA8A04",
-  "#EA580C", "#DB2777", "#0D9488", "#4F46E5",
+  "#7857FC",
+  "#2563EB",
+  "#16A34A",
+  "#CA8A04",
+  "#EA580C",
+  "#DB2777",
+  "#0D9488",
+  "#4F46E5",
 ];
 
-const evalsOf = (envState) => (envState?.evals || []).map(resolveEval).filter(Boolean);
+const evalsOf = (envState) =>
+  (envState?.evals || []).map(resolveEval).filter(Boolean);
 
 /**
  * The scenarios a stored run actually covered.
@@ -86,15 +93,25 @@ export const rebuildRun = (env, envState, run) => {
   /* A snapshot re-run replays its source's draws; anything else draws from
      its own id (not `run.seed` — seeded runs carry numeric seeds that differ
      from their ids, and their results come from the id). */
-  return withRegrade(buildRun({
-    seed: run.replaySeed || run.id,
-    scenarios: runScenarios(envState, run).scenarios,
-    stage: getSurface(env?.surface).stage,
-    evals: (run.evals || envState?.evals || []).map(resolveEval).filter(Boolean),
-    repeats: run.repeats || 1,
-    ...inputs,
-  }).tasks.map((t) => ({ ...t, status: t.verdict })), run);
+  return withRegrade(
+    buildRun({
+      seed: run.replaySeed || run.id,
+      scenarios: runScenarios(envState, run).scenarios,
+      stage: getSurface(env?.surface).stage,
+      evals: (run.evals || envState?.evals || [])
+        .map(resolveEval)
+        .filter(Boolean),
+      repeats: run.repeats || 1,
+      ...inputs,
+    })
+      .tasks /* Scenarios the run's spending limit kept from starting never ran. */
+      .filter((t) => !notStartedOf(run).has(t.id))
+      .map((t) => ({ ...t, status: t.verdict })),
+    run,
+  );
 };
+
+const notStartedOf = (run) => new Set(run?.budget?.notStarted || []);
 
 /**
  * One row of the summary table.
@@ -172,24 +189,40 @@ export const runSummary = (env, envState, run, index) => {
        that never reports one is a test harness wearing the name. */
     meanReturn: (() => {
       const returns = measured
-        .map((t) => episodeReturn(t, { steps: checklistSteps(t, env, t) })?.total)
+        .map(
+          (t) => episodeReturn(t, { steps: checklistSteps(t, env, t) })?.total,
+        )
         .filter((v) => v != null);
       return returns.length
-        ? Math.round((returns.reduce((a, v) => a + v, 0) / returns.length) * 100) / 100
+        ? Math.round(
+            (returns.reduce((a, v) => a + v, 0) / returns.length) * 100,
+          ) / 100
         : null;
     })(),
     /* What went wrong, grouped by whose fault it was. */
     domains: domainTally(tasks),
     passRate: measured.length
-      ? Math.round((measured.reduce((a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)), 0) / measured.length) * 100)
+      ? Math.round(
+          (measured.reduce(
+            (a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)),
+            0,
+          ) /
+            measured.length) *
+            100,
+        )
       : 0,
     avgDurationMs: tasks.length
-      ? Math.round(tasks.reduce((a, t) => a + (t.durationMs || 0), 0) / tasks.length)
+      ? Math.round(
+          tasks.reduce((a, t) => a + (t.durationMs || 0), 0) / tasks.length,
+        )
       : 0,
     tokens: tasks.reduce((a, t) => a + (t.tokens || 0), 0),
     /* Only costs the agent's side reported; unverified ones are counted, never summed. */
-    cost: tasks.filter((t) => !t.costUnverified).reduce((a, t) => a + (t.cost || 0), 0),
-    costUnverified: tasks.filter((t) => t.costUnverified && isMeasured(t)).length,
+    cost: tasks
+      .filter((t) => !t.costUnverified)
+      .reduce((a, t) => a + (t.cost || 0), 0),
+    costUnverified: tasks.filter((t) => t.costUnverified && isMeasured(t))
+      .length,
     /* Claims the call log did not support — the failure a transcript hides. */
     saidNotDone: tasks.filter((t) => t.callLog?.unsupportedClaim).length,
     scores,
@@ -211,8 +244,9 @@ const runTime = (r) => {
 };
 
 export const runSummaries = (env, envState) => {
-  const ordered = [...(envState?.runs || [])]
-    .sort((a, b) => runTime(a) - runTime(b));
+  const ordered = [...(envState?.runs || [])].sort(
+    (a, b) => runTime(a) - runTime(b),
+  );
   return ordered.map((r, i) => runSummary(env, envState, r, i));
 };
 
@@ -230,18 +264,29 @@ export const runSummaries = (env, envState) => {
  * by exposing the trials.
  */
 const SI_TRIAL_COLORS = [
-  "#7857FC", "#0D9488", "#CA8A04", "#DB2777",
-  "#2563EB", "#16A34A", "#EA580C", "#4F46E5",
+  "#7857FC",
+  "#0D9488",
+  "#CA8A04",
+  "#DB2777",
+  "#2563EB",
+  "#16A34A",
+  "#EA580C",
+  "#4F46E5",
 ];
 
 /* What a self-improvement trial did to a scenario that changes its outcome.
    "same" and "still-failing" leave the source run's own outcome in place. */
-export const TRIAL_CHANGES = { fixed: "passed", passed: "passed", broke: "failed" };
+export const TRIAL_CHANGES = {
+  fixed: "passed",
+  passed: "passed",
+  broke: "failed",
+};
 
 /* A small stable hash, so a run's generated numbers are the same every read. */
 const hashOf = (str) => {
   let h = 2166136261;
-  for (let i = 0; i < str.length; i += 1) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  for (let i = 0; i < str.length; i += 1)
+    h = Math.imul(h ^ str.charCodeAt(i), 16777619);
   return (h >>> 0) / 4294967296;
 };
 
@@ -253,17 +298,22 @@ export const trialSummaries = (env, envState) => {
 
   opts.forEach((opt, optIdx) => {
     if (!opt?.result?.trials?.length) return;
-    const sourceRun = (envState?.runs || []).find((r) => r.id === opt.fromRunId);
+    const sourceRun = (envState?.runs || []).find(
+      (r) => r.id === opt.fromRunId,
+    );
     /* What the run it started from scored — each run's graders, return and
        "said, not done" move from there by what that run changed. */
     const source = sourceRun ? runSummary(env, envState, sourceRun, 0) : null;
-    const baseFinishedAt = new Date(opt.completedAt || opt.createdAt || Date.now()).getTime();
+    const baseFinishedAt = new Date(
+      opt.completedAt || opt.createdAt || Date.now(),
+    ).getTime();
     const winnerN = opt.result.winner?.n;
     const groupOrdinal = optIdx + 1;
-    const scenarioCount = envState?.scenarios?.length
-      || sourceRun?.total
-      || Object.keys(opt.result.trials[0]?.perScenario || {}).length
-      || 0;
+    const scenarioCount =
+      envState?.scenarios?.length ||
+      sourceRun?.total ||
+      Object.keys(opt.result.trials[0]?.perScenario || {}).length ||
+      0;
 
     /*
       Each trial row reports the trial's OWN score — not a running max.
@@ -283,17 +333,33 @@ export const trialSummaries = (env, envState) => {
          scale the source run's numbers by a seeded factor per trial —
          internally consistent, honest at a glance, and never claiming a
          precision the mock does not have. */
-      const jitter = 0.88 + (((trial.n * 37) + optIdx * 13) % 25) / 100;
+      const jitter = 0.88 + ((trial.n * 37 + optIdx * 13) % 25) / 100;
       const lift = source ? passRate - (source.passRate ?? passRate) : 0;
-      const wobble = (key, span) => (hashOf(`${opt.id}:${trial.n}:${key}`) - 0.5) * span;
-      const scores = Object.fromEntries(evalIds.map((id) => {
-        const from = source?.scores?.[id] ?? passRate;
-        const pull = 0.6 + hashOf(`${opt.id}:${id}`) * 0.6;
-        /* A gain closes part of the gap to 100, a loss part of the way to 0 —
+      const wobble = (key, span) =>
+        (hashOf(`${opt.id}:${trial.n}:${key}`) - 0.5) * span;
+      const scores = Object.fromEntries(
+        evalIds.map((id) => {
+          const from = source?.scores?.[id] ?? passRate;
+          const pull = 0.6 + hashOf(`${opt.id}:${id}`) * 0.6;
+          /* A gain closes part of the gap to 100, a loss part of the way to 0 —
            a grader already near the top can't jump past it. */
-        const room = lift >= 0 ? (100 - from) / 100 : from / 100;
-        return [id, Math.max(0, Math.min(100, Math.round(from + lift * pull * Math.max(0.25, room) * 1.6 + wobble(id, 6))))];
-      }));
+          const room = lift >= 0 ? (100 - from) / 100 : from / 100;
+          return [
+            id,
+            Math.max(
+              0,
+              Math.min(
+                100,
+                Math.round(
+                  from +
+                    lift * pull * Math.max(0.25, room) * 1.6 +
+                    wobble(id, 6),
+                ),
+              ),
+            ),
+          ];
+        }),
+      );
       const finishedAt = new Date(baseFinishedAt + tIdx * 60_000).toISOString();
       /* A trial is scored on the training split only — the held-out
          scenarios are what the winner is checked against afterwards. So a
@@ -303,7 +369,8 @@ export const trialSummaries = (env, envState) => {
       const covered = trialIds.length || scenarioCount;
       const passed = Math.round((passRate / 100) * covered);
 
-      const baseVersion = sourceRun?.agentVersion || opt.baseAgentVersion || null;
+      const baseVersion =
+        sourceRun?.agentVersion || opt.baseAgentVersion || null;
       results.push({
         id: `${opt.id}-t${trial.n}`,
         kind: "trial",
@@ -339,15 +406,32 @@ export const trialSummaries = (env, envState) => {
         measured: covered,
         unmeasured: 0,
         repeats: sourceRun?.repeats || 1,
-        meanReturn: source?.meanReturn != null
-          ? Math.round((source.meanReturn + (lift / 100) * 0.8 + wobble("return", 0.06)) * 100) / 100
-          : Math.round((passRate / 100) * 0.9 * 100) / 100,
+        meanReturn:
+          source?.meanReturn != null
+            ? Math.round(
+                (source.meanReturn +
+                  (lift / 100) * 0.8 +
+                  wobble("return", 0.06)) *
+                  100,
+              ) / 100
+            : Math.round((passRate / 100) * 0.9 * 100) / 100,
         passRate,
         /* Read off the run it started from, as that run's own summary shows it. */
-        avgDurationMs: Math.round((source?.avgDurationMs || sourceRun?.avgDurationMs || 10000) * jitter),
-        tokens: Math.round((source?.tokens || sourceRun?.tokens || 300000) * jitter),
-        cost: Math.round((source?.cost || sourceRun?.cost || 5) * jitter * 100) / 100,
-        saidNotDone: Math.max(0, Math.round((source?.saidNotDone ?? 2) - lift / 12 + wobble("said", 2))),
+        avgDurationMs: Math.round(
+          (source?.avgDurationMs || sourceRun?.avgDurationMs || 10000) * jitter,
+        ),
+        tokens: Math.round(
+          (source?.tokens || sourceRun?.tokens || 300000) * jitter,
+        ),
+        cost:
+          Math.round((source?.cost || sourceRun?.cost || 5) * jitter * 100) /
+          100,
+        saidNotDone: Math.max(
+          0,
+          Math.round(
+            (source?.saidNotDone ?? 2) - lift / 12 + wobble("said", 2),
+          ),
+        ),
         scores,
         /* Deliberately empty — the compare pipeline hydrates tasks per
            trial in buildComparison (via buildRun + perScenario overlay)
@@ -360,10 +444,20 @@ export const trialSummaries = (env, envState) => {
            table's counts (runStatsOf reads it when `tasks` is empty). */
         trialTasks: trialIds.map((sid) => {
           const state = trial.perScenario[sid];
-          const status = state === "fixed" || state === "same" ? "passed"
-            : state === "flaky" ? "flaky"
-              : state === "inconclusive" ? "unmeasured" : "failed";
-          return { id: sid, scenarioId: sid, status, passShare: status === "passed" ? 1 : status === "flaky" ? 2 / 3 : 0 };
+          const status =
+            state === "fixed" || state === "same"
+              ? "passed"
+              : state === "flaky"
+                ? "flaky"
+                : state === "inconclusive"
+                  ? "unmeasured"
+                  : "failed";
+          return {
+            id: sid,
+            scenarioId: sid,
+            status,
+            passShare: status === "passed" ? 1 : status === "flaky" ? 2 / 3 : 0,
+          };
         }),
         domains: {},
       });
@@ -395,9 +489,10 @@ export const trialGroups = (envState) => {
       winnerScore: winner?.score ?? null,
       heldScore: opt?.result?.heldScore ?? null,
       baseScore: opt?.result?.base ?? null,
-      lift: opt?.result?.heldScore != null && opt?.result?.heldBase != null
-        ? opt.result.heldScore - opt.result.heldBase
-        : null,
+      lift:
+        opt?.result?.heldScore != null && opt?.result?.heldBase != null
+          ? opt.result.heldScore - opt.result.heldBase
+          : null,
       fromRunId: opt.fromRunId,
       createdAt: opt.createdAt,
     };
@@ -406,8 +501,18 @@ export const trialGroups = (envState) => {
 
 /* Colours a chart can tell apart, in the order they're handed out. */
 const SERIES_PALETTE = [
-  "#16A34A", "#7857FC", "#2563EB", "#EA580C", "#DB2777", "#0891B2",
-  "#CA8A04", "#DC2626", "#0D9488", "#65A30D", "#C026D3", "#525252",
+  "#16A34A",
+  "#7857FC",
+  "#2563EB",
+  "#EA580C",
+  "#DB2777",
+  "#0891B2",
+  "#CA8A04",
+  "#DC2626",
+  "#0D9488",
+  "#65A30D",
+  "#C026D3",
+  "#525252",
 ];
 
 /**
@@ -419,9 +524,14 @@ const SERIES_PALETTE = [
  */
 const distinctColors = (evals) => {
   const taken = new Set();
-  const next = () => SERIES_PALETTE.find((c) => !taken.has(c)) || SERIES_PALETTE[taken.size % SERIES_PALETTE.length];
+  const next = () =>
+    SERIES_PALETTE.find((c) => !taken.has(c)) ||
+    SERIES_PALETTE[taken.size % SERIES_PALETTE.length];
   return evals.map((e) => {
-    const own = e.color && !taken.has(e.color.toUpperCase()) ? e.color.toUpperCase() : null;
+    const own =
+      e.color && !taken.has(e.color.toUpperCase())
+        ? e.color.toUpperCase()
+        : null;
     const c = own || next();
     taken.add(c);
     return c;
@@ -436,7 +546,9 @@ export const evalSeries = (summaries, envState) => {
     id: e.id,
     name: e.name,
     color: colors[i],
-    data: summaries.map((s) => (s.scores[e.id] == null ? null : s.scores[e.id])),
+    data: summaries.map((s) =>
+      s.scores[e.id] == null ? null : s.scores[e.id],
+    ),
   }));
 };
 
@@ -450,13 +562,17 @@ export const evalSeries = (summaries, envState) => {
  * and when they disagree the log is the one that found something.
  */
 export const decidingMoment = (task) => {
-  if (!task) return { kind: "missing", text: "This scenario did not run here." };
+  if (!task)
+    return { kind: "missing", text: "This scenario did not run here." };
 
   /* Attribution first. Everything below reads the agent's behaviour, and none
      of it applies when the agent never got a fair run. */
   const domain = attribute(task);
   if (domain && !domain.measured) {
-    return { kind: "unmeasured", text: `${faultReason(task)} Not counted against the agent.` };
+    return {
+      kind: "unmeasured",
+      text: `${faultReason(task)} Not counted against the agent.`,
+    };
   }
 
   const failed = (task.evalResults || []).find((r) => !r.passed);
@@ -495,9 +611,15 @@ export const decidingMoment = (task) => {
   }
   const missing = task.callLog?.missing?.[0];
   if (missing) {
-    return { kind: "tool", text: `Never called ${missing}, which this scenario needed.` };
+    return {
+      kind: "tool",
+      text: `Never called ${missing}, which this scenario needed.`,
+    };
   }
-  return { kind: "unclear", text: "Failed without a grader or a tool call explaining why." };
+  return {
+    kind: "unclear",
+    text: "Failed without a grader or a tool call explaining why.",
+  };
 };
 
 const pct = (now, before) => {
@@ -560,8 +682,12 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       if (!trialM) return null;
       const t = trialsByRow.find((r) => r.id === id);
       if (!t) return null;
-      const opt = (envState.optimizations || []).find((o) => o.id === trialM[1]);
-      const trial = opt?.result?.trials?.find((tr) => tr.n === Number(trialM[2]));
+      const opt = (envState.optimizations || []).find(
+        (o) => o.id === trialM[1],
+      );
+      const trial = opt?.result?.trials?.find(
+        (tr) => tr.n === Number(trialM[2]),
+      );
       const per = trial?.perScenario || {};
       const source = (envState.runs || []).find((r) => r.id === opt?.fromRunId);
       if (source) {
@@ -575,7 +701,9 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
           const passed = TRIAL_CHANGES[outcome] === "passed";
           const score = passed ? 0.95 : 0.2;
           const evalResults = (task.evalResults || []).map((r) => ({
-            ...r, score, passed,
+            ...r,
+            score,
+            passed,
           }));
           /* When the trial's outcome differs from the source run's, the
              source's callLog (which reports what the source agent said)
@@ -583,9 +711,10 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
              "Said, not done" flag on tasks the trial marked passed so
              attribution and the Said-not-done chip don't misreport the
              source run's failure on a trial row. */
-          const callLog = passed && task.callLog?.unsupportedClaim
-            ? { ...task.callLog, unsupportedClaim: null }
-            : task.callLog;
+          const callLog =
+            passed && task.callLog?.unsupportedClaim
+              ? { ...task.callLog, unsupportedClaim: null }
+              : task.callLog;
           return {
             ...task,
             status: passed ? "passed" : "failed",
@@ -606,7 +735,9 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
         outcomes so the verdicts match what the trial actually saw.
       */
       const trialIds = new Set(Object.keys(per));
-      const scenarios = (envState?.scenarios || []).filter((sc) => !trialIds.size || trialIds.has(sc.id));
+      const scenarios = (envState?.scenarios || []).filter(
+        (sc) => !trialIds.size || trialIds.has(sc.id),
+      );
       const agent = opt.baseAgentVersion || "v1";
       const built = buildRun({
         seed: id,
@@ -614,7 +745,10 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
         stage: getSurface(env?.surface).stage,
         evals: evalsOf(envState),
         repeats: 1,
-        ...runInputs(env, envState, { agent, envVersion: runEnvVersion(env, envState, {}) }),
+        ...runInputs(env, envState, {
+          agent,
+          envVersion: runEnvVersion(env, envState, {}),
+        }),
       }).tasks.map((task) => ({ ...task, status: task.verdict }));
       const tasks = built.map((task) => {
         const outcome = per[task.scenarioId] || per[task.id];
@@ -622,7 +756,9 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
         const passed = TRIAL_CHANGES[outcome] === "passed";
         const score = passed ? 0.95 : 0.2;
         const evalResults = (task.evalResults || []).map((r) => ({
-          ...r, score, passed,
+          ...r,
+          score,
+          passed,
         }));
         return {
           ...task,
@@ -644,7 +780,8 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       return chip ? { ...r, letter: chip.letter, color: chip.color } : r;
     });
 
-  if (runs.length === 0) return { runs: [], rows: [], evals: [], coverage: null };
+  if (runs.length === 0)
+    return { runs: [], rows: [], evals: [], coverage: null };
 
   const baseline = runs[0];
 
@@ -655,7 +792,11 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
     which is the difference between "this got worse" and "this was not tested".
   */
   const seen = new Map();
-  runs.forEach((run) => run.tasks.forEach((t) => { if (!seen.has(t.id)) seen.set(t.id, t); }));
+  runs.forEach((run) =>
+    run.tasks.forEach((t) => {
+      if (!seen.has(t.id)) seen.set(t.id, t);
+    }),
+  );
   const scenarios = [...seen.values()];
 
   const rows = scenarios.map((base) => {
@@ -665,12 +806,14 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       const task = run.tasks.find((t) => t.id === base.id);
       /* An unmeasured cell has no share — not a zero one. Treating it as zero
          is how a dropped session becomes a regression in the next review. */
-      const share = task && isMeasured(task)
-        ? task.passShare ?? (task.status === "passed" ? 1 : 0)
-        : null;
-      const baseShare = baseTask && isMeasured(baseTask)
-        ? baseTask.passShare ?? (baseTask.status === "passed" ? 1 : 0)
-        : null;
+      const share =
+        task && isMeasured(task)
+          ? task.passShare ?? (task.status === "passed" ? 1 : 0)
+          : null;
+      const baseShare =
+        baseTask && isMeasured(baseTask)
+          ? baseTask.passShare ?? (baseTask.status === "passed" ? 1 : 0)
+          : null;
       /*
         One sample flipping is inside the noise of a sampled counterpart. A
         change only counts as movement when it is larger than a single sample
@@ -678,7 +821,8 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
         jitter into a regression someone gets paged about.
       */
       const step = 1 / Math.max(1, task?.repeats || run.repeats || 1);
-      const delta = share == null || baseShare == null ? null : share - baseShare;
+      const delta =
+        share == null || baseShare == null ? null : share - baseShare;
       return {
         runId: run.id,
         letter: run.letter,
@@ -700,9 +844,18 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
            has a cell whose run never touched this scenario — there is no
            number to subtract, and subtracting anyway printed NaN%. */
         shareDelta: run.id === baseline.id ? null : delta,
-        significant: run.id === baseline.id ? false : delta != null && Math.abs(delta) > step + 1e-9,
-        durationDelta: run.id === baseline.id || !task || !baseTask ? null : pct(task.durationMs, baseTask.durationMs),
-        tokensDelta: run.id === baseline.id || !task || !baseTask ? null : pct(task.tokens, baseTask.tokens),
+        significant:
+          run.id === baseline.id
+            ? false
+            : delta != null && Math.abs(delta) > step + 1e-9,
+        durationDelta:
+          run.id === baseline.id || !task || !baseTask
+            ? null
+            : pct(task.durationMs, baseTask.durationMs),
+        tokensDelta:
+          run.id === baseline.id || !task || !baseTask
+            ? null
+            : pct(task.tokens, baseTask.tokens),
       };
     });
 
@@ -730,10 +883,16 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       flaky: cells.some((c) => c.status === "flaky"),
       missing: cells.some((c) => c.status === "missing"),
       unmeasured: cells.some((c) => c.task && !c.measured),
-      fixed: moved && cells[0]?.measured && cells[0]?.status !== "passed"
-        && cells.slice(1).some((c) => c.measured && c.status === "passed"),
-      broke: moved && cells[0]?.measured && cells[0]?.status === "passed"
-        && cells.slice(1).some((c) => c.measured && c.status === "failed"),
+      fixed:
+        moved &&
+        cells[0]?.measured &&
+        cells[0]?.status !== "passed" &&
+        cells.slice(1).some((c) => c.measured && c.status === "passed"),
+      broke:
+        moved &&
+        cells[0]?.measured &&
+        cells[0]?.status === "passed" &&
+        cells.slice(1).some((c) => c.measured && c.status === "failed"),
     };
   });
 
@@ -748,23 +907,48 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
     scenarios every run ran and measured. A whole-run rate from a 4-scenario
     re-run and one from a 68-scenario sweep are different quantities.
   */
-  const common = rows.filter((r) => r.cells.every((c) => c.status !== "missing" && c.measured));
+  const common = rows.filter((r) =>
+    r.cells.every((c) => c.status !== "missing" && c.measured),
+  );
   runs.forEach((run, i) => {
-    const shares = common.map((r) => r.cells[i].passShare).filter((v) => v != null);
-    run.sharedPassRate = shares.length ? Math.round((shares.reduce((a, b) => a + b, 0) / shares.length) * 100) : null;
+    const shares = common
+      .map((r) => r.cells[i].passShare)
+      .filter((v) => v != null);
+    run.sharedPassRate = shares.length
+      ? Math.round((shares.reduce((a, b) => a + b, 0) / shares.length) * 100)
+      : null;
   });
   /* Whether the runs took the same test: environment version and graders. */
-  const envVersions = [...new Set(runs.map((r) => r.envVersion).filter(Boolean))];
-  const graderKey = (r) => JSON.stringify((r.evals || envState?.evals || []).map((e) => (typeof e === "string" ? e : `${e.id}:${e.threshold ?? ""}`)).sort());
+  const envVersions = [
+    ...new Set(runs.map((r) => r.envVersion).filter(Boolean)),
+  ];
+  const graderKey = (r) =>
+    JSON.stringify(
+      (r.evals || envState?.evals || [])
+        .map((e) =>
+          typeof e === "string" ? e : `${e.id}:${e.threshold ?? ""}`,
+        )
+        .sort(),
+    );
   const graderSets = new Set(runs.map(graderKey));
   /* The rules each run was graded by. Runs recorded before rules were kept
      have nothing to compare, so they don't count against the rest. */
-  const ruleSets = new Set(runs.filter((r) => Array.isArray(r.rules)).map((r) => JSON.stringify([...r.rules].sort())));
+  const ruleSets = new Set(
+    runs
+      .filter((r) => Array.isArray(r.rules))
+      .map((r) => JSON.stringify([...r.rules].sort())),
+  );
   /* Scenarios that are not in every run — most often a batch added between
      them. The headline rate already reads only the shared ones; this says so. */
   const notInAll = rows.filter((r) => r.missing);
-  const scenarioById = new Map((envState?.scenarios || []).map((sc) => [sc.id, ensureProvenance(sc)]));
-  const firstStart = Math.min(...runs.map((r) => Date.parse(r.startedAt || r.finishedAt || "") || Infinity));
+  const scenarioById = new Map(
+    (envState?.scenarios || []).map((sc) => [sc.id, ensureProvenance(sc)]),
+  );
+  const firstStart = Math.min(
+    ...runs.map(
+      (r) => Date.parse(r.startedAt || r.finishedAt || "") || Infinity,
+    ),
+  );
   const addedAfterFirst = notInAll.filter((r) => {
     const at = Date.parse(scenarioById.get(r.id)?.addedAt || "");
     return Number.isFinite(at) && at > firstStart;
@@ -816,4 +1000,5 @@ export const distributionFor = (comparison, evalId) => {
 };
 
 /** Rows worth reading first: the ones where the runs disagree. */
-export const changedCount = (comparison) => comparison.rows.filter((r) => r.changed).length;
+export const changedCount = (comparison) =>
+  comparison.rows.filter((r) => r.changed).length;

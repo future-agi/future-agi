@@ -310,7 +310,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
 
           {!collapsed && (
             <Typography
-              fontSize={13}
+              fontSize={12}
               lineHeight="20px"
               color="text.primary"
               sx={{

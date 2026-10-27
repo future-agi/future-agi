@@ -10,15 +10,22 @@
   back through definitionOf, so every surface shows the corrected record;
   the tests go to `repoTests`, the command every code change must keep
   passing. `foundCheckedAt` marks the item done — until then a newly
-  connected code agent can't run (needsFoundCheck).
+  connected code agent runs sealed on what we read, but not live, and a code
+  Fix waits (needsFoundCheck).
 */
-import { agentDefinitionOf, definitionOf, needsFoundCheck, sourceKindOf } from "../_mock/agentRegistry";
+import {
+  agentDefinitionOf,
+  definitionOf,
+  needsFoundCheck,
+  sourceKindOf,
+} from "../_mock/agentRegistry";
 import { repoChecksOf } from "../_mock/connectAgent";
 
 export { needsFoundCheck };
 
 /** Code we read — a repository, an upload or a framework adapter. */
-export const isCodeAgent = (agent) => ["repo", "upload", "framework"].includes(sourceKindOf(agent));
+export const isCodeAgent = (agent) =>
+  ["repo", "upload", "framework"].includes(sourceKindOf(agent));
 
 /* The facts a person confirms or corrects, in the PRD's order. */
 export const FOUND_FACTS = [
@@ -37,16 +44,25 @@ export const FOUND_FACTS = [
 */
 const testsOf = (agent, d, toolNames) => {
   const saved = agent?.values?.repoTests;
-  const read = repoChecksOf({ repo: d.repoUrl || agent?.name || "", folder: d.folder || "", tools: toolNames }).tests;
+  const read = repoChecksOf({
+    repo: d.repoUrl || agent?.name || "",
+    folder: d.folder || "",
+    tools: toolNames,
+  }).tests;
   if (typeof saved === "string") return { command: saved, checks: read.checks };
-  return { command: saved?.command || read.value, checks: saved?.checks || read.checks };
+  return {
+    command: saved?.command || read.value,
+    checks: saved?.checks || read.checks,
+  };
 };
 
 /** { entry, prompts, tools, model, runCommand, tests, testChecks, runtimePrompts, modelAtRuntime, credentialKeys } as read (corrections applied). */
 export const foundValuesOf = (agent) => {
   const d = definitionOf(agent);
   const read = agentDefinitionOf({ agent });
-  const toolNames = (d.tools || read.tools?.items || []).map((t) => (typeof t === "string" ? t : t.name)).filter(Boolean);
+  const toolNames = (d.tools || read.tools?.items || [])
+    .map((t) => (typeof t === "string" ? t : t.name))
+    .filter(Boolean);
   const tests = testsOf(agent, d, toolNames);
   return {
     tests: tests.command,
@@ -58,7 +74,9 @@ export const foundValuesOf = (agent) => {
     runCommand: d.runCommand || d.installCommand || "",
     runtimePrompts: d.runtimePrompts || [],
     modelAtRuntime: !!d.modelAtRuntime,
-    credentialKeys: (d.credentialKeys || []).map((k) => (typeof k === "string" ? k : k.name)).filter(Boolean),
+    credentialKeys: (d.credentialKeys || [])
+      .map((k) => (typeof k === "string" ? k : k.name))
+      .filter(Boolean),
   };
 };
 
@@ -66,20 +84,33 @@ export const foundValuesOf = (agent) => {
  * The values patch a review saves: only what was corrected goes into
  * `foundCorrections` (tools keep their descriptions where the name stayed).
  */
-export const foundPatchOf = (agent, { corrected, runtimePrompts, neverRunForReal, testCredentialsRef }) => {
+export const foundPatchOf = (
+  agent,
+  { corrected, runtimePrompts, neverRunForReal, testCredentialsRef },
+) => {
   const d = definitionOf(agent);
-  const known = Object.fromEntries((d.tools || []).filter((t) => typeof t === "object").map((t) => [t.name, t]));
+  const known = Object.fromEntries(
+    (d.tools || [])
+      .filter((t) => typeof t === "object")
+      .map((t) => [t.name, t]),
+  );
   const fixes = { ...(agent?.values?.foundCorrections || {}) };
   const { tests: testsFix, ...defined } = corrected;
   Object.entries(defined).forEach(([id, value]) => {
-    fixes[id] = id === "tools" ? value.map((name) => known[name] || { name, desc: "", args: [] }) : value;
+    fixes[id] =
+      id === "tools"
+        ? value.map((name) => known[name] || { name, desc: "", args: [] })
+        : value;
   });
   if (runtimePrompts?.length) fixes.runtimePrompts = runtimePrompts;
   /* Confirmed or corrected, the tests go on the record as what every code
      change must keep passing. */
   const found = foundValuesOf(agent);
   return {
-    repoTests: { command: (testsFix ?? found.tests) || "", checks: found.testChecks },
+    repoTests: {
+      command: (testsFix ?? found.tests) || "",
+      checks: found.testChecks,
+    },
     foundCorrections: fixes,
     neverRunForReal,
     testCredentialsRef: testCredentialsRef || "",

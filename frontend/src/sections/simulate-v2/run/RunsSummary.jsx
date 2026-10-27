@@ -46,8 +46,9 @@ import WinnerDrawer from "./WinnerDrawer";
 import FromImprovement from "./FromImprovement";
 import AppliedEvalsDrawer from "../workspace/evals/AppliedEvalsDrawer";
 import { allMetrics, deltaAgainst } from "../_mock/winner";
-import { creditsLabel } from "../_mock/metering";
-import { priceOf } from "../_mock/pairs";
+import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
+import { runCreditsOf } from "../_mock/usageLedger";
+import { resolveEval } from "../_mock/evals";
 import { useEnvState } from "../store";
 import { neutralCheckboxSx } from "../components/primitives";
 import { Head, MetricCell, ScoreCell } from "./RunsTableCells";
@@ -87,6 +88,20 @@ const runTimeLabel = (r) => {
  * moved because of the agent.
  */
 export default function RunsSummary({ env, envState, onGo, onStart }) {
+  /* Each finished run's charge, priced as its Cost tab. */
+  const creditsByRun = useMemo(
+    () => runCreditsOf(env, envState),
+    [env, envState],
+  );
+  /* The cost column's delta against the compared run, on the credits each
+     was charged — kept from when it compared the agent's reported cost. */
+  const creditsMetric = {
+    id: "credits",
+    lowerIsBetter: true,
+    get: (x) => creditsByRun[x.id],
+  };
+  const creditsComparable = (r, against) =>
+    !!against && creditsByRun[r.id] != null && creditsByRun[against.id] != null;
   const navigate = useNavigate();
   const { patch } = useEnvState(env.id);
   const [selected, setSelected] = useState(() => []);
@@ -1161,10 +1176,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       <MetricCell
                         quiet
                         deltaWidth={grid.deltaWidth}
-                        text={costText(r)}
+                        text={costText(creditsByRun[r.id])}
                         delta={
-                          costComparable(r, against)
-                            ? deltaAgainst(metrics.cost, r, against)
+                          creditsComparable(r, against)
+                            ? deltaAgainst(creditsMetric, r, against)
                             : null
                         }
                       />
@@ -1529,10 +1544,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     <MetricCell
                       quiet
                       deltaWidth={grid.deltaWidth}
-                      text={costText(r)}
+                      text={costText(creditsByRun[r.id])}
                       delta={
-                        costComparable(r, against)
-                          ? deltaAgainst(metrics.cost, r, against)
+                        creditsComparable(r, against)
+                          ? deltaAgainst(creditsMetric, r, against)
                           : null
                       }
                     />
@@ -1673,7 +1688,18 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             {/* Priced with the metering rates, scenarios × repeats, in credits. */}
             <Line
               label="Est. cost"
-              value={`≈ ${creditsLabel(priceOf(env, envState, envState.scenarios.length, 3).usd)}`}
+              value={(() => {
+                const e = estimateRunPlan({
+                  env,
+                  envState,
+                  scenarios: envState.scenarios.length,
+                  attempts: 3,
+                  evals: (envState.evals || [])
+                    .map(resolveEval)
+                    .filter(Boolean),
+                });
+                return `≈ ${rangeLabel(e.platform.low, e.platform.high, e.platform.unknown)}`;
+              })()}
             />
           </Stack>
 
@@ -1803,6 +1829,9 @@ const QUEUED_ID = "demo-queued";
 const runStatus = (r) => {
   const raw = String(r?.status || "").toLowerCase();
   if (r?.kind === "trial") return "Completed";
+  /* The spending limit (or the person) stopped new scenarios starting. */
+  if (r?.finishedAt && r?.budget?.stoppedBy)
+    return r.budget.stoppedBy === "stopped" ? "Stopped" : "At limit";
   /* Unfinished for over a day: timed out, an infrastructure failure. */
   if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r))
     return "Failed";
@@ -1821,6 +1850,9 @@ const RUN_CHIP_STYLES = {
   ...statusStyles,
   Running: statusStyles.Pending,
   Queued: statusStyles.Running,
+  /* Stopped by the spending limit: amber, like the limit everywhere else. */
+  "At limit": statusStyles.Inactive,
+  Stopped: statusStyles.Cancelled,
 };
 
 /**
@@ -2000,19 +2032,11 @@ const fmtTook = (ms) => {
 };
 const statsOf = (r) => (r?.finishedAt ? runStatsOf(r) : null);
 
-/* Spend in credits, over the costs the agent's side reported. Unverified
-   ones are never summed — said instead: "unverified" when none reported,
-   "+ n unverified" beside a partial sum. */
-const costText = (r) => {
-  const n = r.costUnverified || 0;
-  if (n && !(r.cost > 0)) return "unverified";
-  return n
-    ? `${creditsLabel(r.cost || 0)} + ${n} unverified`
-    : creditsLabel(r.cost || 0);
-};
-/* A cost delta needs every cost known on both sides. */
-const costComparable = (r, against) =>
-  !!against && !r.costUnverified && !against.costUnverified;
+/* What the run was charged, in credits — the same number as its Cost tab.
+   The agent's own model cost is billed to the customer's key and never
+   mixed into it. */
+const costText = (credits) =>
+  credits == null ? "—" : `${Math.round(credits).toLocaleString()} credits`;
 
 /* A count against the same count in another run: lower is better. */
 const countDelta = (now, before) =>

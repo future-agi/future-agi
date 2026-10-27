@@ -6,8 +6,8 @@ export function radio(theme) {
     MuiFormControlLabel: {
       styleOverrides: {
         label: {
-          fontSize: 13,
-          lineHeight: "20px",
+          fontSize: 12,
+          lineHeight: "18px",
         },
       },
     },

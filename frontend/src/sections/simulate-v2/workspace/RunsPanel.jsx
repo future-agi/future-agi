@@ -11,8 +11,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { paths } from "src/routes/paths";
-import { protoRunId } from "../_mock/executionAdapter";
+import { runPlanHref } from "../_mock/runPlanLink";
 import { agentVersionsWithRuns, currentAgentVersion } from "../_mock/versions";
 import { runReadiness } from "../_mock/setupGaps";
 import { runScopeOf } from "../_mock/runScope";
@@ -26,10 +25,9 @@ import { runEnvVersion } from "../_mock/toolFit";
 import { snapshotLabelOf } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import useEnvViewAs from "./useEnvViewAs";
-import { parallelOf, runSizeOf } from "../_mock/runStream";
 import { runDefaultsOf } from "../_mock/rsiModel";
-import { priceOf } from "../_mock/pairs";
-import { creditsLabel } from "../_mock/metering";
+import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
+import { resolveEval } from "../_mock/evals";
 
 /**
  * Run history.
@@ -65,29 +63,30 @@ export default function RunsPanel({ env, envState, onGo }) {
      conversations-at-once it sets. */
   const { repeats: defaultRepeats } = runDefaultsOf(envState);
   const runScope = runScopeOf(env, envState);
-  const size = runSizeOf({
+  /* The same estimate the run plan opens with. */
+  const runEstimate = estimateRunPlan({
+    env,
+    envState,
     scenarios: runScope.count,
-    repeats: defaultRepeats,
-    surface: env.surface,
-    parallel: parallelOf(envState),
+    attempts: defaultRepeats,
+    evals: (envState.evals || []).map(resolveEval).filter(Boolean),
   });
 
+  /* Opens the run plan prefilled, like the header's Run. */
   const startRun = () =>
-    checkRunFit(() => {
-      if (groupWith.length) {
-        runGroup.start(groupWith, { trials: defaultRepeats });
-        return;
-      }
-      const runId = protoRunId(env.id, Date.now().toString(36));
-      /* Scenarios waiting on an open question sit out, as from the header. */
-      const only =
-        runScope.sitOut && runScope.count
-          ? `&only=${runScope.ids.join(",")}`
-          : "";
+    checkRunFit(() =>
       navigate(
-        `${paths.dashboard.simulate.simulationRun(env.id, runId)}?trials=${defaultRepeats}${only}`,
-      );
-    });
+        runPlanHref(env.id, {
+          trials: defaultRepeats,
+          also: groupWith,
+          /* Scenarios waiting on an open question sit out, as from the header. */
+          only:
+            !groupWith.length && runScope.sitOut && runScope.count
+              ? runScope.ids
+              : [],
+        }),
+      ),
+    );
 
   /*
     Once there is anything to compare, this step is the summary rather than a
@@ -173,7 +172,7 @@ export default function RunsPanel({ env, envState, onGo }) {
               arrow
               title={
                 ready
-                  ? `${runScope.sitOut ? `Runs ${runScope.count} of the ${runScope.runnable} scenarios that can run (${runScope.sitOut} wait on Needs input)` : `Runs all ${runScope.count} scenarios`}, ${defaultRepeats} times each · ≈ ${creditsLabel(priceOf(env, envState, size.conversations, 1).usd)}`
+                  ? `${runScope.sitOut ? `Runs ${runScope.count} of the ${runScope.runnable} scenarios that can run (${runScope.sitOut} wait on Needs input)` : `Runs all ${runScope.count} scenarios`}, ${defaultRepeats} times each · ≈ ${rangeLabel(runEstimate.platform.low, runEstimate.platform.high)}`
                   : readiness.reason
               }
             >

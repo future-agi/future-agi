@@ -26,8 +26,8 @@ export function tabs(theme) {
           opacity: 1,
           minWidth: 0,
           minHeight: 32,
-          fontSize: 13,
-          lineHeight: "20px",
+          fontSize: 12,
+          lineHeight: "18px",
           fontWeight: 500,
           textTransform: "none",
           "&:not(:last-of-type)": {

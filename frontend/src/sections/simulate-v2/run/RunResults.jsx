@@ -48,7 +48,8 @@ import { canEditEval } from "../workspace/evals/canEditEval";
 import { useAppliedEvals } from "../workspace/evals/useAppliedEvals";
 import { useEnvState } from "../store";
 import useRunFitCheck from "./useRunFitCheck";
-import { protoRunId } from "../_mock/executionAdapter";
+import { runPlanHref } from "../_mock/runPlanLink";
+import { RATE_PLAN } from "../_mock/rates";
 import { runSummaries, trialSummaries } from "../_mock/comparison";
 import { textTone } from "../components/textTone";
 import { resolveEval } from "../_mock/evals";
@@ -68,6 +69,8 @@ import { REPLAY_HEADER, stubbedToolNames } from "../_mock/replay";
 import FromImprovement from "./FromImprovement";
 import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
+import CostTab from "./CostTab";
+import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
 import { runTracingOf, runIssueImprovement } from "../errorFeed/runIssueFix";
 import { startImproverSession, useIntegrations } from "../_mock/integrations";
@@ -521,19 +524,17 @@ export default function RunResults({
   })();
   const rerun = (ids, { mode = "now", agent = null } = {}) =>
     checkRunFit(() => {
-      const url = paths.dashboard.simulate.simulationRun(
-        envId,
-        protoRunId(envId, Date.now().toString(36)),
+      /* Through the run plan, like every run: scope, estimate and limit. */
+      const snap = mode === "snapshot" && canSnapshot;
+      navigate(
+        runPlanHref(envId, {
+          only: ids || [],
+          trials: sourceRun?.repeats || 3,
+          agent: snap ? agent || sourceRun.agentVersion : agent || undefined,
+          snapshot: snap ? sourceRun.id : undefined,
+          envVersion: snap ? sourceRun.envVersion : undefined,
+        }),
       );
-      const q = new URLSearchParams();
-      if (ids?.length) q.set("only", ids.join(","));
-      q.set("trials", String(sourceRun?.repeats || 3));
-      if (mode === "snapshot" && canSnapshot) {
-        q.set("snapshot", sourceRun.id);
-        q.set("agent", agent || sourceRun.agentVersion);
-        if (sourceRun.envVersion) q.set("env", sourceRun.envVersion);
-      }
-      navigate(`${url}?${q.toString()}`);
     });
   const [runRerunAnchor, setRunRerunAnchor] = useState(null);
   /* The scenarios that didn't pass — what "Re-run N failing" replays. */
@@ -547,6 +548,32 @@ export default function RunResults({
     ],
     [tasks],
   );
+  /* Failure analysis is priced and charged once per run: the first open
+     records the charge on the run; opening it again reads the same one. */
+  const analysisCharge =
+    (envState.runs || []).find((r) => r.id === runId)?.analysis || null;
+  const analysisCredits =
+    failingScenarioIds.length * RATE_PLAN.rates.analysis_calls.credits;
+  const openDebug = () => {
+    if (!analysisCharge && failingScenarioIds.length) {
+      patch({
+        runs: (envState.runs || []).map((r) =>
+          r.id === runId
+            ? {
+                ...r,
+                analysis: {
+                  credits: analysisCredits,
+                  scenarios: failingScenarioIds.length,
+                  at: new Date().toISOString(),
+                },
+              }
+            : r,
+        ),
+      });
+    }
+    setFixOptId(null);
+    setFixOpen(true);
+  };
 
   /* Re-grade (AC-12.23): offered when a sub-goal this run used got a grader
      fix, or the eval version moved, since it ran. Priced; starts on a click. */
@@ -1078,11 +1105,15 @@ export default function RunResults({
             */}
             <StatusChip
               status={
-                stats.passed === 0
-                  ? "failed"
-                  : stats.failed === 0
-                    ? "passed"
-                    : "completed"
+                identity?.budget?.stoppedBy
+                  ? identity.budget.stoppedBy === "stopped"
+                    ? "stopped_early"
+                    : "stopped_limit"
+                  : stats.passed === 0
+                    ? "failed"
+                    : stats.failed === 0
+                      ? "passed"
+                      : "completed"
               }
             />
             {/* Two indicators, apart: how the agent did (a report — pass^1,
@@ -1185,6 +1216,14 @@ export default function RunResults({
             )}
             {` · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
             {identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}
+            {(() => {
+              /* Finishing what an earlier run's limit left unstarted. */
+              const of = (envState.runs || []).find(
+                (r) => r.id === runId,
+              )?.continues;
+              const src = of && (envState.runs || []).find((r) => r.id === of);
+              return src ? ` · continues run ${src.ordinal}` : "";
+            })()}
             {finishedLabel ? ` · ${finishedLabel}` : ""}
             {/* Where it was started from, when that wasn't the console — the
                 command on hover, so it can be re-run the same way. */}
@@ -1256,6 +1295,45 @@ export default function RunResults({
                     }}
                   >
                     {`${pulledIds.length} pulled for review`}
+                  </Box>
+                </Tooltip>
+              </>
+            )}
+            {/* The limit kept some from starting: finish them under a new
+                limit — only those; the finished ones aren't run or charged again. */}
+            {identity?.budget?.notStarted?.length > 0 && (
+              <>
+                {" · "}
+                <Tooltip
+                  arrow
+                  describeChild
+                  placement="bottom-start"
+                  title="Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
+                >
+                  <Box
+                    component="span"
+                    {...clickable(
+                      () =>
+                        navigate(
+                          runPlanHref(envId, {
+                            only: identity.budget.notStarted,
+                            trials: identity.repeats || 3,
+                            agent: identity.agentVersion,
+                            continues: identity.id,
+                          }),
+                        ),
+                      { role: "link" },
+                    )}
+                    sx={{
+                      ...focusRing,
+                      cursor: "pointer",
+                      "&:hover": {
+                        color: "text.primary",
+                        textDecoration: "underline",
+                      },
+                    }}
+                  >
+                    {`${identity.budget.notStarted.length} didn't start · Run them`}
                   </Box>
                 </Tooltip>
               </>
@@ -1466,18 +1544,29 @@ export default function RunResults({
             </span>
           </Tooltip>
         ) : (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            startIcon={<Iconify icon="solar:magnifer-linear" width={16} />}
-            onClick={() => {
-              setFixOptId(null);
-              setFixOpen(true);
-            }}
+          <Tooltip
+            arrow
+            describeChild
+            title={
+              analysisCharge
+                ? `Already analysed (${analysisCharge.credits.toLocaleString()} credits) — opening it again isn't charged.`
+                : failingScenarioIds.length
+                  ? `Reads the ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"} · ${RATE_PLAN.rates.analysis_calls.credits} credits each, charged once on this run's Cost tab.`
+                  : "Nothing failed — nothing to analyse or charge."
+            }
           >
-            Debug failures
-          </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={<Iconify icon="solar:magnifer-linear" width={16} />}
+              onClick={openDebug}
+            >
+              {!analysisCharge && failingScenarioIds.length
+                ? `Debug failures · ≈ ${analysisCredits.toLocaleString()} credits`
+                : "Debug failures"}
+            </Button>
+          </Tooltip>
         )}
       </Stack>
 
@@ -1571,6 +1660,7 @@ export default function RunResults({
             {SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
             <Tab value="tasks" label={`Scenarios (${stats.total})`} />
             <Tab value="analytics" label="Analytics" />
+            <Tab value="cost" label="Cost" />
           </CustomTabs>
 
           {/* Wraps both tab bodies so it survives a tab switch: errors thrown
@@ -1966,6 +2056,22 @@ export default function RunResults({
               />
             )}
 
+            {tab === "cost" && (
+              <CostTab
+                run={identity}
+                env={env}
+                envState={envState}
+                tasks={tasks}
+                onOpenTask={(t) => {
+                  /* The full call drawer, as a Scenarios row opens it. */
+                  if (isVoiceRun) {
+                    setEvalFocus(null);
+                    setOpenTask(t);
+                  } else openTrace(t);
+                }}
+              />
+            )}
+
             {tab === "analytics" && (
               <RunAnalytics
                 tasks={tasks}
@@ -2310,6 +2416,7 @@ export default function RunResults({
               >
                 {traceTask && (
                   <TraceSheet
+                    showCost={tab === "cost"}
                     task={traceTask}
                     env={env}
                     envState={envState}
@@ -2346,40 +2453,57 @@ export default function RunResults({
                   },
                 }}
               >
+                {openTask && tab === "cost" && (
+                  <CostStrip task={openTask} env={env} envState={envState} />
+                )}
                 {openTask && (
-                  <VoiceDetailDrawerV2
-                    key={`${openTask.id}-${evalFocus || ""}`}
-                    /* The verdict and its cause (§4.10.10) ride in the real
-                     drawer's Status chip — "Failed · agent". */
-                    data={{
-                      ...taskToVoiceData(openTask, {
-                        env,
-                        voice: true,
-                        /* The Graph tab draws the scenario's path and where the call left it. */
-                        scenario:
-                          (envState.scenarios || []).find(
-                            (sc) => sc.id === openTask.id,
-                          ) || null,
-                        failedGoal:
-                          subGoalResultsOf(openTask, env, envState).items.find(
-                            (g) =>
-                              g.status === "failed" && g.mark === "critical",
-                          )?.text || null,
-                      }),
-                      ...(verdicts?.get(openTask.id) && {
-                        status: verdicts.get(openTask.id).label,
-                      }),
+                  /* The real drawer fills what's left under the cost strip
+                     (on its own it takes the whole window height). */
+                  <Box
+                    sx={{
+                      flex: 1,
+                      minHeight: 0,
+                      "& > :first-of-type": { height: "100%", minHeight: 0 },
                     }}
-                    initialTab={evalFocus ? "evaluations" : undefined}
-                    focusEvalName={evalFocus || undefined}
-                    hideEvalRowFix
-                    onClose={closeTask}
-                    onPrev={goPrev}
-                    onNext={goNext}
-                    hasPrev={!!goPrev}
-                    hasNext={!!goNext}
-                    hideAnnotationTab
-                  />
+                  >
+                    <VoiceDetailDrawerV2
+                      key={`${openTask.id}-${evalFocus || ""}`}
+                      /* The verdict and its cause (§4.10.10) ride in the real
+                     drawer's Status chip — "Failed · agent". */
+                      data={{
+                        ...taskToVoiceData(openTask, {
+                          env,
+                          voice: true,
+                          /* The Graph tab draws the scenario's path and where the call left it. */
+                          scenario:
+                            (envState.scenarios || []).find(
+                              (sc) => sc.id === openTask.id,
+                            ) || null,
+                          failedGoal:
+                            subGoalResultsOf(
+                              openTask,
+                              env,
+                              envState,
+                            ).items.find(
+                              (g) =>
+                                g.status === "failed" && g.mark === "critical",
+                            )?.text || null,
+                        }),
+                        ...(verdicts?.get(openTask.id) && {
+                          status: verdicts.get(openTask.id).label,
+                        }),
+                      }}
+                      initialTab={evalFocus ? "evaluations" : undefined}
+                      focusEvalName={evalFocus || undefined}
+                      hideEvalRowFix
+                      onClose={closeTask}
+                      onPrev={goPrev}
+                      onNext={goNext}
+                      hasPrev={!!goPrev}
+                      hasNext={!!goNext}
+                      hideAnnotationTab
+                    />
+                  </Box>
                 )}
               </Drawer>
             </>
@@ -2394,6 +2518,7 @@ export default function RunResults({
           >
             {openTask && (
               <CallDrawer
+                showCost={tab === "cost"}
                 key={`${openTask.id}-${focusStep || ""}-${evalFocus || ""}-${openPane || ""}`}
                 task={openTask}
                 focus={focusStep || undefined}

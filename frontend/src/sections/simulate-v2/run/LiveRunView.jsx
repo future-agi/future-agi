@@ -35,6 +35,16 @@ import { runReportOf } from "../_mock/runReport";
 import { digestDestinationsOf } from "../_mock/runDigest";
 import SharedReport from "./SharedReport";
 import ClarifyCard from "./ClarifyCard";
+import SpendCard from "./SpendCard";
+import {
+  RATE_PLAN,
+  WORKSPACE_POLICY,
+  allowanceOf,
+  projectOf,
+  creditsOfTask,
+  estimateRunPlan,
+  judgeCreditsOf,
+} from "../_mock/pricing";
 import { deriveUseCaseLabel } from "./traceTableHelpers";
 import { runPlan } from "../_mock/proofs";
 import { runReadiness } from "../_mock/setupGaps";
@@ -83,6 +93,7 @@ import { withRegrade } from "../_mock/regrade";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { milestoneOf } from "../_mock/runScripts";
 import { currentUser } from "../_mock/scenarioProvenance";
+import { monthUsage } from "../_mock/usageLedger";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
 
@@ -346,7 +357,76 @@ function LiveRun() {
         })()
       : size.voice?.line;
 
+  /* The run plan's spending limit — on the link it started from, or on the
+     record a run group wrote for it. */
+  /* This month's usage when the run opened — read once, not on every
+     state change while it plays. */
+  const [monthAtStart] = useState(() => monthUsage(state));
+  /* A group member's share of the group's limit, when it has one. */
+  const groupCap =
+    recorded?.budget?.groupCap || pendingMember?.budget?.groupCap || null;
+  const runBudget = (() => {
+    const cap =
+      Number(params.get("cap")) ||
+      recorded?.budget?.cap ||
+      pendingMember?.budget?.cap ||
+      null;
+    if (!cap) return null;
+    const alertAt =
+      (Number(params.get("warn")) ||
+        Math.round((recorded?.budget?.alertAt || 0.8) * 100)) / 100;
+    const voiceRun = ["voice", "multi"].includes(env?.surface);
+    const judgeCredits = judgeCreditsOf(runEvals);
+    /* What's left this month — workspace, project and the person's own
+       limit. Running low holds queued work before another call starts.
+       ?credits=low shows it. */
+    const month = monthAtStart;
+    const me = currentUser().name;
+    /* Other runs still playing hold their limits too. */
+    const held = month.held || { total: 0, byProject: {}, byUser: {} };
+    const p = projectOf(env);
+    const lefts = [
+      allowanceOf(month.total + held.total).left,
+      WORKSPACE_POLICY.projects?.[p]?.limit != null
+        ? WORKSPACE_POLICY.projects[p].limit -
+          (month.byProject[p] || 0) -
+          (held.byProject[p] || 0)
+        : Infinity,
+      WORKSPACE_POLICY.users?.[me]?.limit != null
+        ? WORKSPACE_POLICY.users[me].limit -
+          (month.byUser[me] || 0) -
+          (held.byUser[me] || 0)
+        : Infinity,
+    ];
+    const accountLeft =
+      params.get("credits") === "low"
+        ? Math.round(cap * 0.4)
+        : Math.min(...lefts);
+    /* ?provider=limit: the voice platform's own account runs out after a
+       few calls — its limit, not ours, stops new ones. */
+    const provider = envState?.agent?.values?.provider;
+    const providerCalls =
+      params.get("provider") === "limit" && voiceRun && provider ? 3 : null;
+    return {
+      cap,
+      alertAt,
+      accountLeft,
+      providerCalls,
+      providerName:
+        { vapi: "Vapi", retell: "Retell", livekit: "LiveKit", bland: "Bland" }[
+          provider
+        ] || "voice platform",
+      voice: voiceRun,
+      creditsOf: (task, { high = false } = {}) =>
+        creditsOfTask(
+          task,
+          { voice: voiceRun, judgeCredits, repeats },
+          { high },
+        ),
+    };
+  })();
   const playerArgs = {
+    budget: runBudget,
     seed: replaySeed || runId,
     scenarios,
     stage: surface.stage,
@@ -379,6 +459,11 @@ function LiveRun() {
     blocked,
     answer,
     clarifications,
+    spend,
+    dismissAlert,
+    setCap,
+    stopAtLimit,
+    notStartedIds,
   } = player;
   /* Declared before the effect that records the run, so the freeze lands
      first. */
@@ -611,6 +696,39 @@ function LiveRun() {
     const totalTasks = tasks.length || scenarios.length * repeats;
     recordRun({
       id: runId,
+      ...(runBudget && {
+        budget: {
+          /* A group member keeps what the group recorded (its share of the
+             shared limit, groupCap). */
+          ...(pendingMember?.budget || {}),
+          cap: runBudget.cap,
+          alertAt: runBudget.alertAt,
+          /* The run plan's estimate, kept for the Cost tab's comparison. */
+          estimate: (() => {
+            const e = estimateRunPlan({
+              env,
+              envState,
+              scenarios: scenarios.length,
+              attempts: repeats,
+              versions: [runAgent].filter(Boolean),
+              evals: runEvals,
+            });
+            return {
+              low: e.platform.low,
+              high: e.platform.high,
+              trials: e.trials,
+            };
+          })(),
+          /* The rate plan it was priced at — a later rate change doesn't
+             reprice this run. */
+          rates: `${RATE_PLAN.name} · ${RATE_PLAN.version}`,
+          /* Where the agent ran — hosted sandbox is measured, not billed. */
+          runLocation: envState?.agent?.values?.runLocation || null,
+        },
+      }),
+      /* Finishing what an earlier run's limit left unstarted — those
+         scenarios only; the ones that finished there aren't run again. */
+      ...(params.get("continues") && { continues: params.get("continues") }),
       label: only
         ? `${totalTasks} scenario${totalTasks === 1 ? "" : "s"} re-run`
         : `${env?.name} · ${totalTasks} scenario${totalTasks === 1 ? "" : "s"}`,
@@ -736,7 +854,18 @@ function LiveRun() {
           ? "passed"
           : "failed",
       finishedAt: new Date().toISOString(),
-      total: stats.total,
+      /* What the limit did: used, why it stopped, what never started. */
+      ...(spend?.cap && {
+        budget: {
+          ...(recorded?.budget || {}),
+          cap: spend.cap,
+          alertAt: runBudget?.alertAt || 0.8,
+          used: spend.used,
+          stoppedBy: spend.reached || null,
+          notStarted: notStartedIds,
+        },
+      }),
+      total: stats.total - (stats.notStarted || 0),
       passed: stats.passed,
       failed: stats.failed,
       flaky: stats.flaky,
@@ -750,6 +879,8 @@ function LiveRun() {
           }, 0)
         : null,
     });
+    // The spend is final once the phase is done; it isn't a reason to re-record.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, runId, env, envState, stats, scenarios, only, recordRun]);
 
   /*
@@ -1148,12 +1279,21 @@ function LiveRun() {
 
   /* ── results ── */
   if (phase === "done") {
+    /* Scenarios the spending limit kept from starting never ran — results
+       read only what did, as the run reads back later. */
+    const ran = stats.notStarted
+      ? tasks.filter((t) => t.status !== "notStarted")
+      : tasks;
     return (
       <RunResults
         env={env}
         runId={runId}
-        tasks={tasks}
-        stats={stats}
+        tasks={ran}
+        stats={
+          stats.notStarted
+            ? { ...stats, total: stats.total - stats.notStarted }
+            : stats
+        }
         evals={evals}
       />
     );
@@ -1320,6 +1460,9 @@ function LiveRun() {
                 `${stats.done} of ${stats.total} scenarios done${repeats > 1 ? ` · ${repeats} repeats each` : ""}`,
                 outcomeLines(stats).join(" · "),
                 `${formatMs(elapsed)} elapsed${size.voice ? ` · expected ${voiceLine}` : ""}`,
+                spend?.cap
+                  ? `Credits · ${spend.used.toLocaleString()} used · ~${spend.running.toLocaleString()} held by running scenarios · limit ${spend.cap.toLocaleString()}${groupCap ? ` (share of the group's ${groupCap.toLocaleString()})` : ""} · ${Math.max(0, spend.cap - spend.used - spend.running).toLocaleString()} left`
+                  : null,
                 overCap
                   ? `${parallel} at once · you can leave this page; the run is saved in Runs`
                   : null,
@@ -1382,7 +1525,19 @@ function LiveRun() {
                   >
                     {stats.failed}
                   </Box>
-                  {` failed · ${formatMs(elapsed)} · ${env.name}`}
+                  {` failed · ${formatMs(elapsed)}`}
+                  {spend?.cap ? (
+                    <Box
+                      component="span"
+                      sx={{
+                        color: spend.reached ? "status.warning.fg" : "inherit",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {` · ${spend.used.toLocaleString()} / ${spend.cap.toLocaleString()} credits`}
+                    </Box>
+                  ) : null}
+                  {` · ${env.name}`}
                   {named.improvement && (
                     <>
                       {" · "}
@@ -1400,8 +1555,23 @@ function LiveRun() {
             </Tooltip>
           </Box>
 
-          <Tooltip title="Stop run" arrow>
-            <IconButton size="small" aria-label="Stop run" onClick={finishNow}>
+          <Tooltip
+            title={
+              spend?.cap
+                ? `Stop — no new ${size.voice ? "calls" : "scenarios"} start; running ones finish and are charged, the rest aren't`
+                : "Stop run"
+            }
+            arrow
+          >
+            <IconButton
+              size="small"
+              aria-label="Stop run"
+              onClick={
+                spend?.cap && spend.reached !== "stopped"
+                  ? stopAtLimit
+                  : finishNow
+              }
+            >
               <Iconify
                 icon="solar:stop-circle-linear"
                 width={20}
@@ -1555,6 +1725,17 @@ function LiveRun() {
           )}
         </Stack>
       )}
+
+      {/* ── the spending limit: its warning, or the limit reached ── */}
+      <SpendCard
+        spend={spend}
+        stats={stats}
+        voice={["voice", "multi"].includes(env?.surface)}
+        onContinue={dismissAlert}
+        onLowerLimit={setCap}
+        onStop={stopAtLimit}
+        providerName={runBudget?.providerName}
+      />
 
       {/* ── a scenario waiting on a clarifying question ── */}
       <ClarifyCard

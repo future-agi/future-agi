@@ -16,7 +16,11 @@
  */
 import { getEnvironment } from "./environments";
 import { connectedAgentsFrom, envAgentKey } from "./agentRegistry";
-import { agentVersions, currentAgentVersion, currentEnvVersion } from "./versions";
+import {
+  agentVersions,
+  currentAgentVersion,
+  currentEnvVersion,
+} from "./versions";
 import { currentEnvSnapshot } from "./envSnapshot";
 import { runReadiness } from "./setupGaps";
 import { protoRunId } from "./executionAdapter";
@@ -29,11 +33,15 @@ import { pinsForNewRun } from "./envModel";
 
 /* The same lookup the run page uses, so a member's numbers here match its own page. */
 export const envOf = (state, envId) =>
-  getEnvironment(envId) || (state?.myEnvironments || []).find((e) => e.id === envId) || null;
+  getEnvironment(envId) ||
+  (state?.myEnvironments || []).find((e) => e.id === envId) ||
+  null;
 
 /** The name people gave it — an adopted template keeps the user's rename. */
 const envNameOf = (state, envId) =>
-  (state?.myEnvironments || []).find((e) => e.id === envId)?.name || getEnvironment(envId)?.name || "Environment";
+  (state?.myEnvironments || []).find((e) => e.id === envId)?.name ||
+  getEnvironment(envId)?.name ||
+  "Environment";
 
 /**
  * The other environments this environment's next run could also run in: every
@@ -62,7 +70,9 @@ export const groupCandidates = (state, envId) => {
         /* Named as that environment's version (a snapshot — envSnapshot.js). */
         envShown: currentEnvSnapshot(env, other)?.label || null,
         ready: readiness.ready && knows,
-        reason: !knows ? `Agent ${version} isn't in this environment yet` : readiness.reason,
+        reason: !knows
+          ? `Agent ${version} isn't in this environment yet`
+          : readiness.reason,
       };
     });
 };
@@ -71,11 +81,20 @@ export const groupCandidates = (state, envId) => {
  * The records a new group starts with — one pending run per environment, the
  * environment it was started from first. Nothing is dispatched here.
  */
-export const planRunGroup = (state, envId, otherEnvIds, { trials = 3, now = new Date() } = {}) => {
+export const planRunGroup = (
+  state,
+  envId,
+  otherEnvIds,
+  { trials = 3, now = new Date() } = {},
+) => {
   const stamp = now.getTime().toString(36);
   const agentVersion = currentAgentVersion(state?.byEnv?.[envId])?.label;
   const ids = [envId, ...otherEnvIds.filter((id) => id !== envId)];
-  const members = ids.map((id) => ({ envId: id, envName: envNameOf(state, id), runId: protoRunId(id, stamp) }));
+  const members = ids.map((id) => ({
+    envId: id,
+    envName: envNameOf(state, id),
+    runId: protoRunId(id, stamp),
+  }));
   const group = { id: `grp-${stamp}`, agentVersion, members };
   const records = members.map((m) => {
     const es = state?.byEnv?.[m.envId];
@@ -92,12 +111,17 @@ export const planRunGroup = (state, envId, otherEnvIds, { trials = 3, now = new 
         status: "running",
         pending: true,
         startedAt: now.toISOString(),
-        total: 0, passed: 0, failed: 0, flaky: 0, unmeasured: 0,
+        total: 0,
+        passed: 0,
+        failed: 0,
+        flaky: 0,
+        unmeasured: 0,
         agentVersion,
         envVersion: currentEnvVersion(env, es)?.label,
         repeats: trials,
         partial: false,
-        ordinal: Math.max(0, ...(es?.runs || []).map((r) => r.ordinal || 0)) + 1,
+        ordinal:
+          Math.max(0, ...(es?.runs || []).map((r) => r.ordinal || 0)) + 1,
         seed: m.runId,
         twinWrites: null,
         group,
@@ -121,8 +145,18 @@ export const settledRun = (env, envState, run, now = new Date()) => {
     skippedIds: run.skippedIds || plan.skipped.map((sc) => sc.id),
     evals: run.evals || envState?.evals || [],
     rules: run.rules || gradedRuleIds(env, envState),
-    actors: run.actors || runInputs(env, envState, { agent: run.agentVersion, envVersion: run.envVersion }).actors.map((a) => a.id),
-    toolGap: run.toolGap || toolFit(env, envState, { agent: run.agentVersion, envVersion: run.envVersion }).missing.map((t) => t.name),
+    actors:
+      run.actors ||
+      runInputs(env, envState, {
+        agent: run.agentVersion,
+        envVersion: run.envVersion,
+      }).actors.map((a) => a.id),
+    toolGap:
+      run.toolGap ||
+      toolFit(env, envState, {
+        agent: run.agentVersion,
+        envVersion: run.envVersion,
+      }).missing.map((t) => t.name),
   };
   const t = outcomeTally(rebuildRun(env, envState, stamped));
   return {
@@ -149,7 +183,9 @@ export const settledRun = (env, envState, run, now = new Date()) => {
 const ABANDONED_MS = 30 * 60 * 1000;
 export const settleAbandonedRuns = (state, envId, es, now = Date.now()) => {
   const runs = es?.runs || [];
-  const stuck = (r) => r.status === "running" && now - (Date.parse(r.startedAt || "") || now) > ABANDONED_MS;
+  const stuck = (r) =>
+    r.status === "running" &&
+    now - (Date.parse(r.startedAt || "") || now) > ABANDONED_MS;
   if (!runs.some(stuck)) return es;
   const env = envOf(state, envId);
   if (!env) return es;
@@ -158,7 +194,14 @@ export const settleAbandonedRuns = (state, envId, es, now = Date.now()) => {
     runs: runs.map((r) => {
       if (!stuck(r)) return r;
       const started = Date.parse(r.startedAt);
-      const took = Math.min(15 * 60000, Math.max(60000, (r.total || (r.scenarioIds || []).length * (r.repeats || 1) || 10) * 5000));
+      const took = Math.min(
+        15 * 60000,
+        Math.max(
+          60000,
+          (r.total || (r.scenarioIds || []).length * (r.repeats || 1) || 10) *
+            5000,
+        ),
+      );
       try {
         return settledRun(env, es, r, new Date(started + took));
       } catch {
@@ -169,6 +212,66 @@ export const settleAbandonedRuns = (state, envId, es, now = Date.now()) => {
 };
 
 /** Every member of a run's group with its record as stored now — or null for a run on its own. */
+/*
+  One environment run on several agent versions at once — the run plan's
+  "Agent versions". Same shape as an environment group, so the group bar,
+  history and pending-run playback read it unchanged; each member pins its
+  own version and is labelled by it.
+*/
+export const planVersionGroup = (
+  state,
+  envId,
+  versions,
+  { trials = 3, now = new Date() } = {},
+) => {
+  const stamp = now.getTime().toString(36);
+  const envName = envNameOf(state, envId);
+  const members = versions.map((v, i) => ({
+    envId,
+    envName,
+    label: v,
+    agentVersion: v,
+    runId: protoRunId(envId, `${stamp}${i}`),
+  }));
+  const group = {
+    id: `grp-${stamp}`,
+    kind: "versions",
+    agentVersion: versions[0],
+    members,
+  };
+  const es = state?.byEnv?.[envId];
+  const env = envOf(state, envId);
+  const records = members.map((m) => ({
+    envId,
+    run: {
+      ...pinsForNewRun(env, es, { trials, rules: true }),
+      id: m.runId,
+      label: `${envName} · ${m.agentVersion}`,
+      status: "running",
+      pending: true,
+      startedAt: now.toISOString(),
+      total: 0,
+      passed: 0,
+      failed: 0,
+      flaky: 0,
+      unmeasured: 0,
+      agentVersion: m.agentVersion,
+      envVersion: currentEnvVersion(env, es)?.label,
+      repeats: trials,
+      partial: false,
+      seed: m.runId,
+      twinWrites: null,
+      group,
+    },
+  }));
+  /* Ordinals in start order, after this environment's last run. */
+  const base = Math.max(0, ...(es?.runs || []).map((r) => r.ordinal || 0));
+  records.forEach((r, i) => {
+    r.run.ordinal = base + i + 1;
+  });
+  return { group, records, leader: records[0] };
+};
+
 export const groupMembersOf = (state, run) => {
   const members = run?.group?.members;
   if (!members?.length) return null;

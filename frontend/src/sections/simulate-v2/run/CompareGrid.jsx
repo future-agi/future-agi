@@ -4,7 +4,6 @@ import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { behaviourDiff } from "../_mock/compareView";
 import { runIdentityOf } from "../_mock/runIdentity";
-import { creditsLabel } from "../_mock/metering";
 import { twinTimelineFor, twinById } from "../_mock/twins";
 import { Verdict } from "../components/primitives";
 import { textTone } from "../components/textTone";
@@ -341,13 +340,13 @@ function Cell({
         )}
         {view.columns.cost && (
           <Stat
-            label="Cost"
+            label="Model cost"
             value={
               !cell.task
                 ? "—"
                 : cell.costUnverified
                   ? "unverified"
-                  : creditsLabel(cell.cost || 0)
+                  : `≈ $${(cell.cost || 0).toFixed(2)}`
             }
           />
         )}

@@ -43,19 +43,63 @@ const speakerRole = (role) =>
  * are pure conversation, so we don't want a tool row before every one.
  */
 const TOOL_INTENT_RULES = [
-  { pat: /shipment|carrier|deliver|tracking|arrival|eta|package/i, name: "shipment_status", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: (ctx) => ({ status: "in_transit", eta: ctx.eta || "today 8pm", carrier: "UPS" }) },
-  { pat: /refund|reimburs|money\s*back|charge\s*back/i, name: "issue_refund", argsFor: (ctx) => ({ order_id: ctx.orderId, amount_cents: 4999 }), result: () => ({ ok: true, refund_id: "rf_9c3e4a" }) },
-  { pat: /return\s*(window|label|policy|eligib)|eligib/i, name: "check_return_eligibility", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ eligible: true, window_days: 30, days_remaining: 4 }) },
-  { pat: /escalat|supervisor|manager|human\s*agent|transfer/i, name: "escalate_to_human", argsFor: () => ({ queue: "supervisor" }), result: () => ({ queued: true, wait_seconds: 42 }) },
-  { pat: /cancel|stop\s*(the\s*)?order/i, name: "cancel_order", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: (ctx) => ({ cancelled: true, cancelled_at: ctx.callTime }) },
-  { pat: /return\s*label|print|email\s*(it|the)?\s*(label)?/i, name: "generate_return_label", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ url: "https://ship.futureagi.com/labels/rl_1a2b3c.pdf" }) },
-  { pat: /order|number|status|placed|invoice/i, name: "lookup_order", argsFor: (ctx) => ({ query: ctx.orderId || "AB-102401" }), result: (ctx) => ({ order_id: ctx.orderId || "AB-102401", status: "shipped", total_cents: 4999 }) },
+  {
+    pat: /shipment|carrier|deliver|tracking|arrival|eta|package/i,
+    name: "shipment_status",
+    argsFor: (ctx) => ({ order_id: ctx.orderId }),
+    result: (ctx) => ({
+      status: "in_transit",
+      eta: ctx.eta || "today 8pm",
+      carrier: "UPS",
+    }),
+  },
+  {
+    pat: /refund|reimburs|money\s*back|charge\s*back/i,
+    name: "issue_refund",
+    argsFor: (ctx) => ({ order_id: ctx.orderId, amount_cents: 4999 }),
+    result: () => ({ ok: true, refund_id: "rf_9c3e4a" }),
+  },
+  {
+    pat: /return\s*(window|label|policy|eligib)|eligib/i,
+    name: "check_return_eligibility",
+    argsFor: (ctx) => ({ order_id: ctx.orderId }),
+    result: () => ({ eligible: true, window_days: 30, days_remaining: 4 }),
+  },
+  {
+    pat: /escalat|supervisor|manager|human\s*agent|transfer/i,
+    name: "escalate_to_human",
+    argsFor: () => ({ queue: "supervisor" }),
+    result: () => ({ queued: true, wait_seconds: 42 }),
+  },
+  {
+    pat: /cancel|stop\s*(the\s*)?order/i,
+    name: "cancel_order",
+    argsFor: (ctx) => ({ order_id: ctx.orderId }),
+    result: (ctx) => ({ cancelled: true, cancelled_at: ctx.callTime }),
+  },
+  {
+    pat: /return\s*label|print|email\s*(it|the)?\s*(label)?/i,
+    name: "generate_return_label",
+    argsFor: (ctx) => ({ order_id: ctx.orderId }),
+    result: () => ({ url: "https://ship.futureagi.com/labels/rl_1a2b3c.pdf" }),
+  },
+  {
+    pat: /order|number|status|placed|invoice/i,
+    name: "lookup_order",
+    argsFor: (ctx) => ({ query: ctx.orderId || "AB-102401" }),
+    result: (ctx) => ({
+      order_id: ctx.orderId || "AB-102401",
+      status: "shipped",
+      total_cents: 4999,
+    }),
+  },
 ];
 
 /* Stable hash, so a past call's numbers are the same on every render. */
 const hash = (str) => {
   let h = 0;
-  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < str.length; i += 1)
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
   return Math.abs(h);
 };
 
@@ -63,7 +107,8 @@ function inferToolCall(assistantText, ctx, allowedTools, key) {
   if (!assistantText) return null;
   const rule = TOOL_INTENT_RULES.find((r) => r.pat.test(assistantText));
   if (!rule) return null;
-  if (allowedTools && allowedTools.length && !allowedTools.includes(rule.name)) return null;
+  if (allowedTools && allowedTools.length && !allowedTools.includes(rule.name))
+    return null;
   const args = rule.argsFor(ctx);
   const result = rule.result(ctx);
   /* This is a finished call, so the latency is a recorded fact — derived
@@ -98,10 +143,15 @@ function formatToolTurnContent({ name, args, result, latencyMs }) {
  * for tool turns) plus `tool_meta` so downstream views can key off it.
  */
 function buildTranscriptWithTools(steps, env, task) {
-  const allowedTools = (env?.tools || []).map((t) => t.id || t.name).filter(Boolean);
+  const allowedTools = (env?.tools || [])
+    .map((t) => t.id || t.name)
+    .filter(Boolean);
   // Pick a stable order id per task so every tool call within a call references the same order.
-  const orderId = task?.attributes?.order_id
-    || (task?.id ? `AB-${(task.id.split("-").pop() || "102401").slice(0, 6).toUpperCase()}` : "AB-102401");
+  const orderId =
+    task?.attributes?.order_id ||
+    (task?.id
+      ? `AB-${(task.id.split("-").pop() || "102401").slice(0, 6).toUpperCase()}`
+      : "AB-102401");
   const ctx = {
     orderId,
     eta: task?.attributes?.eta,
@@ -115,7 +165,9 @@ function buildTranscriptWithTools(steps, env, task) {
     const role = speakerRole(s.role);
     /* Speech pace (~2.6 words a second) and a short, varied pause before each
        turn, so the transcript shows real turn lengths and silences. */
-    const words = String(s.text || "").split(/\s+/).filter(Boolean).length;
+    const words = String(s.text || "")
+      .split(/\s+/)
+      .filter(Boolean).length;
     const turnDur = Math.round((0.6 + words / 2.6) * 10) / 10;
     if (i > 0) cursor += 0.4 + ((i * 7) % 11) / 10;
 
@@ -137,7 +189,12 @@ function buildTranscriptWithTools(steps, env, task) {
        assistant bubble as a footer. Amber accent (the drawer's `tool`
        role color) keeps them visually attached to the turn above. */
     if (role === "assistant") {
-      const tool = inferToolCall(s.text, ctx, allowedTools, `${task?.id || "t"}-${i}`);
+      const tool = inferToolCall(
+        s.text,
+        ctx,
+        allowedTools,
+        `${task?.id || "t"}-${i}`,
+      );
       if (tool) {
         const dur = Math.max(0.2, tool.latencyMs / 1000);
         out.push({
@@ -177,7 +234,8 @@ function wavUrl(segments, total) {
   const buffer = new ArrayBuffer(44 + n * 2);
   const view = new DataView(buffer);
   const writeStr = (off, str) => {
-    for (let i = 0; i < str.length; i += 1) view.setUint8(off + i, str.charCodeAt(i));
+    for (let i = 0; i < str.length; i += 1)
+      view.setUint8(off + i, str.charCodeAt(i));
   };
   writeStr(0, "RIFF");
   view.setUint32(4, 36 + n * 2, true);
@@ -198,28 +256,40 @@ function wavUrl(segments, total) {
     while (seg < segments.length && t > segments[seg][1]) seg += 1;
     const on = seg < segments.length && t >= segments[seg][0];
     /* Syllable-like bursts inside a turn; silence outside it. */
-    const env = on ? Math.abs(Math.sin(t * 6.3)) * (0.5 + 0.5 * Math.sin(t * 1.7)) : 0;
+    const env = on
+      ? Math.abs(Math.sin(t * 6.3)) * (0.5 + 0.5 * Math.sin(t * 1.7))
+      : 0;
     const carrier =
       0.6 * Math.sin(2 * Math.PI * 180 * t) +
       0.3 * Math.sin(2 * Math.PI * 320 * t) +
       0.1 * Math.sin(2 * Math.PI * 90 * t);
-    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, env * carrier)) * 0.22 * 32767, true);
+    view.setInt16(
+      44 + i * 2,
+      Math.max(-1, Math.min(1, env * carrier)) * 0.22 * 32767,
+      true,
+    );
   }
   return window.URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 function speakerRecordings(transcript, key) {
-  if (typeof window === "undefined" || !window.URL?.createObjectURL) return null;
+  if (typeof window === "undefined" || !window.URL?.createObjectURL)
+    return null;
   if (RECORDING_CACHE.has(key)) return RECORDING_CACHE.get(key);
   const turns = (transcript || []).filter((t) => t.role !== "tool");
   if (!turns.length) return null;
   const total = Math.max(...turns.map((t) => t.end_time_seconds || 0)) + 0.5;
   const of = (who) =>
     turns
-      .filter((t) => (who === "assistant" ? t.role === "assistant" : t.role !== "assistant"))
+      .filter((t) =>
+        who === "assistant" ? t.role === "assistant" : t.role !== "assistant",
+      )
       .map((t) => [t.start_time_seconds, t.end_time_seconds]);
   let recs = null;
   try {
-    recs = { assistant: wavUrl(of("assistant"), total), customer: wavUrl(of("customer"), total) };
+    recs = {
+      assistant: wavUrl(of("assistant"), total),
+      customer: wavUrl(of("customer"), total),
+    };
   } catch {
     recs = null;
   }
@@ -232,13 +302,18 @@ function speakerRecordings(transcript, key) {
   return recs;
 }
 
-export function taskToVoiceData(task, { env, voice = true, scenario = null, failedGoal = null } = {}) {
+export function taskToVoiceData(
+  task,
+  { env, voice = true, scenario = null, failedGoal = null } = {},
+) {
   const steps = task?.steps || [];
   const durationSec = (task?.durationMs || 0) / 1000;
   const direction = env?.direction === "inbound" ? "inbound" : "outbound";
 
   const agentTurns = steps.filter((s) => s.role === "agent").length;
-  const talkAgent = steps.length ? Math.round((agentTurns / steps.length) * 100) : 50;
+  const talkAgent = steps.length
+    ? Math.round((agentTurns / steps.length) * 100)
+    : 50;
 
   /* Each turn becomes a transcript entry, and where an assistant reply
      depended on a tool the tool-call is minted as its own row directly
@@ -246,6 +321,19 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
      are synthesised at a steady cadence so the analytics view has
      something to plot; a simulated call has no real per-word timing. */
   const transcript = buildTranscriptWithTools(steps, env, task);
+  /* The transcript, recording and analytics run at the call's real length —
+     the one billed and shown everywhere else. */
+  const lastEnd = transcript.length
+    ? transcript[transcript.length - 1].end_time_seconds
+    : 0;
+  if (durationSec > 0 && lastEnd > 0) {
+    const k = durationSec / lastEnd;
+    transcript.forEach((t) => {
+      t.start_time_seconds = Math.round(t.start_time_seconds * k * 10) / 10;
+      t.end_time_seconds = Math.round(t.end_time_seconds * k * 10) / 10;
+      t.duration_seconds = Math.round(t.duration_seconds * k * 10) / 10;
+    });
+  }
 
   /* Per-eval map keyed by id — the drawer accepts either an array or an
      `{ id: { name, score, reason } }` map and normalises a 0..1 score to a
@@ -266,18 +354,26 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
   });
 
   const personaStr = task?.persona
-    ? [task.persona.name, task.persona.age, task.persona.voice].filter(Boolean).join(" · ")
+    ? [task.persona.name, task.persona.age, task.persona.voice]
+        .filter(Boolean)
+        .join(" · ")
     : undefined;
 
   const summary =
     task?.summary ||
     task?.expected ||
-    (task?.title ? `Simulated ${voice ? "call" : "conversation"}: ${task.title}` : "");
+    (task?.title
+      ? `Simulated ${voice ? "call" : "conversation"}: ${task.title}`
+      : "");
 
   const ended = endedReasonFor(task, { voice });
   /* The Graph / Checklist tabs: the scenario's path, the tool calls on it,
      and where a failed call left it (voiceFlow.js). */
-  const failed = task?.status && !["passed", "unmeasured"].includes(task.status) && task?.failStep != null && task.failStep >= 0;
+  const failed =
+    task?.status &&
+    !["passed", "unmeasured"].includes(task.status) &&
+    task?.failStep != null &&
+    task.failStep >= 0;
   const flow = voiceFlowOf({
     path: scenario?.conversationBranch || task?.conversationBranch,
     transcript,
@@ -297,11 +393,15 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
 
     provider: "future-agi-sandbox",
     call_type: direction,
-    call_metadata: { provider: "future-agi-sandbox", call_direction: direction },
+    call_metadata: {
+      provider: "future-agi-sandbox",
+      call_direction: direction,
+    },
     duration_seconds: durationSec,
     turn_count: steps.length,
     phone_number: voice ? "+1 (415) 555-0182" : undefined,
-    timestamp: task?.finishedAt || task?.startedAt || task?.timestamp || undefined,
+    timestamp:
+      task?.finishedAt || task?.startedAt || task?.timestamp || undefined,
     /* The plain reason, not the pipeline's internal one — a normal run read
        "simulator ended the call" and sounded like a fault. The raw value is
        kept in the Attributes tab for debugging. */
@@ -313,7 +413,9 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
     /* Recording — synthesised per-speaker stand-ins, so the player draws the
        customer and assistant rows instead of "No recording found". */
     ...(() => {
-      const recs = voice ? speakerRecordings(transcript, task?.id || "call") : null;
+      const recs = voice
+        ? speakerRecordings(transcript, task?.id || "call")
+        : null;
       return { recordings: recs || undefined, audio_url: recs?.assistant };
     })(),
 
@@ -327,7 +429,14 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
     user_interruption_count: 0,
     ai_interruption_count: 0,
     customer_latency_metrics: voice
-      ? { system_metrics: { endpointing: 120, transcriber: 90, model: 260, voice: 140 } }
+      ? {
+          system_metrics: {
+            endpointing: 120,
+            transcriber: 90,
+            model: 260,
+            voice: 140,
+          },
+        }
       : undefined,
 
     /* Attributes tab. */
@@ -341,7 +450,10 @@ export function taskToVoiceData(task, { env, voice = true, scenario = null, fail
     },
 
     scenario: summary,
-    ...(flow && { scenario_graph: flow.scenario_graph, flow_analysis: flow.flow_analysis }),
+    ...(flow && {
+      scenario_graph: flow.scenario_graph,
+      flow_analysis: flow.flow_analysis,
+    }),
   };
 }
 

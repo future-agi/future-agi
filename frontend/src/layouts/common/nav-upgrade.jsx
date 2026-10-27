@@ -82,7 +82,7 @@ export default function NavUpgrade() {
               sx={{
                 fontWeight: 500,
                 color: "text.primary",
-                fontSize: "13px",
+                fontSize: "12px",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",

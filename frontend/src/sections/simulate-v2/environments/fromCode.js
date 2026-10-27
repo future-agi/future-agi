@@ -42,8 +42,14 @@ while not done:
     action = policy(obs)                  # a message and/or tool calls
     obs, reward, done, info = env.step(action)
 
-# many episodes at once, written for your trainer
-env.rollout(policy, episodes=10_000, parallel=256, out="rollouts.jsonl")`;
+# many episodes at once, written for your trainer — priced and capped like a run
+plan = env.rollout(policy, episodes=1_000, held_out=100, budget=5_000,
+                   dry_run=True)
+print(plan.estimate)                      # rollouts and held-out eval, in credits
+job = env.rollout(policy, episodes=1_000, held_out=100, parallel=256,
+                  budget=5_000, out="rollouts.jsonl",
+                  key="train-2026-10-27")  # same key again reuses this job
+print(job.usage)                          # itemized, even with no improvement`;
 
 export const serveCmd = (id = "my-environment") =>
   `fai env serve ${id} --replicas 256`;

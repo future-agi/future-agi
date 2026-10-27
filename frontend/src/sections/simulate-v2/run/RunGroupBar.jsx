@@ -115,7 +115,7 @@ export default function RunGroupBar({ envId, runId, live = false }) {
           sx={{ color: "text.tertiary" }}
         />
         <Typography noWrap sx={{ typography: "s3", fontWeight: 600 }}>
-          Run group · {members.length} environments
+          {`Run group · ${members.length} ${members[0]?.label ? "agent versions" : "environments"}`}
         </Typography>
         <Iconify
           icon={
@@ -177,7 +177,7 @@ export default function RunGroupBar({ envId, runId, live = false }) {
                   fontWeight: m.current ? 600 : 500,
                 }}
               >
-                {m.envName}
+                {m.label || m.envName}
               </Typography>
               <Typography
                 sx={{
@@ -234,7 +234,7 @@ export default function RunGroupBar({ envId, runId, live = false }) {
             sx={{ gap: 1, py: 0.875 }}
           >
             <ListItemText
-              primary={m.envName}
+              primary={m.label || m.envName}
               secondary={[m.identity, m.result].filter(Boolean).join(" · ")}
               primaryTypographyProps={{
                 typography: "s2",

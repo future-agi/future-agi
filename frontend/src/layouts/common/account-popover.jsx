@@ -101,7 +101,7 @@ export default function AccountPopover({ variant }) {
         <Typography
           noWrap
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             lineHeight: "16px",
             fontWeight: 500,
             color: "text.primary",

@@ -380,47 +380,47 @@ export const dsTypography = {
     "letterSpacing": "-0.01em"
   },
   "h3": {
-    "fontSize": "1.0rem",
-    "lineHeight": "24px",
+    "fontSize": "0.9375rem",
+    "lineHeight": "22px",
     "fontWeight": 600
   },
   "h4": {
-    "fontSize": "1.0rem",
-    "lineHeight": "24px",
+    "fontSize": "0.9375rem",
+    "lineHeight": "22px",
     "fontWeight": 600
   },
   "h5": {
-    "fontSize": "0.875rem",
+    "fontSize": "0.8125rem",
     "lineHeight": "20px",
-    "fontWeight": 600
+    "fontWeight": 500
   },
   "h6": {
-    "fontSize": "0.875rem",
+    "fontSize": "0.8125rem",
     "lineHeight": "20px",
-    "fontWeight": 600
+    "fontWeight": 500
   },
   "subtitle1": {
     "fontSize": "0.875rem",
-    "lineHeight": "20px",
+    "lineHeight": "18px",
     "fontWeight": 500
   },
   "subtitle2": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 500
   },
   "body1": {
-    "fontSize": "0.875rem",
-    "lineHeight": "22px",
-    "fontWeight": 400
-  },
-  "body2": {
     "fontSize": "0.8125rem",
     "lineHeight": "20px",
     "fontWeight": 400
   },
-  "caption": {
+  "body2": {
     "fontSize": "0.75rem",
+    "lineHeight": "18px",
+    "fontWeight": 400
+  },
+  "caption": {
+    "fontSize": "0.6875rem",
     "lineHeight": "16px",
     "fontWeight": 400
   },
@@ -432,8 +432,8 @@ export const dsTypography = {
     "textTransform": "uppercase"
   },
   "button": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 500,
     "textTransform": "none"
   },
@@ -456,44 +456,44 @@ export const dsTypography = {
     "letterSpacing": "-0.01em"
   },
   "title_sm": {
-    "fontSize": "1.0rem",
-    "lineHeight": "24px",
+    "fontSize": "0.9375rem",
+    "lineHeight": "22px",
     "fontWeight": 600
   },
   "title_xs": {
-    "fontSize": "0.875rem",
-    "lineHeight": "20px",
-    "fontWeight": 600
-  },
-  "body_md": {
-    "fontSize": "0.875rem",
-    "lineHeight": "22px",
-    "fontWeight": 400
-  },
-  "body_sm": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
-    "fontWeight": 400
-  },
-  "label_md": {
     "fontSize": "0.8125rem",
     "lineHeight": "20px",
     "fontWeight": 500
   },
-  "label_sm": {
+  "body_md": {
+    "fontSize": "0.8125rem",
+    "lineHeight": "20px",
+    "fontWeight": 400
+  },
+  "body_sm": {
     "fontSize": "0.75rem",
+    "lineHeight": "18px",
+    "fontWeight": 400
+  },
+  "label_md": {
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
+    "fontWeight": 500
+  },
+  "label_sm": {
+    "fontSize": "0.6875rem",
     "lineHeight": "16px",
     "fontWeight": 500
   },
   "code_sm": {
-    "fontSize": "0.75rem",
-    "lineHeight": "18px",
+    "fontSize": "0.6875rem",
+    "lineHeight": "16px",
     "fontWeight": 400,
     "fontFamily": "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, \"JetBrains Mono\", monospace"
   },
   "code_md": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 400,
     "fontFamily": "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, \"JetBrains Mono\", monospace"
   },
@@ -504,8 +504,8 @@ export const dsTypography = {
     "letterSpacing": "-0.01em"
   },
   "metric_md": {
-    "fontSize": "1.0rem",
-    "lineHeight": "24px",
+    "fontSize": "0.9375rem",
+    "lineHeight": "22px",
     "fontWeight": 600
   }
 };
@@ -535,7 +535,7 @@ export const dsSize = {
   },
   "row": {
     "compact": 28,
-    "default": 36,
+    "default": 32,
     "twoLine": 44
   },
   "tableHeader": {

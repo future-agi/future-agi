@@ -13,6 +13,7 @@ import { admissionOf } from "./coverage";
 import { inferTools, sandboxScenario } from "./toolInference";
 import { blockerReason } from "./releaseBlocker";
 import { scriptFor } from "./runScripts";
+import { callMinutesOf } from "./pricing";
 
 /* ── seeded RNG (mulberry32) ─────────────────────────────────────────────── */
 export function rng(seed) {
@@ -48,7 +49,10 @@ export const hashSeed = (str) => {
   agent answers it differently, the agent is the variable.
 */
 const VOICE_TURNS = [
-  { role: "customer", text: "Hi, I'm calling about an order I placed last week." },
+  {
+    role: "customer",
+    text: "Hi, I'm calling about an order I placed last week.",
+  },
   {
     role: "agent",
     text: "Of course — I can help with that. Could I take the order number?",
@@ -106,15 +110,30 @@ const VOICE_TURNS = [
 
 const CHAT_TURNS = [
   { role: "customer", text: "There's a charge on my card I don't recognise." },
-  { role: "agent", text: "I can look into that. For security, can you confirm your date of birth?" },
+  {
+    role: "agent",
+    text: "I can look into that. For security, can you confirm your date of birth?",
+  },
   { role: "customer", text: "14 March 1987." },
-  { role: "agent", text: "Thank you. I'll also need the last four digits of the card." },
+  {
+    role: "agent",
+    text: "Thank you. I'll also need the last four digits of the card.",
+  },
   { role: "customer", text: "4471." },
-  { role: "agent", text: "Verified. I can see a £64.99 charge from ACME Retail on 12 August." },
+  {
+    role: "agent",
+    text: "Verified. I can see a £64.99 charge from ACME Retail on 12 August.",
+  },
   { role: "customer", text: "I've never shopped there." },
-  { role: "agent", text: "I'll freeze the card now and raise a dispute. Resolution takes up to 10 business days." },
+  {
+    role: "agent",
+    text: "I'll freeze the card now and raise a dispute. Resolution takes up to 10 business days.",
+  },
   { role: "customer", text: "Please do." },
-  { role: "agent", text: "Card frozen and dispute DSP-99214 raised. A replacement arrives in 3–5 days." },
+  {
+    role: "agent",
+    text: "Card frozen and dispute DSP-99214 raised. A replacement arrives in 3–5 days.",
+  },
 ];
 
 /*
@@ -126,40 +145,148 @@ const CHAT_TURNS = [
   and the steps are the ones that app can actually take.
 */
 const BROWSER_TODO = [
-  { action: "navigate", target: "app.taskly.dev/lists/inbox", thought: "Open the shared inbox list." },
-  { action: "click", target: "tab:has-text('Active')", thought: "Hide what is already done before counting." },
-  { action: "type", target: "#new-task", value: "Chase Northwind invoice", thought: "Add the task that was asked for." },
-  { action: "click", target: "button:has-text('Add')", thought: "Commit it to the list." },
-  { action: "click", target: "li:has-text('Renew SSL certificate') >> input[type=checkbox]", thought: "Tick the one that is finished." },
-  { action: "scroll", target: "task list", thought: "Check nothing below is already complete." },
-  { action: "click", target: "button:has-text('Clear completed')", thought: "Tidy the list as instructed." },
-  { action: "wait", target: "counter settles", thought: "Confirm the remaining count changed." },
+  {
+    action: "navigate",
+    target: "app.taskly.dev/lists/inbox",
+    thought: "Open the shared inbox list.",
+  },
+  {
+    action: "click",
+    target: "tab:has-text('Active')",
+    thought: "Hide what is already done before counting.",
+  },
+  {
+    action: "type",
+    target: "#new-task",
+    value: "Chase Northwind invoice",
+    thought: "Add the task that was asked for.",
+  },
+  {
+    action: "click",
+    target: "button:has-text('Add')",
+    thought: "Commit it to the list.",
+  },
+  {
+    action: "click",
+    target: "li:has-text('Renew SSL certificate') >> input[type=checkbox]",
+    thought: "Tick the one that is finished.",
+  },
+  {
+    action: "scroll",
+    target: "task list",
+    thought: "Check nothing below is already complete.",
+  },
+  {
+    action: "click",
+    target: "button:has-text('Clear completed')",
+    thought: "Tidy the list as instructed.",
+  },
+  {
+    action: "wait",
+    target: "counter settles",
+    thought: "Confirm the remaining count changed.",
+  },
 ];
 
 const BROWSER_GAME = [
-  { action: "navigate", target: "play.2048.io/seeded/4x4", thought: "Load the seeded board." },
-  { action: "key", target: "ArrowLeft", thought: "Collapse the row and keep the big tile in a corner." },
-  { action: "key", target: "ArrowUp", thought: "Stack the pairs without breaking the corner." },
+  {
+    action: "navigate",
+    target: "play.2048.io/seeded/4x4",
+    thought: "Load the seeded board.",
+  },
+  {
+    action: "key",
+    target: "ArrowLeft",
+    thought: "Collapse the row and keep the big tile in a corner.",
+  },
+  {
+    action: "key",
+    target: "ArrowUp",
+    thought: "Stack the pairs without breaking the corner.",
+  },
   { action: "key", target: "ArrowLeft", thought: "Merge the two 32s." },
-  { action: "scroll", target: "score panel", thought: "Read the score before deciding again." },
-  { action: "key", target: "ArrowUp", thought: "Keep the largest tile pinned." },
-  { action: "key", target: "ArrowLeft", thought: "One more merge along the top row." },
-  { action: "wait", target: "board settles", thought: "Let the spawned tile land before the next move." },
+  {
+    action: "scroll",
+    target: "score panel",
+    thought: "Read the score before deciding again.",
+  },
+  {
+    action: "key",
+    target: "ArrowUp",
+    thought: "Keep the largest tile pinned.",
+  },
+  {
+    action: "key",
+    target: "ArrowLeft",
+    thought: "One more merge along the top row.",
+  },
+  {
+    action: "wait",
+    target: "board settles",
+    thought: "Let the spawned tile land before the next move.",
+  },
 ];
 
 const BROWSER_ADMIN = [
-  { action: "navigate", target: "app.acme-admin.com/login", thought: "Start at the console login." },
-  { action: "type", target: "#email", value: "ops@acme.com", thought: "Fill the operator account." },
-  { action: "type", target: "#password", value: "••••••••", thought: "Enter the password." },
+  {
+    action: "navigate",
+    target: "app.acme-admin.com/login",
+    thought: "Start at the console login.",
+  },
+  {
+    action: "type",
+    target: "#email",
+    value: "ops@acme.com",
+    thought: "Fill the operator account.",
+  },
+  {
+    action: "type",
+    target: "#password",
+    value: "••••••••",
+    thought: "Enter the password.",
+  },
   { action: "click", target: "button[type=submit]", thought: "Sign in." },
-  { action: "wait", target: "dashboard", thought: "Wait for the dashboard to settle." },
-  { action: "click", target: "nav >> Billing", thought: "Billing is where failed payments live." },
-  { action: "type", target: "input[name=search]", value: "past due", thought: "Filter to past-due workspaces." },
-  { action: "click", target: "tr:has-text('Northwind') >> button", thought: "Open the first affected workspace." },
-  { action: "scroll", target: "invoice list", thought: "Find the failed invoice." },
-  { action: "click", target: "button:has-text('Retry payment')", thought: "Retry the charge." },
-  { action: "wait", target: "confirmation toast", thought: "Confirm the retry succeeded." },
-  { action: "click", target: "button:has-text('Export')", thought: "Export the reconciliation list." },
+  {
+    action: "wait",
+    target: "dashboard",
+    thought: "Wait for the dashboard to settle.",
+  },
+  {
+    action: "click",
+    target: "nav >> Billing",
+    thought: "Billing is where failed payments live.",
+  },
+  {
+    action: "type",
+    target: "input[name=search]",
+    value: "past due",
+    thought: "Filter to past-due workspaces.",
+  },
+  {
+    action: "click",
+    target: "tr:has-text('Northwind') >> button",
+    thought: "Open the first affected workspace.",
+  },
+  {
+    action: "scroll",
+    target: "invoice list",
+    thought: "Find the failed invoice.",
+  },
+  {
+    action: "click",
+    target: "button:has-text('Retry payment')",
+    thought: "Retry the charge.",
+  },
+  {
+    action: "wait",
+    target: "confirmation toast",
+    thought: "Confirm the retry succeeded.",
+  },
+  {
+    action: "click",
+    target: "button:has-text('Export')",
+    thought: "Export the reconciliation list.",
+  },
 ];
 
 /** Which app this scenario is about. Titles and tasks name it. */
@@ -170,44 +297,155 @@ export const browserAppOf = (row) => {
   return "admin";
 };
 
-const BROWSER_VOCAB = { admin: BROWSER_ADMIN, todo: BROWSER_TODO, game: BROWSER_GAME };
+const BROWSER_VOCAB = {
+  admin: BROWSER_ADMIN,
+  todo: BROWSER_TODO,
+  game: BROWSER_GAME,
+};
 
 const TOOL_STEPS = [
-  { tool: "query_metrics", args: { q: "rate(http_errors[5m])", svc: "checkout" }, result: "0.081 (8.1%)", ms: 240 },
-  { tool: "read_logs", args: { svc: "checkout", since: "15m" }, result: "412 × NullPointerException", ms: 610 },
-  { tool: "query_metrics", args: { q: "deploy_version", svc: "checkout" }, result: "v4.12.0 @ 14:02", ms: 180 },
-  { tool: "read_logs", args: { svc: "checkout", grep: "v4.12.0" }, result: "errors begin 14:03", ms: 520 },
-  { tool: "rollback_deploy", args: { svc: "checkout", to: "v4.11.3" }, result: "rollback queued", ms: 1400 },
-  { tool: "query_metrics", args: { q: "rate(http_errors[5m])", svc: "checkout" }, result: "0.004 (0.4%)", ms: 260 },
-  { tool: "page_oncall", args: { team: "payments", sev: 3 }, result: "paged @alex", ms: 320 },
+  {
+    tool: "query_metrics",
+    args: { q: "rate(http_errors[5m])", svc: "checkout" },
+    result: "0.081 (8.1%)",
+    ms: 240,
+  },
+  {
+    tool: "read_logs",
+    args: { svc: "checkout", since: "15m" },
+    result: "412 × NullPointerException",
+    ms: 610,
+  },
+  {
+    tool: "query_metrics",
+    args: { q: "deploy_version", svc: "checkout" },
+    result: "v4.12.0 @ 14:02",
+    ms: 180,
+  },
+  {
+    tool: "read_logs",
+    args: { svc: "checkout", grep: "v4.12.0" },
+    result: "errors begin 14:03",
+    ms: 520,
+  },
+  {
+    tool: "rollback_deploy",
+    args: { svc: "checkout", to: "v4.11.3" },
+    result: "rollback queued",
+    ms: 1400,
+  },
+  {
+    tool: "query_metrics",
+    args: { q: "rate(http_errors[5m])", svc: "checkout" },
+    result: "0.004 (0.4%)",
+    ms: 260,
+  },
+  {
+    tool: "page_oncall",
+    args: { team: "payments", sev: 3 },
+    result: "paged @alex",
+    ms: 320,
+  },
 ];
 
 const TERMINAL_STEPS = [
   { cmd: "pytest -q", out: "3 failed, 128 passed in 12.4s", ms: 12400 },
-  { cmd: "pytest -q tests/test_invoice.py -x", out: "FAILED test_prorate_refund", ms: 3100 },
-  { cmd: "cat src/billing/prorate.py", out: "…def prorate(amount, days): return amount * days / 30", ms: 90 },
-  { cmd: "git log --oneline -3 src/billing/prorate.py", out: "a91c3f4 fix rounding\n2b7e881 initial", ms: 140 },
+  {
+    cmd: "pytest -q tests/test_invoice.py -x",
+    out: "FAILED test_prorate_refund",
+    ms: 3100,
+  },
+  {
+    cmd: "cat src/billing/prorate.py",
+    out: "…def prorate(amount, days): return amount * days / 30",
+    ms: 90,
+  },
+  {
+    cmd: "git log --oneline -3 src/billing/prorate.py",
+    out: "a91c3f4 fix rounding\n2b7e881 initial",
+    ms: 140,
+  },
   { cmd: "apply_patch prorate.py", out: "patched 1 file, +4 −2", ms: 200 },
   { cmd: "pytest -q", out: "131 passed in 12.9s", ms: 12900 },
 ];
 
 const SIM_STEPS = [
-  { action: "reset", obs: "episode start · scene loaded", reward: 0, note: "Fresh episode from the seeded scene." },
-  { action: "observe", obs: "gripper (0.12, 0.04, 0.31) · target (0.38, 0.02, 0.05)", reward: 0, note: "Reading joint and object state." },
-  { action: "act", obs: "move_to(pre_grasp)", reward: 0.04, note: "Approaching the object." },
-  { action: "act", obs: "close_gripper()", reward: 0.18, note: "Contact detected on both pads." },
-  { action: "observe", obs: "object lifted 0.06m", reward: 0.31, note: "Grasp is holding." },
-  { action: "act", obs: "move_to(goal_pose)", reward: 0.52, note: "Transporting to the goal." },
-  { action: "act", obs: "open_gripper()", reward: 0.74, note: "Releasing at the target." },
-  { action: "observe", obs: "success predicate = true", reward: 0.91, note: "Task predicate satisfied." },
+  {
+    action: "reset",
+    obs: "episode start · scene loaded",
+    reward: 0,
+    note: "Fresh episode from the seeded scene.",
+  },
+  {
+    action: "observe",
+    obs: "gripper (0.12, 0.04, 0.31) · target (0.38, 0.02, 0.05)",
+    reward: 0,
+    note: "Reading joint and object state.",
+  },
+  {
+    action: "act",
+    obs: "move_to(pre_grasp)",
+    reward: 0.04,
+    note: "Approaching the object.",
+  },
+  {
+    action: "act",
+    obs: "close_gripper()",
+    reward: 0.18,
+    note: "Contact detected on both pads.",
+  },
+  {
+    action: "observe",
+    obs: "object lifted 0.06m",
+    reward: 0.31,
+    note: "Grasp is holding.",
+  },
+  {
+    action: "act",
+    obs: "move_to(goal_pose)",
+    reward: 0.52,
+    note: "Transporting to the goal.",
+  },
+  {
+    action: "act",
+    obs: "open_gripper()",
+    reward: 0.74,
+    note: "Releasing at the target.",
+  },
+  {
+    action: "observe",
+    obs: "success predicate = true",
+    reward: 0.91,
+    note: "Task predicate satisfied.",
+  },
 ];
 
 const EMAIL_STEPS = [
-  { kind: "read", subject: "Claim #CLM-4471 — water damage", note: "Thread has 4 messages, 2 attachments." },
-  { kind: "parse", subject: "surveyor_report.pdf", note: "Extracted: incident date, policy no., estimate £8,400." },
-  { kind: "check", subject: "Policy P-88213", note: "Active. Excess £250. Adjuster review needed above £5,000." },
-  { kind: "compose", subject: "Re: Claim #CLM-4471 — documents needed", note: "Listed 3 missing documents in one message." },
-  { kind: "send", subject: "Re: Claim #CLM-4471", note: "Sent to claimant, adjuster CC'd." },
+  {
+    kind: "read",
+    subject: "Claim #CLM-4471 — water damage",
+    note: "Thread has 4 messages, 2 attachments.",
+  },
+  {
+    kind: "parse",
+    subject: "surveyor_report.pdf",
+    note: "Extracted: incident date, policy no., estimate £8,400.",
+  },
+  {
+    kind: "check",
+    subject: "Policy P-88213",
+    note: "Active. Excess £250. Adjuster review needed above £5,000.",
+  },
+  {
+    kind: "compose",
+    subject: "Re: Claim #CLM-4471 — documents needed",
+    note: "Listed 3 missing documents in one message.",
+  },
+  {
+    kind: "send",
+    subject: "Re: Claim #CLM-4471",
+    note: "Sent to claimant, adjuster CC'd.",
+  },
 ];
 
 /* ── run construction ────────────────────────────────────────────────────── */
@@ -245,15 +483,21 @@ function buildCallLog(scenario, tools, r, failed) {
   /* Tools the scenario is actually about: the ones it records it needs, else
      the ones it names, or the first couple as a fallback so every task has
      something to be judged on. */
-  const recorded = Array.isArray(scenario.requiredTools) && scenario.requiredTools.length
-    ? tools.filter((t) => scenario.requiredTools.includes(t.name))
-    : [];
+  const recorded =
+    Array.isArray(scenario.requiredTools) && scenario.requiredTools.length
+      ? tools.filter((t) => scenario.requiredTools.includes(t.name))
+      : [];
   /* Recorded, else named, else read from its wording — the same inference
      the Scenarios tab shows, so a run exercises the tools the row lists. */
-  const inferred = recorded.length || sandboxScenario(scenario) ? [] : inferTools(scenario, tools);
-  const required = (recorded.length
-    ? recorded
-    : tools.filter((t) => named.includes(t.name) || inferred.includes(t.name))).slice(0, 3);
+  const inferred =
+    recorded.length || sandboxScenario(scenario)
+      ? []
+      : inferTools(scenario, tools);
+  const required = (
+    recorded.length
+      ? recorded
+      : tools.filter((t) => named.includes(t.name) || inferred.includes(t.name))
+  ).slice(0, 3);
   /* Fallback picks from the scenario's own hash rather than the head of the
      list. Taking the first two made every failing task in a run skip the same
      tool, which reads as one bug repeated seven times rather than seven
@@ -261,14 +505,15 @@ function buildCallLog(scenario, tools, r, failed) {
   const pick = hashSeed(scenario.id || "s");
   const fallback = tools.length
     ? [tools[pick % tools.length], tools[(pick + 1) % tools.length]].filter(
-      (t, i, arr) => arr.indexOf(t) === i,
-    )
+        (t, i, arr) => arr.indexOf(t) === i,
+      )
     : [];
   const expected = required.length ? required : fallback;
 
   /* A failing run skips one of the tools it needed — that skip is the finding,
      and it is what the claims-vs-actions check reads. */
-  const skipped = failed && expected.length ? expected[expected.length - 1] : null;
+  const skipped =
+    failed && expected.length ? expected[expected.length - 1] : null;
 
   const calls = expected
     .filter((t) => t !== skipped)
@@ -308,9 +553,9 @@ function buildCallLog(scenario, tools, r, failed) {
        A skipped write was claimed as done; a skipped read was claimed as
        looked up — "the shipment status was done" is not a sentence. */
     unsupportedClaim: skipped
-      ? (/refund|issue|create|update|cancel|book|escalate/.test(skipped.name)
+      ? /refund|issue|create|update|cancel|book|escalate/.test(skipped.name)
         ? `The agent told the caller the ${skipped.name.replace(/_/g, " ")} was done, but never called ${skipped.name}.`
-        : `The agent told the caller it had checked the ${skipped.name.replace(/_/g, " ")}, but never called ${skipped.name}.`)
+        : `The agent told the caller it had checked the ${skipped.name.replace(/_/g, " ")}, but never called ${skipped.name}.`
       : null,
   };
 }
@@ -388,10 +633,13 @@ export function buildRun({
   /* The scenario's own conversation where one can be written — same length
      as the stock script it replaces, so the run draws the same numbers. */
   const vocabFor = (sc) => {
-    if (stage === "browser") return { vocab: BROWSER_VOCAB[browserAppOf(sc)], scripted: false };
+    if (stage === "browser")
+      return { vocab: BROWSER_VOCAB[browserAppOf(sc)], scripted: false };
     const stock = STAGE_STEPS[stage] || VOICE_TURNS;
     const own = scriptFor(sc, stage);
-    return own && own.length === stock.length ? { vocab: own, scripted: true } : { vocab: stock, scripted: false };
+    return own && own.length === stock.length
+      ? { vocab: own, scripted: true }
+      : { vocab: stock, scripted: false };
   };
 
   const tasks = scenarios.map((sc, i) => {
@@ -401,7 +649,10 @@ export function buildRun({
        seeded run keeps its verdicts. A scenario's own script is played in
        full — cutting a rule probe off before the agent answers leaves nothing
        to watch — and its extra turns take their timing from a hash. */
-    const drawn = Array.from({ length: stepCount }, () => 600 + Math.floor(r() * 1400));
+    const drawn = Array.from(
+      { length: stepCount },
+      () => 600 + Math.floor(r() * 1400),
+    );
     const length = scripted ? vocab.length : stepCount;
     /* Phrasing belongs to the agent version, not to the run: one prompt means
        one way of opening the call, every time it runs. Two runs of the same
@@ -434,21 +685,36 @@ export function buildRun({
        otherwise one of the environment's actors joins about one in four.
        Picked by hash, not by the run's random stream, so adding actors never
        reshuffles the rest of the run. */
-    const ownCast = (sc.actors || []).map((id) => actors.find((a) => a.id === id)).filter(Boolean);
+    const ownCast = (sc.actors || [])
+      .map((id) => actors.find((a) => a.id === id))
+      .filter(Boolean);
     const actorHash = hashSeed(`${sc.id}:actor`);
-    const actor = ownCast[0] || (actors.length && actorHash % 4 === 0 ? actors[actorHash % actors.length] : null);
+    const actor =
+      ownCast[0] ||
+      (actors.length && actorHash % 4 === 0
+        ? actors[actorHash % actors.length]
+        : null);
     if (actor) {
       /* When they come in is who they are: someone present speaks from the
          start, someone who joins arrives once the agent hands over, and an
          interruption lands wherever it lands. */
       const handover = steps.findIndex((st) => st.meets?.includes("close"));
-      const at = actor.entry === "present"
-        ? 1
-        : actor.entry === "joins"
-          ? (handover >= 0 ? handover + 1 : steps.length - 2)
-          : Math.min(steps.length - 1, 2 + (actorHash % Math.max(1, steps.length - 3)));
+      const at =
+        actor.entry === "present"
+          ? 1
+          : actor.entry === "joins"
+            ? handover >= 0
+              ? handover + 1
+              : steps.length - 2
+            : Math.min(
+                steps.length - 1,
+                2 + (actorHash % Math.max(1, steps.length - 3)),
+              );
       const where = stage === "voice" ? "call" : "conversation";
-      const lead = { present: `Also on the ${where}`, joins: `Joins the ${where}` }[actor.entry] || "Cuts in";
+      const lead =
+        { present: `Also on the ${where}`, joins: `Joins the ${where}` }[
+          actor.entry
+        ] || "Cuts in";
       steps.splice(at, 0, {
         id: `${sc.id}-actor`,
         index: at,
@@ -460,7 +726,9 @@ export function buildRun({
         text: `${lead} — ${actor.goal.charAt(0).toLowerCase()}${actor.goal.slice(1)}`,
         duration: 900,
       });
-      steps.forEach((st, k) => { st.index = k; });
+      steps.forEach((st, k) => {
+        st.index = k;
+      });
     }
 
     const fault = {};
@@ -471,23 +739,33 @@ export function buildRun({
     /* The agent reached for a tool this world has no answer for. Scenarios
        that need it always do; elsewhere the agent reaches for it now and then,
        the way a new tool gets used. Deterministic per scenario and tool. */
-    const reached = gapTools.find((t) => (sc.requiredTools || []).includes(t.name)
-      || hashSeed(`${sc.id}:${t.name}`) % 6 === 0);
+    const reached = gapTools.find(
+      (t) =>
+        (sc.requiredTools || []).includes(t.name) ||
+        hashSeed(`${sc.id}:${t.name}`) % 6 === 0,
+    );
     if (reached) {
       fault.environment = `The agent called ${reached.name}, which this world can't answer — nothing came back, so the scenario can't be scored.`;
       fault.toolGap = reached.name;
-    } else if (sc.provedBroke && (!sc.brokeAgainst || !envVersion || sc.brokeAgainst === envVersion)) {
-      fault.environment = "This scenario no longer stages on this world — its proof broke when the environment changed. Re-prove it before reading a verdict.";
+    } else if (
+      sc.provedBroke &&
+      (!sc.brokeAgainst || !envVersion || sc.brokeAgainst === envVersion)
+    ) {
+      fault.environment =
+        "This scenario no longer stages on this world — its proof broke when the environment changed. Re-prove it before reading a verdict.";
     } else if (!admission.admitted) {
       fault.environment = `Quarantined — ${admission.reason}`;
     } else if (faultDraw < 0.035) {
       fault.environment = `${tools[0]?.name || "The seeded world"} never passed its readiness probe — the scenario could not be staged.`;
     } else if (faultDraw < 0.07) {
-      fault.transport = "The session dropped before the agent answered; no terminal state was reached.";
+      fault.transport =
+        "The session dropped before the agent answered; no terminal state was reached.";
     } else if (faultDraw < 0.115) {
-      fault.simulator = "The simulated caller contradicted its own scenario facts and the run was abandoned.";
+      fault.simulator =
+        "The simulated caller contradicted its own scenario facts and the run was abandoned.";
     } else if (faultDraw < 0.13) {
-      fault.grading = "Evidence was captured but the grader returned no verdict.";
+      fault.grading =
+        "Evidence was captured but the grader returned no verdict.";
     }
     /*
       Retry once (updated RSI PRD). A conversation that ended test invalid or
@@ -501,23 +779,46 @@ export function buildRun({
     let pulled = null;
     const retryKind = outcomes ? retryKindOf(fault) : null;
     if (retryKind) {
-      const first = fault.environment || fault.transport || fault.simulator || fault.grading;
-      const fixed = !!(fault.toolGap || /no longer stages/i.test(fault.environment || ""));
+      const first =
+        fault.environment ||
+        fault.transport ||
+        fault.simulator ||
+        fault.grading;
+      const fixed = !!(
+        fault.toolGap || /no longer stages/i.test(fault.environment || "")
+      );
       const recovered = !fixed && unit(`${seed}:${sc.id}:retry`) < 0.8;
       retried = { kind: retryKind, first, recovered };
-      if (recovered) Object.keys(fault).forEach((k) => { delete fault[k]; });
+      if (recovered)
+        Object.keys(fault).forEach((k) => {
+          delete fault[k];
+        });
       else if (retryKind === "test-invalid") {
-        pulled = { reason: `Test invalid twice — ${String(first).replace(/\.$/, "")}. Pulled from this run and flagged for review.` };
+        pulled = {
+          reason: `Test invalid twice — ${String(first).replace(/\.$/, "")}. Pulled from this run and flagged for review.`,
+        };
       }
     }
 
     /* Older runs: evaluations decide pass or fail, so with none applied
        there is no verdict to give. Under the sub-goal rule the sub-goals
        decide, and a run with no evaluations still has one. */
-    if (!subGoalsDecide && !evals.length && !fault.environment && !fault.transport && !fault.simulator) {
-      fault.grading = "No evaluations were applied, so nothing decided pass or fail.";
+    if (
+      !subGoalsDecide &&
+      !evals.length &&
+      !fault.environment &&
+      !fault.transport &&
+      !fault.simulator
+    ) {
+      fault.grading =
+        "No evaluations were applied, so nothing decided pass or fail.";
     }
-    const unmeasured = !!(fault.environment || fault.transport || fault.simulator || fault.grading);
+    const unmeasured = !!(
+      fault.environment ||
+      fault.transport ||
+      fault.simulator ||
+      fault.grading
+    );
 
     /* Sample-to-sample drift in the *caller* rather than the agent. A scenario
        whose caller wanders is flaky because of the scenario. */
@@ -525,7 +826,8 @@ export function buildRun({
 
     // Critical scenarios fail more often — that is the point of marking them.
     // An actor pulling the other way makes the episode harder, too.
-    const failChance = (sc.critical ? failRate * 1.9 : failRate) + (actor ? 0.06 : 0);
+    const failChance =
+      (sc.critical ? failRate * 1.9 : failRate) + (actor ? 0.06 : 0);
     const draw = r();
     const failed = draw < failChance;
     const drawnFail = failed
@@ -537,7 +839,11 @@ export function buildRun({
     const cruxAt = steps.findIndex((st) => st.crux);
     const failStep = failed && !unmeasured && cruxAt >= 0 ? cruxAt : drawnFail;
     if (failStep === cruxAt && cruxAt >= 0 && steps[cruxAt].failText) {
-      steps[cruxAt] = { ...steps[cruxAt], text: steps[cruxAt].failText, failedHere: true };
+      steps[cruxAt] = {
+        ...steps[cruxAt],
+        text: steps[cruxAt].failText,
+        failedHere: true,
+      };
     }
 
     /*
@@ -548,9 +854,11 @@ export function buildRun({
       The eval that explains a failure is the culprit: the rule, then the goal.
     */
     const CULPRIT_ORDER = ["policy_adherence", "task_success", "pii_leakage"];
-    const culpritId = failed && evals.length
-      ? (CULPRIT_ORDER.find((id) => evals.some((ev) => ev.id === id)) || evals[0].id)
-      : null;
+    const culpritId =
+      failed && evals.length
+        ? CULPRIT_ORDER.find((id) => evals.some((ev) => ev.id === id)) ||
+          evals[0].id
+        : null;
     const evalResults = evals.map((ev) => {
       const threshold = ev.threshold ?? 0.8;
       const isCulprit = ev.id === culpritId;
@@ -586,7 +894,12 @@ export function buildRun({
         const ev = evals[k];
         if (hashSeed(`${seed}:${sc.id}:${ev.id}:low`) % 9 !== 0) return;
         const threshold = ev.threshold ?? 0.8;
-        const score = Math.round(threshold * (0.55 + unit(`${seed}:${sc.id}:${ev.id}:lowv`) * 0.35) * 100) / 100;
+        const score =
+          Math.round(
+            threshold *
+              (0.55 + unit(`${seed}:${sc.id}:${ev.id}:lowv`) * 0.35) *
+              100,
+          ) / 100;
         const required = !!(ev.required && requiredEvals);
         const line = `Scored ${Math.round(score * 100)} against a threshold of ${Math.round(threshold * 100)}`;
         evalResults[k] = {
@@ -607,7 +920,9 @@ export function buildRun({
        critical sub-goals', or a required evaluation's. */
     const gradedFail = subGoalsDecide
       ? failed || !!requiredHit
-      : evalResults.length ? evalResults.some((e) => !e.passed) : failed;
+      : evalResults.length
+        ? evalResults.some((e) => !e.passed)
+        : failed;
     const callLog = buildCallLog(sc, tools, r, gradedFail);
 
     /*
@@ -618,9 +933,10 @@ export function buildRun({
     */
     /* Injected tool faults — drawn by hash, never from the run's stream, so a
        run with no faults draws exactly the numbers it always did. */
-    const injected = !unmeasured && hasFaults(toolFaults)
-      ? injectToolFaults({ seed, sc, callLog, toolFaults, stage })
-      : null;
+    const injected =
+      !unmeasured && hasFaults(toolFaults)
+        ? injectToolFaults({ seed, sc, callLog, toolFaults, stage })
+        : null;
     if (injected?.failed && !gradedFail) {
       faultFailEvals(evalResults, injected.failed);
     }
@@ -638,7 +954,9 @@ export function buildRun({
     for (let k = 1; k < Math.max(1, repeats); k += 1) {
       const flipped = r() < flipChance ? !gradedFail : gradedFail;
       /* A later sample meets the same fault profile, drawn afresh. */
-      const faultFailed = injected ? sampleFaultFails({ seed, sc, k, callLog, toolFaults }) : false;
+      const faultFailed = injected
+        ? sampleFaultFails({ seed, sc, k, callLog, toolFaults })
+        : false;
       samples.push(flipped || faultFailed ? "failed" : "passed");
     }
     const passes = samples.filter((v) => v === "passed").length;
@@ -651,19 +969,25 @@ export function buildRun({
       ? "unmeasured"
       : passes === samples.length
         ? "passed"
-        : passes === 0 ? "failed" : "flaky";
+        : passes === 0
+          ? "failed"
+          : "flaky";
 
     const finalSamples = samples;
     const finalPasses = passes;
 
     /* A required evaluation that failed fails the conversation, and is the
        cause the row names — "failed a required evaluation · Policy adherence". */
-    const requiredById = new Set(evals.filter((ev) => ev.required).map((ev) => ev.id));
+    const requiredById = new Set(
+      evals.filter((ev) => ev.required).map((ev) => ev.id),
+    );
     /* Under the sub-goal rule a required evaluation is the cause only when
        it is what failed the conversation — a missed critical sub-goal is the
        agent's failure, named by the sub-goal. */
     const requiredMiss = subGoalsDecide
-      ? (requiredHit && !unmeasured && verdict !== "passed" ? requiredHit : null)
+      ? requiredHit && !unmeasured && verdict !== "passed"
+        ? requiredHit
+        : null
       : requiredEvals && !unmeasured && verdict !== "passed"
         ? evalResults.find((e) => !e.passed && requiredById.has(e.id))
         : null;
@@ -688,19 +1012,29 @@ export function buildRun({
       }
     }
     if (cutOff) verdict = "failed";
-    const keptSamples = cutOff ? finalSamples.map(() => "failed") : finalSamples;
+    const keptSamples = cutOff
+      ? finalSamples.map(() => "failed")
+      : finalSamples;
     const keptPasses = cutOff ? 0 : finalPasses;
     /* What failed it, under the sub-goal rule — read by the sub-goal results
        so a required evaluation's failure doesn't invent a missed sub-goal. */
-    const failedBy = !subGoalsDecide || unmeasured || verdict === "passed" ? null
-      : cutOff ? "turn-limit"
-        : requiredMiss && !failed && !injected?.failed ? "required-evaluation"
-          : "sub-goal";
+    const failedBy =
+      !subGoalsDecide || unmeasured || verdict === "passed"
+        ? null
+        : cutOff
+          ? "turn-limit"
+          : requiredMiss && !failed && !injected?.failed
+            ? "required-evaluation"
+            : "sub-goal";
     /* Cost and response times are recorded when the agent's side reports
        them. A missing number is unverified — never read as a pass or as $0. */
-    const reported = outcomes && !unmeasured
-      ? { cost: hashSeed(`${seed}:${sc.id}:cost`) % 9 !== 0, response: hashSeed(`${seed}:${sc.id}:response`) % 11 !== 0 }
-      : null;
+    const reported =
+      outcomes && !unmeasured
+        ? {
+            cost: hashSeed(`${seed}:${sc.id}:cost`) % 9 !== 0,
+            response: hashSeed(`${seed}:${sc.id}:response`) % 11 !== 0,
+          }
+        : null;
 
     return {
       id: sc.id,
@@ -720,7 +1054,13 @@ export function buildRun({
       critical: sc.critical,
       /* Why it's marked critical, as it stood when the run started. v7 has
          no blocker scenarios — the reason is information only. */
-      blockerReason: (blockerReason(sc) || null)?.replace(/(was )?an? release blocker/gi, (m, was) => `${was || ""}critical`).replace(/release blocker/gi, "critical scenario") || null,
+      blockerReason:
+        (blockerReason(sc) || null)
+          ?.replace(
+            /(was )?an? release blocker/gi,
+            (m, was) => `${was || ""}critical`,
+          )
+          .replace(/release blocker/gi, "critical scenario") || null,
       /* Carry the scenario's use-case sentence through so downstream
          grouping in the traces table matches the labels the env
          creation Scenarios tab shows. Without this a task falls back
@@ -741,7 +1081,9 @@ export function buildRun({
       ...(cutOff && { turnLimit: cutOff }),
       /* What the fault dial did to this episode: each injected fault, and
          whether the agent recovered, escalated or lost the scenario to it. */
-      ...(injected?.hits.length ? { toolFaults: injected.hits, faultFailed: !!injected.failed } : {}),
+      ...(injected?.hits.length
+        ? { toolFaults: injected.hits, faultFailed: !!injected.failed }
+        : {}),
       measured: !unmeasured,
       samples: unmeasured ? [] : keptSamples,
       repeats: unmeasured ? 0 : keptSamples.length,
@@ -752,7 +1094,12 @@ export function buildRun({
       passShare: unmeasured ? null : keptPasses / keptSamples.length,
       ...(retried && { retried }),
       ...(pulled && { pulled }),
-      ...(requiredMiss && { requiredFail: { id: requiredMiss.id, name: requiredMiss.name || requiredMiss.id } }),
+      ...(requiredMiss && {
+        requiredFail: {
+          id: requiredMiss.id,
+          name: requiredMiss.name || requiredMiss.id,
+        },
+      }),
       evalResults,
       durationMs: steps.reduce((a, s) => a + s.duration, 0),
       cost: Math.round((0.02 + r() * 0.14) * 1000) / 1000,
@@ -762,11 +1109,23 @@ export function buildRun({
         /* The agent's side didn't report a cost: there is no number to show
            or sum — never a made-up one. */
         ...(!reported.cost && { cost: null }),
-        responseMs: reported.response ? 280 + (hashSeed(`${sc.id}:response-ms`) % 320) : null,
+        responseMs: reported.response
+          ? 280 + (hashSeed(`${sc.id}:response-ms`) % 320)
+          : null,
       }),
     };
   });
 
+  /* A voice call lasts minutes, not the seconds its playback takes: every
+     duration a reader sees is the real call length, the one that's billed. */
+  if (stage === "voice") {
+    tasks.forEach((t) => {
+      /* Latency is the agent's responsiveness, not the call's length —
+         Analytics keeps reading what it always did. */
+      if (t.latencyMs == null) t.latencyMs = t.durationMs;
+      t.durationMs = Math.round(callMinutesOf(t) * 60000);
+    });
+  }
   return { tasks, stage, concurrency, repeats };
 }
 
@@ -779,10 +1138,21 @@ export function buildRun({
 */
 const retryKindOf = (f) => {
   if (f.simulator) return "test-invalid";
-  if (f.grading) return /no evaluations|no ground truth|not enough evidence|coverage skipped/i.test(f.grading) ? null : "test-invalid";
+  if (f.grading)
+    return /no evaluations|no ground truth|not enough evidence|coverage skipped/i.test(
+      f.grading,
+    )
+      ? null
+      : "test-invalid";
   if (f.environment) {
     if (!f.toolGap && /quarantin/i.test(f.environment)) return null;
-    if (!f.toolGap && /never passed its readiness|no longer stages|could not be staged/i.test(f.environment)) return "test-invalid";
+    if (
+      !f.toolGap &&
+      /never passed its readiness|no longer stages|could not be staged/i.test(
+        f.environment,
+      )
+    )
+      return "test-invalid";
     return "error";
   }
   if (f.transport) return "error";
@@ -796,7 +1166,12 @@ const retryKindOf = (f) => {
   conversations at once where parallel runs are on. Voice runs in real time,
   so a voice run quotes how long it will take before it starts.
 */
-export const RUN_LIMITS = { minRepeats: 1, maxRepeats: 20, maxConversations: 200, maxParallel: 4 };
+export const RUN_LIMITS = {
+  minRepeats: 1,
+  maxRepeats: 20,
+  maxConversations: 200,
+  maxParallel: 4,
+};
 
 /* Minutes one simulated call takes — the same 2.4 the metering estimate uses. */
 const VOICE_CALL_MIN = 2.4;
@@ -818,7 +1193,9 @@ export const durationLabel = (min) => {
 export const parallelOf = (envState) => {
   if (envState?.parallelRuns === false) return 1;
   const saved = Math.round(Number(envState?.runDefaults?.conversationsAtOnce));
-  return Number.isFinite(saved) && saved >= 2 ? Math.min(RUN_LIMITS.maxParallel, saved) : RUN_LIMITS.maxParallel;
+  return Number.isFinite(saved) && saved >= 2
+    ? Math.min(RUN_LIMITS.maxParallel, saved)
+    : RUN_LIMITS.maxParallel;
 };
 
 /* ── turn limit (pinned `turnLimits`) ────────────────────────────────────── */
@@ -839,26 +1216,38 @@ export const turnsOf = (steps = []) => steps.filter(isTurn).length;
  * the environment's limit.
  */
 export const turnLimitOf = (sc, stage, envLimit = DEFAULT_TURN_LIMIT) => {
-  const own = Number(sc?.maxTurns) || (stage === "voice" ? Number(sc?.turns) : 0);
+  const own =
+    Number(sc?.maxTurns) || (stage === "voice" ? Number(sc?.turns) : 0);
   return Math.max(1, Math.round(own || Number(envLimit) || DEFAULT_TURN_LIMIT));
 };
 
 /** The environment's limit, as Settings saved it. */
 export const envTurnLimitOf = (envState) => {
   const v = Math.round(Number(envState?.runDefaults?.turnLimit));
-  return Number.isFinite(v) && v >= TURN_LIMIT_RANGE.min ? Math.min(TURN_LIMIT_RANGE.max, v) : DEFAULT_TURN_LIMIT;
+  return Number.isFinite(v) && v >= TURN_LIMIT_RANGE.min
+    ? Math.min(TURN_LIMIT_RANGE.max, v)
+    : DEFAULT_TURN_LIMIT;
 };
 
 /** "Hit the turn limit (12)" — the cause a cut-off conversation fails with. */
-export const turnLimitLine = (cut) => (cut ? `Hit the turn limit (${cut.limit})` : null);
+export const turnLimitLine = (cut) =>
+  cut ? `Hit the turn limit (${cut.limit})` : null;
 
 /**
  * The size a run would be, and whether it fits.
  * { conversations, repeats, over, reason, fit: { scenarios, repeats } | null,
  *   parallel, voice: { serial, parallel, line } | null }
  */
-export const runSizeOf = ({ scenarios = 0, repeats = 3, surface = null, parallel = RUN_LIMITS.maxParallel } = {}) => {
-  const k = Math.min(RUN_LIMITS.maxRepeats, Math.max(RUN_LIMITS.minRepeats, Math.floor(Number(repeats) || 3)));
+export const runSizeOf = ({
+  scenarios = 0,
+  repeats = 3,
+  surface = null,
+  parallel = RUN_LIMITS.maxParallel,
+} = {}) => {
+  const k = Math.min(
+    RUN_LIMITS.maxRepeats,
+    Math.max(RUN_LIMITS.minRepeats, Math.floor(Number(repeats) || 3)),
+  );
   const conversations = scenarios * k;
   const cap = RUN_LIMITS.maxConversations;
   const over = conversations > cap;
@@ -869,27 +1258,34 @@ export const runSizeOf = ({ scenarios = 0, repeats = 3, surface = null, parallel
     ? `${plural(scenarios, "scenario")} × ${plural(k, "repeat")} = ${conversations} conversations — over the ${cap} limit; run ${plural(fitScenarios, "scenario")}${fitRepeats >= 1 ? ` or ${plural(fitRepeats, "repeat")}` : ""}`
     : null;
   const shown = Math.min(conversations, cap);
-  const voice = ["voice", "multi"].includes(surface) && shown
-    ? (() => {
-      const serial = shown * VOICE_CALL_MIN;
-      /* Rounded up to 5 minutes — calls in a batch don't end together. */
-      const atOnce = Math.ceil((serial / parallel) / 5) * 5;
-      return {
-        serial,
-        parallel: atOnce,
-        line: parallel > 1
-          ? `≈ ${durationLabel(serial)} at 1 call at a time · ≈ ${durationLabel(atOnce)} at ${parallel}`
-          : `≈ ${durationLabel(serial)} at 1 call at a time`,
-      };
-    })()
-    : null;
+  const voice =
+    ["voice", "multi"].includes(surface) && shown
+      ? (() => {
+          const serial = shown * VOICE_CALL_MIN;
+          /* Rounded up to 5 minutes — calls in a batch don't end together. */
+          const atOnce = Math.ceil(serial / parallel / 5) * 5;
+          return {
+            serial,
+            parallel: atOnce,
+            line:
+              parallel > 1
+                ? `≈ ${durationLabel(serial)} at 1 call at a time · ≈ ${durationLabel(atOnce)} at ${parallel}`
+                : `≈ ${durationLabel(serial)} at 1 call at a time`,
+          };
+        })()
+      : null;
   return {
     conversations,
     repeats: k,
     cap,
     over,
     reason,
-    fit: over ? { scenarios: fitScenarios, repeats: fitRepeats >= 1 ? fitRepeats : null } : null,
+    fit: over
+      ? {
+          scenarios: fitScenarios,
+          repeats: fitRepeats >= 1 ? fitRepeats : null,
+        }
+      : null,
     parallel,
     voice,
   };
@@ -899,9 +1295,17 @@ export const runSizeOf = ({ scenarios = 0, repeats = 3, surface = null, parallel
 
 const unit = (str) => hashSeed(str) / 4294967296;
 
-const hasFaults = (toolFaults) => !!toolFaults && Object.values(toolFaults).some((f) => f && (
-  f.timeoutPct || f.errorPct || f.rateLimitPct || f.malformedPct || f.latencyMs
-));
+const hasFaults = (toolFaults) =>
+  !!toolFaults &&
+  Object.values(toolFaults).some(
+    (f) =>
+      f &&
+      (f.timeoutPct ||
+        f.errorPct ||
+        f.rateLimitPct ||
+        f.malformedPct ||
+        f.latencyMs),
+  );
 
 /*
   What the agent does when a call goes wrong, per kind. Retries and backoff
@@ -910,13 +1314,35 @@ const hasFaults = (toolFaults) => !!toolFaults && Object.values(toolFaults).some
   if the call had worked.
 */
 const RECOVERY = {
-  timeout: [["retried", 0.55], ["escalated", 0.15], ["failed", 0.3]],
-  error: [["retried", 0.5], ["escalated", 0.2], ["failed", 0.3]],
-  rate_limited: [["retried", 0.7], ["failed", 0.3]],
-  malformed: [["retried", 0.4], ["failed", 0.6]],
-  slow: [["waited", 0.85], ["failed", 0.15]],
+  timeout: [
+    ["retried", 0.55],
+    ["escalated", 0.15],
+    ["failed", 0.3],
+  ],
+  error: [
+    ["retried", 0.5],
+    ["escalated", 0.2],
+    ["failed", 0.3],
+  ],
+  rate_limited: [
+    ["retried", 0.7],
+    ["failed", 0.3],
+  ],
+  malformed: [
+    ["retried", 0.4],
+    ["failed", 0.6],
+  ],
+  slow: [
+    ["waited", 0.85],
+    ["failed", 0.15],
+  ],
 };
-const FAIL_SHARE = Object.fromEntries(Object.entries(RECOVERY).map(([k, rows]) => [k, rows.find(([o]) => o === "failed")?.[1] || 0]));
+const FAIL_SHARE = Object.fromEntries(
+  Object.entries(RECOVERY).map(([k, rows]) => [
+    k,
+    rows.find(([o]) => o === "failed")?.[1] || 0,
+  ]),
+);
 
 const KIND_LABEL = {
   timeout: "timed out",
@@ -929,7 +1355,12 @@ const KIND_LABEL = {
 /** Which fault, if any, one call draws — by its share of the profile. */
 const drawKind = (f, u) => {
   let cum = 0;
-  const order = [["timeout", f.timeoutPct], ["error", f.errorPct], ["rate_limited", f.rateLimitPct], ["malformed", f.malformedPct]];
+  const order = [
+    ["timeout", f.timeoutPct],
+    ["error", f.errorPct],
+    ["rate_limited", f.rateLimitPct],
+    ["malformed", f.malformedPct],
+  ];
   for (let i = 0; i < order.length; i += 1) {
     cum += Number(order[i][1] || 0) / 100;
     if (u < cum) return order[i][0];
@@ -940,10 +1371,18 @@ const drawKind = (f, u) => {
 const faultNote = (name, kind, outcome, stage, wrote) => {
   const what = `${name} ${KIND_LABEL[kind]}`;
   const party = stage === "voice" ? "the caller" : "the user";
-  if (outcome === "retried") return kind === "rate_limited" ? `${what}; the agent backed off and retried, and the call went through.` : kind === "malformed" ? `${what}; the agent asked again and got a usable answer.` : `${what}; the agent retried and the call went through.`;
-  if (outcome === "escalated") return `${what}; the agent handed ${party} to a person instead of guessing.`;
-  if (outcome === "waited") return `${what}; the agent held ${party} and carried on.`;
-  if (kind === "malformed") return `${what}; the agent read it as valid and acted on bad data.`;
+  if (outcome === "retried")
+    return kind === "rate_limited"
+      ? `${what}; the agent backed off and retried, and the call went through.`
+      : kind === "malformed"
+        ? `${what}; the agent asked again and got a usable answer.`
+        : `${what}; the agent retried and the call went through.`;
+  if (outcome === "escalated")
+    return `${what}; the agent handed ${party} to a person instead of guessing.`;
+  if (outcome === "waited")
+    return `${what}; the agent held ${party} and carried on.`;
+  if (kind === "malformed")
+    return `${what}; the agent read it as valid and acted on bad data.`;
   if (kind === "slow") return `${what}; ${party} gave up before it came back.`;
   return wrote
     ? `${what}; the agent didn't retry and told ${party} it was done anyway.`
@@ -964,18 +1403,31 @@ function injectToolFaults({ seed, sc, callLog, toolFaults, stage }) {
     const f = toolFaults[c.name];
     if (!f) return;
     const key = `${seed}:${sc.id}:${c.id}`;
-    const extra = f.latencyMs ? Math.round(Number(f.latencyMs) * (0.5 + unit(`${key}:lat`))) : 0;
+    const extra = f.latencyMs
+      ? Math.round(Number(f.latencyMs) * (0.5 + unit(`${key}:lat`)))
+      : 0;
     if (extra) c.ms += extra;
-    const kind = drawKind(f, unit(`${key}:fault`)) || (extra >= 1000 ? "slow" : null);
+    const kind =
+      drawKind(f, unit(`${key}:fault`)) || (extra >= 1000 ? "slow" : null);
     if (!kind) return;
     const v = unit(`${key}:outcome`);
     let cum = 0;
-    const outcome = (RECOVERY[kind].find(([, p]) => { cum += p; return v < cum; }) || RECOVERY[kind][RECOVERY[kind].length - 1])[0];
+    const outcome = (RECOVERY[kind].find(([, p]) => {
+      cum += p;
+      return v < cum;
+    }) || RECOVERY[kind][RECOVERY[kind].length - 1])[0];
     const note = faultNote(c.name, kind, outcome, stage, c.wrote);
     c.status = kind;
     c.fault = { kind, outcome, note };
     if (outcome === "retried") c.retries = 1;
-    hits.push({ callId: c.id, tool: c.name, kind, outcome, note, ...(extra && { latencyMs: extra }) });
+    hits.push({
+      callId: c.id,
+      tool: c.name,
+      kind,
+      outcome,
+      note,
+      ...(extra && { latencyMs: extra }),
+    });
     if (outcome === "failed" && !failed) failed = note;
   });
   return { hits, failed };
@@ -986,11 +1438,13 @@ function sampleFaultFails({ seed, sc, k, callLog, toolFaults }) {
   return callLog.calls.some((c) => {
     const f = toolFaults[c.name];
     if (!f) return false;
-    const pFail = (Number(f.timeoutPct || 0) * FAIL_SHARE.timeout
-      + Number(f.errorPct || 0) * FAIL_SHARE.error
-      + Number(f.rateLimitPct || 0) * FAIL_SHARE.rate_limited
-      + Number(f.malformedPct || 0) * FAIL_SHARE.malformed) / 100
-      + (Number(f.latencyMs || 0) >= 1000 ? 0.5 * FAIL_SHARE.slow : 0);
+    const pFail =
+      (Number(f.timeoutPct || 0) * FAIL_SHARE.timeout +
+        Number(f.errorPct || 0) * FAIL_SHARE.error +
+        Number(f.rateLimitPct || 0) * FAIL_SHARE.rate_limited +
+        Number(f.malformedPct || 0) * FAIL_SHARE.malformed) /
+        100 +
+      (Number(f.latencyMs || 0) >= 1000 ? 0.5 * FAIL_SHARE.slow : 0);
     return unit(`${seed}:${sc.id}:${c.id}:k${k}`) < pFail;
   });
 }
@@ -998,8 +1452,16 @@ function sampleFaultFails({ seed, sc, k, callLog, toolFaults }) {
 /* The scenario was lost to a fault: the goal grader carries it. */
 function faultFailEvals(evalResults, note) {
   if (!evalResults.length) return;
-  const i = Math.max(0, evalResults.findIndex((e) => e.id === "task_success"));
-  evalResults[i] = { ...evalResults[i], score: 0.32, passed: false, reason: `Lost to an injected fault: ${note}` };
+  const i = Math.max(
+    0,
+    evalResults.findIndex((e) => e.id === "task_success"),
+  );
+  evalResults[i] = {
+    ...evalResults[i],
+    score: 0.32,
+    passed: false,
+    reason: `Lost to an injected fault: ${note}`,
+  };
 }
 
 function culpritReason(evalId, sc) {
@@ -1017,12 +1479,52 @@ function culpritReason(evalId, sc) {
 
 /** Provisioning steps shown while the environment boots, per surface. */
 export const BOOT_STEPS = {
-  voice: ["Allocating media servers", "Reserving test numbers", "Warming TTS voices", "Dialling the agent"],
-  chat: ["Spinning up session pool", "Opening webhook channel", "Priming conversation state", "Sending handshake"],
-  browser: ["Provisioning sandbox VMs", "Restoring seeded database", "Launching Chromium", "Attaching screen recorder"],
-  tools: ["Publishing tool manifest", "Restoring seeded database", "Opening MCP channel", "Awaiting agent connect"],
-  terminal: ["Building container image", "Cloning seed repositories", "Installing dependencies", "Attaching to pty"],
-  email: ["Provisioning mailboxes", "Seeding claim threads", "Starting SMTP relay", "Awaiting first poll"],
-  sim: ["Starting physics engine", "Loading scene assets", "Warming the renderer", "Sending first observation"],
-  multi: ["Allocating media servers", "Provisioning mailboxes", "Linking channel state", "Awaiting first contact"],
+  voice: [
+    "Allocating media servers",
+    "Reserving test numbers",
+    "Warming TTS voices",
+    "Dialling the agent",
+  ],
+  chat: [
+    "Spinning up session pool",
+    "Opening webhook channel",
+    "Priming conversation state",
+    "Sending handshake",
+  ],
+  browser: [
+    "Provisioning sandbox VMs",
+    "Restoring seeded database",
+    "Launching Chromium",
+    "Attaching screen recorder",
+  ],
+  tools: [
+    "Publishing tool manifest",
+    "Restoring seeded database",
+    "Opening MCP channel",
+    "Awaiting agent connect",
+  ],
+  terminal: [
+    "Building container image",
+    "Cloning seed repositories",
+    "Installing dependencies",
+    "Attaching to pty",
+  ],
+  email: [
+    "Provisioning mailboxes",
+    "Seeding claim threads",
+    "Starting SMTP relay",
+    "Awaiting first poll",
+  ],
+  sim: [
+    "Starting physics engine",
+    "Loading scene assets",
+    "Warming the renderer",
+    "Sending first observation",
+  ],
+  multi: [
+    "Allocating media servers",
+    "Provisioning mailboxes",
+    "Linking channel state",
+    "Awaiting first contact",
+  ],
 };

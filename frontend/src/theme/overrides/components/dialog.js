@@ -21,8 +21,8 @@ export function dialog(theme) {
       styleOverrides: {
         root: {
           padding: theme.spacing(2, 2.5, 1),
-          fontSize: 16,
-          lineHeight: "24px",
+          fontSize: 15,
+          lineHeight: "22px",
           fontWeight: 600,
         },
       },
@@ -31,8 +31,8 @@ export function dialog(theme) {
       styleOverrides: {
         root: {
           padding: theme.spacing(1, 2.5),
-          fontSize: 14,
-          lineHeight: "22px",
+          fontSize: 13,
+          lineHeight: "20px",
         },
         dividers: {
           borderTop: 0,

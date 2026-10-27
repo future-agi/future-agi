@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { creditsText } from "./runsTableFormat";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
@@ -8,6 +7,14 @@ import { StatusDot, ScorePill } from "../components/primitives";
 import { traceOf, spanTree, fmtMs } from "../_mock/runTrace";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
+import CostStrip from "./CostStrip";
+import { resolveEval } from "../_mock/evals";
+import { judgeCreditsOf, judgesOf, usageOfTask } from "../_mock/pricing";
+
+/* The agent's own model spend, billed to the customer's key — dollars, never
+   Future AGI credits. */
+const keyUsd = (usd) => (usd == null ? "—" : `≈ $${Number(usd).toFixed(2)}`);
+const fmtN = (n) => Math.round(n).toLocaleString();
 
 /**
  * The trace of one scenario, as a waterfall (Story 11 — AC-11.3, 11.7, 11.9,
@@ -44,8 +51,25 @@ const barColor = (s, theme) => {
   );
 };
 
-export default function TraceWaterfall({ task, env, envState, focusSpanId }) {
+export default function TraceWaterfall({
+  task,
+  env,
+  envState,
+  focusSpanId,
+  showCost,
+}) {
   const theme = useTheme();
+  /* What this scenario's calls used — the same rules as the run's Cost tab. */
+  const usage = useMemo(() => {
+    const evals = (envState?.evals || []).map(resolveEval).filter(Boolean);
+    return usageOfTask(task, {
+      voice: ["voice", "multi"].includes(env?.surface),
+      judgeCredits: judgeCreditsOf(evals),
+      judges: judgesOf(evals),
+      repeats: task?.samples?.length || 1,
+    });
+  }, [task, env, envState]);
+  const perCall = usage.samples ? usage.credits / usage.samples : 0;
   const trace = useMemo(
     () => traceOf(task, env, envState),
     [task, env, envState],
@@ -113,6 +137,8 @@ export default function TraceWaterfall({ task, env, envState, focusSpanId }) {
 
   return (
     <Stack sx={{ minHeight: 0 }}>
+      {/* ── opened from the Cost tab: what this scenario's calls cost ── */}
+      {showCost && <CostStrip task={task} env={env} envState={envState} />}
       {/* ── summary ── */}
       <Stack
         direction="row"
@@ -128,7 +154,7 @@ export default function TraceWaterfall({ task, env, envState, focusSpanId }) {
         }}
       >
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {`${trace.spans.length} spans · ${fmtMs(trace.total)}`}
+          {`${trace.spans.length} spans · ${fmtMs(trace.total)}${usage.charged ? ` · ${fmtN(perCall)} credits` : " · not charged"}`}
         </Typography>
         <Typography
           sx={{
@@ -137,7 +163,7 @@ export default function TraceWaterfall({ task, env, envState, focusSpanId }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {`${llm.length} LLM · ${tools.length} tool · ${tokens.toLocaleString()} tokens · ${creditsText(cost)} · ${trace.model}`}
+          {`${llm.length} LLM · ${tools.length} tool · ${tokens.toLocaleString()} tokens · your model ${keyUsd(cost)} on your key · ${trace.model}`}
         </Typography>
         <Box flex={1} />
         {offending && (
@@ -404,6 +430,7 @@ export default function TraceWaterfall({ task, env, envState, focusSpanId }) {
 }
 
 TraceWaterfall.propTypes = {
+  showCost: PropTypes.bool,
   task: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,
@@ -425,7 +452,8 @@ function SpanDetail({ span, parent }) {
         "Tokens",
         `${span.tokens.toLocaleString()} (${(span.inputTokens || 0).toLocaleString()} in · ${(span.tokens - (span.inputTokens || 0)).toLocaleString()} out)`,
       ]);
-    if (span.cost != null) rows.push(["Cost", creditsText(span.cost)]);
+    if (span.cost != null)
+      rows.push(["Model cost", `${keyUsd(span.cost)} · billed to your key`]);
     if (span.input) rows.push(["Input", span.input]);
     if (span.output) rows.push(["Output", span.output]);
   }
@@ -583,7 +611,15 @@ SpanDetail.propTypes = { span: PropTypes.object, parent: PropTypes.object };
  * The trace on its own, in a drawer — how a voice run (whose call drawer is
  * Observe's) opens a scenario at its offending span from the Insights tab.
  */
-export function TraceSheet({ task, env, envState, onClose, onPrev, onNext }) {
+export function TraceSheet({
+  task,
+  env,
+  envState,
+  onClose,
+  onPrev,
+  onNext,
+  showCost,
+}) {
   if (!task) return null;
   return (
     <Stack sx={{ height: "100%" }}>
@@ -638,12 +674,14 @@ export function TraceSheet({ task, env, envState, onClose, onPrev, onNext }) {
           task={task}
           env={env}
           envState={envState}
+          showCost={showCost}
         />
       </Box>
     </Stack>
   );
 }
 TraceSheet.propTypes = {
+  showCost: PropTypes.bool,
   task: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,

@@ -54,7 +54,9 @@ import {
   settlePending,
   reproduceStepsOf,
   reproduceMsOf,
+  improvementSpendParts,
 } from "../../_mock/optimizationRuns";
+import CostPartsTable from "../../improvements/CostPartsTable";
 import { proofKindOf, fixDepthOf } from "../../_mock/rsiModel";
 import {
   membersChanged,
@@ -1008,6 +1010,27 @@ export default function OptimizationRunView({
                   ],
                 ]}
               />
+              {/* What it spent, part by part — linked to the exact job and
+                  the versions it ran on; a partial stop keeps what it found. */}
+              <Box sx={{ mt: 2 }}>
+                <CostPartsTable
+                  parts={improvementSpendParts(record, env?.surface, {
+                    attempts: attemptsNow,
+                  })}
+                  totalLabel="Spent"
+                  note={[
+                    `${record.name || "This improvement"} · from agent ${record.baseAgentVersion || record.agentVersion || "—"}${record.compat?.envVersion ? ` on environment ${record.compat.envVersion}` : ""}`,
+                    record.stoppedAtBudget
+                      ? "stopped at its budget — the best it found is kept"
+                      : statusOf(record) === OPT_STATUS.RUNNING
+                        ? "still running — more may be used, up to its budget"
+                        : null,
+                    "each part charged once",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
+              </Box>
               {/* A fix also answers for the issue it was started for. */}
               {/* The smallest change that verifies was kept over a deeper one. */}
               {result.shallower && winner && (

@@ -53,8 +53,8 @@ import {
   newViewId,
 } from "../_mock/compareView";
 import { withPairs, bridgeOf, priceOf, priceLine } from "../_mock/pairs";
-import { creditsLabel, creditsForUsd } from "../_mock/metering";
 import { useEnvState, useSimStore } from "../store";
+import { runCreditsOf } from "../_mock/usageLedger";
 import {
   SectionCard,
   EmptyState,
@@ -449,7 +449,10 @@ export default function CompareRuns() {
         agentVersion: r.agentVersion,
         passRate: r.passRate,
         tokens: r.tokens,
-        credits: creditsForUsd(r.cost || 0),
+        /* What the run was charged, as its Cost tab — kept in the export — and
+           the agent's own model, on the customer's key, in dollars. */
+        credits: runCreditsOf(env, envState)[r.id] ?? null,
+        modelUsd: Number((r.cost || 0).toFixed(4)),
         costUnverified: r.costUnverified || 0,
       })),
       scenarios: rows.map((row) => ({
@@ -1317,7 +1320,7 @@ function TableView({
     view.columns.latency && "Latency",
     view.columns.duration && "Duration",
     view.columns.tokens && "Tokens",
-    view.columns.cost && "Cost",
+    view.columns.cost && "Model cost",
   ].filter(Boolean);
   const metricColWidth = metricBits.length
     ? metricBits.length * 76 + (metricBits.length - 1) * 10
@@ -1655,7 +1658,7 @@ function TableView({
                             ? "—"
                             : c.costUnverified
                               ? "unverified"
-                              : creditsLabel(c.cost || 0),
+                              : `≈ $${(c.cost || 0).toFixed(2)}`,
                       },
                     ].filter(Boolean);
                     return row.cells.map((c) => (

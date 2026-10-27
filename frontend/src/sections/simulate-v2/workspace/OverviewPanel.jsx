@@ -228,17 +228,12 @@ export default function OverviewPanel({
                   width: "1px",
                   bgcolor: "divider",
                   alignSelf: "stretch",
-                  mx: 2,
+                  mx: 1.5,
                 }}
               />
             }
             sx={{
-              my: 2,
-              py: 1.25,
-              px: 2,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
+              my: 1.5,
               rowGap: 1,
             }}
           >
@@ -350,10 +345,11 @@ export default function OverviewPanel({
               >
                 <Grid item xs={12} md={7}>
                   <SectionCard
+                    dense
                     title="Use cases"
                     subtitle="What it is actually for"
                   >
-                    <Stack sx={{ p: 2.5 }} spacing={1}>
+                    <Stack sx={{ p: 1.5 }} spacing={1}>
                       {useCases.map((u) => (
                         <Stack
                           key={u}
@@ -385,10 +381,11 @@ export default function OverviewPanel({
                 <Grid item xs={12} md={5}>
                   {!buildMode && (
                     <SectionCard
+                      dense
                       title="Amendments"
                       subtitle="Changed after reading, each with its reason"
                     >
-                      <Stack sx={{ p: 2.5 }} spacing={1.25}>
+                      <Stack sx={{ p: 1.5 }} spacing={1.25}>
                         {contract.amendments.map((a) => (
                           <Box
                             key={a.subject}
@@ -448,6 +445,7 @@ export default function OverviewPanel({
                 >
                   <Grid item xs={12} md={7}>
                     <SectionCard
+                      dense
                       title="Seeded data"
                       subtitle={seedBlurb(totalRows)}
                     >
@@ -513,6 +511,7 @@ export default function OverviewPanel({
 
                   <Grid item xs={12} md={5}>
                     <SectionCard
+                      dense
                       title="What it depends on"
                       subtitle="Built and torn down with the environment"
                     >
@@ -669,72 +668,54 @@ function StateSummary({ env, envState, onGo }) {
     },
   ];
 
+  /* One quiet line of counts, each opening its tab — not four boxes. */
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const words = {
+    scenarios: "scenario",
+    evals: "evaluation",
+    runs: "run",
+    rules: "rule",
+  };
   return (
-    <Box sx={{ mb: 3 }}>
-      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-        {tiles.map((t) => (
+    <Stack
+      direction="row"
+      alignItems="center"
+      flexWrap="wrap"
+      sx={{ mb: 2.5, typography: "s2", color: "text.tertiary" }}
+    >
+      {tiles.map((t, i) => (
+        <Box key={t.id} component="span" sx={{ display: "inline-flex" }}>
+          {i > 0 && (
+            <Box component="span" sx={{ mx: 1, color: "text.disabled" }}>
+              ·
+            </Box>
+          )}
           <Box
-            key={t.id}
-            {...clickable(t.disabled ? undefined : () => onGo?.(t.to))}
+            component="span"
+            {...clickable(t.disabled ? undefined : () => onGo?.(t.to), {
+              role: "link",
+            })}
             sx={{
               ...focusRing,
-              flex: 1,
-              minWidth: 0,
-              p: 1.75,
-              borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.paper",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
               cursor: t.disabled ? "default" : "pointer",
-              transition: "border-color .12s ease, background-color .12s ease",
               "&:hover": t.disabled
                 ? {}
-                : {
-                    borderColor: "text.disabled",
-                    bgcolor: "action.hover",
-                  },
+                : { color: "text.primary", textDecoration: "underline" },
             }}
           >
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Iconify
-                icon={t.icon}
-                width={14}
-                sx={{ color: "text.tertiary" }}
-              />
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  letterSpacing: 0.4,
-                  flex: 1,
-                }}
-              >
-                {t.label}
-              </Typography>
-              {!t.disabled && (
-                <Iconify
-                  icon="solar:alt-arrow-right-linear"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-              )}
-            </Stack>
-            <Typography
-              sx={{
-                typography: "h6",
-                fontWeight: 600,
-                mt: 0.5,
-                fontVariantNumeric: "tabular-nums",
-              }}
+            <Box
+              component="span"
+              sx={{ color: "text.primary", fontWeight: 500 }}
             >
               {t.value}
-            </Typography>
+            </Box>
+            {` ${plural(t.value, words[t.id]).replace(/^\d+ /, "")}`}
           </Box>
-        ))}
-      </Stack>
-    </Box>
+        </Box>
+      ))}
+    </Stack>
   );
 }
 StateSummary.propTypes = {
@@ -748,11 +729,10 @@ function GroupHeading({ children }) {
     <Typography
       sx={{
         typography: "s3",
-        fontWeight: 600,
-        color: "text.primary",
+        fontWeight: 500,
+        color: "text.secondary",
         textTransform: "none",
-        letterSpacing: 0.5,
-        mb: 1.25,
+        mb: 1,
       }}
     >
       {children}
@@ -771,7 +751,7 @@ function Fact({ label, value, color }) {
         noWrap
         sx={{
           typography: "s2",
-          fontWeight: 600,
+          fontWeight: 500,
           color: color || "text.primary",
         }}
       >
@@ -1474,6 +1454,7 @@ function TwinBackedSections({ env, envState, onGo }) {
         {/* ── services list ── */}
         <Grid item xs={12} md={7}>
           <SectionCard
+            dense
             title="Sandboxed apps"
             subtitle={`${services.length} sandbox${services.length === 1 ? "" : "es"} provisioned for this environment`}
           >
@@ -1521,10 +1502,11 @@ function TwinBackedSections({ env, envState, onGo }) {
         {/* ── connected agent ── */}
         <Grid item xs={12} md={5}>
           <SectionCard
+            dense
             title="Connected agent"
             subtitle="Where the sandbox calls your agent"
           >
-            <Stack sx={{ p: 2.5 }} spacing={1.25}>
+            <Stack sx={{ p: 1.5 }} spacing={1.25}>
               {/* Connected = a real agent from Agents, named; its endpoint
                   only when it has one (a SaaS-sandbox agent doesn't). */}
               <Stack direction="row" alignItems="center" spacing={1}>
@@ -1590,10 +1572,11 @@ function TwinBackedSections({ env, envState, onGo }) {
         {/* ── seed prompt + resolved shape ── */}
         <Grid item xs={12} md={7}>
           <SectionCard
+            dense
             title="Seed prompt"
             subtitle="Natural-language description of what the sandbox starts with each run"
           >
-            <Box sx={{ p: 2.5 }}>
+            <Box sx={{ p: 1.5 }}>
               {backing?.seedPrompt ? (
                 <Typography
                   sx={{
@@ -1620,6 +1603,7 @@ function TwinBackedSections({ env, envState, onGo }) {
         {/* ── resolved shape per service ── */}
         <Grid item xs={12} md={5}>
           <SectionCard
+            dense
             title="Resolves to"
             subtitle="Concrete state per service after seeding"
           >
@@ -1670,6 +1654,7 @@ function TwinBackedSections({ env, envState, onGo }) {
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12}>
           <SectionCard
+            dense
             title="End-state graders"
             subtitle="Sandbox evals inspect what actually landed after each run — not just whether a tool was called"
             action={
@@ -2114,6 +2099,7 @@ function NextStepsChecklist({ env, envState, onGo }) {
 
   return (
     <SectionCard
+      dense
       title="Next steps"
       subtitle={`${doneCount} of ${steps.length} complete — ${steps.length - doneCount} left to run your first simulation`}
       sx={{ mb: 3 }}
@@ -2220,7 +2206,7 @@ NextStepsChecklist.propTypes = {
    all chips right-align to their widest peer instead of floating
    wherever a tool name happens to end. */
 const MAP_GRID = "minmax(0, 1fr) min-content 24px minmax(0, 1fr)";
-const MAP_PX = 3;
+const MAP_PX = 2;
 
 function SourceToSandboxMap({ env, envState, progress }) {
   /*
@@ -2328,13 +2314,13 @@ function SourceToSandboxMap({ env, envState, progress }) {
       <Box
         sx={{
           px: MAP_PX,
-          py: 2,
+          py: 1.25,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
       >
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {streaming ? "Writing the contract" : "How the world was built"}
           </Typography>
           {streaming && (
@@ -2347,7 +2333,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
         </Stack>
         <Typography
           sx={{
-            typography: "s2",
+            typography: "s3",
             color: "text.tertiary",
             mt: 0.25,
             maxWidth: 720,
@@ -2367,10 +2353,9 @@ function SourceToSandboxMap({ env, envState, progress }) {
           columnGap: 2,
           alignItems: "center",
           px: MAP_PX,
-          py: 1.25,
+          py: 0.75,
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: "background.neutral",
         }}
       >
         <ColHead>Read from source</ColHead>
@@ -2438,7 +2423,6 @@ function SourceToSandboxMap({ env, envState, progress }) {
                   : r.origin
             }
             target={ruleTarget(r.subject, r.origin, connectOnly)}
-            mono
           />
         ))}
       </MapGroup>
@@ -2542,9 +2526,8 @@ function ColHead({ children }) {
     <Typography
       sx={{
         typography: "s3",
-        fontWeight: 600,
+        fontWeight: 500,
         textTransform: "none",
-        letterSpacing: 0.6,
         color: "text.tertiary",
       }}
     >
@@ -2601,8 +2584,8 @@ function MapGroup({ label, hint, right, children, first }) {
           columnGap: 2,
           alignItems: "baseline",
           px: MAP_PX,
-          pt: first ? 2 : 2.25,
-          pb: 1,
+          pt: first ? 1.25 : 1.5,
+          pb: 0.5,
           borderTop: first ? "none" : "1px solid",
           borderColor: "divider",
         }}
@@ -2613,7 +2596,7 @@ function MapGroup({ label, hint, right, children, first }) {
           spacing={1}
           sx={{ minWidth: 0 }}
         >
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {label}
           </Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -2623,14 +2606,13 @@ function MapGroup({ label, hint, right, children, first }) {
         <Typography
           sx={{
             typography: "s3",
-            fontWeight: 600,
             color: "text.tertiary",
           }}
         >
           {right}
         </Typography>
       </Box>
-      <Box sx={{ pb: 1 }}>{children}</Box>
+      <Box sx={{ pb: 0.5 }}>{children}</Box>
     </Box>
   );
 }
@@ -2652,7 +2634,7 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
           gridTemplateColumns: MAP_GRID,
           columnGap: 2.5,
           alignItems: "center",
-          minHeight: 40,
+          minHeight: 32,
           pl: MAP_PX,
           pr: MAP_PX,
         }}
@@ -2661,10 +2643,10 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
           <Typography
             noWrap
             sx={{
-              // Row title: 13px/500 (mono for code identifiers), never bold.
-              fontSize: 13,
-              lineHeight: "20px",
-              fontWeight: 500,
+              // Row title: 12px regular (mono for code identifiers), never bold.
+              fontSize: 12,
+              lineHeight: "18px",
+              fontWeight: 400,
               fontFamily: mono ? "ui-monospace, Menlo, monospace" : undefined,
               color: derived ? "text.tertiary" : "text.primary",
             }}

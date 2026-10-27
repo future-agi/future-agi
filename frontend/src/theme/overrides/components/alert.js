@@ -34,8 +34,8 @@ export function alert(theme) {
       },
       [`& .${alertClasses.message}`]: {
         padding: 0,
-        fontSize: 13,
-        lineHeight: "20px",
+        fontSize: 12,
+        lineHeight: "18px",
         fontWeight: 400,
       },
       [`& .${alertClasses.action}`]: {
@@ -59,8 +59,8 @@ export function alert(theme) {
         root: {
           marginTop: 0,
           marginBottom: 2,
-          fontSize: 13,
-          lineHeight: "20px",
+          fontSize: 12,
+          lineHeight: "18px",
           fontWeight: 600,
         },
       },

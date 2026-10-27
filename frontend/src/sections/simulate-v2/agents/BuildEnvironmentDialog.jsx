@@ -22,6 +22,7 @@ import {
 import { DEFAULT_RUNTIME } from "../_mock/envConfig";
 import { PARALLEL_MAX, RUN_DEFAULTS } from "../_mock/rsiModel";
 import { buildCreditsCheck } from "../_mock/metering";
+import useCreditBalance from "../usage/useCreditBalance";
 import ConnectPreflight from "./connect/ConnectPreflight";
 import { credentialCheck, factCheck, usePreflight } from "./connect/preflight";
 
@@ -107,6 +108,7 @@ export default function BuildEnvironmentDialog({
   channel = null,
   defaultParallel = null,
 }) {
+  const creditBalance = useCreditBalance();
   const [name, setName] = useState("");
   const envs = useOptionalSimStore()?.state?.myEnvironments || [];
   const [version, setVersion] = useState(defaultVersion);
@@ -132,7 +134,7 @@ export default function BuildEnvironmentDialog({
   /* How many run at once is a run setting (the environment's Settings), not a build choice — the build starts from the default, and preflight checks it's admitted. */
   const worlds = startWorlds;
   /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
-  const credits = countOk ? buildCreditsCheck(count) : null;
+  const credits = countOk ? buildCreditsCheck(count, creditBalance) : null;
   const preflight = usePreflight(buildChecks(agent, worlds), [
     open,
     version,
@@ -291,13 +293,14 @@ export default function BuildEnvironmentDialog({
             }}
           >
             {countOk
-              ? `Any number from ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+              ? `Any number from ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()} · writing ${count} ≈ ${(credits?.need || 0).toLocaleString()} credits, once`
               : `Pick ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`}
           </Typography>
         </Stack>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           The environment tests this version first. You can add scenarios and
-          switch versions afterwards.
+          switch versions afterwards. Running them is priced separately, in the
+          run plan.
         </Typography>
         {/* Out of credits for this many: said before the build, with the most that fits. */}
         {credits && !credits.ok && (

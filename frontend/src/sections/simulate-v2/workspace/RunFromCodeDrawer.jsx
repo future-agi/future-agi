@@ -17,6 +17,37 @@ import { pythonTrain, serveCmd, INSTALL_CMD } from "../environments/fromCode";
 import SideDrawer from "../components/SideDrawer";
 import LocalSteps from "../environments/LocalSteps";
 import { CopyField } from "../components/primitives";
+import {
+  RATE_PLAN,
+  WORKSPACE_POLICY,
+  estimateTrainingPlan,
+  fmtCredits,
+  rangeLabel,
+  usdRange,
+} from "../_mock/pricing";
+
+/* What `--dry-run` prints: the run plan's scope, estimate and limit, in the
+   same units and rates — nothing runs. */
+const dryRunOutput = (e, budget, repeats) => {
+  const unit = e.voice ? "calls" : "trials";
+  const ext = e.external[0];
+  return [
+    `Scope     ${e.trials / repeats / e.versionCount} scenarios × ${repeats} attempts${e.versionCount > 1 ? ` × ${e.versionCount} versions` : ""} = ${e.trials} ${unit}`,
+    ...e.lines.map(
+      (l) =>
+        `  ${l.label.padEnd(30)}${l.status === "priced" ? rangeLabel(l.low, l.high) : l.status === "unpriced" ? "no price set" : l.status === "informational" ? "measured, not billed" : "included"}`,
+    ),
+    `Estimate  ≈ ${rangeLabel(e.platform.low, e.platform.high, e.platform.unknown)}`,
+    ext
+      ? `External  ${ext.label}: ${ext.low == null ? "unknown" : usdRange(ext.low, ext.high)} · ${ext.detail.toLowerCase()}`
+      : null,
+    `Limit     ${fmtCredits(budget)} · up to ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)} per run`,
+    `Rates     ${e.rateLine}`,
+    e.blocked.length ? `Held      ${e.blocked[0].title}` : "Nothing ran.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
 
 /*
   Run from code — the same run the Run simulation button starts, from the
@@ -44,6 +75,7 @@ Label.propTypes = { children: PropTypes.node };
 const TABS = [
   { id: "cli", label: "CLI" },
   { id: "python", label: "Python" },
+  { id: "node", label: "Node" },
   { id: "ci", label: "CI" },
   { id: "mcp", label: "Your agent (MCP)" },
   { id: "train", label: "Train (RL)" },
@@ -62,6 +94,14 @@ export default function RunFromCodeDrawer({
   managedIn = "console",
   repo,
   onPulled,
+  /* The run's spending limit in credits — the run plan's default for this
+     scope; code runs take the same limit. */
+  budget = 1000,
+  /* The run plan's estimate for this scope (estimateRunPlan) — what
+     --dry-run prints, so the two read the same. */
+  estimate = null,
+  /* The environment's evals, resolved — the held-out evaluation's judges. */
+  trainEvals = [],
 }) {
   const [tab, setTab] = useState("cli");
   const id = env?.id || "env_…";
@@ -74,15 +114,31 @@ export default function RunFromCodeDrawer({
       cmd: INSTALL_CMD,
     },
     {
+      title: "Preview the cost",
+      body: "The same scope, estimate and limit check as the run plan — nothing runs.",
+      cmd: `fai sim run ${id} ${flags} --budget ${budget} --dry-run`,
+      after: estimate && (
+        <Box sx={{ mt: 1 }}>
+          <CodeBlock code={dryRunOutput(estimate, budget, repeats)} />
+        </Box>
+      ),
+    },
+    {
       title: "Run this environment",
-      body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}.`,
+      body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}. No new calls start past --budget. It prints the run's ID and its link here.`,
       hint: "--scenarios picks a subset; --agent-url tests a local build.",
-      cmd: `fai sim run ${id} ${flags}`,
+      cmd: `RUN_ID=$(fai sim run ${id} ${flags} --budget ${budget} --print-id)`,
     },
     {
       title: "Read the results",
-      body: "Pass rate, the failing scenarios and why, with a link to the run here.",
-      cmd: "fai sim results --latest --failures",
+      body: "Pass rate, the failing scenarios and why, with a link to the run here — the same run, by its ID.",
+      cmd: "fai sim results --run $RUN_ID --failures",
+    },
+    {
+      title: "Check what it cost",
+      body: "The run's itemized credits, free-tier adjustment and what's pending on your own accounts — the same lines as its Cost tab.",
+      hint: `usage show --group-by agent compares versions; admins set limits with usage budget set. A --budget over your admin's ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)} per run is refused here too.`,
+      cmd: "fai usage show --run $RUN_ID",
     },
   ];
 
@@ -90,7 +146,10 @@ export default function RunFromCodeDrawer({
 
 env = Environment.get("${id}")
 
-run = env.run(repeats=${repeats}, parallel=${parallel})
+plan = env.run(repeats=${repeats}, budget=${budget}, dry_run=True)
+print(plan.trials, plan.estimate)     # same estimate as the run plan
+
+run = env.run(repeats=${repeats}, parallel=${parallel}, budget=${budget})
 for result in run.stream():          # each conversation as it ends
     print(result.scenario.slug, result.passed, result.score)
 
@@ -106,6 +165,39 @@ def my_agent(input: AgentInput) -> AgentResponse:
 
 run = env.run(agent=my_agent, repeats=${repeats})`;
 
+  /* The training plan's dry run — rollouts and held-out evaluation priced
+     like a run, the trainer's own cost said as unknown, the budget applied. */
+  const trainPlan = (() => {
+    const budgetCredits = Math.min(5000, WORKSPACE_POLICY.maxRunCredits);
+    const p = estimateTrainingPlan({
+      env,
+      episodes: 1000,
+      heldOut: 100,
+      evals: trainEvals,
+      budget: budgetCredits,
+    });
+    const line = (x) =>
+      `  ${x.label.padEnd(22)}${x.credits == null ? "unknown" : `${Math.round(x.credits).toLocaleString()} credits`}   ${x.detail}`;
+    return [
+      ...p.parts.map(line),
+      `Estimate  ≈ ${Math.round(p.total).toLocaleString()} credits + training (unknown)`,
+      `Budget    ${budgetCredits.toLocaleString()} credits${p.episodesInBudget < 1000 ? ` — covers about ${p.episodesInBudget.toLocaleString()} of 1,000 episodes; the rest won't start, and the rollouts done are kept` : ""}`,
+      `Rates     ${RATE_PLAN.name} · ${RATE_PLAN.version} · 1 credit = $${RATE_PLAN.creditUsd.toFixed(2)}`,
+      "Nothing ran.",
+    ].join("\n");
+  })();
+
+  const node = `import { Environment } from "@futureagi/simulate";
+
+const env = await Environment.get("${id}");
+
+const plan = await env.run({ repeats: ${repeats}, budget: ${budget}, dryRun: true });
+console.log(plan.trials, plan.estimate);  // same estimate as the run plan
+
+const run = await env.run({ repeats: ${repeats}, parallel: ${parallel}, budget: ${budget} });
+const summary = await run.wait();         // pass rate, failures, credits used
+console.log(summary.passRate, summary.usage.credits, run.url);`;
+
   const ci = `# .github/workflows/simulate.yml
 name: Simulate
 on: [pull_request]
@@ -115,7 +207,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pip install futureagi
-      - run: fai sim run ${id} ${flags} --fail-under 0.9
+      # CI needs a limit: a run without one fails before it starts.
+      - run: fai sim run ${id} ${flags} --budget ${budget} --fail-under 0.9
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}`;
 
@@ -255,6 +348,13 @@ jobs:
               </Stack>
             )}
 
+            {tab === "node" && (
+              <Box>
+                <Label>Preview, run and read what it cost</Label>
+                <CodeBlock code={node} />
+              </Box>
+            )}
+
             {tab === "ci" && (
               <Box>
                 <Label>Block a pull request when the pass rate drops</Label>
@@ -268,7 +368,9 @@ jobs:
                   }}
                 >
                   The run shows up here with its commit and pull request.
-                  --fail-under exits 1 below the pass rate you set.
+                  --fail-under exits 1 below the pass rate you set. Without
+                  --budget, or with one over your admin&apos;s per-run limit,
+                  the job fails before anything runs.
                 </Typography>
               </Box>
             )}
@@ -279,6 +381,12 @@ jobs:
                   <Label>Drive episodes from your training loop</Label>
                   <CodeBlock code={pythonTrain(id)} />
                 </Box>
+                {trainPlan && (
+                  <Box>
+                    <Label>What plan.estimate prints</Label>
+                    <CodeBlock code={trainPlan} />
+                  </Box>
+                )}
                 <Box>
                   <Label>Or serve copies to a trainer on another machine</Label>
                   <CodeBlock code={serveCmd(id)} />
@@ -331,6 +439,9 @@ jobs:
 }
 
 RunFromCodeDrawer.propTypes = {
+  budget: PropTypes.number,
+  estimate: PropTypes.object,
+  trainEvals: PropTypes.array,
   batchAt: PropTypes.number,
   open: PropTypes.bool,
   onClose: PropTypes.func,

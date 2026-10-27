@@ -18,27 +18,85 @@ const EMPTY = [];
  * of them — a half-working pause is worse than none.
  */
 export default function useRunPlayer({
-  seed, scenarios, stage, evals, tools = [], agentTools = null, failRate, concurrency = 4, repeats = 3, phrasing = 0,
+  seed,
+  scenarios,
+  stage,
+  evals,
+  tools = [],
+  agentTools = null,
+  failRate,
+  concurrency = 4,
+  repeats = 3,
+  phrasing = 0,
   /* The run's cast and world — without them no actor ever joined a live run,
      and the live verdicts could differ from the same run read back later. */
-  actors = EMPTY, envVersion = null, toolFaults = null,
+  actors = EMPTY,
+  envVersion = null,
+  toolFaults = null,
   /* Which generation of admission gates judges this run — pinned, so a
      finished run isn't re-judged by gates added later. */
   admissionGates = 3,
   /* The updated RSI PRD's run rules the run pinned (0: none — see runInputs). */
-  outcomes = 0, requiredEvals = 0,
+  outcomes = 0,
+  requiredEvals = 0,
   /* Sub-goals deciding and the turn limit, as the run pinned them (0: none). */
-  gradingRule = 0, turnLimits = 0, turnLimit = undefined,
+  gradingRule = 0,
+  turnLimits = 0,
+  turnLimit = undefined,
   /* Outdated / Re-check scenarios as the run started ({ id: state }) — they
      run, but count toward no decision. */
   staleIds = null,
   /* Whether this run may stop a scenario on a clarifying question (AC-15.13).
      Only a live run ever asks; one read back from history never plays. */
   clarify = true,
+  /* The run plan's spending limit: { cap, alertAt, creditsOf(task, {high}) }.
+     No limit: nothing is held back. */
+  budget = null,
 }) {
   const run = useMemo(
-    () => buildRun({ seed, scenarios, stage, evals, tools, agentTools, failRate, concurrency, repeats, phrasing, actors, envVersion, toolFaults, admissionGates, outcomes, requiredEvals, gradingRule, turnLimits, ...(turnLimit != null && { turnLimit }) }),
-    [seed, scenarios, stage, evals, tools, agentTools, failRate, concurrency, repeats, phrasing, actors, envVersion, toolFaults, admissionGates, outcomes, requiredEvals, gradingRule, turnLimits, turnLimit],
+    () =>
+      buildRun({
+        seed,
+        scenarios,
+        stage,
+        evals,
+        tools,
+        agentTools,
+        failRate,
+        concurrency,
+        repeats,
+        phrasing,
+        actors,
+        envVersion,
+        toolFaults,
+        admissionGates,
+        outcomes,
+        requiredEvals,
+        gradingRule,
+        turnLimits,
+        ...(turnLimit != null && { turnLimit }),
+      }),
+    [
+      seed,
+      scenarios,
+      stage,
+      evals,
+      tools,
+      agentTools,
+      failRate,
+      concurrency,
+      repeats,
+      phrasing,
+      actors,
+      envVersion,
+      toolFaults,
+      admissionGates,
+      outcomes,
+      requiredEvals,
+      gradingRule,
+      turnLimits,
+      turnLimit,
+    ],
   );
 
   const [phase, setPhase] = useState("booting"); // booting | running | done
@@ -54,7 +112,12 @@ export default function useRunPlayer({
   const [now, setNow] = useState(() => Date.now());
   const [speed, setSpeed] = useState(1);
   const [tasks, setTasks] = useState(() =>
-    run.tasks.map((t) => ({ ...t, status: "queued", stepIndex: -1, evalIndex: -1 })),
+    run.tasks.map((t) => ({
+      ...t,
+      status: "queued",
+      stepIndex: -1,
+      evalIndex: -1,
+    })),
   );
   const [focusId, setFocusId] = useState(run.tasks[0]?.id || null);
   const [elapsed, setElapsed] = useState(0);
@@ -66,12 +129,49 @@ export default function useRunPlayer({
     (or the run is stopped).
   */
   const plan = useMemo(
-    () => (clarify ? clarifyPlanOf({ seed, tasks: run.tasks, concurrency }) : null),
+    () =>
+      clarify ? clarifyPlanOf({ seed, tasks: run.tasks, concurrency }) : null,
     [clarify, seed, run, concurrency],
   );
   const [blocked, setBlocked] = useState(null);
   const [clarifications, setClarifications] = useState([]);
   const holdRef = useRef(false);
+  /*
+    The spending limit. Credits are counted when a scenario finishes; a
+    running one holds the most it can use. A scenario starts only if what's
+    used plus what's running plus its own most stays under the limit — at the
+    limit no new scenarios start, and the ones running finish.
+  */
+  const budgetRef = useRef(budget);
+  /* The latest budget each render — what's known about the agent (its
+     voice platform) can arrive after the first render. The limit itself
+     lives in capRef, so a later render never resets a lowered limit. */
+  if (budget) budgetRef.current = budget;
+  const capRef = useRef(budget?.cap || null);
+  /* Calls admitted so far — what a provider's own limit counts. */
+  const admittedRef = useRef(0);
+  const spentRef = useRef(0);
+  const inflightRef = useRef(new Map());
+  const skippedRef = useRef(new Set());
+  const stopRef = useRef(null);
+  const alertedRef = useRef(false);
+  const [spend, setSpend] = useState({
+    used: 0,
+    running: 0,
+    cap: budget?.cap || null,
+    reached: null,
+    alert: false,
+  });
+  const syncSpend = (patch = {}) =>
+    setSpend((s) => ({
+      ...s,
+      used: Math.round(spentRef.current),
+      running: Math.round(
+        [...inflightRef.current.values()].reduce((a, b) => a + b, 0),
+      ),
+      cap: capRef.current,
+      ...patch,
+    }));
   const doneWaitingRef = useRef(false);
   const resumeRef = useRef(null);
   const driveRef = useRef(null);
@@ -90,7 +190,28 @@ export default function useRunPlayer({
 
   // Reset whenever the underlying run changes.
   useEffect(() => {
-    setTasks(run.tasks.map((t) => ({ ...t, status: "queued", stepIndex: -1, evalIndex: -1 })));
+    spentRef.current = 0;
+    admittedRef.current = 0;
+    inflightRef.current = new Map();
+    skippedRef.current = new Set();
+    stopRef.current = null;
+    alertedRef.current = false;
+    capRef.current = budgetRef.current?.cap || null;
+    setSpend({
+      used: 0,
+      running: 0,
+      cap: capRef.current,
+      reached: null,
+      alert: false,
+    });
+    setTasks(
+      run.tasks.map((t) => ({
+        ...t,
+        status: "queued",
+        stepIndex: -1,
+        evalIndex: -1,
+      })),
+    );
     setPhase("booting");
     setElapsed(0);
     setFocusId(run.tasks[0]?.id || null);
@@ -121,12 +242,54 @@ export default function useRunPlayer({
    */
   const driveTask = useCallback(
     (task, startDelay, { from = 0, blockAt = null } = {}) => {
+      /* A scenario the limit kept from starting plays nothing further. */
       const push = (fn, ms) => {
-        timers.current.push(setTimeout(fn, ms));
+        timers.current.push(
+          setTimeout(() => {
+            if (skippedRef.current.has(task.id)) return;
+            fn();
+          }, ms),
+        );
       };
       let t = startDelay;
 
-      if (from === 0) push(() => patchTask(task.id, { status: "running", stepIndex: 0 }), t);
+      if (from === 0)
+        push(() => {
+          const b = budgetRef.current;
+          if (b && capRef.current) {
+            const most = b.creditsOf(task, { high: true });
+            const running = [...inflightRef.current.values()].reduce(
+              (a, v) => a + v,
+              0,
+            );
+            /* The run's limit, or the month's credits left if that's lower
+               — low account credit holds queued work the same way. */
+            /* A voice platform's own limit (the customer's Vapi or Retell
+               account) stops new calls the same way, measured in calls. */
+            const providerFull =
+              b.providerCalls != null && admittedRef.current >= b.providerCalls;
+            const ceiling = Math.min(capRef.current, b.accountLeft ?? Infinity);
+            if (
+              stopRef.current ||
+              providerFull ||
+              spentRef.current + running + most > ceiling
+            ) {
+              if (!stopRef.current)
+                stopRef.current = providerFull
+                  ? "provider"
+                  : ceiling < capRef.current
+                    ? "credits"
+                    : "limit";
+              holdQueued();
+              syncSpend({ reached: stopRef.current });
+              return;
+            }
+            admittedRef.current += 1;
+            inflightRef.current.set(task.id, most);
+            syncSpend();
+          }
+          patchTask(task.id, { status: "running", stepIndex: 0 });
+        }, t);
 
       for (let i = from; i < task.steps.length; i += 1) {
         const at = i;
@@ -139,7 +302,8 @@ export default function useRunPlayer({
         if (blockAt != null && at === blockAt) {
           push(() => {
             holdRef.current = true;
-            resumeRef.current = () => driveRef.current?.(task, 0, { from: at + 1 });
+            resumeRef.current = () =>
+              driveRef.current?.(task, 0, { from: at + 1 });
             patchTask(task.id, { blocked: true });
             setBlocked({ ...plan, askedAt: Date.now() });
           }, t + 1);
@@ -156,10 +320,29 @@ export default function useRunPlayer({
       });
 
       t += 300 / speed;
-      push(
-        () => patchTask(task.id, { status: task.verdict, evalIndex: task.evalResults.length }),
-        t,
-      );
+      push(() => {
+        patchTask(task.id, {
+          status: task.verdict,
+          evalIndex: task.evalResults.length,
+        });
+        const b = budgetRef.current;
+        if (!b || !inflightRef.current.has(task.id)) return;
+        inflightRef.current.delete(task.id);
+        spentRef.current += b.creditsOf({ ...task, status: task.verdict });
+        const running = [...inflightRef.current.values()].reduce(
+          (a, v) => a + v,
+          0,
+        );
+        const alert =
+          !alertedRef.current &&
+          capRef.current &&
+          b.alertAt &&
+          spentRef.current + running >= b.alertAt * capRef.current;
+        if (alert) alertedRef.current = true;
+        syncSpend(alert ? { alert: true } : {});
+        /* Held at the limit, the run ends when the last running scenario does. */
+        if (stopRef.current && inflightRef.current.size === 0) settleAtLimit();
+      }, t);
 
       /* A resumed task was the last thing holding the run open. */
       if (from > 0) {
@@ -174,6 +357,8 @@ export default function useRunPlayer({
 
       return t;
     },
+    // settleAtLimit only reads refs and setters; it's declared below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [patchTask, speed, plan],
   );
   driveRef.current = driveTask;
@@ -187,28 +372,89 @@ export default function useRunPlayer({
     run.tasks.forEach((task) => {
       const lane = task.worker;
       const startAt = (lanes[lane] || 0) + Math.random() * 200;
-      lanes[lane] = driveTask(task, startAt, { blockAt: plan?.taskId === task.id ? plan.step : null });
+      lanes[lane] = driveTask(task, startAt, {
+        blockAt: plan?.taskId === task.id ? plan.step : null,
+      });
     });
 
     const total = Math.max(...Object.values(lanes), 1000);
-    timers.current.push(setTimeout(() => {
-      /* Still waiting on an answer: finish when that scenario does. */
-      if (holdRef.current) doneWaitingRef.current = true;
-      else setPhase("done");
-    }, total + 500));
+    timers.current.push(
+      setTimeout(() => {
+        /* Still waiting on an answer: finish when that scenario does. */
+        if (holdRef.current) doneWaitingRef.current = true;
+        else setPhase("done");
+      }, total + 500),
+    );
   }, [run.tasks, driveTask, plan]);
 
   /* Answer the open question; the held scenario picks up from the next turn. */
-  const answer = useCallback((text) => {
-    if (!blocked) return;
-    const entry = { taskId: blocked.taskId, question: blocked.question, answer: text, at: new Date().toISOString() };
-    setClarifications((c) => [...c, entry]);
-    patchTask(blocked.taskId, { blocked: false, clarified: entry });
-    setBlocked(null);
-    const resume = resumeRef.current;
-    resumeRef.current = null;
-    resume?.();
-  }, [blocked, patchTask]);
+  const answer = useCallback(
+    (text) => {
+      if (!blocked) return;
+      const entry = {
+        taskId: blocked.taskId,
+        question: blocked.question,
+        answer: text,
+        at: new Date().toISOString(),
+      };
+      setClarifications((c) => [...c, entry]);
+      patchTask(blocked.taskId, { blocked: false, clarified: entry });
+      setBlocked(null);
+      const resume = resumeRef.current;
+      resumeRef.current = null;
+      resume?.();
+    },
+    [blocked, patchTask],
+  );
+
+  /* Once the limit is reached nothing waiting will start — said at once, not
+     one scenario at a time as each one's turn comes up. */
+  function holdQueued() {
+    setTasks((ts) =>
+      ts.map((t) => {
+        if (t.status !== "queued") return t;
+        skippedRef.current.add(t.id);
+        return { ...t, status: "notStarted" };
+      }),
+    );
+    setLastEventAt(Date.now());
+  }
+  /* Every scenario still waiting is marked as never started, and the run ends. */
+  const settleAtLimit = () => {
+    clearTimers();
+    holdQueued();
+    syncSpend({ reached: stopRef.current || "limit" });
+    setLastEventAt(Date.now());
+    setPhase("done");
+  };
+
+  /* The warning's choices. Continue keeps going to the limit; a lower limit
+     cuts the rest; Stop lets the running scenarios finish and starts no more. */
+  const dismissAlert = useCallback(
+    () => setSpend((s) => ({ ...s, alert: false })),
+    [],
+  );
+  const setCap = useCallback((n) => {
+    capRef.current = n;
+    const running = [...inflightRef.current.values()].reduce(
+      (a, v) => a + v,
+      0,
+    );
+    if (spentRef.current + running >= n) {
+      stopRef.current = "limit";
+      holdQueued();
+    }
+    syncSpend({ alert: false, reached: stopRef.current || null });
+    if (stopRef.current && inflightRef.current.size === 0) settleAtLimit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const stopAtLimit = useCallback(() => {
+    stopRef.current = "stopped";
+    holdQueued();
+    syncSpend({ alert: false, reached: "stopped" });
+    if (inflightRef.current.size === 0) settleAtLimit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /*
     Stop, for the demo, means "the run is over": every scenario jumps to the
@@ -218,13 +464,18 @@ export default function useRunPlayer({
   const finishNow = useCallback(() => {
     clearTimers();
     clearHold();
-    setTasks((ts) => ts.map((t) => ({
-      ...t,
-      blocked: false,
-      status: t.verdict,
-      stepIndex: t.failStep != null ? Math.min(t.failStep, t.steps.length - 1) : t.steps.length - 1,
-      evalIndex: t.evalResults.length,
-    })));
+    setTasks((ts) =>
+      ts.map((t) => ({
+        ...t,
+        blocked: false,
+        status: t.status === "notStarted" ? t.status : t.verdict,
+        stepIndex:
+          t.failStep != null
+            ? Math.min(t.failStep, t.steps.length - 1)
+            : t.steps.length - 1,
+        evalIndex: t.evalResults.length,
+      })),
+    );
     setLastEventAt(Date.now());
     setPhase("done");
   }, []);
@@ -256,9 +507,17 @@ export default function useRunPlayer({
     const unmeasured = unmeasuredTasks.length;
     /* …by outcome: inconclusive, test invalid, error. */
     const notCounted = { inconclusive: 0, "test-invalid": 0, error: 0 };
-    unmeasuredTasks.forEach((t) => { const o = outcomeOfCause(causeOf(t)); if (o in notCounted) notCounted[o] += 1; });
-    const measured = done.filter((t) => t.status !== "unmeasured" && !t.pulled && !staleIds?.[t.id]);
-    const active = tasks.filter((t) => ["running", "grading"].includes(t.status)).length;
+    unmeasuredTasks.forEach((t) => {
+      const o = outcomeOfCause(causeOf(t));
+      if (o in notCounted) notCounted[o] += 1;
+    });
+    const measured = done.filter(
+      (t) => t.status !== "unmeasured" && !t.pulled && !staleIds?.[t.id],
+    );
+    const active = tasks.filter((t) =>
+      ["running", "grading"].includes(t.status),
+    ).length;
+    const notStarted = tasks.filter((t) => t.status === "notStarted").length;
     return {
       total: tasks.length,
       done: done.length,
@@ -273,33 +532,61 @@ export default function useRunPlayer({
       measured: measured.length,
       repeats: run.repeats || 1,
       active,
-      queued: tasks.length - done.length - active,
+      queued: tasks.length - done.length - active - notStarted,
+      notStarted,
       /* The mean pass proportion, so a scenario that passed two of three
          samples counts as two thirds rather than as a clean pass or a loss. */
       /* Over what was measurable, never over what was attempted. */
       passRate: measured.length
-        ? measured.reduce((a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)), 0) / measured.length
+        ? measured.reduce(
+            (a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)),
+            0,
+          ) / measured.length
         : 0,
-      progress: tasks.length ? (done.length / tasks.length) * 100 : 0,
+      progress: tasks.length
+        ? ((done.length + notStarted) / tasks.length) * 100
+        : 0,
       /* Cost the agent's side didn't report is unverified, not $0. */
-      cost: done.filter((t) => !t.costUnverified).reduce((a, t) => a + t.cost, 0),
-      costUnverified: done.filter((t) => t.costUnverified && t.status !== "unmeasured").length,
+      cost: done
+        .filter((t) => !t.costUnverified)
+        .reduce((a, t) => a + t.cost, 0),
+      costUnverified: done.filter(
+        (t) => t.costUnverified && t.status !== "unmeasured",
+      ).length,
       tokens: done.reduce((a, t) => a + t.tokens, 0),
     };
   }, [tasks, run.repeats, staleIds]);
 
   return {
-    phase, setPhase, start, finishNow,
-    tasks, focus, focusId, setFocusId,
-    stats, elapsed,
+    phase,
+    setPhase,
+    start,
+    finishNow,
+    tasks,
+    focus,
+    focusId,
+    setFocusId,
+    stats,
+    elapsed,
     /* Seconds since anything last changed, and whether that is long enough to
        stop calling it slow. */
     sinceLastEvent: Math.max(0, Math.round((now - lastEventAt) / 1000)),
     /* Waiting on a person is not a stall. */
     stalled: phase === "running" && !blocked && now - lastEventAt > 15000,
-    speed, setSpeed,
+    speed,
+    setSpeed,
     stage: run.stage,
     /* The open clarifying question, how to answer it, and what was answered. */
-    blocked, answer, clarifications,
+    blocked,
+    answer,
+    clarifications,
+    /* The spending limit: used, running, the limit, and why it stopped. */
+    spend,
+    dismissAlert,
+    setCap,
+    stopAtLimit,
+    notStartedIds: tasks
+      .filter((t) => t.status === "notStarted")
+      .map((t) => t.id),
   };
 }

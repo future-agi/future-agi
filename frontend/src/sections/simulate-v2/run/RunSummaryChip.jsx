@@ -16,7 +16,6 @@ import { paths } from "src/routes/paths";
 import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { CAUSE_ORDER } from "../_mock/runCauses";
 import { causeCountsLine } from "../_mock/runRollup";
-import { creditsLabel } from "../_mock/metering";
 
 const colHead = {
   typography: "s3",
@@ -553,11 +552,12 @@ export function RunSummaryBlock({
     summary.speed &&
       cell(
         "cost",
-        "Cost",
-        /* Credits over the costs the agent's side reported; unverified ones are never summed. */
+        "Model cost",
+        /* The agent's own model, billed to the customer's key — dollars, never
+           credits; unverified ones are never summed. */
         summary.speed.costUnverified && !(summary.speed.cost > 0)
           ? "unverified"
-          : `${creditsLabel(summary.speed.cost || 0)}${summary.speed.costUnverified ? ` + ${summary.speed.costUnverified} unverified` : ""}`,
+          : `≈ $${(summary.speed.cost || 0).toFixed(2)} on your key${summary.speed.costUnverified ? ` + ${summary.speed.costUnverified} unverified` : ""}`,
         summary.speed.responseMs != null
           ? `Median response ${fmtMs(summary.speed.responseMs)}`
           : "Response time unverified",

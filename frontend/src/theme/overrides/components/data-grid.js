@@ -18,10 +18,10 @@ export function dataGrid(theme) {
         root: {
           borderRadius: 0,
           borderWidth: 0,
-          fontSize: 13,
+          fontSize: 12,
           color: theme.palette.text.secondary,
           "& .MuiDataGrid-columnHeaderTitle": {
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: 500,
             color: theme.palette.text.subtitle,
           },

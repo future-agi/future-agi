@@ -28,25 +28,25 @@ export function table(theme) {
     },
     MuiTableCell: {
       styleOverrides: {
-        // Design system table: no outer box, 13px cells in fg.secondary, a
-        // border.default line under every row; 32px header in 12px/500
+        // Design system table: no outer box, 12px cells in fg.secondary in 32px
+        // rows, a border.default line under every row; 32px header in 11px/500
         // fg.tertiary with no fill.
         root: {
-          fontSize: 13,
-          lineHeight: "20px",
+          fontSize: 12,
+          lineHeight: "18px",
           color: theme.palette.text.secondary,
           borderBottom: `1px solid ${theme.palette.border.default}`,
-          paddingTop: 8,
-          paddingBottom: 8,
+          paddingTop: 7,
+          paddingBottom: 7,
           paddingLeft: 12,
           paddingRight: 12,
         },
         sizeSmall: {
-          paddingTop: 6,
-          paddingBottom: 6,
+          paddingTop: 5,
+          paddingBottom: 5,
         },
         head: {
-          fontSize: 12,
+          fontSize: 11,
           lineHeight: "16px",
           height: 32,
           paddingTop: 0,
@@ -72,7 +72,7 @@ export function table(theme) {
         toolbar: {
           minHeight: 44,
           height: 44,
-          fontSize: 12,
+          fontSize: 11,
           color: theme.palette.text.subtitle,
         },
         actions: {

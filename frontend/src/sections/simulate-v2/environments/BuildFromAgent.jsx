@@ -26,6 +26,7 @@ import {
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
 import { buildCreditsCheck } from "../_mock/metering";
+import useCreditBalance from "../usage/useCreditBalance";
 import { Upload } from "src/components/upload";
 import { formatFileSize } from "src/utils/utils";
 import { paths } from "src/routes/paths";
@@ -127,6 +128,7 @@ function sizeToCount(pool, count) {
 }
 
 export default function BuildFromAgent() {
+  const creditBalance = useCreditBalance();
   const navigate = useNavigate();
   const location = useLocation();
   const { state: storeState, dispatch } = useSimStore();
@@ -533,7 +535,8 @@ export default function BuildFromAgent() {
     /* Writing scenarios spends AI credits. Past what's left the job stops
        before it writes any, and says so — a retry with fewer can work. */
     const requested = Number(source?.scenarioCount) || draftCount || 0;
-    const credits = id === "scenarios" ? buildCreditsCheck(requested) : null;
+    const credits =
+      id === "scenarios" ? buildCreditsCheck(requested, creditBalance) : null;
     if (credits && !credits.ok) {
       setRunning(true);
       setChips([]);
@@ -1240,7 +1243,7 @@ export default function BuildFromAgent() {
   /* Said before the build gets there: this many scenarios is more than the credits left cover. */
   const creditsAhead =
     building && !done.includes("scenarios")
-      ? buildCreditsCheck(Number(source?.scenarioCount) || 0)
+      ? buildCreditsCheck(Number(source?.scenarioCount) || 0, creditBalance)
       : null;
 
   const goBack = () => {

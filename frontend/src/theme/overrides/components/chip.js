@@ -83,7 +83,7 @@ export function chip(theme) {
 
     return [
       {
-        fontSize: 12,
+        fontSize: 11,
         lineHeight: "16px",
         fontWeight: 500,
         borderRadius: 4,

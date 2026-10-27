@@ -90,6 +90,8 @@ export default function CallDrawer({
   task,
   env,
   envState,
+  /* Opened from the Cost tab: the trace leads with what the calls cost. */
+  showCost = false,
   focus,
   focusEvalName,
   initialPane,
@@ -548,7 +550,12 @@ export default function CallDrawer({
 
             {/* Session → turns → LLM, tool and guard spans on one time axis. */}
             {pane === "trace" && (
-              <TraceWaterfall task={task} env={env} envState={envState} />
+              <TraceWaterfall
+                task={task}
+                env={env}
+                envState={envState}
+                showCost={showCost}
+              />
             )}
 
             {pane === "twin" && envState?.twinBacking && (
@@ -977,6 +984,7 @@ export default function CallDrawer({
 }
 
 CallDrawer.propTypes = {
+  showCost: PropTypes.bool,
   task: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,

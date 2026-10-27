@@ -26,7 +26,7 @@ import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { subGoalCatalogOf } from "../_mock/envModel";
 import { runReadiness } from "../_mock/setupGaps";
-import { protoRunId } from "../_mock/executionAdapter";
+import { runPlanHref } from "../_mock/runPlanLink";
 import { useSimStore } from "../store";
 import useRunFitCheck from "../run/useRunFitCheck";
 import DeleteEnvironmentDialog from "./DeleteEnvironmentDialog";
@@ -134,11 +134,7 @@ export default function MyEnvironmentsTable({
       return;
     }
     setRunTarget(env);
-    checkRunFit(() =>
-      navigate(
-        `${paths.dashboard.simulate.simulationRun(env.id, protoRunId(env.id, Date.now().toString(36)))}?trials=3`,
-      ),
-    );
+    checkRunFit(() => navigate(runPlanHref(env.id, { trials: 3 })));
   };
   const deleteEnv = (env) => {
     dispatch({ type: "removeEnvironment", envId: env.id });

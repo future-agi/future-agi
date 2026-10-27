@@ -17,7 +17,7 @@ const CRED_SLOT = "vault://acme/sim/agent_test_credentials";
  * which tools must never run for real, and the test credentials to use
  * (pasted or by secret-manager reference — never production secrets).
  * Saving writes it all to the agent record; until then a newly connected
- * code agent can't run.
+ * code agent runs sealed on what we read, but not live.
  */
 export default function AgentFoundReview({ agent, onSave, onCancel }) {
   const found = foundValuesOf(agent);
