@@ -587,6 +587,76 @@ laptop-measured ones.
 
 ---
 
+## Host update assertion fallibility (opt-in CI tool)
+
+`scripts/host-update-fallibility.mjs` proves the existing **SET-E2E-002** assertions can fail.
+It does not add a flow, change its five `backendChecks`, boot a stack, or qualify the host updater's
+apply/rollback lifecycle. Authoring or unit-testing this driver is **not** a real fallibility proof.
+Only a retained `proof-report.json` with `qualified: true`, its real child reports, and the restored
+final green establish that proof.
+
+After the branch has been reviewed and pushed, a separately authorized operator can request it:
+
+```bash
+gh workflow run e2e-ci.yml --repo future-agi/future-agi --ref <reviewed-branch> \
+  -f stack=distributed -f host_update_fallibility=true
+```
+
+The boolean defaults to `false`. Enabling it with any other stack fails in `changes`, before
+builds. The workflow still runs the **unchanged normal suite first**; only a successful distributed
+manual dispatch can then run the proof. PR/push/schedule behavior, dispatch's default `standalone`,
+`bin/e2e`'s default distributed stack, permissions and push-only cache publication are unchanged.
+The driver itself refuses non-opted-in/non-dispatch/non-CI execution, another checkout, quarantine
+or live-provider overrides, and debug/extra-reporter overrides. It accepts only `--output-dir` with
+a new absolute directory outside the checkout and public status directory; there is no arbitrary
+command, spec, grep, retry or timeout passthrough.
+
+The sequence is serial: original green, **six mutants covering five checks**, exact-byte restoration,
+original green again. Every mutant starts from the same SHA256-pinned source, temporarily written
+at the original spec path so relative fixtures/contracts still resolve. All anchors are checked
+for uniqueness before edits. The spec's annotation, `@flow`, seeding, authentication, 240s timeout
+and ordinary `UI_READY=60s` remain unchanged.
+
+| Check | One-sided perturbation | Required failure evidence |
+| --- | --- | --- |
+| 1 | First API candidate expectation A → B; seed stays A | Expected minted B / received minted A at that assertion |
+| 2 | Only first available-version UI expected array A → B | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
+| 3 | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement |
+| 4 | Omit owned report deletion; keep `ownsStatus=true` | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file |
+| 5a | Only POST's expected status 405 → 200 | POST expected 200 / received 405 |
+| 5b | Anonymous GET's expected status 401 → 200 | Expected 200 / received 401, after unchanged method checks |
+
+Each child invokes the installed Playwright CLI on only the original file, with one worker,
+zero retries, one repetition, `--forbid-only`, the existing config and JSON-only reporting. It
+never replaces the config's quarantine filter. JSON, stdout/stderr, seed attachment, source copy,
+trace/screenshot attachments and a plain expected-failure summary live in distinct per-run
+subdirectories. The separately named `host-update-fallibility-distributed` artifact retains these
+and the machine-readable source/output hashes and runtime versions for seven days. It never writes
+expected mutant failures into the ordinary `playwright-report`, blob report or `test-results`.
+
+A child has a **360s deadline**. The eight-run sequence has a **20-minute aggregate cap**, not eight
+independent six-minute allowances: each launch gets the lesser of 360s and the remaining aggregate
+budget. At either deadline the process group receives TERM then KILL (5s + at most 2s grace), the
+proof stops unqualified, and source restoration/evidence writing run in `finally`. The CI step's
+22-minute limit leaves headroom for that cleanup; the existing job limit is unchanged. The driver
+handles SIGINT/SIGTERM the same way; SIGKILL or runner loss cannot execute JavaScript cleanup, so the
+private original backup is retained and no proof is valid without its restoration hash and final
+green. It refuses concurrent source edits rather than overwriting them.
+
+A nonzero child exit alone is **never** evidence. The parser requires precisely the original test,
+retry zero, matching flow annotation, seed A/B identities, the intended source assertion and step,
+concrete expected/received values, and no global, earlier-stage or teardown errors. Missing or
+malformed JSON, skips, flakes, retries, launch/connection/step/test deadlines, an absent page, and
+failure at any other assertion all stop the sequence. The script only inspects the public status
+slot: it never removes an existing report, flow lock or temporary, and never clears state after a
+crash to force a later pass. Only the original flow owns report cleanup.
+
+Offline validation (no Docker or browser) is included in `yarn selftest` through
+`scripts/host-update-fallibility.test.mjs`. Unit test doubles are explicitly labelled and can never
+produce `qualified: true`; real CI proof still must be run and reviewed separately.
+
+---
+
 ## Troubleshooting
 
 **The first boot takes forever.** It does: about 8–9 minutes cold, of which roughly 6.5 are the
