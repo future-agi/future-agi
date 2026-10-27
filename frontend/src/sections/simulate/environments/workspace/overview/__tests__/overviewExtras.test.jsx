@@ -106,20 +106,21 @@ describe("Overview extras wired into OverviewPanel", () => {
     scenarios: [],
   };
 
-  it("renders the source-to-sandbox map without guessed origins and targets", () => {
+  it("renders the source-to-sandbox map with each row's sandbox target", () => {
     renderWithRouter(
       <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />,
       { route: "/x" },
     );
-    // Origins and targets were derived by position and keyword rather than
-    // reported by ALK, so a real environment shows soon chips in their place.
+    // The product has always shown what each tool and rule becomes in the
+    // sandbox; the port keeps it.
     expect(screen.getByText("How the world was built")).toBeInTheDocument();
-    expect(screen.getByText("Origin soon")).toBeInTheDocument();
+    expect(screen.queryByText("Origin soon")).toBeNull();
+    expect(screen.getAllByText(/enforced at the sandbox boundary|requires supervisor approval|blocks late cancels/).length).toBeGreaterThan(0);
   });
 });
 
 describe("SourceToSandboxMap", () => {
-  // The sample fills origins and targets the way Vel's prototype does.
+  // The sample adds Vel's hints and Other parties.
   const renderMap = (props = {}) => render(<SourceToSandboxMap env={MOCK_WORLD} sample {...props} />);
 
   it("renders the source and sandbox columns for the env", () => {

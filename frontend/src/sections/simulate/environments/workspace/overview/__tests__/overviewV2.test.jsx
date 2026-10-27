@@ -96,17 +96,17 @@ describe("Overview, Vel's layout", () => {
     expect(screen.queryByText("Hard rules")).toBeNull();
   });
 
-  it("maps the real tools, rules and stores without guessing where each came from", () => {
+  it("maps the real tools, rules and stores with what each became in the sandbox", () => {
     renderPanel();
     expect(screen.getByText("How the world was built")).toBeInTheDocument();
-    expect(screen.getByText("Origin soon")).toBeInTheDocument();
-    expect(screen.getByText("Target soon")).toBeInTheDocument();
+    expect(screen.queryByText("Origin soon")).toBeNull();
+    expect(screen.queryByText("Target soon")).toBeNull();
     expect(screen.getByText("orders · 500")).toBeInTheDocument();
     expect(screen.getByText("orders (500)")).toBeInTheDocument();
-    expect(screen.queryByText("Config")).toBeNull();
-    expect(
-      screen.queryByText(/reads from fixture state|writes to the sandbox/),
-    ).toBeNull();
+    expect(screen.getAllByText("Config").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("reads from fixture state").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("requires supervisor approval").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Other parties")).toBeNull();
   });
 
   it("fills origins and targets with ?uiSample=world, flagged", () => {

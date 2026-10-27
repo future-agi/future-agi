@@ -3,7 +3,6 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import OriginChip from "../../components/OriginChip";
-import SoonChip from "../../components/SoonChip";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { ENV_SHAPE } from "./overview.constants";
 import {
@@ -32,18 +31,12 @@ const MAP_PX = 3;
 // confirmed" mark. This is the artifact someone returns to weeks later to see
 // which decisions a human made and which the reader made itself.
 export default function SourceToSandboxMap({ env, envState, stores, sample = false }) {
-  // Where each fact was read from and what it became aren't in the API, so a
-  // real environment lists its real tools, rules and stores without them; the
-  // sample fills them the way Vel's prototype does.
-  const blank = (r) => (sample ? r : { ...r, origin: null, target: null });
-  const toolRows = toolMapRows(env, envState).map(blank);
-  const ruleRows = ruleMapRows(env).map(blank);
+  const toolRows = toolMapRows(env, envState);
+  const ruleRows = ruleMapRows(env);
   // A backed env passes its real §6 world.stores (may be empty); otherwise fall
   // back to the client/fixture seed tables. Actors were removed — they were a
   // hardcoded 4-row stub, not backed by world.personas.
-  const storeRows = (stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env)).map((r) =>
-    sample ? r : { ...r, origin: null },
-  );
+  const storeRows = stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
   const hint = (g) => (sample && g.sampleHint) || g.hint;
 
   return (
@@ -71,16 +64,10 @@ export default function SourceToSandboxMap({ env, envState, stores, sample = fal
           bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
         }}
       >
-        <Stack direction="row" alignItems="center" spacing={0.75}>
-          <ColHead>{MAP_COPY.readHead}</ColHead>
-          {!sample && <SoonChip label="Origin" what="Where each fact was read from" size="tiny" />}
-        </Stack>
+        <ColHead>{MAP_COPY.readHead}</ColHead>
         <Box />
         <Box />
-        <Stack direction="row" alignItems="center" spacing={0.75}>
-          <ColHead>{MAP_COPY.sandboxHead}</ColHead>
-          {!sample && <SoonChip label="Target" what="What each tool and rule became in the sandbox" size="tiny" />}
-        </Stack>
+        <ColHead>{MAP_COPY.sandboxHead}</ColHead>
       </Box>
 
       <MapGroup
@@ -144,7 +131,7 @@ SourceToSandboxMap.propTypes = {
   // Real §6 world.stores for a backed env (may be []); undefined = use the
   // client/fixture seed tables.
   stores: PropTypes.array,
-  // Fill origins, targets and Other parties with Vel's sample (?uiSample=world).
+  // Vel's sample hints and Other parties (?uiSample=world).
   sample: PropTypes.bool,
 };
 
