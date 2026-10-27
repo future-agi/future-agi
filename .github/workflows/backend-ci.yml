@@ -243,7 +243,10 @@ jobs:
         id: run-shard
         run: |
           set +e
-          uv run pytest -q -ra --ignore=tests/stress \
+          # Record the active node and all thread stacks for a stalled test.
+          # faulthandler_timeout only emits diagnostics; it does not interrupt,
+          # retry, skip or extend a test or this job's existing deadline.
+          uv run pytest -vv -ra -o faulthandler_timeout=60 --ignore=tests/stress \
             --splits "$SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
             --durations-path .test_durations \
