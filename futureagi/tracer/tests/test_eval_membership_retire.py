@@ -289,6 +289,7 @@ def test_every_eval_delete_goes_through_the_service():
         for path in root.rglob("*.py")
         if "tests" not in path.parts
         and "migrations" not in path.parts
+        and not any(part.startswith(".") for part in path.relative_to(root).parts)
         and path != service
         for line in _raw_eval_deletes(path.read_text(encoding="utf-8"))
     ]
