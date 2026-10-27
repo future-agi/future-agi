@@ -55,7 +55,7 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
   const onDuplicate = (data) => {
     const payload = {
       name: data.name,
-      evalTemplateId: evalId,
+      eval_template_id: evalId,
     };
     mutate(payload);
   };

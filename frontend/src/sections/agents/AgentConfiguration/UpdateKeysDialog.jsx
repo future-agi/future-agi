@@ -25,6 +25,7 @@ const UpdateKeysDialogChild = ({
     if (!agentDetails) return null;
     return {
       ...agentDetails,
+      api_key: agentDetails.api_key,
       configuration_snapshot: {
         ...agentDetails.configuration_snapshot,
         commit_message: "Updated keys",
@@ -32,7 +33,7 @@ const UpdateKeysDialogChild = ({
     };
   }, [agentDetails]);
   const { control, handleSubmit, reset, formState } = useAgentConfigForm(
-    createAgentDefinitionSchema({ keysRequired: true }),
+    createAgentDefinitionSchema({ keysRequired: true, agentDefinitionId }),
     defaultValue,
   );
 

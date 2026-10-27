@@ -22,10 +22,11 @@ config:
     import re
 
     def evaluate(input, output, expected, context, **kwargs):
-        text = kwargs.get("text", output or "")
-        text = str(text).strip()
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        text = str(kwargs.get("text", output or "")).strip()
+        local = r"(?!\.)(?!.*\.\.)[A-Za-z0-9._%+\-]+(?<!\.)"
+        label = r"(?!-)[A-Za-z0-9-]+(?<!-)"
+        domain = rf"{label}(?:\.{label})*\.[A-Za-z]{{2,}}"
+        pattern = rf"^{local}@{domain}$"
         if re.match(pattern, text):
             return {"score": 1.0, "reason": "Text is a valid email address format"}
-        else:
-            return {"score": 0.0, "reason": "Text is not a valid email address format"}
+        return {"score": 0.0, "reason": "Text is not a valid email address format"}

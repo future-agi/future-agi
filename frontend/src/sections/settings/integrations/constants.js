@@ -30,7 +30,7 @@ export const SKIP_PROJECT_MAPPING_PLATFORMS = [
 ];
 
 // Platforms that skip sync settings (no polling / backfill — action-only integrations)
-export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear"];
+export const SKIP_SYNC_SETTINGS_PLATFORMS = ["linear", "slack"];
 
 export const DATADOG_SITES = [
   { value: "us1", label: "US1 (datadoghq.com)", domain: "datadoghq.com" },
@@ -70,7 +70,8 @@ export const PLATFORMS = [
     id: "datadog",
     name: "Datadog",
     description: "APM, metrics, logs, and distributed traces",
-    wizardDescription: "Export Agent Command Center metrics, logs, and traces to Datadog",
+    wizardDescription:
+      "Export Agent Command Center metrics, logs, and traces to Datadog",
     logo: "/assets/icons/integrations/datadog.svg",
     available: true,
   },
@@ -86,7 +87,8 @@ export const PLATFORMS = [
     id: "pagerduty",
     name: "PagerDuty",
     description: "Incident management and on-call alerting",
-    wizardDescription: "Route Agent Command Center alerts to PagerDuty incidents",
+    wizardDescription:
+      "Route Agent Command Center alerts to PagerDuty incidents",
     logo: "/assets/icons/integrations/pagerduty.svg",
     available: true,
   },
@@ -112,6 +114,16 @@ export const PLATFORMS = [
     description: "SQS or Pub/Sub real-time log streaming",
     wizardDescription: "Publish request logs to a message queue",
     logo: "/assets/icons/integrations/message-queue.svg",
+    available: true,
+  },
+  {
+    id: "slack",
+    name: "Slack",
+    description: "Send Error Feed alerts to a Slack channel",
+    wizardDescription: "Connect a Slack workspace for Error Feed alerts",
+    logo: null,
+    icon: "simple-icons:slack",
+    iconColor: "#E01E5A",
     available: true,
   },
   {

@@ -57,7 +57,7 @@ const LanguageSelector = ({ multiple = true }) => {
           <Typography
             typography="s1"
             fontWeight="fontWeightRegular"
-            color="text.disabled"
+            color="text.secondary"
           >
             Enable your persona to communicate in multiple languages during
             calls

@@ -65,7 +65,7 @@ const LandingPageCard = ({
           <Typography
             variant="s1"
             fontWeight={"fontWeightRegular"}
-            color="text.disabled"
+            color="text.secondary"
           >
             {description}
           </Typography>

@@ -64,7 +64,6 @@ export function initReddit() {
   initialized = true;
 }
 
-
 export function trackRedditSignup({ email, userId } = {}) {
   if (!rdtReady()) return;
   if (!isEnabled()) return;

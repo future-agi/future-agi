@@ -1,10 +1,9 @@
 import { snakeCaseToTitleCase } from "../../../utils/utils";
 
 // Keys are snake_case — the canonical form used by KPI responses and
-// by `AGENT_METRICS` / `IGNORED_KEYS` in `test-detail/common.js`. The
-// axios response interceptor exposes camelCase aliases on raw responses,
-// but `extractKpis` copies keys one by one so downstream objects only
-// carry the canonical form.
+// by `AGENT_METRICS` / `IGNORED_KEYS` in `test-detail/common.js`.
+// `extractKpis` copies keys one by one so downstream objects only carry
+// the canonical form.
 const timeSystemMetrics = [
   "avg_response",
   "avg_agent_latency",

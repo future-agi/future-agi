@@ -15,9 +15,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.RequestContext) (providers.VectorStoresProvider, error) {
-	orgID := rc.Metadata["org_id"]
-	_, orgCfg := h.resolveOrgConfig(rc)
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, "gpt-4o")
+	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,11 @@ def get_event_id_from_prediction_id(prediction_id):
     query = "SELECT UUID from events where PredictionId = %(prediction_id)s limit 1"
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(query, {"prediction_id": prediction_id})
+    results = clickhouse_client.execute_read(
+        query,
+        {"prediction_id": prediction_id},
+        max_result_rows=1,
+    )
 
     return results
 
@@ -31,8 +35,10 @@ def upsert_record(
         FROM {table_name}
         WHERE {primary_key_field} = %(primary_key_value)s AND deleted = 0
     """
-    existing_record = client.execute(
-        select_query, {"primary_key_value": primary_key_value}
+    existing_record = client.execute_read(
+        select_query,
+        {"primary_key_value": primary_key_value},
+        max_result_rows=1,
     )
 
     if existing_record:
@@ -75,7 +81,7 @@ def upsert_record(
 def get_table_columns(table_name):
     client = ClickHouseClientSingleton()
     query = f"DESCRIBE TABLE {table_name}"
-    columns = client.execute(query)
+    columns = client.execute_read(query)
     return [col[0] for col in columns]
 
 
@@ -91,8 +97,10 @@ def update_eval_record(
         FROM {table_name}
         WHERE {primary_key_field} = %(primary_key_value)s AND deleted = 0
     """
-    existing_record = client.execute(
-        select_query, {"primary_key_value": primary_key_value}
+    existing_record = client.execute_read(
+        select_query,
+        {"primary_key_value": primary_key_value},
+        max_result_rows=1,
     )
 
     # print(select_query, {"primary_key_value": primary_key_value})
@@ -164,8 +172,10 @@ def create_empty_conversation(table_name, conversation_id, columns, _uuid):
         AND deleted = 0
         limit 1
     """
-    existing_record = client.execute(
-        select_query, {"primary_key_value": conversation_id}
+    existing_record = client.execute_read(
+        select_query,
+        {"primary_key_value": conversation_id},
+        max_result_rows=1,
     )
 
     # print("existing_record",existing_record, len(existing_record))
@@ -265,6 +275,66 @@ def insert_record(table_name, updated_values):
     client.execute(insert_query, merged_values)
 
 
+def get_model_hourly_volume(org_id=None, model_ids=None, hours=24):
+    if model_ids is None:
+        model_ids = []
+    hours = int(hours)
+    if len(model_ids) == 0 and not org_id:
+        return [], 0
+
+    client = ClickHouseClientSingleton()
+    where_clauses = [
+        f"EventDateTime >= now() - INTERVAL {hours} HOUR",
+        "has(Features.Key, 'node_id')",
+        "deleted = 0",
+    ]
+    if len(model_ids) > 0:
+        model_ids = ["'" + str(id) + "'" for id in model_ids]
+        where_clauses.append(f"AIModel in ({', '.join(model_ids)})")
+    else:
+        where_clauses.append(f"OrgID = '{org_id}'")
+
+    where_sql = "\n                            AND ".join(where_clauses)
+    query = f"""
+            SELECT
+                seriesTime,
+                COALESCE(SUM(recordsCount), 0) AS RecordCount
+            FROM
+                (
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
+                ) AS series
+            LEFT JOIN
+                (
+                    SELECT
+                        toStartOfHour(EventDateTime) AS EventHour,
+                        COUNT(*) AS recordsCount
+                    FROM events
+                    WHERE {where_sql}
+                    GROUP BY EventHour
+                ) AS events
+            ON series.seriesTime = events.EventHour
+            GROUP BY seriesTime
+            ORDER BY seriesTime;
+        """
+
+    data = client.execute_read(query)
+    points = []
+    total_count = 0
+    for row in data:
+        points.append(
+            {
+                "y": row[1],
+                "x": row[0],
+            }
+        )
+        total_count += row[1]
+
+    return points, total_count
+
+
 def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
     if model_ids is None:
         model_ids = []
@@ -306,10 +376,6 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
 
     else:
         query = f"""
-            WITH
-                -- Generate a series of timestamps for the last 24 hours (every hour)
-                arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours})) AS timeSeries
-
             -- Select from the generated series
             SELECT
                 seriesTime,
@@ -318,7 +384,10 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
             FROM
                 (
                     -- Convert the generated numbers to timestamps
-                    SELECT arrayJoin(timeSeries) AS seriesTime
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
                 ) AS series
             LEFT JOIN
                 (
@@ -328,7 +397,7 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
                     FROM events
                     WHERE EventDateTime >= now() - INTERVAL {hours} HOUR AND
                     OrgID = '{org_id}' AND
-                    AND has(Features.Key, 'node_id')
+                    has(Features.Key, 'node_id') AND
                     deleted = 0
                     GROUP BY EventHour
                 ) AS events
@@ -339,7 +408,7 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
         """
 
     # print("QUR", query)
-    data = client.execute(query)
+    data = client.execute_read(query)
     points = []
     total_count = 0
     for row in data:
@@ -370,7 +439,7 @@ def get_model_details(model, org):
 
     # print(dataset_query)
 
-    results = client.execute(dataset_query)
+    results = client.execute_read(dataset_query, max_result_rows=1)
     # return {"is_metric_added": metrics.exists(), "isDatasetAdded": True}
 
     return {
@@ -409,10 +478,10 @@ def copy_modify_and_insert_rows(
     client = ClickHouseClientSingleton()
 
     # Execute the select query to get the rows
-    data_rows = client.execute(select_query)
+    data_rows = client.execute_read(select_query)
 
     # Retrieve column names and types
-    columns_with_types = client.execute(f"DESCRIBE TABLE ({select_query})")
+    columns_with_types = client.execute_read(f"DESCRIBE TABLE ({select_query})")
     column_names = [col[0] for col in columns_with_types]
 
     # Identify nested columns

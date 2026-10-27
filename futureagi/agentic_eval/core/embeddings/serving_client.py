@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import threading
 import time
 from typing import Any
 
@@ -13,6 +14,44 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# The standalone install runs `serving` only with the `ml` compose profile, so
+# every embedding-backed feature has to cope with it being absent.
+#
+# How each self-hosted setup turns serving on; every message that reports it
+# missing ends with this. Standalone keeps `ml` in COMPOSE_PROFILES in .env
+# (INSTALLATION.md): a profile given only as `--profile ml` is not active on
+# the next `docker compose up -d`, so an upgrade would leave `serving` on its
+# old image. Cloud users can see these messages too, hence the scope.
+SERVING_START_HINT = (
+    "Self-hosted installs: on Standalone, add `ml` to COMPOSE_PROFILES in .env "
+    "and run `docker compose up -d`; on Distributed, run "
+    "`docker compose up -d serving`; on Helm, set `serving.enabled=true`. "
+    "Or point MODEL_SERVING_URL at a running instance."
+)
+SERVING_UNAVAILABLE_MESSAGE = (
+    "Model serving is not running, so embedding-based features are unavailable. "
+    + SERVING_START_HINT
+)
+
+# How long a probe result is trusted. Short enough that enabling the profile
+# is picked up quickly, long enough that a missing host costs one DNS lookup
+# per process every half minute instead of one per embedding call.
+SERVING_PROBE_TTL_SECONDS = 30
+SERVING_PROBE_TIMEOUT_SECONDS = 2
+
+
+class ServingUnavailableError(ValueError, ConnectionError):
+    """Model serving is not configured or not reachable.
+
+    A ConnectionError so existing ``except ConnectionError`` fail-open paths
+    keep catching it, and a ValueError so eval error handling
+    (``get_specific_error_message``) shows this message verbatim instead of a
+    generic failure.
+    """
+
+    def __init__(self, message: str = SERVING_UNAVAILABLE_MESSAGE):
+        super().__init__(message)
+
 
 class ModelServingClient:
     """
@@ -21,15 +60,11 @@ class ModelServingClient:
     """
 
     def __init__(self, base_url: str | None = None):
-        self.base_url = base_url or os.getenv('MODEL_SERVING_URL', 'http://serving:8080')
-
-
+        self.base_url = base_url or serving_base_url()
 
         self.default_timeout = int(os.getenv('MODEL_SERVING_TIMEOUT', '120'))
         self.max_retries = int(os.getenv('MODEL_SERVING_MAX_RETRIES', '3'))
 
-        self._health_check_cache = {}  
-        self._health_check_cache_ttl = 60  # 1 minute
         self.session = self._create_session()
 
     def _create_session(self) -> requests.Session:
@@ -54,10 +89,17 @@ class ModelServingClient:
 
         return session
 
+    def _require_serving(self) -> None:
+        """Fail fast on the cached probe verdict. Without it, every call to a
+        missing host pays a DNS lookup and the adapter's retries."""
+        if not serving_available(self.base_url):
+            raise ServingUnavailableError()
+
     def _make_request(self, endpoint: str, data: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
         """Make a request to the serving service with built-in retry."""
         url = f"{self.base_url}/model/v1{endpoint}"
         request_timeout = timeout or self.default_timeout
+        self._require_serving()
 
         try:
             logger.debug(f"Making request to {url}")
@@ -93,6 +135,7 @@ class ModelServingClient:
             raise TimeoutError(f"Request timed out after {request_timeout}s")
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Connection error to serving service: {e}")
+            mark_serving_unavailable(self.base_url)
             raise ConnectionError(f"Failed to connect to serving service: {e}")
         except requests.exceptions.RequestException as e:
             logger.error(f"Request to serving service failed: {e}")
@@ -127,6 +170,37 @@ class ModelServingClient:
             logger.error(f"Text embedding failed: {e}")
             raise
 
+    def embed_text_batch(self, texts: list[str]) -> list[list[float]]:
+        """
+        Batch text embedding: send N texts in one request, get N vectors back.
+
+        Deliberately does NOT go through _make_request — that path unwraps
+        embeddings[0] for single-input convenience, which silently drops all
+        but the first vector for a batch. The /embed endpoint already returns
+        one vector per input in order, so we return it as-is.
+        """
+        if not texts:
+            return []
+        if not all(isinstance(t, str) for t in texts):
+            raise ValueError("All text inputs must be strings")
+        self._require_serving()
+
+        data = {"text": texts, "input_type": "text"}
+        response = self.session.post(
+            f"{self.base_url}/model/v1/embed", json=data, timeout=self.default_timeout
+        )
+        if response.status_code != 200:
+            response.raise_for_status()
+        embeddings = response.json().get("embeddings", [])
+        if len(embeddings) != len(texts):
+            # Contract violation — caller decides how to fall back rather
+            # than us silently returning misaligned vectors.
+            raise ValueError(
+                f"serving returned {len(embeddings)} embeddings for "
+                f"{len(texts)} texts"
+            )
+        return embeddings
+
     def embed_image(self, image: str | Image.Image | bytes, model_name: str = "image_embedding") -> list[float]:
         """
         ✅ IMPROVED: Get image embeddings from the serving service with better image handling.
@@ -148,7 +222,11 @@ class ModelServingClient:
             logger.error(f"Image embedding failed: {e}")
             raise
 
-    def embed_audio(self, audio_data: str | bytes, model_name: str = "audio_embedding") -> list[float]:
+    def embed_audio(
+        self,
+        audio_data: str | bytes,
+        model_name: str = "audio_embedding",
+    ) -> list[float]:
         """
         ✅ IMPROVED: Get audio embeddings from the serving service with input validation.
         """
@@ -156,10 +234,10 @@ class ModelServingClient:
             raise ValueError("Audio input cannot be None")
 
         processed_audio = self._process_audio_input(audio_data)
-        
+
         data = {
             "audio": processed_audio,
-            "input_type": "audio"
+            "input_type": "audio",
         }
 
         try:
@@ -171,7 +249,13 @@ class ModelServingClient:
 
     def embed_image_text(self, content: str | Image.Image | bytes, model_name: str = "image_text_embedding") -> list[float]:
         """
-        ✅ IMPROVED: Get image-text embeddings from the serving service.
+        Get image-text embeddings from the serving service.
+
+        Routes URL / data-URI strings to the *image* branch (so CLIP encodes
+        the pixels) and plain strings to the *text* branch (so CLIP encodes
+        the caption). Treating every string as text — the previous behaviour
+        — embedded the URL/base64 literal in the text encoder, producing
+        garbage similarities that hovered near the noise floor.
         """
         if content is None:
             raise ValueError("Content input cannot be None")
@@ -179,12 +263,14 @@ class ModelServingClient:
         data = {"input_type": "image-text"}
 
         if isinstance(content, str):
-            # Assume it's text
-            data["text"] = content
+            stripped = content.strip()
+            if stripped.startswith(("http://", "https://", "data:")):
+                data["image"] = self._process_image_input(content)
+            else:
+                data["text"] = content
         else:
-            # Process as image
-            processed_image = self._process_image_input(content)
-            data["image"] = processed_image
+            # PIL Image, bytes — always the image branch.
+            data["image"] = self._process_image_input(content)
 
         try:
             response = self._make_request("/embed/image-text", data)
@@ -195,6 +281,7 @@ class ModelServingClient:
 
     def get_syn_data_embedding(self, text: str | list[str]) -> list[float]:
         """Get synthetic data embeddings from the serving service."""
+        self._require_serving()
         data = {
             "text": text,
             "input_type": "text"
@@ -292,37 +379,8 @@ class ModelServingClient:
             raise ValueError(f"Unsupported audio type: {type(audio_data)}")
 
     def health_check(self, use_cache: bool = True) -> bool:
-        """
-        ✅ IMPROVED: Check if the serving service is healthy with caching.
-        """
-        current_time = time.time()
-        cache_key = "health_check"
-
-        # Check cache if enabled
-        if use_cache and cache_key in self._health_check_cache:
-            cached_result, cached_time = self._health_check_cache[cache_key]
-            if current_time - cached_time < self._health_check_cache_ttl:
-                logger.debug("Using cached health check result")
-                return cached_result
-
-        try:
-            url = f"{self.base_url}/model/v1/models"
-            response = self.session.get(url, timeout=5)
-            is_healthy = response.status_code == 200
-
-            # Cache the result
-            if use_cache:
-                self._health_check_cache[cache_key] = (is_healthy, current_time)
-
-            logger.debug(f"Health check result: {'healthy' if is_healthy else 'unhealthy'}")
-            return is_healthy
-
-        except Exception as e:
-            logger.debug(f"Health check failed: {e}")
-            # Cache negative result for shorter time
-            if use_cache:
-                self._health_check_cache[cache_key] = (False, current_time - self._health_check_cache_ttl + 10)
-            return False
+        """Whether this client's serving answers: ``serving_available()``."""
+        return serving_available(self.base_url, use_cache=use_cache)
 
     def get_model_status(self) -> dict[str, Any]:
         """
@@ -356,6 +414,7 @@ class ModelServingClient:
         Returns:
             A list of embeddings.
         """
+        self._require_serving()
         endpoint = f"{self.base_url}/model/v1/infer/{model_provider}"
 
         # ✅ IMPROVED: Pass model name correctly based on provider
@@ -420,3 +479,72 @@ def close_serving_client():
     if _serving_client is not None:
         _serving_client.close()
         _serving_client = None
+
+
+# base_url -> (available, monotonic time of the probe)
+_probe_cache: dict[str, tuple[bool, float]] = {}
+_probe_lock = threading.Lock()
+
+
+def serving_base_url() -> str:
+    """``MODEL_SERVING_URL``, normalised. Empty means serving is switched off."""
+    return os.getenv("MODEL_SERVING_URL", "http://serving:8080").strip().rstrip("/")
+
+
+def _probe(base_url: str) -> bool:
+    # Plain GET, no retry adapter: a missing host should cost one lookup.
+    # A server that answers but has no /health (an older serving image, the
+    # E2E mock) is asked for the model list instead.
+    try:
+        response = requests.get(
+            f"{base_url}/health", timeout=SERVING_PROBE_TIMEOUT_SECONDS
+        )
+        if response.status_code == 404:
+            response = requests.get(
+                f"{base_url}/model/v1/models", timeout=SERVING_PROBE_TIMEOUT_SECONDS
+            )
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def serving_available(base_url: str | None = None, use_cache: bool = True) -> bool:
+    """Whether model serving answers its health check.
+
+    Results are cached per URL for ``SERVING_PROBE_TTL_SECONDS``, and one
+    thread probes while the others wait for its answer, so callers can ask
+    before every embedding call. ``use_cache=False`` forces a fresh probe and
+    refreshes the cache.
+    """
+    base = serving_base_url() if base_url is None else base_url.strip().rstrip("/")
+    if not base:
+        return False
+
+    cached = _probe_cache.get(base)
+    if use_cache and cached and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS:
+        return cached[0]
+
+    with _probe_lock:
+        cached = _probe_cache.get(base)
+        if use_cache and cached and time.monotonic() - cached[1] < SERVING_PROBE_TTL_SECONDS:
+            return cached[0]
+        available = _probe(base)
+        _probe_cache[base] = (available, time.monotonic())
+
+    # Log the transition, not every probe: absent serving is a normal state.
+    if not available and (cached is None or cached[0]):
+        logger.warning("model_serving_unavailable", url=base)
+    return available
+
+
+def mark_serving_unavailable(base_url: str | None = None) -> None:
+    """Record a failed call so the next callers fail fast until the TTL expires."""
+    base = serving_base_url() if base_url is None else base_url.strip().rstrip("/")
+    if base:
+        _probe_cache[base] = (False, time.monotonic())
+
+
+def require_serving() -> None:
+    """Raise ``ServingUnavailableError`` unless model serving is reachable."""
+    if not serving_available():
+        raise ServingUnavailableError()

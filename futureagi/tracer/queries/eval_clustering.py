@@ -9,11 +9,15 @@ within the same eval, never across different evals.
 """
 
 import hashlib
+import json
+import math
 import re
+from datetime import timedelta
 from typing import List, Optional, Tuple
 
 import structlog
-from django.db.models import Q
+from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
@@ -25,12 +29,137 @@ from tracer.models.trace_error_analysis import (
     FeedIssueStatus,
     TraceErrorGroup,
 )
-from tracer.types.eval_cluster_types import ClusterableEvalResult
+from tracer.services.clickhouse.clustering_tables import (
+    CENTROIDS_TABLE,
+    ensure_centroid_table,
+)
+from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
 
 logger = structlog.get_logger(__name__)
 
-CENTROIDS_TABLE = "cluster_centroids"  # shared with scanner — different family values
 COSINE_THRESHOLD = 0.45
+
+# Only cluster recent eval failures — old results aren't actionable and
+# bound the per-run work unit.
+_CLUSTER_WINDOW_DAYS = 60
+
+# Clustering is scoped to eval-TASK results — rows carrying an ``eval_task_id``.
+# The (now-retired) eval-task cron was the sole clustering trigger, but the old
+# query had no such filter, so a cron run for a project also swept that project's
+# inline / continuous-span failures. This filter makes clustering eval-task-only
+# by design: a deliberate product change (inline/continuous failures no longer
+# cluster). The trigger now lives on the eval-task execution path itself
+# (``run_entry`` dispatches per failing eval-task eval), so this filter keeps a
+# same-project inline failure from riding in on that trigger. (Inline evals set
+# no ``eval_task_id``; external evals never write EvalLogger at all.)
+_FAILING_EVAL_Q = (
+    Q(custom_eval_config__isnull=False)
+    # ``output_str``/``output_str_list`` are included because choice-scored
+    # templates are stored there; the final score check is deliberately done
+    # in Python from the template config below.
+    & (
+        Q(output_bool=False)
+        | Q(output_float__lt=1.0)
+        | ~Q(output_str__isnull=True)
+        | ~Q(output_str_list=[])
+    )
+    & ~Q(eval_explanation__isnull=True)
+    & ~Q(eval_explanation="")
+    & ~Q(eval_task_id__isnull=True)
+    & ~Q(eval_task_id="")
+)
+
+
+def _numeric_score(value) -> float | None:
+    """Return a finite numeric score, or ``None`` for an unscorable value."""
+    if isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) else None
+
+
+def _mapped_choice_score(value, choice_scores: dict) -> float | None:
+    if not choice_scores:
+        return None
+    if isinstance(value, str):
+        for label, score in choice_scores.items():
+            if str(label).strip().lower() == value.strip().lower():
+                return _numeric_score(score)
+        return None
+    if isinstance(value, list):
+        scores = [_mapped_choice_score(item, choice_scores) for item in value]
+        scores = [score for score in scores if score is not None]
+        return sum(scores) / len(scores) if scores else None
+    return None
+
+
+def _eval_result_score(entry: EvalLogger) -> float | None:
+    """Resolve an eval's normalized score, including config-mapped choices."""
+    score = _numeric_score(entry.output_float)
+    if score is not None:
+        return score
+
+    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    if template is None:
+        return None
+    choice_scores = getattr(template, "choice_scores", None) or {}
+
+    raw = entry.output_str
+    if raw:
+        # A scalar label is often serialized as plain text (including numeric
+        # labels such as ``"2"``). Resolve it before JSON/numeric coercion.
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            pass
+        if isinstance(raw, dict):
+            score = _numeric_score(raw.get("score"))
+            if score is not None:
+                return score
+            score = _mapped_choice_score(
+                raw.get("choice", raw.get("choices")), choice_scores
+            )
+            if score is not None:
+                return score
+            raw = raw.get("choice", raw.get("choices"))
+        # A numeric-looking choice label must be mapped before treating it as
+        # a literal score (e.g. choice "2" can intentionally map to 0.0).
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
+        score = _numeric_score(raw)
+        if score is not None:
+            return score
+
+    return _mapped_choice_score(entry.output_str_list, choice_scores)
+
+
+def _eval_score_threshold(entry: EvalLogger) -> float:
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
+    threshold = getattr(template, "pass_threshold", None)
+    if isinstance(threshold, (int, float)) and not isinstance(threshold, bool):
+        return threshold
+    return 0.5
+
+
+def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
+    """Whether a completed eval result is a failing, explainable result."""
+    if not entry.eval_explanation:
+        return False
+    if entry.output_bool is False:
+        return True
+    score = _eval_result_score(entry)
+    if score is None:
+        return False
+    return score < _eval_score_threshold(entry)
 
 
 # ---------------------------------------------------------------------------
@@ -38,51 +167,98 @@ COSINE_THRESHOLD = 0.45
 # ---------------------------------------------------------------------------
 
 
-def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]:
+def get_unclustered_eval_results(
+    project_id: str, limit: Optional[int] = None
+) -> List[ClusterableEvalResult]:
     """
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
 
-    "Failed" = output_bool is False OR output_float < 1.0.
+    "Failed" = output_bool is False OR a score resolved from the typed output,
+    JSON output, or the template's ``choice_scores`` mapping is below the
+    template's pass threshold.
     Skips rows with null eval_explanation (deterministic evals without reasoning).
-    """
-    # Already-clustered eval_logger IDs
-    clustered_ids = set(
-        ErrorClusterTraces.objects.filter(
-            eval_logger__isnull=False,
-            cluster__project_id=project_id,
-        ).values_list("eval_logger_id", flat=True)
-    )
+    Only the last _CLUSTER_WINDOW_DAYS of results are considered.
 
+    ``limit`` bounds the returned batch (oldest-first). The caller drains a
+    large backlog over successive bounded runs so a single clustering
+    activity can never grow unbounded and time out.
+    """
+    since = timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS)
+
+    # Project scope is the eval's *config* project — never the trace/session's.
+    # Every candidate row has a config (``_FAILING_EVAL_Q`` requires it), the
+    # config is always project-FK'd, and an eval only ever runs its own project's
+    # config over that project's data, so ``custom_eval_config__project_id`` is
+    # the exact, total project key for span / trace / session targets alike. It's
+    # also the key the whole pipeline already trusts: the trigger dispatches per
+    # ``config.project_id`` and clusters are created under that same id. Scoping
+    # here the same way — rather than through ``trace__project_id`` /
+    # ``trace_session__project_id`` — keeps this read off the PG ``tracer_trace``
+    # / ``tracer_observation_span`` tables (empty post-CH-cutover, being dropped)
+    # and drops the CH session pre-pass that only existed to resolve
+    # session→project. ``trace_id`` / ``trace_session_id`` are read below from the
+    # eval row's own FK columns (no join). Targets still never co-cluster: the
+    # centroid family is keyed by (target_type, eval_name) downstream.
     evals = (
         EvalLogger.objects.filter(
-            trace__project_id=project_id,
-            custom_eval_config__isnull=False,
+            _FAILING_EVAL_Q,
+            custom_eval_config__project_id=project_id,
+            created_at__gte=since,
         )
+        .select_related("custom_eval_config", "custom_eval_config__eval_template")
         .filter(
-            Q(output_bool=False) | Q(output_float__lt=1.0),
+            ~Exists(
+                ErrorClusterTraces.objects.filter(
+                    eval_logger_id=OuterRef("pk"),
+                    cluster__project_id=project_id,
+                    deleted=False,
+                )
+            )
         )
-        .exclude(eval_explanation__isnull=True)
-        .exclude(eval_explanation="")
-        .select_related("custom_eval_config", "trace")
+        .only(
+            "id",
+            "created_at",
+            "eval_explanation",
+            "output_bool",
+            "output_float",
+            "output_str",
+            "output_str_list",
+            "target_type",
+            "trace_id",
+            "trace_session_id",
+            "custom_eval_config_id",
+            "custom_eval_config__name",
+            "custom_eval_config__eval_template_id",
+            "custom_eval_config__eval_template__choice_scores",
+            "custom_eval_config__eval_template__pass_threshold",
+        )
         .order_by("created_at")
     )
 
-    results = []
-    for ev in evals:
-        if ev.id in clustered_ids:
+    results: List[ClusterableEvalResult] = []
+    # .iterator() so a huge backlog isn't all loaded into memory just to
+    # stop early once `limit` unclustered rows have been collected.
+    for ev in evals.iterator(chunk_size=2000):
+        if not is_clusterable_eval_failure(ev):
             continue
         results.append(
             ClusterableEvalResult(
                 eval_logger_id=str(ev.id),
-                trace_id=str(ev.trace_id),
                 project_id=project_id,
                 eval_name=ev.custom_eval_config.name,
                 eval_config_id=str(ev.custom_eval_config_id),
                 explanation=ev.eval_explanation,
-                score=ev.output_float,
+                target_type=ev.target_type,
+                trace_id=str(ev.trace_id) if ev.trace_id else None,
+                session_id=(
+                    str(ev.trace_session_id) if ev.trace_session_id else None
+                ),
+                score=_eval_result_score(ev),
             )
         )
+        if limit is not None and len(results) >= limit:
+            break
 
     return results
 
@@ -92,13 +268,48 @@ def get_unclustered_eval_results(project_id: str) -> List[ClusterableEvalResult]
 # ---------------------------------------------------------------------------
 
 
+_EMBED_BATCH_SIZE = 64
+
+
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed a batch of texts using the model serving client."""
-    text_embed = model_manager.text_model
-    embeddings = []
-    for text in texts:
-        embedding = text_embed(text)
-        embeddings.append(embedding)
+    """Embed texts via the serving client in bounded batches.
+
+    Chunked rather than per-row or all-at-once: one request carries up to
+    _EMBED_BATCH_SIZE texts (the single-worker serving process does one
+    batched forward pass instead of N round-trips), and a failed chunk only
+    costs re-embedding that chunk on the next idempotent clustering sweep —
+    bounded blast radius, which is the fault-isolation the old per-row
+    enqueue was reaching for, without the fan-out that overran serving.
+    """
+    if not texts:
+        return []
+
+    try:
+        client = model_manager.serving_client
+    except Exception:
+        client = None
+
+    if client is None:
+        # Serving unavailable — preserve the previous per-item behaviour.
+        text_embed = model_manager.text_model
+        return [text_embed(t) for t in texts]
+
+    embeddings: List[List[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        chunk = texts[start : start + _EMBED_BATCH_SIZE]
+        try:
+            embeddings.extend(client.embed_text_batch(chunk))
+        except Exception:
+            # One bad chunk must not fail the whole project sweep — fall
+            # back to per-item for this chunk only.
+            logger.warning(
+                "embed_batch_fallback_per_item",
+                chunk_start=start,
+                chunk_size=len(chunk),
+                exc_info=True,
+            )
+            text_embed = model_manager.text_model
+            embeddings.extend(text_embed(t) for t in chunk)
     return embeddings
 
 
@@ -107,30 +318,18 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_centroid_table(db: ClickHouseVectorDB) -> None:
-    """Ensure the cluster_centroids table exists (shared with scanner)."""
-    # Array(...) can't sit inside Nullable; override server profiles that set
-    # data_type_default_nullable=1 so unmodified types aren't auto-wrapped.
-    db.client.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {CENTROIDS_TABLE} (
-            cluster_id String,
-            project_id UUID,
-            centroid Array(Float32),
-            member_count UInt32,
-            family String,
-            last_updated DateTime DEFAULT now(),
-            PRIMARY KEY (cluster_id)
-        ) ENGINE = ReplacingMergeTree(last_updated)
-        ORDER BY (cluster_id)
-        """,
-        settings={"data_type_default_nullable": 0},
-    )
+def _eval_family(eval_name: str, target_type: str = "span") -> str:
+    """Family key for eval centroids — keeps the three targets (and scanner)
+    in separate centroid spaces.
 
-
-def _eval_family(eval_name: str) -> str:
-    """Family key for eval centroids — prefixed to avoid collision with scanner families."""
-    return f"eval:{eval_name}"
+    span keeps the legacy unprefixed ``eval:{name}`` key on purpose: every
+    centroid created before trace/session targets existed was span-level, so
+    leaving span unprefixed means those existing centroids keep matching with
+    no ClickHouse backfill. trace/session get explicit prefixes.
+    """
+    if target_type == "span":
+        return f"eval:{eval_name}"
+    return f"eval:{target_type}:{eval_name}"
 
 
 def _update_centroid(
@@ -146,18 +345,20 @@ def find_nearest_centroid(
     embedding: List[float],
     project_id: str,
     eval_name: str,
+    target_type: str = "span",
 ) -> Optional[Tuple[str, float]]:
     """
     Find nearest cluster centroid for the given eval within threshold.
 
-    Returns (cluster_id, distance) or None if no match.
+    Scoped to the (target_type, eval_name) family so a span result can never
+    match a trace/session cluster. Returns (cluster_id, distance) or None.
     """
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
-        family = _eval_family(eval_name)
-        rows = db.client.execute(
+        family = _eval_family(eval_name, target_type)
+        rows = db.execute_read(
             f"""
             SELECT
                 cluster_id,
@@ -169,6 +370,7 @@ def find_nearest_centroid(
             LIMIT 1
             """,
             {"project_id": project_id, "family": family},
+            max_result_rows=1,
         )
 
         if rows and rows[0][1] < COSINE_THRESHOLD:
@@ -225,6 +427,28 @@ def _extract_title(explanation: str) -> str:
     return first_line[:200] if first_line else text[:200]
 
 
+def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
+    """Title + fix_layer + severity for an eval cluster via the cheap-LLM
+    EE helper, with deterministic fallback.
+
+    EE absent (OSS) or any LLM failure → first-sentence title, null
+    fix_layer, null severity (caller defaults priority). Each field
+    degrades independently; metadata is best-effort and must never break
+    cluster creation.
+    """
+    from tracer.ee_boundary import generate_eval_cluster_meta
+
+    fallback = EvalClusterMeta(title=_extract_title(reasoning))
+    meta = generate_eval_cluster_meta(eval_name, reasoning)
+    if not meta:
+        return fallback
+    return EvalClusterMeta(
+        title=meta.title or _extract_title(reasoning),
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cluster creation
 # ---------------------------------------------------------------------------
@@ -240,53 +464,109 @@ def create_cluster(
 
     Returns the new cluster_id.
     """
-    base = f"{project_id}|eval|{result.eval_name}|{result.explanation[:100]}"
+    base = (
+        f"{project_id}|eval|{result.target_type}|{result.eval_name}"
+        f"|{result.explanation[:100]}"
+    )
     h = hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8]
     cluster_id = f"E-{h.upper()}"
 
-    # Handle collision
-    if TraceErrorGroup.objects.filter(
+    # A row already under this ID is almost always the SAME failure arriving
+    # again, not an md5 collision: the ID hashes (project, target_type,
+    # eval_name, explanation), so a repeat explanation repeats the hash by
+    # construction. We land here when the centroid lookup missed a cluster it
+    # should have matched. Minting a fresh ID produces two clusters with an
+    # identical title; join the existing one instead. Compare on the stored
+    # explanation rather than meta.title — title comes from _eval_cluster_meta,
+    # which we have not computed yet at this point.
+    existing = TraceErrorGroup.objects.filter(
         project_id=project_id, cluster_id=cluster_id
-    ).exists():
+    ).first()
+    if existing is not None:
+        same_failure = (
+            existing.eval_target_type == result.target_type
+            and existing.issue_group == result.eval_name
+            and existing.combined_description == result.explanation
+        )
+        if same_failure:
+            logger.info(
+                "eval_cluster_join_on_existing_id",
+                cluster_id=cluster_id,
+                eval_logger_id=result.eval_logger_id,
+                reason="centroid_lookup_missed",
+            )
+            assign_to_cluster(cluster_id, project_id, result, embedding)
+            return cluster_id
+
         h2 = hashlib.md5(
             f"{base}|{result.eval_logger_id}".encode(), usedforsecurity=False
         ).hexdigest()[:8]
         cluster_id = f"E-{h2.upper()}"
 
-    title = _extract_title(result.explanation)
+    meta = _eval_cluster_meta(result.eval_name, result.explanation)
+    # Lazy import avoids a query-module import cycle; severity_to_priority
+    # returns "medium" when severity is None (the fallback default).
+    from tracer.queries.feed import severity_to_priority
 
-    cluster = TraceErrorGroup.objects.create(
-        project_id=project_id,
-        cluster_id=cluster_id,
-        source=ClusterSource.EVAL,
-        issue_group=result.eval_name,
-        issue_category=None,
-        fix_layer=None,
-        title=title,
-        combined_description=result.explanation,
-        combined_impact=_score_to_impact(result.score),
-        status=FeedIssueStatus.ESCALATING,
-        error_type=result.eval_name,
-        eval_config_id=result.eval_config_id,
-        total_events=1,
-        unique_traces=1,
-        error_count=1,
-        first_seen=timezone.now(),
-        last_seen=timezone.now(),
-    )
+    try:
+        # Savepoint so a unique-constraint violation here doesn't poison the
+        # surrounding transaction/connection.
+        with transaction.atomic():
+            cluster = TraceErrorGroup.objects.create(
+                project_id=project_id,
+                cluster_id=cluster_id,
+                source=ClusterSource.EVAL,
+                eval_target_type=result.target_type,
+                issue_group=result.eval_name,
+                issue_category=None,
+                fix_layer=meta.fix_layer,
+                title=meta.title,
+                combined_description=result.explanation,
+                combined_impact=_score_to_impact(result.score),
+                status=FeedIssueStatus.ESCALATING,
+                priority=severity_to_priority(meta.severity),
+                error_type=result.eval_name,
+                eval_config_id=result.eval_config_id,
+                total_events=1,
+                unique_traces=1,
+                error_count=1,
+                first_seen=timezone.now(),
+                last_seen=timezone.now(),
+            )
+    except IntegrityError:
+        # Another concurrent run created this cluster between our .exists()
+        # check and the insert (unique_project_cluster_if_not_deleted). Treat
+        # this as an assignment so the trace is still linked and the centroid
+        # still updated.
+        logger.info(
+            "eval_cluster_create_race_assigning",
+            cluster_id=cluster_id,
+            eval_logger_id=result.eval_logger_id,
+        )
+        assign_to_cluster(cluster_id, project_id, result, embedding)
+        return cluster_id
 
-    # Create junction entry
+    # Create junction entry. Session evals anchor to the session (trace NULL);
+    # span/trace evals anchor to the trace.
     ErrorClusterTraces.objects.create(
         cluster=cluster,
         trace_id=result.trace_id,
+        trace_session_id=result.session_id,
         eval_logger_id=result.eval_logger_id,
+    )
+    from tracer.services.feed_alerts.events import record_issue_event
+
+    record_issue_event(
+        cluster=cluster,
+        before=None,
+        source_key=f"eval-create:{result.eval_logger_id}",
     )
 
     # Store centroid in ClickHouse
-    family = _eval_family(result.eval_name)
+    family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         db.client.execute(
             f"""
             INSERT INTO {CENTROIDS_TABLE}
@@ -309,7 +589,9 @@ def create_cluster(
         "eval_cluster_created",
         cluster_id=cluster_id,
         eval_name=result.eval_name,
-        title=title[:80],
+        title=(meta.title or "")[:80],
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
     )
     return cluster_id
 
@@ -327,32 +609,89 @@ def assign_to_cluster(
 ) -> None:
     """Assign an eval result to an existing cluster and update centroid."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
 
-    cluster.error_count = (cluster.error_count or 0) + 1
-    cluster.total_events = (cluster.total_events or 0) + 1
-    cluster.last_seen = timezone.now()
-    cluster.save(
-        update_fields=["error_count", "total_events", "last_seen", "updated_at"]
-    )
+    alert_before = issue_snapshot(cluster)
 
-    # Create junction entry (ignore if trace already linked for this cluster)
-    ErrorClusterTraces.objects.get_or_create(
-        cluster=cluster,
-        trace_id=result.trace_id,
-        defaults={"eval_logger_id": result.eval_logger_id},
-    )
+    # One junction row per eval result — ALWAYS. The row is what marks the eval
+    # as processed: ``get_unclustered_eval_results`` excludes on the presence of
+    # an ``eval_logger_id`` in the junction, so an eval that mutates the counters
+    # without leaving a row is re-fetched by every subsequent batch, forever. It
+    # sits at the head of the oldest-first window, so it also blocks the rows
+    # behind it while re-inflating counters and re-shifting the centroid on each
+    # pass. Counter + membership are written in one transaction so a mid-row
+    # activity kill can't leave the +1 without its row and reopen that loop.
+    with transaction.atomic():
+        if result.target_type == "session":
+            # (cluster, trace_session) is a real unique constraint — both
+            # columns non-null — so a second failing eval on a session already
+            # in this cluster cannot carry the session. Record it as a
+            # provenance-only row instead (every target FK left NULL, which both
+            # unique keys treat as distinct): membership is unchanged, but the
+            # eval is still marked processed and leaves the fetchable set.
+            session_already_member = ErrorClusterTraces.objects.filter(
+                cluster=cluster, trace_session_id=result.session_id
+            ).exists()
+            ErrorClusterTraces.objects.create(
+                cluster=cluster,
+                trace_session_id=None if session_already_member else result.session_id,
+                eval_logger_id=result.eval_logger_id,
+            )
+        else:
+            # Unique key is (cluster, trace, span) with span NULL here, and
+            # Postgres treats NULLs as distinct — so repeat failures on one trace
+            # each get their own row. Reads are unit-aware already (they count
+            # DISTINCT traces or dedup into sets), so the duplicates don't leak
+            # into any membership figure.
+            ErrorClusterTraces.objects.create(
+                cluster=cluster,
+                trace_id=result.trace_id,
+                eval_logger_id=result.eval_logger_id,
+            )
 
-    # Refresh unique traces count + recompute impact from avg score
-    unique = cluster.clusters.values("trace").distinct().count()
-    cluster.unique_traces = unique
-    cluster.combined_impact = _compute_cluster_impact(cluster)
-    cluster.save(update_fields=["unique_traces", "combined_impact", "updated_at"])
+        # Occurrence counters move per eval; ``unique_traces`` carries the
+        # distinct-unit meaning. Provenance rows have no unit, so they're
+        # excluded from the DISTINCT count rather than landing in a NULL group.
+        if result.target_type == "session":
+            unique = (
+                cluster.clusters.exclude(trace_session__isnull=True)
+                .values("trace_session")
+                .distinct()
+                .count()
+            )
+        else:
+            unique = (
+                cluster.clusters.exclude(trace__isnull=True)
+                .values("trace")
+                .distinct()
+                .count()
+            )
+        cluster.error_count = (cluster.error_count or 0) + 1
+        cluster.total_events = (cluster.total_events or 0) + 1
+        cluster.last_seen = timezone.now()
+        cluster.unique_traces = unique
+        cluster.combined_impact = _compute_cluster_impact(cluster)
+        cluster.save(
+            update_fields=[
+                "error_count",
+                "total_events",
+                "last_seen",
+                "unique_traces",
+                "combined_impact",
+                "updated_at",
+            ]
+        )
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"eval-assign:{result.eval_logger_id}:{cluster.pk}",
+        )
 
     # Incrementally update centroid in ClickHouse
-    family = _eval_family(result.eval_name)
+    family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT centroid, member_count
             FROM {CENTROIDS_TABLE}
@@ -360,6 +699,7 @@ def assign_to_cluster(
             LIMIT 1
             """,
             {"cluster_id": cluster_id},
+            max_result_rows=1,
         )
 
         if rows:

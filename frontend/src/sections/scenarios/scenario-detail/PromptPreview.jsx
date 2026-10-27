@@ -9,29 +9,33 @@ import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  isScenarioFailed,
+  isScenarioInProgress,
+} from "src/utils/scenarioStatus";
 
 const PromptPreview = ({ scenario }) => {
   const { role } = useAuthContext();
   const isWriteDisabled =
     !RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
-  const { data: tableData, isPending: isLoadingTable } = useQuery(
+  const { data: tableData } = useQuery(
     getDatasetQueryOptions(scenario.dataset, 0, [], [], "", { enabled: false }),
   );
 
   const allowedVariables = useMemo(() => {
-    const columnConfig = tableData?.data?.result?.columnConfig ?? [];
+    const columnConfig = tableData?.data?.result?.column_config ?? [];
 
     const allowedVariables = columnConfig.map((col) => col.name);
     return allowedVariables;
-  }, [tableData?.data?.result?.columnConfig]);
+  }, [tableData?.data?.result?.column_config]);
 
-  const isLoading =
-    isLoadingTable ||
-    (scenario?.prompts ? false : scenario?.status === "Processing");
+  const hasPrompts = Boolean(scenario?.prompts?.[0]?.content);
+  const isProcessing = !hasPrompts && isScenarioInProgress(scenario?.status);
+  const isFailed = !hasPrompts && isScenarioFailed(scenario?.status);
 
   const [open, setOpen] = useState(false);
 
-  if (isLoading) {
+  if (isProcessing) {
     return (
       <Box
         sx={{
@@ -51,6 +55,29 @@ const PromptPreview = ({ scenario }) => {
         <CircularProgress size={20} />
         <Typography typography="s1">
           We are processing the prompts...
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (isFailed) {
+    return (
+      <Box
+        sx={{
+          flex: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+          overflow: "hidden",
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+        }}
+      >
+        <Typography typography="s1">
+          There was an error generating the prompt
         </Typography>
       </Box>
     );

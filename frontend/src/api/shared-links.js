@@ -29,6 +29,7 @@ export const useGetSharedLinks = (resourceType, resourceId) => {
     },
     enabled: !!resourceType && !!resourceId,
     staleTime: 30_000,
+    meta: { errorHandled: true },
   });
 };
 
@@ -65,6 +66,7 @@ export const useCreateSharedLink = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) => axios.post(endpoints.sharedLinks.create, data),
+    meta: { errorHandled: true },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
         queryKey: [
@@ -82,6 +84,7 @@ export const useUpdateSharedLink = () => {
   return useMutation({
     mutationFn: ({ id, ...data }) =>
       axios.patch(endpoints.sharedLinks.update(id), data),
+    meta: { errorHandled: true },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [SHARED_LINKS_KEY] });
     },

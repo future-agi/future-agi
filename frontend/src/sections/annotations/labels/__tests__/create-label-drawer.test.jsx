@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
-import CreateLabelDrawer from "../create-label-drawer";
+import CreateLabelDrawer, { buildPreviewSettings } from "../create-label-drawer";
 
 // Mock the API hooks
 const mockCreate = vi.fn();
@@ -221,6 +221,36 @@ describe("CreateLabelDrawer", () => {
     });
   });
 
+  it("passes the created label back to the caller", async () => {
+    const user = userEvent.setup();
+    const onCreated = vi.fn();
+    mockCreate.mockImplementationOnce((_payload, options) => {
+      options.onSuccess({
+        data: { id: "created-label", name: "Created Label" },
+      });
+    });
+
+    render(
+      <CreateLabelDrawer
+        open={true}
+        onClose={onClose}
+        editLabel={null}
+        onCreated={onCreated}
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/name/i), "Created Label");
+    await user.click(screen.getByRole("button", { name: /create$/i }));
+
+    await waitFor(() => {
+      expect(onCreated).toHaveBeenCalledWith({
+        id: "created-label",
+        name: "Created Label",
+      });
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+  });
+
   it("calls updateLabel on submit in edit mode", async () => {
     const user = userEvent.setup();
     const editLabel = {
@@ -268,5 +298,24 @@ describe("CreateLabelDrawer", () => {
 
     expect(screen.getByLabelText(/name/i)).toHaveValue("Accuracy");
     expect(screen.getByLabelText(/description/i)).toHaveValue("A description");
+  });
+});
+
+describe("buildPreviewSettings", () => {
+  it("forwards display_type so numeric previews are not blank", () => {
+    expect(
+      buildPreviewSettings("numeric", {
+        min: 0,
+        max: 5,
+        step_size: 1,
+        display_type: "input",
+      }),
+    ).toMatchObject({ min: 0, max: 5, step: 1, display_type: "input" });
+  });
+
+  it("defaults numeric display_type to slider when not provided", () => {
+    expect(buildPreviewSettings("numeric", { min: 1, max: 10 })).toMatchObject({
+      display_type: "slider",
+    });
   });
 });

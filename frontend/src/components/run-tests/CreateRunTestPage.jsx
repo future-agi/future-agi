@@ -32,7 +32,10 @@ import axios, { endpoints } from "src/utils/axios";
 import { useSnackbar } from "notistack";
 import { useRouter } from "src/routes/hooks";
 import { useDebounce } from "src/hooks/use-debounce";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
 import EmptyLayout from "../EmptyLayout/EmptyLayout";
 import SvgColor from "../svg-color";
 import { FormSearchSelectFieldState } from "../FromSearchSelectField";
@@ -178,8 +181,18 @@ const CreateRunTestPage = ({ open, onClose }) => {
   const [openEvaluationDialog, setOpenEvaluationDialog] = useState(false);
   const [openUpdateKeysDialog, setOpenUpdateKeysDialog] = useState(false);
   // When non-null, the new EvalPickerDrawer opens directly at the config
-  // step with this template loaded (edit flow).
-  const [editingEvalItem, setEditingEvalItem] = useState(null);
+  // step with the matching row from `evaluationsConfig` loaded (edit flow).
+  // We track only the id and look the row up at render time so we never
+  // hold a stale snapshot if `evaluationsConfig` changes underneath us.
+  const [editingEvalId, setEditingEvalId] = useState(null);
+  const editingEvalItem = useMemo(
+    () =>
+      editingEvalId
+        ? evaluationsConfig.find((e) => e.evalId === editingEvalId) || null
+        : null,
+    [editingEvalId, evaluationsConfig],
+  );
+
   useEffect(() => {
     if (open) {
       setActiveStep(0);
@@ -197,7 +210,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
       });
       setEvaluationsConfig([]);
       setOpenEvaluationDialog(false);
-      setEditingEvalItem(null);
+      setEditingEvalId(null);
       setCompleted({});
     }
   }, [open]);
@@ -235,16 +248,12 @@ const CreateRunTestPage = ({ open, onClose }) => {
       return response.data;
     },
     enabled: !!formData?.agentType,
-    keepPreviousData: true,
   });
 
   // Extract scenarios data
   const scenarios = scenariosData?.results || [];
   const scenariosTotal = scenariosData?.count || 0;
   const scenariosPage = scenariosPagination.page;
-  const scenariosTotalPages = Math.ceil(
-    scenariosTotal / scenariosPagination.pageSize,
-  );
 
   // Since search is done server-side, we don't need to filter locally
   const filteredScenarios = scenarios;
@@ -320,14 +329,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       // Call-level runtime vocabulary — resolved server-side at eval run time
       "call.transcript",
       "call.agent_prompt",
-      "call.summary",
       "call.ended_reason",
       "call.duration_seconds",
       "call.status",
       "call.overall_score",
-      "call.phone_number",
-      "call.recording_url",
-      "call.stereo_recording_url",
       // Modality-specific runtime vocabulary
       ...(isText
         ? ["call.user_chat_transcript", "call.assistant_chat_transcript"]
@@ -336,6 +341,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
             "call.stereo_recording",
             "call.assistant_recording",
             "call.customer_recording",
+            // Only the voice pipeline populates these; chat resolves them to "".
+            "call.summary",
+            "call.phone_number",
+            "call.recording_url",
+            "call.stereo_recording_url",
           ]),
     ];
     return keys.map((key) => ({
@@ -371,10 +381,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
   );
   const selectedAgentVersion = useMemo(() => {
     if (!selectedAgentDef) return null;
-    // Agent definition list response uses snake_case `agent_versions`
-    // / `versions`. camelCase aliases are dead post middleware removal.
-    const versions =
-      selectedAgentDef.versions ?? selectedAgentDef.agent_versions ?? [];
+    const versions = selectedAgentDef.versions ?? [];
     return (
       versions.find((v) => v.id === formData.agentDefinitionVersionId) || null
     );
@@ -383,6 +390,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
     if (!formData?.selectedScenarios?.length) return [];
     return scenarios.filter((s) => formData.selectedScenarios.includes(s.id));
   }, [scenarios, formData?.selectedScenarios]);
+  const runnableScenarioIds = useMemo(
+    () =>
+      (formData?.selectedScenarios || []).filter((id) => {
+        const s = scenarios.find((x) => x.id === id);
+        return !s || (s.dataset_rows || 0) > 0;
+      }),
+    [scenarios, formData?.selectedScenarios],
+  );
 
   const sourcePreviewData = useMemo(() => {
     const isText = formData?.agentType === AGENT_TYPES.CHAT;
@@ -391,8 +406,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     // is an array of per-scenario entries; each has dataset_column_config.
     const scenarioColumns = {};
     (data?.data?.columnConfigs || []).forEach((detail) => {
-      const cfg =
-        detail?.dataset_column_config ?? detail?.datasetColumnConfig ?? {};
+      const cfg = detail?.dataset_column_config ?? {};
       Object.entries(cfg).forEach(([uuid, meta]) => {
         scenarioColumns[uuid] = meta;
       });
@@ -407,11 +421,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       id: s.id,
       name: s.name,
       description: s.description,
-      scenario_type: s.scenario_type ?? s.scenarioType,
+      scenario_type: s.scenario_type,
       source: s.source,
       persona: s.agent ?? null,
-      prompt_template:
-        s.prompt_template_detail ?? s.promptTemplateDetail ?? null,
+      prompt_template: s.prompt_template_detail ?? null,
     }));
 
     // First-scenario values power the flat vocabulary keys. The per-
@@ -509,7 +522,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
       enqueueSnackbar("Test created successfully!", { variant: "success" });
       onClose();
       navigate(`/dashboard/simulate/test/${data.id}/runs`);
-      // Navigate to run tests list page
     },
   });
   const handleSubmit = async () => {
@@ -534,13 +546,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
             evalConfig.evalTemplateName ||
             "Unnamed Evaluation",
           template_id: evalConfig.templateId || evalConfig.id?.split("_")[0], // Extract original template ID
-          template_name: evalConfig.evalTemplateName,
           mapping: evalConfig.config?.mapping || {},
           config: evalConfig.config || {},
-          description: evalConfig.description || "",
-          type: evalConfig.type || "user_built",
-          required_keys: evalConfig.evalRequiredKeys || [],
-          tags: evalConfig.evalTemplateTags || [],
           error_localizer: evalConfig?.errorLocalizer,
           ...(evalConfig?.model && { model: evalConfig.model }),
           ...(evalConfig?.evalGroup && { eval_group: evalConfig.evalGroup }),
@@ -551,7 +558,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     const payload = {
       name: formData?.testName || "",
       description: formData?.description || "",
-      scenario_ids: formData?.selectedScenarios || [],
+      scenario_ids: runnableScenarioIds,
       agent_definition_id: formData.agentDefinitionId,
       agent_version: formData?.agentDefinitionVersionId,
       eval_config_ids: [], // Keep empty for existing eval configs
@@ -610,6 +617,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
   const handleScenarioToggle = (scenarioId) => {
     const isSelected = formData.selectedScenarios.includes(scenarioId);
+    if (!isSelected) {
+      const scenario = scenarios.find((s) => s.id === scenarioId);
+      if (scenario && (scenario.dataset_rows || 0) === 0) return;
+    }
     setFormData({
       ...formData,
       selectedScenarios: isSelected
@@ -618,44 +629,45 @@ const CreateRunTestPage = ({ open, onClose }) => {
     });
   };
 
-  // Transform the new EvalPickerDrawer's camelCase payload into the legacy
-  // `evaluationsConfig` shape expected by the existing render + final POST.
-  // Keeps the rest of CreateRunTestPage untouched.
-  const toLegacyEvalShape = (evalConfig, versionedName) => ({
-    evalId: `${evalConfig.templateId}_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2, 8)}`,
-    templateId: evalConfig.templateId,
-    name: versionedName,
-    evalTemplateName: evalConfig.evalTemplate?.name || evalConfig.name,
-    description: evalConfig.evalTemplate?.description || "",
-    type: "user_built",
-    config: {
-      ...(evalConfig.config || {}),
+  const toLegacyEvalShape = (evalConfig, versionedName) => {
+    const serialized = serializeEvalConfig(evalConfig);
+    return {
+      evalId: `${evalConfig.templateId}_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+      templateId: evalConfig.templateId,
+      name: versionedName,
+      evalTemplateName: evalConfig.evalTemplate?.name || evalConfig.name,
+      description: evalConfig.evalTemplate?.description || "",
+      type: "user_built",
       mapping: evalConfig.mapping || {},
-      ...(evalConfig.instructions != null && {
-        instructions: evalConfig.instructions,
-      }),
-      ...(evalConfig.passThreshold != null && {
-        pass_threshold: evalConfig.passThreshold,
-      }),
-      ...(evalConfig.choiceScores &&
-        Object.keys(evalConfig.choiceScores).length > 0 && {
-          choice_scores: evalConfig.choiceScores,
+      config: {
+        ...serialized.config,
+        mapping: evalConfig.mapping || {},
+        ...(evalConfig.instructions != null && {
+          instructions: evalConfig.instructions,
         }),
-    },
-    model: evalConfig.model,
-    evalRequiredKeys:
-      evalConfig.evalTemplate?.required_keys ||
-      evalConfig.evalTemplate?.requiredKeys ||
-      [],
-    evalTemplateTags: evalConfig.evalTemplate?.tags || [],
-    errorLocalizer: false,
-  });
+        ...(evalConfig.passThreshold != null && {
+          pass_threshold: evalConfig.passThreshold,
+        }),
+        ...(evalConfig.choiceScores &&
+          Object.keys(evalConfig.choiceScores).length > 0 && {
+            choice_scores: evalConfig.choiceScores,
+          }),
+      },
+      model: evalConfig.model,
+      evalRequiredKeys:
+        evalConfig.evalTemplate?.required_keys ||
+        evalConfig.evalTemplate?.requiredKeys ||
+        [],
+      evalTemplateTags: evalConfig.evalTemplate?.tags || [],
+      errorLocalizer: !!evalConfig.error_localizer_enabled,
+    };
+  };
 
   const handleAddEvaluation = async (evalConfig) => {
     // Capture edit-target before we close the drawer and clear state.
-    const editingId = editingEvalItem?.evalId || null;
+    const editingId = editingEvalId;
 
     setEvaluationsConfig((prev) => {
       let updated = [...prev];
@@ -671,7 +683,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     });
 
     setOpenEvaluationDialog(false);
-    setEditingEvalItem(null);
+    setEditingEvalId(null);
   };
 
   const handleRemoveEvaluation = (id, isGroupEval) => {
@@ -695,7 +707,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     return agentDefVersions?.pages?.reduce((acc, curr) => {
       const newOptions =
         curr.results?.map((result) => ({
-          label: result.versionNameDisplay,
+          label: result.version_name_display,
           value: result.id,
         })) ?? [];
       return [...acc, ...newOptions];
@@ -729,7 +741,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // Without this branch, LiveKit agents hit a false "missing credentials"
   // gate and can't enable tool-call eval at all. [TH-4130]
   /** @param {Record<string, any> | null | undefined} snapshot */
-  const hasToolCallCredentials = (snapshot) => {
+  const hasToolCallCredentials = (agentVersionDetails, snapshot) => {
     if (!snapshot) return false;
     if (isLiveKitProvider(snapshot.provider)) {
       return Boolean(
@@ -739,19 +751,19 @@ const CreateRunTestPage = ({ open, onClose }) => {
           snapshot.livekitAgentName,
       );
     }
-    return Boolean(snapshot.apiKey && snapshot.assistantId);
+    const apiKey = agentVersionDetails?.api_key;
+    const assistantId = snapshot.assistant_id;
+    return Boolean(apiKey && assistantId);
   };
 
   useEffect(() => {
     if (agentVersionDetails && formData?.enableToolEvaluation) {
-      const snapshot =
-        agentVersionDetails?.configuration_snapshot ??
-        agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
-      const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
+      const snapshot = agentVersionDetails?.configuration_snapshot;
+      const apiKey = agentVersionDetails?.api_key;
+      const vapiAssistantId = snapshot?.assistant_id;
 
       if (
-        !hasToolCallCredentials(snapshot) &&
+        !hasToolCallCredentials(agentVersionDetails, snapshot) &&
         formData?.agentType !== AGENT_TYPES.CHAT
       ) {
         setFormData((prev) => ({
@@ -780,12 +792,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
         });
         return;
       }
-      const snapshot =
-        agentVersionDetails?.configuration_snapshot ??
-        agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
-      const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
-      if ((!vapiApiKey || !vapiAssistantId) && value) {
+      const snapshot = agentVersionDetails?.configuration_snapshot;
+      const apiKey = agentVersionDetails?.api_key;
+      const vapiAssistantId = snapshot?.assistant_id;
+      if ((!apiKey || !vapiAssistantId) && value) {
         setOpenUpdateKeysDialog(true);
         return;
       }
@@ -800,8 +810,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
       });
       return;
     }
-    const snapshot = agentVersionDetails?.configurationSnapshot;
-    if (!hasToolCallCredentials(snapshot) && value) {
+    const snapshot = agentVersionDetails?.configuration_snapshot;
+    if (!hasToolCallCredentials(agentVersionDetails, snapshot) && value) {
       setOpenUpdateKeysDialog(true);
       return;
     }
@@ -810,10 +820,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
       enableToolEvaluation: value,
     }));
   };
-  const handleEditEvalItem = (evalConfig) => {
-    // Pass through to the new picker via `initialEval`: it only needs `.id`
-    // (the eval template id) to load the full template at the config step.
-    setEditingEvalItem(evalConfig);
+
+  const handleEditEvalItem = (evalItem) => {
+    setEditingEvalId(evalItem.evalId);
     setOpenEvaluationDialog(true);
   };
   useEffect(() => {
@@ -896,9 +905,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     agentDefinitionsLoading
                       ? []
                       : agentDefinitions?.map((agent) => ({
-                          label: agent?.agentName,
+                          label: agent?.agent_name,
                           value: agent?.id,
-                          type: agent?.agentType,
+                          type: agent?.agent_type,
                           component: (
                             <Box
                               sx={{
@@ -912,11 +921,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               <SvgColor
                                 sx={{ width: 18 }}
                                 src={getIconForAgentDefinitions(
-                                  agent?.agentType,
+                                  agent?.agent_type,
                                 )}
                               />
-                              <Typography variant="s2_1">
-                                {agent?.agentName}
+                              <Typography typography="s2_1">
+                                {agent?.agent_name}
                               </Typography>
                             </Box>
                           ),
@@ -997,7 +1006,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       case 1:
         return (
           <>
-            {filteredScenarios.length === 0 && debouncedSearch === "" ? (
+            {!isLoadingScenarios &&
+            !scenariosError &&
+            filteredScenarios.length === 0 &&
+            debouncedSearch === "" ? (
               <EmptyLayout
                 title="Add your first scenario"
                 description="Create scenarios and experiments to evaluate your application across different test cases and conditions."
@@ -1101,102 +1113,133 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 ) : (
                   <>
                     <List sx={{ width: "100%", bgcolor: "background.paper" }}>
-                      {filteredScenarios.map((scenario) => (
-                        <ListItem
-                          key={scenario.id}
-                          sx={{
-                            border: "1px solid",
-                            borderColor: formData.selectedScenarios.includes(
-                              scenario.id,
-                            )
-                              ? "primary.main"
-                              : "divider",
-                            borderRadius: 1,
-                            mb: 1.5,
-                            px: 2,
-                            py: 1.5,
-                            cursor: "pointer",
-                            "&:hover": {
-                              borderColor: "primary.lighter",
-                              bgcolor: alpha(
-                                theme.palette.primary["lighter"],
-                                0.12,
-                              ),
-                            },
-                          }}
-                          onClick={() => {
-                            handleScenarioToggle(scenario.id);
-                          }}
-                        >
-                          <ListItemIcon sx={{ minWidth: 40 }}>
-                            <Checkbox
-                              edge="start"
-                              checked={formData.selectedScenarios.includes(
-                                scenario.id,
-                              )}
-                              tabIndex={-1}
-                              disableRipple
-                            />
-                          </ListItemIcon>
-                          <ListItemText
-                            primary={
-                              <Typography
-                                variant="subtitle2"
-                                sx={{
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 1,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                {scenario.name}
-                              </Typography>
-                            }
-                            secondary={
-                              <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                {scenario.description ||
-                                  scenario.source ||
-                                  "No description available"}
-                              </Typography>
-                            }
-                          />
-                          <Box
-                            sx={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-end",
-                              gap: 0.5,
-                            }}
+                      {filteredScenarios.map((scenario) => {
+                        const isEmpty = (scenario.dataset_rows || 0) === 0;
+                        return (
+                          <CustomTooltip
+                            key={scenario.id}
+                            show={isEmpty}
+                            arrow
+                            placement="top"
+                            size="small"
+                            title="This scenario has no datapoints to run against."
                           >
-                            {scenario.scenarioType === "dataset" && (
-                              <Chip
-                                label="Dataset"
-                                size="small"
-                                sx={{
-                                  height: "20px",
-                                  fontSize: "11px",
-                                }}
+                            <ListItem
+                              sx={{
+                                border: "1px solid",
+                                borderColor:
+                                  formData.selectedScenarios.includes(
+                                    scenario.id,
+                                  )
+                                    ? "primary.main"
+                                    : "divider",
+                                borderRadius: 1,
+                                mb: 1.5,
+                                px: 2,
+                                py: 1.5,
+                                cursor: isEmpty ? "not-allowed" : "pointer",
+                                opacity: isEmpty ? 0.5 : 1,
+                                "&:hover": isEmpty
+                                  ? {}
+                                  : {
+                                      borderColor: "primary.lighter",
+                                      bgcolor: alpha(
+                                        theme.palette.primary["lighter"],
+                                        0.12,
+                                      ),
+                                    },
+                              }}
+                              onClick={() => {
+                                if (!isEmpty) handleScenarioToggle(scenario.id);
+                              }}
+                            >
+                              <ListItemIcon sx={{ minWidth: 40 }}>
+                                <Checkbox
+                                  edge="start"
+                                  checked={formData.selectedScenarios.includes(
+                                    scenario.id,
+                                  )}
+                                  disabled={isEmpty}
+                                  tabIndex={-1}
+                                  disableRipple
+                                />
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={
+                                  <Typography
+                                    variant="subtitle2"
+                                    sx={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 1,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {scenario.name}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Typography
+                                    variant="body2"
+                                    color="text.secondary"
+                                    sx={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {scenario.description ||
+                                      scenario.source ||
+                                      "No description available"}
+                                  </Typography>
+                                }
                               />
-                            )}
-                            <Typography variant="body2" fontWeight={600}>
-                              {scenario.datasetRows || 0}
-                            </Typography>
-                          </Box>
-                        </ListItem>
-                      ))}
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-end",
+                                  gap: 0.5,
+                                }}
+                              >
+                                {scenario.scenarioType === "dataset" && (
+                                  <Chip
+                                    label="Dataset"
+                                    size="small"
+                                    sx={{
+                                      height: "20px",
+                                      fontSize: "11px",
+                                    }}
+                                  />
+                                )}
+                                {isEmpty ? (
+                                  <Chip
+                                    label="No datapoints"
+                                    size="small"
+                                    sx={{
+                                      height: "20px",
+                                      color: "text.disabled",
+                                      bgcolor: "action.hover",
+                                    }}
+                                  />
+                                ) : (
+                                  <Typography variant="body2" fontWeight={600}>
+                                    {scenario.dataset_rows}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </ListItem>
+                          </CustomTooltip>
+                        );
+                      })}
                     </List>
 
-                    {/* Pagination */}
-                    {scenariosTotalPages > 1 && (
+                    {/* Gated on rows, not on page count: the rows-per-page
+                        selector lives in this bar, so hiding it whenever the
+                        chosen size covers everything strands the user at that
+                        size with no way back. */}
+                    {scenariosTotal > 0 && (
                       <Box
                         sx={{
                           display: "flex",
@@ -1484,14 +1527,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
             >
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <Typography
-                  variant="s1"
+                  typography="s1"
                   fontWeight={"fontWeightMedium"}
                   color={"text.primary"}
                 >
                   Enable tool call evaluation
                 </Typography>
                 <Typography
-                  variant="s2_1"
+                  typography="s2_1"
                   fontWeight={"fontWeightRegular"}
                   color={"text.primary"}
                 >
@@ -1535,7 +1578,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                   variant="contained"
                   startIcon={<Iconify icon="eva:plus-fill" />}
                   onClick={() => {
-                    setEditingEvalItem(null);
+                    setEditingEvalId(null);
                     setOpenEvaluationDialog(true);
                   }}
                   sx={{
@@ -1568,7 +1611,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                       variant="outlined"
                       size="small"
                       onClick={() => {
-                        setEditingEvalItem(null);
+                        setEditingEvalId(null);
                         setOpenEvaluationDialog(true);
                       }}
                       startIcon={
@@ -1623,9 +1666,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 flexWrap: "wrap",
                               }}
                             >
-                              <ShowComponent condition={!!evalItem?.groupName}>
+                              <ShowComponent condition={!!evalItem?.group_name}>
                                 <Chip
-                                  label={`Group name - ${evalItem?.groupName}.`}
+                                  label={`Group name - ${evalItem?.group_name}.`}
                                   size="small"
                                   sx={{
                                     height: "24px",
@@ -1757,7 +1800,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
               }}
               onClose={() => setOpenUpdateKeysDialog(false)}
               agentDetails={agentVersionDetails}
-              agentDefinitionId={agentVersionDetails?.agentDefinition}
+              agentDefinitionId={agentVersionDetails?.agent_definition}
             />
           </Box>
         );
@@ -1819,7 +1862,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                         agentDefinitions.filter(
                           (definition) =>
                             definition.id === formData.agentDefinitionId,
-                        )[0]?.agentName
+                        )[0]?.agent_name
                       }
                       &nbsp; (
                       {versionOptions.find(
@@ -1905,7 +1948,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             </Typography>
                           </Box>
                           <Typography variant="body2" fontWeight={600}>
-                            {scenario.datasetRows || 0} rows
+                            {scenario.dataset_rows || 0} rows
                           </Typography>
                         </Box>
                       ) : null;
@@ -2221,7 +2264,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             ? "text.primary"
                             : index <= activeStep
                               ? "primary.main"
-                              : "text.disabled"
+                              : "text.secondary"
                         }
                         sx={{
                           textAlign: "center",
@@ -2325,20 +2368,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
         open={openEvaluationDialog}
         onClose={() => {
           setOpenEvaluationDialog(false);
-          setEditingEvalItem(null);
+          setEditingEvalId(null);
         }}
         source="create-simulate"
         sourceColumns={evalColumnsToDisplay}
         sourcePreviewData={sourcePreviewData}
         onEvalAdded={handleAddEvaluation}
-        initialEval={
-          editingEvalItem
-            ? {
-                id: editingEvalItem.templateId,
-                template_id: editingEvalItem.templateId,
-              }
-            : null
-        }
+        existingEvals={editingEvalItem ? [] : evaluationsConfig}
+        initialEval={editingEvalItem || null}
       />
     </>
   );

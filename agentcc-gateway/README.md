@@ -19,7 +19,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
-  <a href="https://discord.gg/UjZ2gRT5p"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
 
 <p>
@@ -465,8 +465,8 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Text / chat | `/v1/chat/completions` · `/v1/completions` · `/v1/messages` (Anthropic) · `/v1/responses` |
 | Vision (image → text) | `/v1/chat/completions` with image content parts |
 | Image generation | `/v1/images/generations` |
-| Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` |
-| Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` |
+| Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` · streaming: `/deepgram/v1/listen` · `/cartesia/stt/websocket` |
+| Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` · streaming: `/deepgram/v1/speak` · `/cartesia/tts/websocket` |
 | Realtime voice + text (WebSocket) | `/v1/realtime` |
 | Video generation | `/v1/videos` · `/v1/videos/{id}` |
 | Embeddings | `/v1/embeddings` |
@@ -537,6 +537,11 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <td><b>Realtime (WebSocket)</b></td>
 <td><code>GET /v1/realtime</code></td>
 <td>OpenAI Realtime voice + text · WebSocket passthrough with per-frame plugins</td>
+</tr>
+<tr>
+<td><b>Streaming speech (WebSocket)</b></td>
+<td><code>GET /deepgram/v1/listen</code> · <code>/deepgram/v1/speak</code> · <code>/cartesia/tts/websocket</code> · <code>/cartesia/stt/websocket</code> · <code>/cartesia/stt/turns/websocket</code></td>
+<td>Deepgram and Cartesia's own streaming APIs, relayed on the platform's vendor key · vendor SDKs need only a base URL and the gateway key · metered in audio seconds / characters</td>
 </tr>
 <tr>
 <td><b>Assistants API</b></td>
@@ -698,7 +703,7 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `alerting` | Always | Fire alerts on SLO breach / guardrail violation |
 | `logging` | Always | Structured JSON access log with redaction |
 
-### 🌐 Provider formats — 8 native (100+ upstreams)
+### 🌐 Provider formats — 10 native (100+ upstreams)
 
 One gateway HTTP endpoint, each provider's native protocol preserved — we don't lossy-convert provider-specific features.
 
@@ -712,6 +717,8 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 | **Bedrock** | AWS Bedrock (all model families: Anthropic, Meta, Cohere, AI21, Mistral, Amazon) | — | SigV4 signing, inference profiles, cross-region invocations |
 | **Cohere** | Cohere · AWS Bedrock (Cohere) | — | command-R family, embed-v3, rerank-3 |
 | **Google (gauth)** | Vertex, Gemini, PaLM | — | service-account + workload-identity auth flows |
+| **Deepgram** (`api_format: deepgram`) | Deepgram | — | streaming speech-to-text and Aura text-to-speech over Deepgram's own WebSocket API |
+| **Cartesia** (`api_format: cartesia`) | Cartesia | — | streaming Sonic text-to-speech and Ink speech-to-text over Cartesia's own WebSocket API |
 
 Add a new provider with ~30 lines of YAML — no code changes. See [`config.example.yaml`](./config.example.yaml).
 
@@ -1046,6 +1053,6 @@ Apache License 2.0 — see [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE).
 
 **Built with ❤️ in Go by the [Future AGI](https://futureagi.com) team and contributors.**
 
-[🌐 futureagi.com](https://futureagi.com) · [📖 docs](https://docs.futureagi.com/docs/prism) · [💬 Discord](https://discord.gg/UjZ2gRT5p) · [🐦 Twitter](https://twitter.com/futureagi)
+[🌐 futureagi.com](https://futureagi.com) · [📖 docs](https://docs.futureagi.com/docs/prism) · [💬 Discord](https://discord.com/invite/n2tCUKBkAw) · [🐦 Twitter](https://twitter.com/futureagi)
 
 </div>

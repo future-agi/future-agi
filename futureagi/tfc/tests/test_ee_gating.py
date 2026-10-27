@@ -5,17 +5,19 @@ Covers:
 - `is_oss()` probes via `has_ee("ee.usage")`.
 - `require_ee_feature` denies when ee is absent.
 - `_ee_stub` and `_ee_activity_stub` raise the right exception types.
-- `EEFeature` enum mirrors the ee-side `EE_FEATURES` set (skipped when
-  ee/ is absent).
+- `EEFeature` enum mirrors the canonical paid capability registry.
 """
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from rest_framework import status as drf_status
 
+from tfc.capabilities.registry import PAID_FEATURES
 from tfc.ee_gating import (
     EE_FEATURES_OSS,
     EEFeature,
@@ -28,13 +30,12 @@ from tfc.ee_gating import (
 )
 from tfc.ee_loader import has_ee
 
-
 # ── FeatureUnavailable ────────────────────────────────────────────────────
 
 
 class TestFeatureUnavailable:
     def test_status_code_is_402(self):
-        exc = FeatureUnavailable(EEFeature.KNOWLEDGE_BASE)
+        exc = FeatureUnavailable(EEFeature.SCIM)
         assert exc.status_code == drf_status.HTTP_402_PAYMENT_REQUIRED
 
     def test_carries_feature_name(self):
@@ -77,6 +78,26 @@ class TestFeatureUnavailable:
         assert response.status_code == 402
         assert response.data["upgrade_cta"] == cta
 
+    def test_custom_exception_handler_uses_instance_code_and_metadata(self):
+        from accounts.authentication import custom_exception_handler
+
+        exc = FeatureUnavailable(
+            EEResource.ANNOTATION_QUEUES,
+            detail="You've reached the 10 annotation queues limit (11 existing).",
+            code="ENTITLEMENT_LIMIT",
+            metadata={"current_usage": 11, "limit": 10, "resource": "queues"},
+        )
+        response = custom_exception_handler(exc, context={})
+
+        assert response.status_code == 402
+        assert response.data["error"]["code"] == "ENTITLEMENT_LIMIT"
+        assert response.data["error"]["detail"] == {
+            "feature": "queues",
+            "resource": "queues",
+            "current_usage": 11,
+            "limit": 10,
+        }
+
 
 # ── is_oss ────────────────────────────────────────────────────────────────
 
@@ -97,7 +118,7 @@ class TestIsOss:
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present — only meaningful with ee/ installed")
 
-        from ee.usage.deployment import DeploymentMode
+        DeploymentMode = pytest.importorskip("ee.usage.deployment").DeploymentMode
 
         # Force DeploymentMode.is_oss() to return True; is_oss() should too.
         with patch.object(DeploymentMode, "is_oss", return_value=True):
@@ -115,25 +136,93 @@ class TestCheckEEFeature:
     def setup_method(self):
         is_oss.cache_clear()
 
-    def test_oss_denies(self):
-        with patch("tfc.ee_gating.is_oss", return_value=True):
+    def test_oss_denies_locked_feature(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=True),
+        ):
             with pytest.raises(FeatureUnavailable) as exc_info:
-                check_ee_feature(EEFeature.KNOWLEDGE_BASE)
-            assert exc_info.value.feature == "knowledge_base"
+                check_ee_feature(EEFeature.PROTECT)
+            assert exc_info.value.feature == "protect"
+
+    def test_oss_allows_unlocked_paid_feature(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=True),
+        ):
+            check_ee_feature(EEFeature.SCIM)  # unlocked → free off-cloud
 
     def test_oss_denies_with_activity_flag(self):
         """activity=True must raise a Temporal ApplicationError (non-retryable)."""
         from temporalio.exceptions import ApplicationError
 
-        with patch("tfc.ee_gating.is_oss", return_value=True):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=True),
+        ):
             with pytest.raises(ApplicationError) as exc_info:
-                check_ee_feature(EEFeature.VOICE_SIM, activity=True)
+                check_ee_feature(EEFeature.PROTECT, activity=True)
             assert exc_info.value.non_retryable is True
             assert exc_info.value.type == "FeatureUnavailable"
 
-    def test_non_oss_without_org_id_passes(self):
-        with patch("tfc.ee_gating.is_oss", return_value=False):
-            check_ee_feature(EEFeature.SCIM)  # no-op: no org_id, no deny
+    def test_non_oss_without_org_id_uses_global_license(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.has_feature_unified",
+                return_value=True,
+            ) as has_feature,
+        ):
+            check_ee_feature(EEFeature.SCIM)
+
+        has_feature.assert_called_once_with("", "scim")
+
+    def test_cloud_without_org_id_denies(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_feature(EEFeature.SCIM)
+
+    def test_malformed_entitlement_result_denies(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.has_feature_unified",
+                return_value="yes",
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_feature(EEFeature.SCIM, org_id="org-1")
+
+    def test_entitlement_resolver_failure_denies(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.has_feature_unified",
+                side_effect=RuntimeError("resolver unavailable"),
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_feature(EEFeature.SCIM, org_id="org-1")
+
+    def test_entitlement_import_failure_denies(self):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch.dict(
+                sys.modules,
+                {"ee.usage.services.entitlements": None},
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_feature(EEFeature.SCIM, org_id="org-1")
 
     def test_non_ee_feature_passes_in_oss(self):
         """A string that isn't in EE_FEATURES_OSS must not be denied.
@@ -143,6 +232,8 @@ class TestCheckEEFeature:
         with patch("tfc.ee_gating.is_oss", return_value=True):
             check_ee_feature("tracing")  # must not raise
             check_ee_feature("datasets")  # core feature, not EE
+            check_ee_feature("knowledge_base")
+            check_ee_feature("review_workflow")
 
 
 class TestRaiseDeniedLogs:
@@ -158,9 +249,7 @@ class TestRaiseDeniedLogs:
         with pytest.raises(FeatureUnavailable):
             _raise_denied("knowledge_base", activity=False)
 
-        matches = [
-            r for r in caplog.records if r.message == "ee_feature_denied"
-        ]
+        matches = [r for r in caplog.records if r.message == "ee_feature_denied"]
         assert matches, "expected ee_feature_denied log record"
         assert matches[0].feature == "knowledge_base"
         assert matches[0].activity is False
@@ -171,11 +260,14 @@ class TestRequireEEFeatureDecorator:
         is_oss.cache_clear()
 
     def test_sync_fn_denied_in_oss(self):
-        @require_ee_feature(EEFeature.OPTIMIZATION)
+        @require_ee_feature(EEFeature.ERROR_FEED)
         def endpoint():
             return "ok"
 
-        with patch("tfc.ee_gating.is_oss", return_value=True):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=True),
+        ):
             with pytest.raises(FeatureUnavailable):
                 endpoint()
 
@@ -217,13 +309,14 @@ class TestEEStub:
 class TestEEFeatureMirror:
     def test_ee_features_oss_mirror_matches_enum(self):
         assert EE_FEATURES_OSS == frozenset(f.value for f in EEFeature)
+        assert EE_FEATURES_OSS == PAID_FEATURES
 
     def test_ee_features_oss_matches_ee_source_when_present(self):
-        """The local mirror must stay in sync with the ee-side source."""
+        """The EE compatibility alias must use the canonical paid registry."""
         if not has_ee("ee.usage"):
             pytest.skip("ee/ not present")
 
-        from ee.usage.deployment import EE_FEATURES as EE_FEATURES_SOURCE
+        EE_FEATURES_SOURCE = pytest.importorskip("ee.usage.deployment").EE_FEATURES
 
         assert EE_FEATURES_OSS == EE_FEATURES_SOURCE, (
             "tfc.ee_gating.EEFeature has drifted from ee.usage.deployment."
@@ -238,9 +331,94 @@ class TestCheckEECanCreate:
     def setup_method(self):
         is_oss.cache_clear()
 
-    def test_oss_denies(self):
-        with patch("tfc.ee_gating.is_oss", return_value=True):
+    def test_self_hosted_uncapped(self):
+        with patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False):
+            check_ee_can_create(
+                EEResource.GATEWAY_WEBHOOKS, org_id="org-1", current_count=10_000
+            )  # count limits are cloud-only — must not raise
+
+    def test_missing_org_id_denies(self):
+        with patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True):
             with pytest.raises(FeatureUnavailable):
                 check_ee_can_create(
-                    EEResource.GATEWAY_WEBHOOKS, org_id="org-1", current_count=0
+                    EEResource.GATEWAY_WEBHOOKS,
+                    org_id=None,
+                    current_count=0,
                 )
+
+    def test_entitlement_import_failure_denies(self):
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch.dict(
+                sys.modules,
+                {"ee.usage.services.entitlements": None},
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_can_create(
+                    EEResource.GATEWAY_WEBHOOKS,
+                    org_id="org-1",
+                    current_count=0,
+                )
+
+    def test_entitlement_resolver_failure_denies(self):
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                side_effect=RuntimeError("resolver unavailable"),
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_can_create(
+                    EEResource.GATEWAY_WEBHOOKS,
+                    org_id="org-1",
+                    current_count=0,
+                )
+
+    def test_missing_allowed_result_denies(self):
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=SimpleNamespace(),
+            ),
+        ):
+            with pytest.raises(FeatureUnavailable):
+                check_ee_can_create(
+                    EEResource.GATEWAY_WEBHOOKS,
+                    org_id="org-1",
+                    current_count=0,
+                )
+
+    def test_entitlement_limit_metadata_threads_to_exception(self):
+        result = SimpleNamespace(
+            allowed=False,
+            reason="You've reached the 10 annotation queues limit (11 existing).",
+            error_code="ENTITLEMENT_LIMIT",
+            current_usage=11,
+            limit=10,
+            upgrade_cta=None,
+        )
+
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=result,
+            ) as can_create,
+        ):
+            with pytest.raises(FeatureUnavailable) as exc_info:
+                check_ee_can_create(
+                    EEResource.ANNOTATION_QUEUES,
+                    org_id="org-1",
+                    current_count=11,
+                )
+
+        can_create.assert_called_once_with("org-1", "queues", 11)
+        assert exc_info.value.error_code == "ENTITLEMENT_LIMIT"
+        assert exc_info.value.metadata == {
+            "resource": "queues",
+            "current_usage": 11,
+            "limit": 10,
+        }

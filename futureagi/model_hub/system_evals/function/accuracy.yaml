@@ -29,22 +29,22 @@ config:
             if val is None:
                 return []
             if isinstance(val, list):
-                return [str(v) for v in val]
+                return [str(v).strip().lower() for v in val]
             if isinstance(val, str):
                 try:
                     p = json.loads(val)
                     if isinstance(p, list):
-                        return [str(v) for v in p]
+                        return [str(v).strip().lower() for v in p]
                 except (json.JSONDecodeError, ValueError):
                     pass
-                return [val.strip()]
-            return [str(val)]
+                return [val.strip().lower()]
+            return [str(val).strip().lower()]
         preds = _parse(kwargs.get("output", output))
         labels = _parse(kwargs.get("expected", expected))
+        if not preds and not labels:
+            return {"score": 1.0, "reason": "Both empty"}
         if len(preds) != len(labels):
             return {"score": 0.0, "reason": f"Length mismatch: {len(preds)} vs {len(labels)}"}
-        if not labels:
-            return {"score": 1.0, "reason": "Both empty"}
-        correct = sum(1 for p, l in zip(preds, labels) if p.lower() == l.lower())
+        correct = sum(1 for p, l in zip(preds, labels) if p == l)
         acc = correct / len(labels)
         return {"score": float(acc), "reason": f"Accuracy: {acc:.4f} ({correct}/{len(labels)})"}

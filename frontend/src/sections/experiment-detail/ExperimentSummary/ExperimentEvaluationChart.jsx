@@ -11,7 +11,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
 
   const data = rows?.map((row, idx) => ({
     x: row?.experiment_dataset_name ?? row?.experimentDatasetName,
-    y: row?.[col.name],
+    y: row?.[col?.name],
     fillColor: isDark
       ? getUniqueColorPalette(idx).tagForeground
       : getUniqueColorPalette(idx).solid,
@@ -81,7 +81,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
           ]}
           type="bar"
           width="100%"
-          height={120 * Math.log2(rows.length + 1)}
+          height={120 * Math.log2((rows?.length || 0) + 1)}
         />
       </Box>
     </Box>

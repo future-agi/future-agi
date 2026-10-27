@@ -126,6 +126,78 @@ class TestFetchComparisonTranscripts:
 
 
 @pytest.mark.unit
+class TestNonVapiProviderComparison:
+    """Bland (and any provider whose raw payload isn't VAPI/Retell-shaped) must
+    compare via the persisted CallTranscript rows + model fields, not render
+    blank. Regression: the retell branch swallowed the empty-list case, and
+    metrics/duration were read only from a VAPI payload."""
+
+    @staticmethod
+    def _patch_call_transcript(rows):
+        # rows: list of (speaker_role, content)
+        transcript_rows = [
+            SimpleNamespace(speaker_role=r, content=c) for r, c in rows
+        ]
+
+        class _SpeakerRole:
+            ASSISTANT = "assistant"
+            USER = "user"
+
+        class _QuerySet:
+            def filter(self, **kwargs):
+                return self
+
+            def order_by(self, *args):
+                return transcript_rows
+
+            def count(self):
+                return len(transcript_rows)
+
+        return patch(
+            "simulate.models.test_execution.CallTranscript",
+            SimpleNamespace(objects=_QuerySet(), SpeakerRole=_SpeakerRole),
+        )
+
+    def test_bland_transcripts_come_from_call_transcript_rows(self):
+        call = SimpleNamespace(
+            provider_call_data={
+                "bland": {"transcripts": [{"user": "assistant", "text": "x"}]}
+            }
+        )
+        with self._patch_call_transcript(
+            [("assistant", "Hello"), ("user", "Hi there")]
+        ):
+            out = session_comparison._extract_transcripts_from_provider_call_data(
+                call
+            )
+        assert out == [
+            {"role": "assistant", "messages": ["Hello"]},
+            {"role": "user", "messages": ["Hi there"]},
+        ]
+
+    def test_bland_metrics_use_model_fields_and_call_transcript(self):
+        call = SimpleNamespace(
+            provider_call_data={"bland": {}},
+            duration_seconds=66,
+            avg_agent_latency_ms=None,
+            user_wpm=None,
+            bot_wpm=None,
+            talk_ratio=None,
+        )
+        with self._patch_call_transcript(
+            [("assistant", "a"), ("user", "b"), ("assistant", "c")]
+        ):
+            metrics = session_comparison._extract_metrics_from_provider_call_data(
+                call
+            )
+        assert metrics["duration"] == 66
+        assert metrics["total_turns"] == 3
+        # None per-turn metrics degrade to 0 for a provider with no timing.
+        assert metrics["avg_agent_latency_ms"] == 0
+        assert metrics["talk_ratio"] == 0
+
+
+@pytest.mark.unit
 class TestConvertTraceToChatMessages:
     def test_returns_empty_list_for_none_or_empty_input(self):
         assert session_comparison.convert_trace_to_chat_messages(None) == []
@@ -206,8 +278,8 @@ class TestFetchSimulatedCallRecordings:
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
         assert result == {}
 
-    def test_single_provider_key(self):
-        """When provider_call_data has a single key, use its value."""
+    def test_non_vapi_single_provider_returns_model_urls(self):
+        """A Retell payload returns recording URLs from model fields."""
         call_exec = SimpleNamespace(
             provider_call_data={
                 "retell": {
@@ -218,25 +290,27 @@ class TestFetchSimulatedCallRecordings:
                     }
                 }
             },
-            recording_url=None,
-            stereo_recording_url=None,
+            recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3",
+            stereo_recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3",
         )
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
-        assert result == {"stereo": "https://example.com/retell-stereo.wav"}
+        assert result["mono_combined"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
+        assert result["stereo"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
 
 
 @pytest.mark.unit
 class TestFetchBaselineTraceRecordings:
     def test_extracts_recordings_from_span_attributes(self):
-        fake_span = SimpleNamespace(
-            span_attributes={
+        fake_span = {
+            "span_attributes": {
                 "conversation.recording.stereo": "https://example.com/stereo.wav",
                 "conversation.recording.mono.combined": "https://example.com/combined.wav",
-            }
+            },
+            "eval_attributes": {},
+        }
+        result = session_comparison.fetch_baseline_trace_recordings(
+            "trace-123", _span=fake_span
         )
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = fake_span
-            result = session_comparison.fetch_baseline_trace_recordings("trace-123")
 
         assert result == {
             "stereo": "https://example.com/stereo.wav",
@@ -244,8 +318,11 @@ class TestFetchBaselineTraceRecordings:
         }
 
     def test_returns_empty_when_no_span(self):
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = None
+        with patch.object(
+            session_comparison,
+            "fetch_voice_conversation_span",
+            side_effect=ValueError("missing"),
+        ):
             result = session_comparison.fetch_baseline_trace_recordings("trace-123")
 
         assert result == {}
@@ -265,14 +342,13 @@ class TestFetchComparisonRecordings:
             recording_url=None,
             stereo_recording_url=None,
         )
-        fake_span = SimpleNamespace(
-            span_attributes={"conversation.recording.stereo": "https://base.wav"}
+        fake_span = {
+            "span_attributes": {"conversation.recording.stereo": "https://base.wav"},
+            "eval_attributes": {},
+        }
+        result = session_comparison.fetch_comparison_recordings(
+            call_exec, "trace-1", _span=fake_span
         )
-        with patch.object(session_comparison.ObservationSpan, "objects") as mock_qs:
-            mock_qs.filter.return_value.only.return_value.first.return_value = fake_span
-            result = session_comparison.fetch_comparison_recordings(
-                call_exec, "trace-1"
-            )
 
         assert result["baseline"] == {"stereo": "https://base.wav"}
         assert result["simulated"] == {"stereo": "https://sim.wav"}

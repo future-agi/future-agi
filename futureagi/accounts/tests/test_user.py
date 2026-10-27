@@ -4,10 +4,21 @@ User API Tests
 Tests for user authentication, token management, and user info endpoints.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from django.core.cache import cache
+from django.test import override_settings
 from rest_framework import status
-from rest_framework.test import APIClient
+
+# The endpoint compares against this module's SECRET_KEY, which the test
+# settings' override does not reach, so send the value the view will read.
+from tfc.settings import settings
+
+
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
 
 
 @pytest.fixture
@@ -79,6 +90,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_nonexistent_email(self, api_client, db, clear_cache):
         """Login fails with nonexistent email."""
@@ -91,6 +104,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_inactive_user(self, api_client, inactive_user, clear_cache):
         """Login fails for inactive user."""
@@ -103,6 +118,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_ACCOUNT_DEACTIVATED"
 
     def test_login_email_case_insensitive(self, api_client, user, clear_cache):
         """Login works with email in different case."""
@@ -198,6 +215,110 @@ class TestGetUserInfoAPI:
         assert "remember_me" in data
 
 
+CUTOFF = datetime(2026, 10, 14, 12, 30, tzinfo=UTC)
+
+
+def _set_org_created_at(organization, created_at):
+    # created_at is auto_now_add, so a value passed to create() is ignored.
+    from accounts.models import Organization
+
+    Organization.objects.filter(pk=organization.pk).update(created_at=created_at)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestUserInfoSimulateRestriction:
+    """restrict_simulate_to_environments: orgs created at or after the cutoff
+    see only Environments in Simulate."""
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=None)
+    def test_unset_cutoff_restricts_nobody(self, auth_client, organization):
+        _set_org_created_at(organization, CUTOFF + timedelta(days=1))
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["restrict_simulate_to_environments"] is False
+
+    @pytest.mark.parametrize(
+        "created_at, restricted",
+        [
+            (CUTOFF - timedelta(seconds=1), False),
+            (CUTOFF, True),
+            (CUTOFF + timedelta(days=1), True),
+        ],
+    )
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_org_created_at_or_after_the_cutoff_is_restricted(
+        self, auth_client, organization, created_at, restricted
+    ):
+        _set_org_created_at(organization, created_at)
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["restrict_simulate_to_environments"] is restricted
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_follows_the_selected_org_not_the_users_own(
+        self, api_client, user, organization, clear_cache
+    ):
+        from accounts.models import Organization
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        _set_org_created_at(organization, CUTOFF - timedelta(days=30))
+        new_org = Organization.objects.create(name="New Organization")
+        _set_org_created_at(new_org, CUTOFF + timedelta(days=1))
+        OrganizationMembership.no_workspace_objects.create(
+            user=user,
+            organization=new_org,
+            role=OrganizationRoles.OWNER,
+            level=Level.OWNER,
+            is_active=True,
+        )
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == status.HTTP_200_OK
+        auth = f"Bearer {login.json()['access']}"
+
+        for org, restricted in ((new_org, True), (organization, False)):
+            response = api_client.get(
+                "/accounts/user-info/",
+                HTTP_AUTHORIZATION=auth,
+                HTTP_X_ORGANIZATION_ID=str(org.id),
+            )
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["organization"]["id"] == str(org.id)
+            assert response.json()["restrict_simulate_to_environments"] is restricted
+
+    def test_the_flag_is_a_required_boolean_in_the_user_info_contract(self):
+        from rest_framework import serializers
+
+        from accounts.serializers.contracts import UserInfoResponseSerializer
+
+        field = UserInfoResponseSerializer().fields.get(
+            "restrict_simulate_to_environments"
+        )
+        assert isinstance(field, serializers.BooleanField)
+        assert field.required
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_user_without_an_org_is_not_restricted(
+        self, auth_client, user, organization
+    ):
+        from accounts.models.organization_membership import OrganizationMembership
+
+        _set_org_created_at(organization, CUTOFF + timedelta(days=1))
+        OrganizationMembership.no_workspace_objects.filter(user=user).update(
+            is_active=False
+        )
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json().get("requires_org_setup") is True
+        assert response.json()["restrict_simulate_to_environments"] is False
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestFirstChecksAPI:
@@ -233,6 +354,122 @@ class TestFirstChecksAPI:
         result = data.get("result", data)
         for key in ["keys", "dataset", "evaluation", "experiment", "observe", "invite"]:
             assert isinstance(result.get(key), bool)
+
+    def test_first_checks_ignores_other_workspace_experiments(
+        self, auth_client, user, organization, workspace
+    ):
+        """Experiment completion should reflect the active workspace."""
+        from accounts.models.workspace import Workspace
+        from model_hub.models.develop_dataset import Dataset
+        from model_hub.models.experiments import ExperimentsTable
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other workspace dataset",
+            organization=organization,
+            workspace=other_workspace,
+            user=user,
+        )
+        ExperimentsTable.no_workspace_objects.create(
+            name="Other workspace experiment",
+            dataset=other_dataset,
+            user=user,
+            prompt_config=[],
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["experiment"] is False
+
+        active_dataset = Dataset.no_workspace_objects.create(
+            name="Active workspace dataset",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        ExperimentsTable.no_workspace_objects.create(
+            name="Active workspace experiment",
+            dataset=active_dataset,
+            user=user,
+            prompt_config=[],
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["experiment"] is True
+
+    def test_first_checks_invites_are_active_workspace_scoped(
+        self, auth_client, user, organization, workspace
+    ):
+        """Invite completion should not be satisfied by another workspace."""
+        from accounts.models import User
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import Workspace, WorkspaceMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        other_workspace = Workspace.objects.create(
+            name="Invite Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        invitee = User.objects.create_user(
+            email="invited-workspace-only@futureagi.com",
+            password="testpassword123",
+            name="Invited Workspace User",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+            invited_by=user,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=invitee,
+            organization=organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+            invited_by=user,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=other_workspace,
+            user=invitee,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=org_membership,
+            invited_by=user,
+            is_active=True,
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["invite"] is False
+
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=workspace,
+            user=invitee,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=org_membership,
+            invited_by=user,
+            is_active=True,
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["invite"] is True
 
 
 @pytest.mark.integration
@@ -270,6 +507,19 @@ class TestUserOnboardingAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_post_onboarding_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/onboarding/",
+            {
+                "role": "developer",
+                "goals": ["Build AI apps"],
+                "selectedGoals": ["legacy camel alias"],
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "selectedGoals")
+
     def test_post_onboarding_updates_user(self, auth_client, user):
         """Onboarding data is saved to user model."""
         auth_client.post(
@@ -283,6 +533,61 @@ class TestUserOnboardingAPI:
         user.refresh_from_db()
         assert user.role == "data_scientist"
         assert "Analyze data" in user.goals
+
+    def test_post_onboarding_allows_workspace_viewer_profile_update(
+        self, api_client, organization, workspace
+    ):
+        """Workspace viewers can still save user-owned onboarding data."""
+        from accounts.models import User
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        viewer = User.objects.create_user(
+            email="onboarding-viewer@futureagi.com",
+            password="testpassword123",
+            name="Onboarding Viewer",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            is_active=True,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=viewer,
+            organization=organization,
+            role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            level=Level.VIEWER,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=workspace,
+            user=viewer,
+            role=OrganizationRoles.WORKSPACE_VIEWER,
+            level=Level.WORKSPACE_VIEWER,
+            organization_membership=org_membership,
+            is_active=True,
+        )
+
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": viewer.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == status.HTTP_200_OK
+
+        response = api_client.post(
+            "/accounts/onboarding/",
+            {"role": "data_scientist", "goals": ["Run evaluations"]},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}",
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        viewer.refresh_from_db()
+        assert viewer.role == "data_scientist"
+        assert viewer.goals == ["Run evaluations"]
 
     def test_post_onboarding_missing_role(self, auth_client, user):
         """Onboarding fails without role."""
@@ -336,6 +641,37 @@ class TestManageRedisKeyAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_manage_redis_key_accepts_secret_and_sets_value(
+        self, auth_client, clear_cache
+    ):
+        """A valid secret reaches the cache write through the real API path."""
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": settings.SECRET_KEY,
+                "key": "test_key",
+                "value": "test_value",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert cache.get("test_key") == "test_value"
+
+    def test_manage_redis_key_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": "invalid-token",
+                "key": "test_key",
+                "value": "test_value",
+                "accessTokenId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "accessTokenId")
+
     def test_manage_redis_key_missing_key(self, auth_client):
         """Request without key fails."""
         response = auth_client.post(
@@ -352,7 +688,7 @@ class TestLoginRateLimiting:
     """Tests for login rate limiting and account blocking."""
 
     def test_failed_login_tracks_attempts(self, api_client, user, clear_cache):
-        """Failed login attempts are tracked."""
+        """Failed login attempts are tracked and error_code is returned."""
         response = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "wrongpassword"},
@@ -361,12 +697,13 @@ class TestLoginRateLimiting:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         result = data.get("result", data)
-        # Should include remaining attempts info
+        # Should include remaining attempts info and structured error_code
         assert (
             "remainingAttempts" in result
             or "remaining_attempts" in result
             or "error" in result
         )
+        assert result.get("error_code") == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_remember_me(self, api_client, user, clear_cache):
         """Login with remember_me flag."""
@@ -390,7 +727,7 @@ class TestMultiOrgLogin:
     def test_login_with_organization_id(
         self, api_client, user, organization, clear_cache
     ):
-        """Login with specific organization_id."""
+        """Login rejects unsupported organization_id selection."""
         response = api_client.post(
             "/accounts/token/",
             {
@@ -400,11 +737,10 @@ class TestMultiOrgLogin:
             },
             format="json",
         )
-        # Should succeed or return org selection required
-        assert response.status_code == status.HTTP_200_OK
+        assert_unknown_field(response, "organization_id")
 
     def test_login_with_invalid_organization_id(self, api_client, user, clear_cache):
-        """Login with invalid organization_id still succeeds (org resolved post-login)."""
+        """Login rejects organization_id even when the value is not a real org."""
         response = api_client.post(
             "/accounts/token/",
             {
@@ -414,8 +750,7 @@ class TestMultiOrgLogin:
             },
             format="json",
         )
-        # Login succeeds — org resolution happens via middleware, not login
-        assert response.status_code == status.HTTP_200_OK
+        assert_unknown_field(response, "organization_id")
 
 
 @pytest.mark.integration

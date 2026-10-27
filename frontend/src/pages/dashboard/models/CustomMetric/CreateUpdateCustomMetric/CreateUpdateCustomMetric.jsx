@@ -61,6 +61,18 @@ const evaluationTypeOptions = [
   { label: "RAG Ranking", value: "EVAL_CONTEXT_RANKING" },
 ];
 
+const toCustomMetricPayload = (formValues, modelId) => ({
+  model_id: modelId,
+  name: formValues.name,
+  prompt: formValues.prompt,
+  metric_type: formValues.metricType,
+  evaluation_type: formValues.evaluationType,
+  datasets: (formValues.datasets || []).map((dataset) => ({
+    environment: dataset.environment,
+    model_version: dataset.modelVersion ?? dataset.model_version,
+  })),
+});
+
 const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
   const { id } = useParams();
   const queryClient = useQueryClient();
@@ -141,11 +153,12 @@ const CustomMetricForm = React.forwardRef(({ onClose, updateData }, ref) => {
   const prompt = watch("prompt");
 
   const onSubmit = (formValues) => {
+    const payload = toCustomMetricPayload(formValues, id);
     if (mode === "create") {
-      createMetric({ ...formValues, modelId: id });
+      createMetric(payload);
       // trackEvent(Events.customMetricCreateComplete, trackObject(formValues));
     } else {
-      editMetric({ ...formValues, id: updateData.id });
+      editMetric({ ...payload, id: updateData.id });
       // trackEvent(Events.customMetricEditComplete, trackObject(formValues));
     }
   };

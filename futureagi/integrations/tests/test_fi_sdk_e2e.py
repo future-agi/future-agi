@@ -23,11 +23,12 @@ from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.trace_ingestion import (
     _bulk_insert_observation_spans,
     _bulk_update_traces,
-    _fetch_or_create_end_users,
-    _fetch_or_create_sessions,
     _fetch_or_create_traces,
+    _fetch_prompt_versions,
     _parse_otel_request,
     _prepare_observation_spans_and_trace_updates,
+    _resolve_end_user_ids,
+    _resolve_session_ids,
 )
 
 HAS_OPENAI_KEY = bool(os.environ.get("OPENAI_API_KEY"))
@@ -181,15 +182,18 @@ def ingest_payload_sync(payload, organization_id, user_id, workspace_id=None):
         return []
 
     all_traces = _fetch_or_create_traces(parsed_data_list)
-    all_sessions = _fetch_or_create_sessions(parsed_data_list)
-    all_end_users = _fetch_or_create_end_users(parsed_data_list, organization_id)
+    all_end_users, _ch_end_users = _resolve_end_user_ids(
+        parsed_data_list, organization_id
+    )
+    all_sessions, _ch_sessions = _resolve_session_ids(parsed_data_list)
+    all_prompt_versions = _fetch_prompt_versions(parsed_data_list, organization_id)
 
     observation_spans, traces_to_update = _prepare_observation_spans_and_trace_updates(
         parsed_data_list,
         all_traces,
         all_sessions,
         all_end_users,
-        {},
+        all_prompt_versions,
         organization_id,
     )
     _bulk_insert_observation_spans(observation_spans)
@@ -343,7 +347,7 @@ class TestFiSdkSyntheticE2E:
     def test_empty_payload_no_crash(self, fi_project, organization, user):
         """Payload with no spans does not crash."""
         payload = _make_otlp_payload(fi_project.name, [])
-        result = ingest_payload_sync(payload, organization.id, user.id)
+        ingest_payload_sync(payload, organization.id, user.id)
 
         # No traces or spans created
         assert Trace.no_workspace_objects.filter(project=fi_project).count() == 0

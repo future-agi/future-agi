@@ -132,7 +132,12 @@ const NavItem = forwardRef(
 
     if (disabled) {
       return (
-        <CustomTooltip title={disabledTooltip || title} show={true} placement="right" arrow>
+        <CustomTooltip
+          title={disabledTooltip || title}
+          show={true}
+          placement="right"
+          arrow
+        >
           <Box sx={{ width: 1, minHeight: "30px", height: "30px" }}>
             {renderContent}
           </Box>

@@ -58,6 +58,8 @@ import {
   getEvalBaseName,
   DEFAULT_EVAL_MODEL,
 } from "src/sections/common/EvaluationDrawer/common";
+import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
 const generateValidationSchema = (
   evalConfig,
@@ -87,7 +89,7 @@ const generateValidationSchema = (
   let isRulePrompt = false;
 
   // Add validation for config fields. canonicalEntries drops the
-  // camelCase aliases the axios interceptor adds alongside snake_case
+  // camelCase aliases that may exist in legacy objects alongside snake_case
   // keys so each parameter is only validated once.
   for (const [key, field] of canonicalEntries(evalConfig?.config || {})) {
     switch (field.type) {
@@ -375,7 +377,7 @@ const generateValidationSchema = (
   });
 };
 
-const getDefaultValues = (evalConfig, editMode, allColumns) => {
+const getDefaultValues = (evalConfig, editMode, allColumns, fagiLocked) => {
   const mapping = {};
   const config = {};
   const allColumnsMap = allColumns?.reduce((acc, col) => {
@@ -391,19 +393,25 @@ const getDefaultValues = (evalConfig, editMode, allColumns) => {
   }
   for (const key of canonicalKeys(evalConfig?.config || {})) {
     const defaultVal = evalConfig?.config[key]?.default;
-    // Auto-select preferred model (turing_large) for model field
+    // Auto-select preferred model (turing_large) for model field. Without
+    // Turing access (no license/plan) it starts blank and the user must pick.
     if (key === "model") {
       const modelOptions =
         evalConfig?.configParamsOption?.[key] ||
         evalConfig?.config_params_option?.[key] ||
         [];
-      const hasTuringLarge = modelOptions.includes(DEFAULT_EVAL_MODEL);
+      const allowed = modelOptions.filter(
+        (m) => !fagiLocked || !FAGI_MODEL_VALUES.has(m),
+      );
+      const safeDefault =
+        fagiLocked && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
+      const hasTuringLarge = !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
-        ? defaultVal ||
-          (hasTuringLarge ? DEFAULT_EVAL_MODEL : modelOptions[0] || "")
+        ? safeDefault ||
+          (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
         : hasTuringLarge
           ? DEFAULT_EVAL_MODEL
-          : defaultVal || modelOptions[0] || "";
+          : safeDefault || allowed[0] || "";
       continue;
     }
     if (evalConfig?.config[key]?.default !== undefined) {
@@ -900,6 +908,9 @@ const EvaluationConfigureForm = ({
 }) => {
   const isPreviouslyConfigured =
     selectedEval?.eval_type === "previouslyConfigured";
+  // Fail closed while capabilities load (locked===true) so form defaults never
+  // seed a Turing model the deployment can't run.
+  const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
 
   const [testData, setTestData] = useState(null);
 
@@ -993,7 +1004,12 @@ const EvaluationConfigureForm = ({
     getValues,
     setValue,
   } = useForm({
-    defaultValues: getDefaultValues(evalConfig, isUserEval, allowedColumns),
+    defaultValues: getDefaultValues(
+      evalConfig,
+      isUserEval,
+      allowedColumns,
+      fagiLocked,
+    ),
     resolver: zodResolver(validationSchema),
   });
   const allValues = getValues();

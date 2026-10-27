@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
+import { useForm } from "react-hook-form";
 import { EvalPickerContext } from "./EvalPickerContext";
 import { normalizeEvalPickerEval } from "../evalPickerValue";
 
@@ -9,6 +10,8 @@ const EvalPickerProvider = ({
   sourceId = "",
   sourceRowType = null,
   sourceColumns = [],
+  onSourceColumnSearchChange,
+  sourceColumnInventoryControls,
   extraColumns = [],
   existingEvals = [],
   onEvalAdded,
@@ -36,6 +39,29 @@ const EvalPickerProvider = ({
   // close the drawer — used by dataset adds where the picker is also a
   // multi-eval entry surface.
   keepOpenAfterSave = false,
+  // Edit-mode counterpart to keepOpenAfterSave. Edit mode (initialEval set)
+  // has always closed on save regardless of keepOpenAfterSave; this opt-in
+  // flag keeps the drawer open so a host can walk a queue of pre-selected
+  // evals through their config screens. Defaults false so every existing
+  // edit caller is unchanged.
+  keepOpenAfterEditSave = false,
+  // Multi-select list mode. When true the list renders a checkbox per row
+  // driven by selectedIds/onToggleSelect. Defaults off so the single-add
+  // list is byte-identical.
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
+  sourceFilters = null,
+  onFiltersChange = null,
+  sourceTimeWindow = null,
+  // Opt-in "Added evaluations" box: the evals already on the caller, listed
+  // in their own collapsible box instead of as rows in the list;
+  // `addedEvalAction` adds one button per row.
+  addedEvals = null,
+  addedEvalAction = null,
+  // Opt-in: refuse to add an eval that has no inputs to map.
+  requireInputs = false,
+  hideCompositeCreate = false,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -68,6 +94,10 @@ const EvalPickerProvider = ({
     onClose?.();
   }, [handleReset, onClose]);
 
+  const filterForm = useForm({
+    defaultValues: { filters: sourceFilters || [] },
+  });
+
   return (
     <EvalPickerContext.Provider
       value={{
@@ -77,6 +107,8 @@ const EvalPickerProvider = ({
         sourceId,
         sourceRowType,
         sourceColumns,
+        onSourceColumnSearchChange,
+        sourceColumnInventoryControls,
         extraColumns,
         sourcePreviewData,
         selectedEval,
@@ -90,6 +122,18 @@ const EvalPickerProvider = ({
         isEditMode,
         requiredColumnId,
         keepOpenAfterSave,
+        keepOpenAfterEditSave,
+        multiSelect,
+        selectedIds,
+        onToggleSelect,
+        sourceFilters,
+        onFiltersChange,
+        sourceTimeWindow,
+        filterForm,
+        addedEvals,
+        addedEvalAction,
+        requireInputs,
+        hideCompositeCreate,
       }}
     >
       {children}
@@ -103,6 +147,8 @@ EvalPickerProvider.propTypes = {
   sourceId: PropTypes.string,
   sourceRowType: PropTypes.string,
   sourceColumns: PropTypes.array,
+  onSourceColumnSearchChange: PropTypes.func,
+  sourceColumnInventoryControls: PropTypes.node,
   extraColumns: PropTypes.array,
   existingEvals: PropTypes.array,
   onEvalAdded: PropTypes.func,
@@ -113,6 +159,26 @@ EvalPickerProvider.propTypes = {
   sourcePreviewData: PropTypes.object,
   requiredColumnId: PropTypes.string,
   keepOpenAfterSave: PropTypes.bool,
+  keepOpenAfterEditSave: PropTypes.bool,
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
+  sourceFilters: PropTypes.array,
+  onFiltersChange: PropTypes.func,
+  sourceTimeWindow: PropTypes.shape({
+    startDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    endDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+  }),
+  addedEvals: PropTypes.array,
+  addedEvalAction: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+    busyName: PropTypes.string,
+    disabled: PropTypes.bool,
+    show: PropTypes.func,
+  }),
+  requireInputs: PropTypes.bool,
+  hideCompositeCreate: PropTypes.bool,
 };
 
 export default EvalPickerProvider;

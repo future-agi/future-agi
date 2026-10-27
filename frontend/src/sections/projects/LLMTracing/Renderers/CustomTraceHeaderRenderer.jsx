@@ -2,6 +2,8 @@ import React, { useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { useTheme } from "@mui/material/styles";
 import HeaderIcon from "./HeaderIcon";
+import EvalTargetGlyph from "src/components/traceDetail/EvalRollupSection/EvalTargetGlyph";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 const wrapperStyle = {
   display: "flex",
@@ -30,9 +32,14 @@ const CustomTraceHeaderRenderer = ({
   }, [eGridHeader]);
 
   const isEvaluationMetric = useMemo(
-    () => column?.colDef?.col?.groupBy === "Evaluation Metrics",
+    () =>
+      column?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics",
     [column],
   );
+  const isGroupHeader = Boolean(group);
+  const targetType =
+    column?.colDef?.context?.sourceColumn?.targetType ||
+    column?.colDef?.context?.sourceColumn?.target_type;
 
   const textStyle = {
     fontSize: "13px",
@@ -48,17 +55,20 @@ const CustomTraceHeaderRenderer = ({
     <div style={wrapperStyle}>
       <HeaderIcon
         displayName={displayName}
-        isGroup={group}
+        isGroup={isGroupHeader}
         isEvaluationMetric={isEvaluationMetric}
       />
-      <span style={textStyle}>{displayName}</span>
+      {isEvaluationMetric && <EvalTargetGlyph targetType={targetType} />}
+      <OverflowTooltip title={displayName}>
+        <span style={textStyle}>{displayName}</span>
+      </OverflowTooltip>
     </div>
   );
 };
 
 CustomTraceHeaderRenderer.propTypes = {
   displayName: PropTypes.string,
-  group: PropTypes.oneOf(["evaluation"]),
+  group: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
   column: PropTypes.object,
   eGridHeader: PropTypes.object,
 };

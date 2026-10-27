@@ -10,6 +10,13 @@ from tfc.middleware.workspace_context import (
     set_workspace_context,
 )
 
+TEST_INTEGRATION_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+
+@pytest.fixture(autouse=True)
+def set_integration_encryption_key(settings):
+    settings.INTEGRATION_ENCRYPTION_KEY = TEST_INTEGRATION_ENCRYPTION_KEY
+
 
 @pytest.fixture(autouse=True)
 def set_workspace_context_fixture(request):

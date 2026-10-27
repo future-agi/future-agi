@@ -8,7 +8,6 @@ same as the old beat task did. Results appear on the feed once clustering comple
 The tool returns immediately — analysis runs in the background via Temporal.
 """
 
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -57,8 +56,9 @@ class AnalyzeProjectTracesTool(BaseTool):
         import structlog
 
         from tracer.models.project import Project
-        from tracer.models.trace import Trace, TraceErrorAnalysisStatus
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
+        from tracer.queries import deep_analysis_state
+        from tracer.services.clickhouse.v2 import get_reader
 
         logger = structlog.get_logger(__name__)
 
@@ -71,37 +71,39 @@ class AnalyzeProjectTracesTool(BaseTool):
         except Project.DoesNotExist:
             return ToolResult.not_found("Project", str(params.project_id))
 
-        # Determine which traces to analyze
+        # Determine which traces to analyze. Traces live only in CH post-cutover,
+        # so listing/validating goes through the CH root spans.
         if params.trace_ids and len(params.trace_ids) > 0:
-            # Specific traces requested — validate they exist
-            traces = list(
-                Trace.objects.filter(
-                    id__in=params.trace_ids,
-                    project=project,
-                ).values_list("id", flat=True)
-            )
-            if not traces:
+            # Specific traces requested — validate they exist in this project.
+            with get_reader() as reader:
+                found = reader.root_ids_by_trace_ids(
+                    [str(t) for t in params.trace_ids], project_ids=[str(project.id)]
+                )
+            trace_ids = list(found.keys())
+            if not trace_ids:
                 return ToolResult.error(
                     "None of the specified trace IDs were found in this project."
                 )
-            trace_ids = [str(t) for t in traces]
         else:
-            # Find un-analyzed traces in the project
-            already_analyzed = set(
-                TraceErrorAnalysis.objects.filter(project=project).values_list(
+            # Find un-analyzed traces in the project (analyzed set is feed-owned).
+            already_analyzed = {
+                str(t)
+                for t in TraceErrorAnalysis.objects.filter(project=project).values_list(
                     "trace_id", flat=True
                 )
-            )
-            all_trace_ids = list(
-                Trace.objects.filter(project=project)
-                .order_by("-created_at")
-                .values_list("id", flat=True)[: params.max_traces]
-            )
-            trace_ids = [str(t) for t in all_trace_ids if t not in already_analyzed]
+            }
+            with get_reader() as reader:
+                all_trace_ids = reader.recent_root_trace_ids_by_project(
+                    str(project.id), limit=params.max_traces
+                )
+            trace_ids = [t for t in all_trace_ids if t not in already_analyzed]
 
             if not trace_ids:
                 # All traces already analyzed — offer to re-analyze
-                total = Trace.objects.filter(project=project).count()
+                with get_reader() as reader:
+                    total = reader.count_with_filters(
+                        project_id=str(project.id), roots_only=True
+                    )
                 analyzed = len(already_analyzed)
                 return ToolResult(
                     content=section(
@@ -117,10 +119,9 @@ class AnalyzeProjectTracesTool(BaseTool):
                     },
                 )
 
-        # Mark traces as processing
-        Trace.objects.filter(id__in=trace_ids).update(
-            error_analysis_status=TraceErrorAnalysisStatus.PROCESSING
-        )
+        # Mark traces as running so the feed reflects in-flight analysis.
+        for tid in trace_ids:
+            deep_analysis_state.set_running(str(tid))
 
         # Dispatch via Temporal in batches of 10 (same as old beat task)
         try:

@@ -39,7 +39,7 @@ const STEPS = [
     key: "hasRequests",
     icon: "mdi:send-outline",
     cta: "View Docs",
-    href: "https://docs.futureagi.com/docs/agentcc/quickstart",
+    href: "https://docs.futureagi.com/docs/command-center",
   },
 ];
 
@@ -90,7 +90,9 @@ const GettingStartedCard = ({ completionState, onDismiss }) => {
               width={22}
               sx={{ color: "primary.main" }}
             />
-            <Typography variant="h6">Get Started with Agent Command Center Gateway</Typography>
+            <Typography variant="h6">
+              Get Started with Agent Command Center Gateway
+            </Typography>
           </Stack>
           <Stack direction="row" spacing={1.5} alignItems="center">
             <Typography variant="caption" color="text.secondary">

@@ -69,7 +69,7 @@ const DuplicateMonitor = ({
           <Typography
             variant="s1"
             fontWeight={"fontWeightRegular"}
-            color="text.disabled"
+            color="text.secondary"
           >
             Create a new for the alert that you want to duplicate
           </Typography>

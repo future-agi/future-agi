@@ -412,7 +412,7 @@ class TestBuildEvalAttributes:
     def test_llm_model_and_tokens(self, transformer, raw_langfuse_trace):
         obs = raw_langfuse_trace["observations"][0]  # GENERATION
         attrs = transformer._build_eval_attributes(obs, "llm", 15, 5, 20)
-        assert attrs["fi.span.kind"] == "LLM"
+        assert attrs["gen_ai.span.kind"] == "LLM"
         assert attrs["llm.model_name"] == "gpt-4"
         assert attrs["llm.token_count.prompt"] == 15
         assert attrs["llm.token_count.completion"] == 5
@@ -537,7 +537,7 @@ class TestBuildEvalAttributes:
     def test_chain_span_has_no_llm_attrs(self, transformer, raw_langfuse_trace):
         obs = raw_langfuse_trace["observations"][1]  # SPAN
         attrs = transformer._build_eval_attributes(obs, "chain", 0, 0, 0)
-        assert attrs["fi.span.kind"] == "CHAIN"
+        assert attrs["gen_ai.span.kind"] == "CHAIN"
         assert "llm.model_name" not in attrs
         assert "llm.token_count.prompt" not in attrs
 

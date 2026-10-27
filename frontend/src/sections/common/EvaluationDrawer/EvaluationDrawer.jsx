@@ -21,6 +21,7 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
@@ -51,6 +52,8 @@ const EvaluationDrawerChild = ({
   setFormIsDirty,
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const theme = useTheme();
   const { experimentId } = useParams();
@@ -75,6 +78,8 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
+  const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
+    usePendingEvalSelections();
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -107,12 +112,20 @@ const EvaluationDrawerChild = ({
         config: {
           required_keys: evalItem.eval_required_keys || [],
           ...(evalItem.config?.run_config || evalItem.run_config || {}),
+          // Multi-turn LLM evals persist the full message chain on the
+          // template config, not under run_config — forward it so the
+          // picker pre-populates with every turn (not just System) before
+          // the detail API response merges the canonical value in.
+          ...(evalItem.config?.messages
+            ? { messages: evalItem.config.messages }
+            : {}),
           // Map the UserEvalMetric.error_localizer BooleanField to the key
           // EvalPickerConfigFull expects so the toggle shows the saved state.
           ...(evalItem.error_localizer !== undefined
             ? { error_localizer_enabled: evalItem.error_localizer }
             : {}),
         },
+        bindingConfig: evalItem.config?.config || {},
         mapping: evalItem.mapping || {},
         outputType: evalItem.output_type,
         // Existing UserEvalMetric id — handleAdd routes via editEval
@@ -120,6 +133,8 @@ const EvaluationDrawerChild = ({
         // The column-menu path matches via user_eval_id/userEvalId, so
         // evalItem.id may not be the user-eval id — normalize here.
         userEvalId: evalItem.user_eval_id ?? evalItem.userEvalId ?? evalItem.id,
+        pinned_version_id:
+          evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       });
       setEvalPickerOpen(true);
     },
@@ -356,6 +371,8 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    autoSelectRequests={autoSelectRequests}
+                    onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -467,7 +484,7 @@ const EvaluationDrawerChild = ({
           )}
         </Collapse>
         <Collapse
-          in={visibleSection === "config"}
+          in={visibleSection === "config" && module !== "workbench"}
           orientation="horizontal"
           sx={{ height: "100%" }}
           unmountOnExit
@@ -507,6 +524,8 @@ const EvaluationDrawerChild = ({
             fullWidth={module === "task"}
             existingEvalsProp={existingEvals}
             requiredColumnIds={requiredColumnIds}
+            onColumnSearchChange={onColumnSearchChange}
+            columnInventoryControls={columnInventoryControls}
           />
         </Collapse>
         <Collapse
@@ -559,6 +578,8 @@ const EvaluationDrawerChild = ({
         source={module || "dataset"}
         sourceId={id || ""}
         sourceColumns={allColumns || []}
+        onSourceColumnSearchChange={onColumnSearchChange}
+        sourceColumnInventoryControls={columnInventoryControls}
         // Experiment evals reference two values that don't exist as real
         // dataset cells — the prompt/agent output and the full prompt chain.
         // Surface them as virtual columns in the variable-mapping dropdown
@@ -612,6 +633,8 @@ const EvaluationDrawerChild = ({
               Object.keys(evalConfig.choice_scores).length
             )
               runConfig.choice_scores = evalConfig.choice_scores;
+            if (evalConfig.multi_choice !== undefined)
+              runConfig.multi_choice = !!evalConfig.multi_choice;
           }
           // Data injection applies to both single and composite — the
           // backend resolves it at row-evaluation time.
@@ -689,6 +712,9 @@ const EvaluationDrawerChild = ({
                       evalConfig.composite_weight_overrides,
                   }
                 : {}),
+              ...(evalConfig.versionId
+                ? { pinned_version_id: evalConfig.versionId }
+                : {}),
             };
           }
           // Edit branch: POST directly to /edit_and_run_user_eval/{id} so the
@@ -720,6 +746,12 @@ const EvaluationDrawerChild = ({
               queryClient.invalidateQueries({
                 queryKey: getUserEvalListKey(module, id),
               });
+              // Invalidate version cache so reopening shows the new version
+              if (evalConfig.templateId) {
+                queryClient.invalidateQueries({
+                  queryKey: ["evals", "versions", evalConfig.templateId],
+                });
+              }
               if (effectiveModule === "run-optimization") {
                 queryClient.invalidateQueries({
                   queryKey: ["optimize-develop-column-info"],
@@ -733,6 +765,7 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
+              requestAutoSelect(evalConfig.name);
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -750,7 +783,9 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
+          const addedName = payload.name;
           await handleRun(payload, () => {
+            requestAutoSelect(addedName);
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
@@ -776,6 +811,8 @@ EvaluationDrawerChild.propTypes = {
   openDrawer: PropTypes.bool,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 const ContextConsumer = ({
@@ -847,6 +884,8 @@ const EvaluationDrawer = ({
   handleTest = (_data) => {},
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const { experimentId } = useParams();
   const setVisibleSectionRef = useRef(null);
@@ -1030,6 +1069,8 @@ const EvaluationDrawer = ({
           listComponent={listComponent}
           existingEvals={existingEvals}
           requiredColumnIds={requiredColumnIds}
+          onColumnSearchChange={onColumnSearchChange}
+          columnInventoryControls={columnInventoryControls}
         />
         <ConfirmDialog
           open={openConfirmDialog}
@@ -1082,6 +1123,8 @@ EvaluationDrawer.propTypes = {
   handleSaveAndRun: PropTypes.func,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 export default EvaluationDrawer;

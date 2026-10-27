@@ -6,7 +6,10 @@ import { useParams } from "react-router";
 
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  EvalPickerDrawer,
+  serializeEvalConfig,
+} from "src/sections/common/EvalPicker";
 import {
   chatEvalColumns,
   voiceEvalColumns,
@@ -90,42 +93,23 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
     });
   }, [queryClient, testId]);
 
-  // Bridge — the new drawer returns a camelCase config; the backend expects
-  // snake_case. When `editingEvalItem` is set we route to the update endpoint
-  // and keep the existing SimulateEvalConfig row; otherwise we create a new
-  // config via the add endpoint.
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       if (!testId) return;
       const editing = editingEvalItem;
-      const payload = {
-        template_id: evalConfig.templateId,
-        name: evalConfig.name,
-        model: evalConfig.model,
-        mapping: evalConfig.mapping || {},
-        config: evalConfig.config || {},
-        error_localizer: false,
-        filters: {},
-      };
-      try {
-        if (editing?.id) {
-          await updateEvalAsync({
-            evalConfigId: editing.id,
-            payload,
-          });
-          enqueueSnackbar("Eval updated successfully", { variant: "success" });
-        } else {
-          await addEvalsAsync({ evaluations_config: [payload] });
-          enqueueSnackbar("Eval added successfully", { variant: "success" });
-        }
-        handleRefresh();
-        setEditingEvalItem(null);
-      } catch (error) {
-        enqueueSnackbar(error?.response?.data?.error || "Failed to save eval", {
-          variant: "error",
+      const payload = serializeEvalConfig(evalConfig);
+      if (editing?.id) {
+        await updateEvalAsync({
+          evalConfigId: editing.id,
+          payload,
         });
-        throw error;
+        enqueueSnackbar("Eval updated successfully", { variant: "success" });
+      } else {
+        await addEvalsAsync({ evaluations_config: [payload] });
+        enqueueSnackbar("Eval added successfully", { variant: "success" });
       }
+      handleRefresh();
+      setEditingEvalItem(null);
     },
     [addEvalsAsync, updateEvalAsync, handleRefresh, testId, editingEvalItem],
   );
@@ -145,7 +129,7 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
       <Drawer
         anchor="right"
         open={openTestEvaluation}
-        variant="temporary"
+        variant={onSuccessOfAdditionOfEvals ? "temporary" : "persistent"}
         onClose={onCloseHandler}
         PaperProps={{
           sx: (theme) => ({

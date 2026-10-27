@@ -20,6 +20,10 @@ const FormTextFieldV2 = React.forwardRef(
       onBlur,
       onChange: propOnChange,
       fieldType = "text",
+      // Filter ``shrink`` out of ``rest`` — it belongs only on InputLabel.
+      // See note in rhf-text-field.jsx for why.
+      // eslint-disable-next-line no-unused-vars
+      shrink: _shrink,
       ...rest
     },
     ref,
@@ -40,7 +44,8 @@ const FormTextFieldV2 = React.forwardRef(
                 fieldType === "number"
                   ? handleNumericInput(e.target.value)
                   : e.target.value;
-              const parsedValue = isNumber ? parseFloat(newValue) : newValue;
+              const parsedValue =
+                isNumber && newValue !== "" ? parseFloat(newValue) : newValue;
               onChange(parsedValue);
               propOnChange?.(e);
             }}
@@ -54,7 +59,7 @@ const FormTextFieldV2 = React.forwardRef(
                 ref.current = el;
               }
             }}
-            value={value}
+            value={value ?? ""}
             error={
               !!fieldName.split(".").reduce((obj, key) => obj?.[key], errors)
                 ?.message || rest?.error
@@ -97,7 +102,7 @@ const FormTextFieldV2 = React.forwardRef(
             InputProps={{
               endAdornment: isNumber ? (
                 <SpinnerControls
-                  value={value}
+                  value={value ?? ""}
                   onChange={(newValue) => {
                     onChange(newValue);
                   }}
@@ -154,4 +159,5 @@ FormTextFieldV2.propTypes = {
   fieldType: PropTypes.string,
   onChange: PropTypes.func,
   ref: PropTypes.object,
+  shrink: PropTypes.bool,
 };

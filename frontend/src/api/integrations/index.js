@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { getErrorMessage } from "src/sections/settings/integrations/utils";
@@ -16,6 +16,18 @@ export const integrationKeys = {
     "sync-logs",
     connectionId,
   ],
+};
+
+// Surfaces that consume integration state outside the integrations page (e.g.
+// the error feed's Linear "Connect/Create issue" button) cache their own
+// derived state. Listing them here so connection mutations can fan out
+// invalidations without taking an import cycle on those packages.
+const CROSS_FEATURE_INTEGRATION_KEYS = [["errorFeed", "linearTeams"]];
+
+const invalidateCrossFeatureIntegrationCaches = (queryClient) => {
+  for (const queryKey of CROSS_FEATURE_INTEGRATION_KEYS) {
+    queryClient.invalidateQueries({ queryKey });
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -40,6 +52,33 @@ export const useIntegrationConnections = (options = {}) => {
     ...options,
   });
 };
+
+export const useSlackChannels = (connectionId, options = {}) =>
+  useInfiniteQuery({
+    queryKey: [...integrationKeys.all, "slack-channels", connectionId],
+    queryFn: ({ pageParam }) => axios.get(endpoints.integrations.slack.channels(connectionId), { params: pageParam ? { cursor: pageParam } : undefined }),
+    select: (response) => ({
+      ...response,
+      channels: response.pages.flatMap((page) => {
+        const result = page?.data?.result || page?.data || {};
+        return result?.channels || [];
+      }),
+    }),
+    getNextPageParam: (lastPage) => lastPage?.data?.result?.next_cursor || undefined,
+    initialPageParam: undefined,
+    enabled: !!connectionId && (options.enabled ?? true),
+    staleTime: 30_000,
+    ...options,
+  });
+
+export const useStartSlackInstall = () =>
+  useMutation({
+    mutationFn: (connectionId) =>
+      axios.post(
+        endpoints.integrations.slack.install,
+        connectionId ? { connection_id: connectionId } : {},
+      ),
+  });
 
 export const useIntegrationConnection = (connectionId, options = {}) => {
   return useQuery({
@@ -103,6 +142,7 @@ export const useCreateConnection = () => {
       queryClient.invalidateQueries({
         queryKey: integrationKeys.connections(),
       });
+      invalidateCrossFeatureIntegrationCaches(queryClient);
     },
     // No onError snackbar — StepSyncSettings shows inline Alert for creation errors
   });
@@ -124,6 +164,7 @@ export const useUpdateConnection = () => {
       queryClient.invalidateQueries({
         queryKey: integrationKeys.connection(variables.id),
       });
+      invalidateCrossFeatureIntegrationCaches(queryClient);
     },
     onError: (error) => {
       enqueueSnackbar(getErrorMessage(error), { variant: "error" });
@@ -142,6 +183,7 @@ export const useDeleteConnection = () => {
       queryClient.invalidateQueries({
         queryKey: integrationKeys.connections(),
       });
+      invalidateCrossFeatureIntegrationCaches(queryClient);
     },
     onError: (error) => {
       enqueueSnackbar(getErrorMessage(error), { variant: "error" });
@@ -154,7 +196,7 @@ export const useSyncNow = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.syncNow(id)),
+      axios.post(endpoints.integrations.connections.syncNow(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Sync triggered", { variant: "success" });
       queryClient.invalidateQueries({
@@ -175,7 +217,7 @@ export const usePauseConnection = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.pause(id)),
+      axios.post(endpoints.integrations.connections.pause(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Integration paused", { variant: "info" });
       queryClient.invalidateQueries({
@@ -196,7 +238,7 @@ export const useResumeConnection = () => {
 
   return useMutation({
     mutationFn: (id) =>
-      axios.post(endpoints.integrations.connections.resume(id)),
+      axios.post(endpoints.integrations.connections.resume(id), {}),
     onSuccess: (_data, id) => {
       enqueueSnackbar("Integration resumed", { variant: "success" });
       queryClient.invalidateQueries({

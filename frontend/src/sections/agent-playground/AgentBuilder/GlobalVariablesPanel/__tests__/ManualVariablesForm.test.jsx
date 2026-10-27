@@ -13,6 +13,10 @@ vi.mock("src/api/agent-playground/agent-playground", () => ({
 }));
 
 const mockRunWorkflow = vi.fn();
+vi.mock("../../../hooks/useCanEditAgent", () => ({
+  default: () => ({ canEditAgent: true, isReadOnly: false }),
+}));
+
 vi.mock("../../../hooks/useWorkflowExecution", () => ({
   default: () => ({ runWorkflow: mockRunWorkflow }),
 }));

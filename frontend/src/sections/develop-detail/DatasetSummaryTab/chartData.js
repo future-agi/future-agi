@@ -1,3 +1,5 @@
+import { cleanChoiceLabel } from "../DataTab/common";
+
 export const getChartData = (values, applySort = false) => {
   const graphLabels = [];
   const graphData = [];
@@ -10,7 +12,7 @@ export const getChartData = (values, applySort = false) => {
       ]),
     );
     let finalValue = Object.values(finalOutput);
-    let finalLabels = Object.keys(finalOutput);
+    let finalLabels = Object.keys(finalOutput).map(cleanChoiceLabel);
 
     if (applySort) {
       const sortedObject = Object.fromEntries(
@@ -21,7 +23,9 @@ export const getChartData = (values, applySort = false) => {
       finalOutput = sortedObject;
 
       finalValue = Object.values(sortedObject);
-      finalLabels = Object.keys(sortedObject).map((k) => k.slice(1)); //remove the leading underscore
+      finalLabels = Object.keys(sortedObject).map((k) =>
+        cleanChoiceLabel(k.slice(1)),
+      ); //remove the leading underscore
     }
 
     graphData.push({

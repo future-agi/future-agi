@@ -7,5 +7,9 @@ class AiToolsConfig(AppConfig):
     verbose_name = "AI Tools"
 
     def ready(self):
-        # Import all tool modules to trigger @register_tool decorators
+        # Import the native tool modules to trigger @register_tool decorators,
+        # then add the OpenAPI-generated catalog shared with the MCP server.
         import ai_tools.tools  # noqa: F401
+        from ai_tools.generated import register_generated_tools
+
+        register_generated_tools()

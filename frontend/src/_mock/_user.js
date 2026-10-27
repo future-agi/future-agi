@@ -1,14 +1,14 @@
-import { countries } from 'src/assets/data';
+import { countries } from "src/assets/data";
 
-import { _mock } from './_mock';
+import { _mock } from "./_mock";
 
 // ----------------------------------------------------------------------
 
 export const USER_STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'banned', label: 'Banned' },
-  { value: 'rejected', label: 'Rejected' },
+  { value: "active", label: "Active" },
+  { value: "pending", label: "Pending" },
+  { value: "banned", label: "Banned" },
+  { value: "rejected", label: "Rejected" },
 ];
 
 export const _userAbout = {
@@ -22,7 +22,7 @@ export const _userAbout = {
   totalFollowers: _mock.number.nativeL(1),
   totalFollowing: _mock.number.nativeL(2),
   quote:
-    'Tart I love sugar plum I love oat cake. Sweet roll caramels I love jujubes. Topping cake wafer..',
+    "Tart I love sugar plum I love oat cake. Sweet roll caramels I love jujubes. Topping cake wafer..",
   socialLinks: {
     facebook: `https://www.facebook.com/caitlyn.kerluke`,
     instagram: `https://www.instagram.com/caitlyn.kerluke`,
@@ -70,7 +70,7 @@ export const _userFeeds = [...Array(3)].map((_, index) => ({
         name: _mock.fullName(index + 5),
       },
       createdAt: _mock.time(2),
-      message: 'Praesent venenatis metus at',
+      message: "Praesent venenatis metus at",
     },
     {
       id: _mock.id(9),
@@ -81,7 +81,7 @@ export const _userFeeds = [...Array(3)].map((_, index) => ({
       },
       createdAt: _mock.time(3),
       message:
-        'Etiam rhoncus. Nullam vel sem. Pellentesque libero tortor, tincidunt et, tincidunt eget, semper nec, quam. Sed lectus.',
+        "Etiam rhoncus. Nullam vel sem. Pellentesque libero tortor, tincidunt et, tincidunt eget, semper nec, quam. Sed lectus.",
     },
   ],
 }));
@@ -99,8 +99,12 @@ export const _userCards = [...Array(21)].map((_, index) => ({
 
 export const _userPayment = [...Array(3)].map((_, index) => ({
   id: _mock.id(index),
-  cardNumber: ['**** **** **** 1234', '**** **** **** 5678', '**** **** **** 7878'][index],
-  cardType: ['mastercard', 'visa', 'visa'][index],
+  cardNumber: [
+    "**** **** **** 1234",
+    "**** **** **** 5678",
+    "**** **** **** 7878",
+  ][index],
+  cardType: ["mastercard", "visa", "visa"][index],
   primary: index === 1,
 }));
 
@@ -110,7 +114,7 @@ export const _userAddressBook = [...Array(4)].map((_, index) => ({
   name: _mock.fullName(index),
   phoneNumber: _mock.phoneNumber(index),
   fullAddress: _mock.fullAddress(index),
-  addressType: (index === 0 && 'Home') || 'Office',
+  addressType: (index === 0 && "Home") || "Office",
 }));
 
 export const _userInvoices = [...Array(10)].map((_, index) => ({
@@ -122,17 +126,17 @@ export const _userInvoices = [...Array(10)].map((_, index) => ({
 
 export const _userPlans = [
   {
-    subscription: 'basic',
+    subscription: "basic",
     price: 0,
     primary: false,
   },
   {
-    subscription: 'starter',
+    subscription: "starter",
     price: 4.99,
     primary: true,
   },
   {
-    subscription: 'premium',
+    subscription: "premium",
     price: 9.99,
     primary: false,
   },
@@ -140,12 +144,12 @@ export const _userPlans = [
 
 export const _userList = [...Array(20)].map((_, index) => ({
   id: _mock.id(index),
-  zipCode: '85807',
-  state: 'Virginia',
-  city: 'Rancho Cordova',
+  zipCode: "85807",
+  state: "Virginia",
+  city: "Rancho Cordova",
   role: _mock.role(index),
   email: _mock.email(index),
-  address: '908 Jack Locks',
+  address: "908 Jack Locks",
   name: _mock.fullName(index),
   isVerified: _mock.boolean(index),
   company: _mock.companyName(index),
@@ -153,5 +157,8 @@ export const _userList = [...Array(20)].map((_, index) => ({
   avatarUrl: _mock.image.avatar(index),
   phoneNumber: _mock.phoneNumber(index),
   status:
-    (index % 2 && 'pending') || (index % 3 && 'banned') || (index % 4 && 'rejected') || 'active',
+    (index % 2 && "pending") ||
+    (index % 3 && "banned") ||
+    (index % 4 && "rejected") ||
+    "active",
 }));

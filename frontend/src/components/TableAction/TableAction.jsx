@@ -64,7 +64,7 @@ const TableAction = (params) => {
               width: 32,
               height: 32,
               border: "1px solid",
-              borderColor: isReRunningExperiment ? "grey.400" : "grey.200",
+              borderColor: isReRunningExperiment ? "text.disabled" : "divider",
               borderRadius: "4px",
               backgroundColor: "transparent",
               transition: "border-color 0.2s",

@@ -11,7 +11,6 @@ import {
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import SvgColor from "src/components/svg-color";
-import { ShowComponent } from "src/components/show";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 export default function MoreActions({
@@ -24,15 +23,12 @@ export default function MoreActions({
   Events,
   PropertyName,
   id,
-  isAnyPromptDraft,
   selectedVersions,
-  setSaveCommitOpen,
   theme,
   isAddingDraft,
   addToCompare,
   userRole,
 }) {
-  const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
   return (
     <Box
       sx={{
@@ -186,70 +182,6 @@ export default function MoreActions({
             </span>
           </CustomTooltip>
 
-          <ShowComponent
-            condition={RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
-          >
-            <CustomTooltip
-              show
-              title={
-                disableCommit
-                  ? "Please run the prompt before saving and committing"
-                  : "Save your prompt changes with a clear message, so every update becomes a trackable version."
-              }
-              arrow
-              size="small"
-              type="black"
-              slotProps={{
-                tooltip: {
-                  sx: {
-                    maxWidth: "200px !important",
-                  },
-                },
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-block",
-                }}
-              >
-                <Button
-                  sx={{
-                    borderRadius: "4px",
-                    backgroundColor: "background.paper",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    height: "30px",
-                    whiteSpace: "nowrap",
-                    "&:hover": {
-                      backgroundColor: `${theme.palette.background.neutral} !important`,
-                    },
-                  }}
-                  disabled={
-                    disableCommit ||
-                    currentTab === "Evaluation" ||
-                    currentTab === "Metrics"
-                  }
-                  onClick={() => {
-                    setSaveCommitOpen(true);
-                    trackEvent(Events.promptVersionHistoryClicked, {
-                      [PropertyName.promptId]: id,
-                    });
-                  }}
-                  startIcon={
-                    <SvgColor
-                      sx={{ width: "20px", height: "20px" }}
-                      src="/assets/icons/ic_commit.svg"
-                    />
-                  }
-                >
-                  <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                    Commit
-                  </Typography>
-                </Button>
-              </span>
-            </CustomTooltip>
-          </ShowComponent>
-
           <CustomTooltip
             show
             title="Compare prompts side-by-side by tweaking words, model settings, and other parameters "
@@ -348,9 +280,7 @@ MoreActions.propTypes = {
   Events: PropTypes.object.isRequired,
   PropertyName: PropTypes.object.isRequired,
   id: PropTypes.string.isRequired,
-  isAnyPromptDraft: PropTypes.bool.isRequired,
   selectedVersions: PropTypes.array.isRequired,
-  setSaveCommitOpen: PropTypes.func.isRequired,
   theme: PropTypes.object.isRequired,
   isAddingDraft: PropTypes.bool.isRequired,
   addToCompare: PropTypes.func.isRequired,

@@ -44,7 +44,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
       }
     }
 
-    const label = outputType === "pass_fail" ? "Pass Rate" : "Avg Score";
+    const label = "Task Completion Rate";
     return { volumeData: vol, valueData: val, valueLabel: label };
   }, [data, outputType]);
 

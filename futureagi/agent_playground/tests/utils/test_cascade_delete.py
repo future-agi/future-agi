@@ -12,16 +12,19 @@ from agent_playground.models.choices import (
 from agent_playground.models.edge import Edge
 from agent_playground.models.execution_data import ExecutionData
 from agent_playground.models.graph import Graph
+from agent_playground.models.graph_dataset import GraphDataset
 from agent_playground.models.graph_execution import GraphExecution
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.node_execution import NodeExecution
 from agent_playground.models.port import Port
+from agent_playground.models.prompt_template_node import PromptTemplateNode
 from agent_playground.utils.cascade_delete import (
     cascade_soft_delete_graph,
     cascade_soft_delete_version_content,
 )
+from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
 # Use fixtures from conftest.py: node_template, graph, graph_version, etc.
 
@@ -180,6 +183,53 @@ class TestCascadeSoftDeleteGraph:
 
         edge.refresh_from_db()
         assert edge.deleted is True
+
+    def test_soft_deletes_prompt_template_nodes(
+        self, graph_with_content, prompt_template_node
+    ):
+        """Test that prompt-template node links are soft-deleted."""
+        graph = graph_with_content["graph"]
+
+        cascade_soft_delete_graph(graph)
+
+        prompt_template_node.refresh_from_db()
+        assert prompt_template_node.deleted is True
+        assert not PromptTemplateNode.no_workspace_objects.filter(
+            id=prompt_template_node.id
+        ).exists()
+
+    def test_soft_deletes_graph_dataset(
+        self, graph_with_content, graph_dataset, dataset_columns, dataset_row_with_cells
+    ):
+        """Test that the linked dataset and table data are soft-deleted."""
+        graph = graph_with_content["graph"]
+        dataset = graph_dataset.dataset
+        row, cells = dataset_row_with_cells
+
+        cascade_soft_delete_graph(graph)
+
+        graph_dataset.refresh_from_db()
+        dataset.refresh_from_db()
+        row.refresh_from_db()
+        for column in dataset_columns:
+            column.refresh_from_db()
+        for cell in cells:
+            cell.refresh_from_db()
+
+        assert graph_dataset.deleted is True
+        assert dataset.deleted is True
+        assert row.deleted is True
+        assert all(column.deleted for column in dataset_columns)
+        assert all(cell.deleted for cell in cells)
+        assert not GraphDataset.no_workspace_objects.filter(id=graph_dataset.id).exists()
+        assert not Dataset.no_workspace_objects.filter(id=dataset.id).exists()
+        assert not Row.no_workspace_objects.filter(id=row.id).exists()
+        assert not Column.no_workspace_objects.filter(
+            id__in=[column.id for column in dataset_columns]
+        ).exists()
+        assert not Cell.no_workspace_objects.filter(
+            id__in=[cell.id for cell in cells]
+        ).exists()
 
     def test_soft_deletes_executions(self, graph_with_executions):
         """Test that all executions are soft-deleted."""

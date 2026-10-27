@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
 import { DEFAULT_RESPONSE_FORMAT_OPTIONS } from "src/sections/agent-playground/utils/constants";
+import { buildResponseFormatMenu } from "src/utils/responseFormat";
 
 /**
  * Custom hook for fetching data related to prompt node form
@@ -37,27 +37,15 @@ export function usePromptNodeQueries(watchedModel, watchedModelProvider) {
   });
 
   // Build menu items for response format dropdown
-  const responseFormatMenuItems = useMemo(() => {
-    const menus = [...DEFAULT_RESPONSE_FORMAT_OPTIONS];
-
-    // Add custom schemas from API
-    responseSchema?.forEach((item) => {
-      menus.push({ label: item.name, value: item.id });
-    });
-
-    // Add model-specific response formats
-    modelParams?.responseFormat?.forEach((item) => {
-      const exists = menus.some((m) => m.value === item.value);
-      if (!exists) {
-        menus.push({
-          label: _.startCase(item.value),
-          value: item.value,
-        });
-      }
-    });
-
-    return menus;
-  }, [responseSchema, modelParams?.responseFormat]);
+  const responseFormatMenuItems = useMemo(
+    () =>
+      buildResponseFormatMenu({
+        defaults: DEFAULT_RESPONSE_FORMAT_OPTIONS,
+        responseSchema,
+        modelResponseFormat: modelParams?.responseFormat,
+      }),
+    [responseSchema, modelParams?.responseFormat],
+  );
 
   return {
     responseSchema,

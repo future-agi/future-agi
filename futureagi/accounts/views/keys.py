@@ -1,7 +1,12 @@
+import hashlib
 import traceback
 from math import ceil
 
+import redis
+import structlog
+from django.conf import settings
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,6 +14,14 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
 from accounts.models import OrgApiKey
+from accounts.permissions import RequiresIndependentAuth
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsStringResultResponseSerializer,
+    SecretKeyCreateResponseSerializer,
+    SecretKeyListResponseSerializer,
+    SecretKeysResponseSerializer,
+)
 from accounts.serializers.org_api_key import (
     CreateSecretKeySerializer,
     OrgApiKeySerializer,
@@ -21,13 +34,36 @@ from analytics.utils import (
 )
 from model_hub.models.api_key import mask_key
 from tfc.constants.roles import RolePermissions
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
+FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
+
+
+def _publish_key_revocation(api_key: str, secret_key: str) -> None:
+    """
+    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
+    """
+    try:
+        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
+        r = redis.Redis.from_url(
+            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
+    except Exception:
+        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
 
 
 class GetKeysView(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: SecretKeysResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         user_organization = (
             getattr(request, "organization", None) or self.request.user.organization
@@ -52,15 +88,20 @@ class GetKeysView(APIView):
 
         except Exception:
             traceback.print_exc()
-            return Response(
-                {"status": "error", "message": "Failed to retrieve API keys"},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to retrieve API keys"
             )
 
 
 class SecretKeyAPIViewSet(ViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        permission_classes = list(self.permission_classes)
+        if self.action == "generate_secret_key":
+            permission_classes.append(RequiresIndependentAuth)
+        return [permission() for permission in permission_classes]
 
     # Map frontend field names (camelCase) to database field names
     SORT_FIELD_MAP = {
@@ -74,6 +115,9 @@ class SecretKeyAPIViewSet(ViewSet):
         "type": "type",
     }
 
+    @swagger_auto_schema(
+        responses={200: SecretKeyListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"])
     def get_secret_keys(self, request, *args, **kwargs):
         user_organization = (
@@ -99,8 +143,10 @@ class SecretKeyAPIViewSet(ViewSet):
             order_by = f"{order_prefix}{db_sort_field}"
 
             # Build base queryset with select_related to avoid N+1 queries
+            # Sandbox ingest keys belong to the platform, not to the user.
             apiKeys = (
                 OrgApiKey.objects.filter(organization=user_organization, deleted=False)
+                .exclude(type="ingest")
                 .select_related("user")
                 .order_by(order_by)
             )
@@ -132,8 +178,8 @@ class SecretKeyAPIViewSet(ViewSet):
                 {
                     "id": key.id,
                     "key_name": key.name,
-                    "api_key": key.api_key,
-                    "secret_key": key.secret_key,
+                    "api_key": mask_key(key.api_key),
+                    "secret_key": mask_key(key.secret_key),
                     "created_by": key.user.name if key.user else None,
                     "created_at": key.created_at,
                     "enabled": key.enabled,
@@ -157,15 +203,18 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_KEYS"))
 
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["POST"])
     def enable_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
@@ -188,15 +237,18 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_ENABLED"))
 
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["POST"])
     def disable_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
@@ -210,6 +262,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
                 apikey.save(update_fields=["enabled"])
+                _publish_key_revocation(apikey.api_key, apikey.secret_key)
 
                 return self._gm.success_response(f"{apikey.name} has been disabled")
             except OrgApiKey.DoesNotExist:
@@ -219,15 +272,15 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_DISABLED"))
 
+    @validated_request(
+        request_serializer=CreateSecretKeySerializer,
+        responses={200: SecretKeyCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["POST"])
     def generate_secret_key(self, request, *args, **kwargs):
         try:
-            serializer = CreateSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_name = validated_data.get("key_name")
+            key_name = request.validated_data.get("key_name")
 
             if OrgApiKey.objects.filter(
                 name=key_name,
@@ -244,6 +297,18 @@ class SecretKeyAPIViewSet(ViewSet):
                 type="user",
                 user=request.user,
             )
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "api_key_created",
+                    actor_type="api_key",
+                    actor_id=org_key.id,
+                    source="web",
+                    organization_id=org_key.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_api_key_event_failed", exc_info=True)
             response = {
                 "key_id": org_key.id,
                 "key_name": org_key.name,
@@ -257,13 +322,17 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("UNABLE_TO_GENERATE_KEY"))
 
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["DELETE"])
     def delete_secret_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
             # Check role in the current org (membership first, FK fallback)
             _current_org = (
                 getattr(request, "organization", None) or request.user.organization
@@ -281,8 +350,7 @@ class SecretKeyAPIViewSet(ViewSet):
             if _role not in RolePermissions.OWNER_ROLES:
                 return self._gm.bad_request(get_error_message("UNAUTHORIZED_ACCESS"))
 
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
             org_key = OrgApiKey.objects.get(
@@ -293,6 +361,7 @@ class SecretKeyAPIViewSet(ViewSet):
             org_key.deleted = True
             org_key.deleted_at = timezone.now()
             org_key.save(update_fields=["deleted", "deleted_at"])
+            _publish_key_revocation(org_key.api_key, org_key.secret_key)
 
             return self._gm.success_response(f"Successfully deleted {org_key.name}")
         except OrgApiKey.DoesNotExist:

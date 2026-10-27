@@ -23,14 +23,13 @@ import { paths } from "src/routes/paths";
 import { useSnackbar } from "src/components/snackbar";
 import {
   useCreateLinearIssue,
-  useErrorFeedDeepAnalysis,
   useErrorFeedSidebar,
   useLinearTeams,
-  useRunDeepAnalysis,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 
@@ -175,24 +174,28 @@ const STATUS_OPTIONS = [
     label: "Escalating",
     icon: "mdi:trending-up",
     color: "#DB2F2D",
+    darkColor: "#E87878",
   },
   {
     value: "acknowledged",
     label: "Acknowledged",
     icon: "mdi:check-circle-outline",
     color: "#938FA3",
+    darkColor: "#938FA3",
   },
   {
     value: "for_review",
     label: "For review",
     icon: "mdi:eye-outline",
     color: "#F5A623",
+    darkColor: "#F5A623",
   },
   {
     value: "resolved",
     label: "Resolved",
     icon: "mdi:check-circle",
     color: "#5ACE6D",
+    darkColor: "#5ACE6D",
   },
 ];
 
@@ -201,8 +204,12 @@ function StatusDropdown({ clusterId, current }) {
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const cur =
+  const statusBase =
     STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
+  const cur = {
+    ...statusBase,
+    color: isDark ? statusBase.darkColor : statusBase.color,
+  };
 
   return (
     <>
@@ -265,21 +272,30 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((s) => s.value !== current).map((s) => (
-          <MenuItem
-            key={s.value}
-            onClick={() => {
-              updateIssue.mutate({ clusterId, status: s.value });
-              setAnchorEl(null);
-            }}
-            sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
-          >
-            <Iconify icon={s.icon} width={15} sx={{ color: s.color }} />
-            <Typography fontSize="12px" sx={{ color: s.color }}>
-              {s.label}
-            </Typography>
-          </MenuItem>
-        ))}
+        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
+          (option) => {
+            const statusColor = isDark ? option.darkColor : option.color;
+            return (
+              <MenuItem
+                key={option.value}
+                onClick={() => {
+                  updateIssue.mutate({ clusterId, status: option.value });
+                  setAnchorEl(null);
+                }}
+                sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+              >
+                <Iconify
+                  icon={option.icon}
+                  width={15}
+                  sx={{ color: statusColor }}
+                />
+                <Typography fontSize="12px" sx={{ color: statusColor }}>
+                  {option.label}
+                </Typography>
+              </MenuItem>
+            );
+          },
+        )}
       </Menu>
     </>
   );
@@ -492,7 +508,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               <Typography
                 fontSize="8px"
                 fontWeight={700}
-                sx={{ color: "#7857FC" }}
+                sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
               >
                 {getInitials(member.name, member.email)}
               </Typography>
@@ -597,7 +613,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                 <Typography
                   fontSize="9px"
                   fontWeight={700}
-                  sx={{ color: "#7857FC" }}
+                  sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
                 >
                   {getInitials(m.name, m.email)}
                 </Typography>
@@ -814,8 +830,8 @@ function CoOccurringList({ issues }) {
               </Typography>
               <Typography fontSize="10px" color="text.secondary">
                 {issue.count?.toLocaleString()} shared
-                {issue.coOccurrence != null &&
-                  ` · ${Math.round(issue.coOccurrence * 100)}%`}
+                {issue.co_occurrence != null &&
+                  ` · ${Math.round(issue.co_occurrence * 100)}%`}
               </Typography>
             </Stack>
           </Stack>
@@ -828,34 +844,49 @@ CoOccurringList.propTypes = { issues: PropTypes.array.isRequired };
 
 // ── Integrations ──────────────────────────────────────────────────────────────
 
-function LinearTeamPicker({ open, onClose, clusterId }) {
+export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { enqueueSnackbar } = useSnackbar();
-  const { data: linearData } = useLinearTeams({ enabled: open });
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the request
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
+  const {
+    data: linearData,
+    isLoading: teamsLoading,
+    isError: teamsError,
+  } = useLinearTeams(currentOrganizationId, { enabled: open });
   const createIssue = useCreateLinearIssue();
   const teams = linearData?.teams ?? [];
 
   const handleCreate = (teamId) => {
     createIssue.mutate(
-      { clusterId, teamId },
+      { clusterId, teamId, traceId },
       {
         onSuccess: (res) => {
+          // Wire form is snake_case; tolerate the axios camelCase aliases.
           const result = res?.data?.result;
-          if (result?.alreadyLinked) {
-            window.open(result.issueUrl, "_blank");
+          const issueId = result?.issue_id ?? result?.issueId;
+          const issueUrl = result?.issue_url ?? result?.issueUrl;
+          const alreadyLinked = result?.already_linked ?? result?.alreadyLinked;
+          if (alreadyLinked) {
+            openExternal(issueUrl);
           } else {
-            enqueueSnackbar(`Created ${result?.issueId}`, {
-              variant: "success",
-            });
-            if (result?.issueUrl) window.open(result.issueUrl, "_blank");
+            enqueueSnackbar(
+              issueId ? `Created ${issueId}` : "Linear issue created",
+              {
+                variant: "success",
+              },
+            );
+            openExternal(issueUrl);
           }
           onClose();
         },
-        onError: () => {
-          enqueueSnackbar("Failed to create Linear issue", {
-            variant: "error",
-          });
+        onError: (err) => {
+          const message =
+            err?.response?.data?.result || "Failed to create Linear issue";
+          enqueueSnackbar(message, { variant: "error" });
         },
       },
     );
@@ -887,7 +918,7 @@ function LinearTeamPicker({ open, onClose, clusterId }) {
             <Typography fontSize="14px" fontWeight={700} color="text.primary">
               Create Linear Issue
             </Typography>
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="11px" color="text.secondary">
               Select a team to create the issue in.
             </Typography>
           </Stack>
@@ -906,7 +937,13 @@ function LinearTeamPicker({ open, onClose, clusterId }) {
       <DialogContent sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
         {teams.length === 0 ? (
           <Typography fontSize="12px" color="text.disabled" sx={{ py: 2 }}>
-            {linearData ? "No teams found." : "Loading teams..."}
+            {teamsLoading
+              ? "Loading teams…"
+              : teamsError
+                ? "Couldn't reach Linear. Check the integration in Settings and try again."
+                : linearData?.connected === false
+                  ? "Linear isn't connected for this workspace. Connect it in Settings > Integrations."
+                  : "No teams found in your Linear workspace."}
           </Typography>
         ) : (
           <Stack gap={0.75} sx={{ mt: 1 }}>
@@ -974,6 +1011,7 @@ LinearTeamPicker.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   clusterId: PropTypes.string.isRequired,
+  traceId: PropTypes.string,
 };
 
 function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
@@ -1060,21 +1098,33 @@ ConnectorRow.propTypes = {
   onAction: PropTypes.func,
 };
 
-function Integrations({ clusterId, externalIssueUrl, externalIssueId }) {
+function Integrations({
+  clusterId,
+  traceId,
+  externalIssueUrl,
+  externalIssueId,
+}) {
   const navigate = useNavigate();
-  const { data: linearData } = useLinearTeams();
+  // Live active org (matches the X-Organization-Id header) rather than the
+  // cached user.organization.id, which can drift and 404 the request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
+  const {
+    data: linearData,
+    isLoading: linearLoading,
+    isError: linearError,
+  } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
 
   const linked = !!externalIssueUrl;
 
   const handleLinearAction = () => {
-    if (!linearConnected) {
-      navigate(paths.dashboard.settings.integrations);
+    if (linked) {
+      openExternal(externalIssueUrl);
       return;
     }
-    if (linked) {
-      window.open(externalIssueUrl, "_blank");
+    if (!linearConnected) {
+      navigate(paths.dashboard.settings.integrations);
       return;
     }
     setTeamPickerOpen(true);
@@ -1082,14 +1132,20 @@ function Integrations({ clusterId, externalIssueUrl, externalIssueId }) {
 
   const linearSubtitle = linked
     ? externalIssueId
-    : linearConnected
-      ? "Connected"
-      : "Not connected";
-  const linearAction = linearConnected
-    ? linked
-      ? `View ${externalIssueId ?? "issue"}`
-      : "Create issue"
-    : "Connect";
+    : linearLoading
+      ? "Checking…"
+      : linearError
+        ? "Connection unreachable"
+        : linearConnected
+          ? "Connected"
+          : "Not connected";
+  const linearAction = linked
+    ? `View ${externalIssueId ?? "issue"}`
+    : linearLoading
+      ? null
+      : linearConnected
+        ? "Create issue"
+        : "Connect";
 
   return (
     <>
@@ -1109,6 +1165,7 @@ function Integrations({ clusterId, externalIssueUrl, externalIssueId }) {
           open={teamPickerOpen}
           onClose={() => setTeamPickerOpen(false)}
           clusterId={clusterId}
+          traceId={traceId}
         />
       )}
     </>
@@ -1116,199 +1173,9 @@ function Integrations({ clusterId, externalIssueUrl, externalIssueId }) {
 }
 Integrations.propTypes = {
   clusterId: PropTypes.string,
+  traceId: PropTypes.string,
   externalIssueUrl: PropTypes.string,
   externalIssueId: PropTypes.string,
-};
-
-// ── Deep Analysis Button ──────────────────────────────────────────────────────
-//
-// State machine driven entirely by backend:
-//   - GET /root-cause/ returns status: idle | running | done | failed
-//   - POST /deep-analysis/ dispatches a run (or no-ops if cached and not forced)
-//   - Running state survives navigation because it's derived from
-//     Trace.error_analysis_status on the server, not client memory.
-function DeepAnalysisButton({ clusterId, traceId }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const { enqueueSnackbar } = useSnackbar();
-
-  const { data: deepAnalysis, isLoading } = useErrorFeedDeepAnalysis(
-    clusterId,
-    traceId,
-  );
-  const runMutation = useRunDeepAnalysis();
-
-  const status = deepAnalysis?.status ?? "idle";
-  const isDispatching = runMutation.isPending;
-  const isRunning = status === "running" || isDispatching;
-
-  const dispatch = (force) => {
-    if (!traceId) return;
-    runMutation.mutate(
-      { clusterId, traceId, force },
-      {
-        onSuccess: (res) => {
-          const newStatus = res?.data?.result?.status;
-          if (newStatus === "running") {
-            enqueueSnackbar(
-              "Deep analysis started — takes about a minute. You can keep browsing; it'll show up here when ready.",
-              { variant: "info", autoHideDuration: 6000 },
-            );
-          } else if (newStatus === "done") {
-            // Cached result; frontend will scroll on its own via the
-            // effect in OverviewTab that watches the done state.
-            enqueueSnackbar("Showing existing analysis results.", {
-              variant: "success",
-              autoHideDuration: 3000,
-            });
-          }
-        },
-        onError: () => {
-          enqueueSnackbar("Failed to start deep analysis. Please try again.", {
-            variant: "error",
-          });
-        },
-      },
-    );
-  };
-
-  // No trace selected yet (e.g. cluster has zero traces) — show disabled button
-  if (!traceId) {
-    return (
-      <Button
-        variant="contained"
-        fullWidth
-        disabled
-        startIcon={<Iconify icon="mdi:magnify-expand" width={14} />}
-        sx={{
-          height: 34,
-          fontSize: "12px",
-          fontWeight: 600,
-          borderRadius: "7px",
-          textTransform: "none",
-        }}
-      >
-        Run Deep Analysis
-      </Button>
-    );
-  }
-
-  // Initial query still loading — neutral placeholder
-  if (isLoading && !deepAnalysis) {
-    return (
-      <Box
-        sx={{
-          height: 34,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "7px",
-        }}
-      >
-        <CircularProgress size={12} thickness={5} />
-      </Box>
-    );
-  }
-
-  if (isRunning) {
-    return (
-      <Box
-        sx={{
-          height: 34,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 1,
-          border: "1px solid",
-          borderColor: "primary.main",
-          borderRadius: "7px",
-          bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
-        }}
-      >
-        <CircularProgress size={12} thickness={5} />
-        <Typography fontSize="12px" fontWeight={600} color="primary.main">
-          Running analysis…
-        </Typography>
-      </Box>
-    );
-  }
-
-  if (status === "done") {
-    return (
-      <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Stack direction="row" alignItems="center" gap={0.5}>
-          <Iconify
-            icon="mdi:check-circle"
-            width={13}
-            sx={{ color: "#5ACE6D" }}
-          />
-          <Typography fontSize="11px" fontWeight={600} color="text.secondary">
-            Analysis complete
-          </Typography>
-        </Stack>
-        <Button
-          size="small"
-          variant="contained"
-          startIcon={<Iconify icon="mdi:refresh" width={10} />}
-          onClick={() => dispatch(true)}
-          disabled={isDispatching}
-          sx={{
-            height: 22,
-            fontSize: "10px",
-            fontWeight: 600,
-            px: 1,
-            borderRadius: "6px",
-            textTransform: "none",
-            bgcolor: isDark ? "#fff" : "#111",
-            color: isDark ? "#111" : "#fff",
-            boxShadow: "none",
-            "&:hover": {
-              bgcolor: isDark ? "#e8e8e8" : "#333",
-              boxShadow: "none",
-            },
-          }}
-        >
-          Re-run
-        </Button>
-      </Stack>
-    );
-  }
-
-  // idle or failed
-  const label =
-    status === "failed" ? "Retry Deep Analysis" : "Run Deep Analysis";
-  return (
-    <Button
-      variant="contained"
-      fullWidth
-      startIcon={<Iconify icon="mdi:magnify-expand" width={14} />}
-      onClick={() => dispatch(false)}
-      disabled={isDispatching}
-      sx={{
-        height: 34,
-        fontSize: "12px",
-        fontWeight: 600,
-        borderRadius: "7px",
-        textTransform: "none",
-        bgcolor: isDark ? "#fff" : "#111",
-        color: isDark ? "#111" : "#fff",
-        boxShadow: "none",
-        "&:hover": {
-          bgcolor: isDark ? "#e8e8e8" : "#333",
-          boxShadow: "none",
-        },
-      }}
-    >
-      {label}
-    </Button>
-  );
-}
-
-DeepAnalysisButton.propTypes = {
-  clusterId: PropTypes.string,
-  traceId: PropTypes.string,
 };
 
 // Backend returns `"llm_judge" | "deterministic"` — EvalRow expects
@@ -1323,43 +1190,43 @@ export default function ErrorMetadataPanel({ error }) {
   const isDark = theme.palette.mode === "dark";
   const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
   const [assignee, setAssigneeLocal] = useState(error?.assignees?.[0] ?? null);
-  const { user } = useAuthContext();
-  const { data: orgMembers = [] } = useOrgMembers(user?.organization?.id);
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the members
+  // request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
+  const { data: orgMembers = [] } = useOrgMembers(currentOrganizationId);
   const updateIssue = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {
     setSeverityLocal(val);
-    updateIssue.mutate({ clusterId: error?.clusterId, severity: val });
+    updateIssue.mutate({ clusterId: error?.cluster_id, severity: val });
   };
   const setAssignee = (val) => {
     setAssigneeLocal(val);
-    updateIssue.mutate({ clusterId: error?.clusterId, assignee: val });
+    updateIssue.mutate({ clusterId: error?.cluster_id, assignee: val });
   };
 
-  // Selected trace drives the sidebar's trace-level sections (AI Metadata,
-  // Evaluations, Deep Analysis). When nothing's selected, backend falls
-  // back to the cluster's latest trace.
   const selectedTraceId = useErrorFeedStore(
-    (s) => s.selectedTraceIdByCluster[error?.clusterId] ?? null,
+    (s) => s.selectedTraceIdByCluster[error?.cluster_id] ?? null,
   );
   const { data: sidebar, isLoading: isSidebarLoading } = useErrorFeedSidebar(
-    error?.clusterId,
+    error?.cluster_id,
     selectedTraceId,
   );
   const sidebarPending = isSidebarLoading && !sidebar;
-  // Effective trace id (what the backend actually used) — hand to the
-  // deep-analysis button so Re-run hits the same trace.
-  const effectiveTraceId = sidebar?.aiMetadata?.traceId ?? null;
+  // Must match OverviewTab's trace source or the two read different cache entries.
+  const effectiveTraceId =
+    selectedTraceId ?? sidebar?.ai_metadata?.trace_id ?? null;
 
   if (!error) return null;
 
-  // Prefer backend-computed ageDays; fall back to client calc if sidebar
+  // Prefer backend-computed age_days; fall back to client calc if sidebar
   // hasn't loaded yet so the UI still renders something.
-  const fallbackAgeMs = error.firstSeen
-    ? Date.now() - new Date(error.firstSeen).getTime()
+  const fallbackAgeMs = error.first_seen
+    ? Date.now() - new Date(error.first_seen).getTime()
     : null;
   const ageDays =
-    sidebar?.timeline?.ageDays ??
+    sidebar?.timeline?.age_days ??
     (fallbackAgeMs ? Math.floor(fallbackAgeMs / (1000 * 60 * 60 * 24)) : null);
 
   const qualityScores = (sidebar?.evaluations ?? []).map((ev) => ({
@@ -1369,17 +1236,14 @@ export default function ErrorMetadataPanel({ error }) {
     score: ev.score ?? undefined,
     value: ev.value ?? undefined,
   }));
-  const coOccurringIssues = sidebar?.coOccurringIssues ?? [];
+  const coOccurringIssues = sidebar?.co_occurring_issues ?? [];
 
-  // Minimal activity trail built from what we actually know: first detection.
-  // Full audit log (status changes, assignment history) is out of scope —
-  // see feed-api-plan.md.
-  const activityLog = error.firstSeen
+  const activityLog = error.first_seen
     ? [
         {
           color: "#F5A623",
           text: "First detected",
-          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.firstSeen)}${
+          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
             ageDays != null ? ` — ${ageDays} days open` : ""
           }`,
         },
@@ -1405,7 +1269,7 @@ export default function ErrorMetadataPanel({ error }) {
           <Stack gap={0.9}>
             <FieldRow label="Status">
               <StatusDropdown
-                clusterId={error.clusterId}
+                clusterId={error.cluster_id}
                 current={error.status}
               />
             </FieldRow>
@@ -1430,12 +1294,12 @@ export default function ErrorMetadataPanel({ error }) {
             {[
               {
                 label: "Traces",
-                value: error.traceCount?.toLocaleString(),
+                value: error.trace_count?.toLocaleString(),
                 icon: "mdi:counter",
               },
               {
                 label: "Users affected",
-                value: error.usersAffected?.toLocaleString(),
+                value: error.users_affected?.toLocaleString(),
                 icon: "mdi:account-group-outline",
               },
               {
@@ -1445,7 +1309,7 @@ export default function ErrorMetadataPanel({ error }) {
               },
               {
                 label: "Cluster ID",
-                value: error.clusterId,
+                value: error.cluster_id,
                 icon: "mdi:identifier",
               },
             ].map((item) => (
@@ -1482,25 +1346,17 @@ export default function ErrorMetadataPanel({ error }) {
           </Box>
         </Section>
 
-        {/* ── Deep Analysis ── */}
-        <Section title="Deep Analysis">
-          <DeepAnalysisButton
-            clusterId={error.clusterId}
-            traceId={effectiveTraceId}
-          />
-        </Section>
-
         {/* ── Timeline ── */}
         <Section title="Timeline">
           <Stack gap={0.5}>
             <MetaRow
               label="First seen"
-              value={error.firstSeenHuman ?? humanizeTime(error.firstSeen)}
+              value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}
               icon="mdi:clock-start"
             />
             <MetaRow
               label="Last seen"
-              value={error.lastSeenHuman ?? humanizeTime(error.lastSeen)}
+              value={error.lastSeenHuman ?? humanizeTime(error.last_seen)}
               icon="mdi:clock-outline"
             />
             {ageDays != null && (
@@ -1518,13 +1374,13 @@ export default function ErrorMetadataPanel({ error }) {
           <Stack gap={0.5}>
             <MetaRow
               label="Model"
-              value={error.model}
+              value={sidebar?.ai_metadata?.model ?? error.model}
               icon="mdi:brain"
               monospace
             />
             <MetaRow
               label="Version"
-              value={error.modelVersion}
+              value={sidebar?.ai_metadata?.model_version ?? error.model_version}
               icon="mdi:tag-outline"
               monospace
             />
@@ -1544,19 +1400,21 @@ export default function ErrorMetadataPanel({ error }) {
             )}
             <MetaRow
               label="Project"
-              value={error.project}
+              value={sidebar?.ai_metadata?.project ?? error.project}
               icon="mdi:folder-outline"
             />
-            {error.evalScore != null && (
+            {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
               <MetaRow
                 label="Eval score"
-                value={`${error.evalScore.toFixed(2)} / 1.00`}
+                value={`${(
+                  sidebar?.ai_metadata?.eval_score ?? error.eval_score
+                ).toFixed(2)} / 1.00`}
                 icon="mdi:chart-line"
               />
             )}
             <MetaRow
               label="Trace ID"
-              value={error.traceId}
+              value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
               icon="mdi:sitemap-outline"
               monospace
             />
@@ -1568,15 +1426,18 @@ export default function ErrorMetadataPanel({ error }) {
           <Section title="Evaluations">
             <Stack gap={0.75}>
               {Array.from({ length: 3 }).map((_, i) => (
-                <Stack
-                  key={i}
-                  direction="row"
-                  alignItems="center"
-                  gap={0.75}
-                >
-                  <Skeleton width={90} height={12} sx={{ borderRadius: "3px" }} />
+                <Stack key={i} direction="row" alignItems="center" gap={0.75}>
+                  <Skeleton
+                    width={90}
+                    height={12}
+                    sx={{ borderRadius: "3px" }}
+                  />
                   <Box sx={{ flex: 1 }} />
-                  <Skeleton width={36} height={12} sx={{ borderRadius: "3px" }} />
+                  <Skeleton
+                    width={36}
+                    height={12}
+                    sx={{ borderRadius: "3px" }}
+                  />
                 </Stack>
               ))}
             </Stack>
@@ -1605,15 +1466,18 @@ export default function ErrorMetadataPanel({ error }) {
           <Section title="Co-occurring Issues">
             <Stack gap={0.75}>
               {Array.from({ length: 3 }).map((_, i) => (
-                <Stack
-                  key={i}
-                  direction="row"
-                  alignItems="center"
-                  gap={0.75}
-                >
-                  <Skeleton width="65%" height={12} sx={{ borderRadius: "3px" }} />
+                <Stack key={i} direction="row" alignItems="center" gap={0.75}>
+                  <Skeleton
+                    width="65%"
+                    height={12}
+                    sx={{ borderRadius: "3px" }}
+                  />
                   <Box sx={{ flex: 1 }} />
-                  <Skeleton width={28} height={12} sx={{ borderRadius: "3px" }} />
+                  <Skeleton
+                    width={28}
+                    height={12}
+                    sx={{ borderRadius: "3px" }}
+                  />
                 </Stack>
               ))}
             </Stack>
@@ -1656,9 +1520,10 @@ export default function ErrorMetadataPanel({ error }) {
             Integrations
           </Typography>
           <Integrations
-            clusterId={error?.clusterId}
-            externalIssueUrl={error?.externalIssueUrl}
-            externalIssueId={error?.externalIssueId}
+            clusterId={error?.cluster_id}
+            traceId={effectiveTraceId}
+            externalIssueUrl={error?.external_issue_url}
+            externalIssueId={error?.external_issue_id}
           />
         </Stack>
       </Stack>

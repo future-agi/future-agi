@@ -29,7 +29,7 @@ const ConfigureMetricModal = ({ open, onClose }) => {
         <Typography variant="h5">Define Metric</Typography>
         <Typography
           variant="body1"
-          color="text.disabled"
+          color="text.secondary"
         >{`You haven't defined a metric`}</Typography>
         <Box sx={{ display: "flex", justifyContent: "end" }}>
           <Button

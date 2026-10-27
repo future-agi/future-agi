@@ -1,7 +1,8 @@
 import React, { useEffect } from "react";
 import { Outlet, useParams, useSearchParams } from "react-router-dom";
 import Header from "./components/Header";
-import { Divider, Box, CircularProgress } from "@mui/material";
+import { Divider, Box } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import AgentPlayGroundTabs from "./components/AgentPlayGroundTabs";
 import DraftConfirmationDialog from "./components/DraftConfirmationDialog";
 import SaveAgentDialog from "./components/SaveAgentDialog";
@@ -22,16 +23,7 @@ import {
 import { VERSION_STATUS } from "./utils/constants";
 
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen variant="orbit" sx={{ minHeight: "60vh" }} />
 );
 
 const AgentPlaygroundView = React.memo(function AgentPlaygroundView() {

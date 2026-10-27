@@ -35,16 +35,20 @@ export default function QueueItemsEmpty({ onAddClick }) {
         No items in this queue
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Add items from datasets, traces, prototypes, or simulations.
+        {onAddClick
+          ? "Add items from datasets, traces, prototypes, or simulations."
+          : "A queue manager can add items to this queue."}
       </Typography>
-      <Button
-        variant="contained"
-        color="primary"
-        startIcon={<Iconify icon="mingcute:add-line" />}
-        onClick={onAddClick}
-      >
-        Add Items
-      </Button>
+      {onAddClick && (
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="mingcute:add-line" />}
+          onClick={onAddClick}
+        >
+          Add Items
+        </Button>
+      )}
     </Stack>
   );
 }

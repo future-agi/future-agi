@@ -11,6 +11,13 @@ import SvgColor from "src/components/svg-color";
 import { useTraceDrawerStore } from "../TracesDrawer/useTraceDrawerStore";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 
+export const CONVERSATION_CARD_CONTENT_SX = {
+  width: "100%",
+  maxWidth: "40vw",
+  minWidth: 0,
+  overflow: "hidden",
+};
+
 const ConversationCard = ({ value, column }) => {
   const { viewType: tabValue } = useTraceDrawerStore();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -132,7 +139,7 @@ const ConversationCard = ({ value, column }) => {
   };
 
   return (
-    <Box>
+    <Box sx={{ width: "100%", maxWidth: "100%", minWidth: 0 }}>
       {/* Copy Button */}
       <IconButton
         onClick={() => {
@@ -163,12 +170,16 @@ const ConversationCard = ({ value, column }) => {
         />
       </IconButton>
 
-      <Box sx={{ width: "40vw" }}>
+      <Box sx={CONVERSATION_CARD_CONTENT_SX}>
         <ShowComponent condition={tabValue === "raw"}>
-          <Box>
+          <Box sx={{ minWidth: 0 }}>
             <Typography
               variant="body2"
-              sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+              sx={{
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
+              }}
             >
               {renderContent()}
             </Typography>
@@ -197,7 +208,16 @@ const ConversationCard = ({ value, column }) => {
         </ShowComponent>
 
         <ShowComponent condition={tabValue === "markdown"}>
-          <Box ref={markdownRef}>
+          <Box
+            ref={markdownRef}
+            sx={{
+              minWidth: 0,
+              overflowWrap: "anywhere",
+              "& *": {
+                maxWidth: "100%",
+              },
+            }}
+          >
             {isJsonContent ? (
               // JSON → render JSON viewer
               <CustomJsonViewer

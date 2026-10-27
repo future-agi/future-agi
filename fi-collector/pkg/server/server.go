@@ -1,0 +1,879 @@
+// Package server hosts a minimal OTLP/gRPC receiver. Why minimal vs the
+// full OTel collector framework:
+//
+//   - The collector framework brings ≈300 MB of transitive deps and a
+//     plugin / factory wiring story that's overkill when we only need ONE
+//     receiver, ONE processor pipeline and ONE exporter.
+//   - The OTLP wire spec is small (~150 LOC to handle ExportTraceServiceRequest)
+//     and stable; we get bit-for-bit OTLP compliance without the framework.
+//   - Building light keeps cold-start under 100 ms — important for
+//     local-dev `docker compose up` iteration.
+//
+// If we ever need multi-pipeline routing, sampling, or tail-based sampling,
+// we should reach for the OTel collector framework at that point. For now,
+// less is more.
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
+)
+
+// Config is what main() passes us. Public fields = YAML wire format.
+type Config struct {
+	GRPCAddr       string        `yaml:"grpc_addr"`         // :4317 default
+	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
+	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
+	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
+	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
+	// GzipInflightMiB caps the decompressed body bytes all gzip OTLP/HTTP
+	// requests hold at once (see inflateBudget). 0 = 128, or GOMEMLIMIT/8
+	// when lower; never below 16.
+	GzipInflightMiB int `yaml:"gzip_inflight_mib"`
+}
+
+// Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
+//
+// gRPC and HTTP both decode an OTLP ExportTraceServiceRequest, run the same
+// converter, and push rows onto the same `pending` buffer. The wire layer is
+// the only difference: gRPC uses the generated stub; HTTP accepts
+// `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
+type Server struct {
+	traceNotifier   TraceNotifier
+	cfg             Config
+	writer          *chwriter.Writer
+	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
+	auth            *auth.Authenticator
+	router          auth.SimulationRouter // nil: requests of sandbox keys are dropped
+	refusalLog      auth.LogLimiter
+	usage           UsageEmitter
+	metering        Metering
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	grpc            *grpc.Server
+	httpd           *http.Server
+	inflate         *inflateBudget // decompressed gzip bytes held by in-flight HTTP requests
+
+	// Batching: the receiver handler pushes converted rows onto `pending` and
+	// signals via `pendCh`. A single flusher goroutine drains it on either
+	// the row-count or age trigger. One channel/one goroutine keeps lock
+	// contention minimal at 100K spans/sec.
+	//
+	// `pendCurated` accumulates the CURATED dimension identities for ALL
+	// payloads received since the last flush into ONE drain-scoped batch (it
+	// dedups across merges). So each drain emits at most one end_users + one
+	// trace_sessions best-effort insert — bounding the curated latency and
+	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
+	// `pend` so the curated dual-write flushes with the span batch.
+	pendMu       sync.Mutex
+	pend         []map[string]any
+	pendCurated  *curatedwriter.Batch
+	pendProperty []observedcatalog.ScopedSpan
+	pendRoots    []traceavailable.Root
+	pendCh       chan struct{}
+
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+}
+
+// Option configures optional Server dependencies.
+type Option struct {
+	traceNotifier   TraceNotifier
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	propertyCatalog PropertyCatalogWriter
+	router          auth.SimulationRouter
+}
+
+// TraceNotifier receives ended roots only after their canonical batch is stored.
+type TraceNotifier interface {
+	EnqueueRoots([]traceavailable.Root) error
+}
+
+func WithTraceNotifier(n TraceNotifier) Option { return Option{traceNotifier: n} }
+
+// WithLogger sets the server's logger.
+func WithLogger(l *slog.Logger) Option { return Option{log: l} }
+
+// WithPricer sets the server's token-cost pricer. Nil (the zero value)
+// disables token-based cost (see chexp.Pricer).
+func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
+
+// WithPropertyCatalogWriter installs the default-off observed catalog spool.
+func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
+	return Option{propertyCatalog: w}
+}
+
+// WithSimulationRouter replaces the router of sandbox-key requests, which
+// defaults to the authenticator. A nil router is ignored. A server that ends
+// with no router at all (no authenticator and no option) drops the requests of
+// sandbox keys, so they are never stored under the project name they carry.
+func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
+
+// New wires up the server but does NOT start serving. Call Run().
+//
+// Defaults:
+//   - GRPCAddr ":4317" (OTLP gRPC). Set to "" to disable.
+//   - HTTPAddr ":4318" (OTLP/HTTP). Set to "" to disable.
+//   - BatchMaxRows 5000, BatchMaxAge 5s.
+//
+// At least one of GRPCAddr / HTTPAddr must be non-empty or Run returns an
+// error. We default both ON because every supported SDK picks one of them;
+// disabling either is an opt-in deployment choice.
+func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator, usage UsageEmitter, metering Metering, opts ...Option) *Server {
+	if cfg.GRPCAddr == "" {
+		cfg.GRPCAddr = ":4317"
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = ":4318"
+	}
+	if cfg.BatchMaxRows <= 0 {
+		cfg.BatchMaxRows = 5000
+	}
+	if cfg.BatchMaxAge <= 0 {
+		cfg.BatchMaxAge = 5 * time.Second
+	}
+	if cfg.GRPCMaxRecvMiB <= 0 {
+		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
+		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
+		// Match the OTLP/HTTP body cap so both transports accept the same spans.
+		cfg.GRPCMaxRecvMiB = maxOTLPHTTPBodyBytes >> 20
+	}
+	if cfg.GRPCMaxRecvMiB > 1024 {
+		cfg.GRPCMaxRecvMiB = 1024 // keep the <<20 shift well under proto's 2 GiB ceiling
+	}
+
+	log := slog.Default()
+	var pricer chexp.Pricer
+	var propertyCatalogWriter PropertyCatalogWriter
+	var traceNotifier TraceNotifier
+	var router auth.SimulationRouter
+	if authenticator != nil {
+		router = authenticator
+	}
+	for _, o := range opts {
+		if o.router != nil {
+			router = o.router
+		}
+		if o.traceNotifier != nil {
+			traceNotifier = o.traceNotifier
+		}
+		if o.log != nil {
+			log = o.log
+		}
+		if o.pricer != nil {
+			pricer = o.pricer
+		}
+		if o.propertyCatalog != nil {
+			propertyCatalogWriter = o.propertyCatalog
+		}
+	}
+
+	s := &Server{
+		traceNotifier:   traceNotifier,
+		cfg:             cfg,
+		writer:          writer,
+		auth:            authenticator,
+		router:          router,
+		usage:           usage,
+		metering:        metering,
+		log:             log,
+		pricer:          pricer,
+		propertyCatalog: propertyCatalogWriter,
+		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
+		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
+		// single POST, no retry, no dead-letter) so it can't stall the span flush
+		// loop or pollute the span dead-letter. Targets end_users /
+		// trace_sessions, never the pinned span table.
+		curated: curatedwriter.New(writer),
+		pendCh:  make(chan struct{}, 1),
+		stopCh:  make(chan struct{}),
+		inflate: newInflateBudget(gzipInflightBytes(cfg.GzipInflightMiB)),
+	}
+	return s
+}
+
+// Run blocks until ctx is cancelled or a serve error occurs. On shutdown
+// we drain pending rows once before returning so an SIGTERM doesn't lose
+// the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
+// the deliberate at-least-once boundary).
+func (s *Server) Run(ctx context.Context) error {
+	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
+		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
+	}
+
+	// One error channel sized for both listeners — first error wins, the
+	// other listener is shut down by the select-case below.
+	serveErr := make(chan error, 2)
+
+	if s.cfg.GRPCAddr != "" {
+		lis, err := net.Listen("tcp", s.cfg.GRPCAddr)
+		if err != nil {
+			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
+		}
+		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", s.cfg.GRPCMaxRecvMiB)
+		// No gzip decompressor is registered, on purpose: gRPC stays
+		// uncompressed-only. A grpc-go decompressor is handed only the
+		// compressed bytes, not the call, so it cannot wait on the call for a
+		// share of the inflate budget or hold that share until the handler
+		// returns, as OTLP/HTTP gzip requests do. A gzip call gets
+		// UNIMPLEMENTED before its message is read.
+		// TestGRPCGzipDecompressorIsNotRegistered (cmd/fi-collector) fails if
+		// any import registers one.
+		grpcOpts := []grpc.ServerOption{
+			grpc.MaxRecvMsgSize(s.cfg.GRPCMaxRecvMiB << 20),
+			grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+			// The nesting limit, checked before a request is decoded
+			// (nestingCheckedCodec).
+			grpc.ForceServerCodecV2(newNestingCheckedCodec()),
+		}
+		if s.auth != nil {
+			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
+		}
+		s.grpc = grpc.NewServer(grpcOpts...)
+		ptraceotlp.RegisterGRPCServer(s.grpc, &otlpHandler{s: s})
+		go func() { serveErr <- s.grpc.Serve(lis) }()
+	}
+
+	if s.cfg.HTTPAddr != "" {
+		mux := http.NewServeMux()
+		// OTLP/HTTP wire spec: a single endpoint per signal. `/v1/traces` is
+		// the trace signal — POST only, body is a serialised
+		// ExportTraceServiceRequest in one of two media types:
+		//   application/x-protobuf  (preferred — every server-side SDK)
+		//   application/json        (browser SDKs, lightweight clients)
+		// Any other method or content-type is rejected with 415 / 405 per
+		// the spec.
+		mux.HandleFunc("/v1/traces", s.handleHTTPTraces)
+		mux.HandleFunc("/tracer/v1/traces", s.handleHTTPTraces)
+		var handler http.Handler = mux
+		if s.auth != nil {
+			handler = s.auth.HTTPMiddleware(mux)
+		}
+		s.log.Info("http listener", "addr", s.cfg.HTTPAddr, "gzip_inflight_mib", s.inflate.size>>20)
+		s.httpd = &http.Server{
+			Addr:              s.cfg.HTTPAddr,
+			Handler:           handler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		lis, err := net.Listen("tcp", s.cfg.HTTPAddr)
+		if err != nil {
+			if s.grpc != nil {
+				s.grpc.GracefulStop()
+			}
+			return fmt.Errorf("listen http %s: %w", s.cfg.HTTPAddr, err)
+		}
+		go func() { serveErr <- s.httpd.Serve(lis) }()
+	}
+
+	s.wg.Add(1)
+	go s.flushLoop()
+
+	select {
+	case <-ctx.Done():
+		s.shutdown()
+		return ctx.Err()
+	case err := <-serveErr:
+		s.shutdown()
+		// http.ErrServerClosed is the expected return when we call Shutdown,
+		// not a real failure — but here we got the error BEFORE shutdown so
+		// it's a genuine listener crash.
+		return err
+	}
+}
+
+// shutdown stops both listeners, waits for the flusher to exit, drains the
+// in-flight batch. Called once from Run on either ctx cancel or a serve
+// error. Safe to call when one of grpc/httpd is nil.
+func (s *Server) shutdown() {
+	if s.grpc != nil {
+		s.grpc.GracefulStop()
+	}
+	if s.httpd != nil {
+		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.httpd.Shutdown(shCtx)
+	}
+	close(s.stopCh)
+	s.wg.Wait()
+	s.drainNow(context.Background())
+}
+
+// grpcErrLogger surfaces transport-level message-size rejections. A message
+// larger than MaxRecvMsgSize is rejected with RESOURCE_EXHAUSTED before the
+// handler or interceptor runs, so a stats.Handler is the only server-side
+// hook that sees it — without this, the client's span is dropped with no
+// trace in the collector's own logs. Deliberately narrow: auth failures are
+// logged by the interceptor, quota rejections are silent by design (same
+// code, would be indistinguishable spam), and client cancels are benign.
+type grpcErrLogger struct {
+	log *slog.Logger
+}
+
+type grpcMethodKey struct{}
+
+// grpc-go's MaxRecvMsgSize rejection message. Both recv variants
+// ("received message larger than max" and the gzip "received message after
+// decompression larger than max") share these two substrings; matching both
+// excludes the send-side "trying to send message larger than max", which
+// carries the same ResourceExhausted code but is the wrong story for a
+// "request rejected" log.
+const (
+	grpcMsgRecv     = "received message"
+	grpcMsgTooLarge = "larger than max"
+)
+
+func (h *grpcErrLogger) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	return context.WithValue(ctx, grpcMethodKey{}, info.FullMethodName)
+}
+
+func (h *grpcErrLogger) HandleRPC(ctx context.Context, s stats.RPCStats) {
+	end, ok := s.(*stats.End)
+	if !ok || end.Error == nil {
+		return
+	}
+	st, _ := status.FromError(end.Error)
+	if st.Code() != codes.ResourceExhausted ||
+		!strings.Contains(st.Message(), grpcMsgRecv) ||
+		!strings.Contains(st.Message(), grpcMsgTooLarge) {
+		return
+	}
+	method, _ := ctx.Value(grpcMethodKey{}).(string)
+	h.log.Error("grpc message over size cap, request rejected",
+		"method", method,
+		"code", st.Code().String(),
+		"err", st.Message(),
+	)
+}
+
+func (h *grpcErrLogger) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (h *grpcErrLogger) HandleConn(context.Context, stats.ConnStats) {}
+
+// otlpHandler implements ptraceotlp.GRPCServer. Stateless per call.
+type otlpHandler struct {
+	ptraceotlp.UnimplementedGRPCServer
+	s *Server
+}
+
+func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) (ptraceotlp.ExportResponse, error) {
+	// x-project-name metadata only fills ResourceSpans that do not name a
+	// project (auth.ProjectNameHeader).
+	md, _ := metadata.FromIncomingContext(ctx)
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameMetadataValues(md)); err != nil {
+		return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	if check, ok := h.s.checkUsage(ctx); !ok {
+		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
+	}
+
+	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
+	// the existing org/project behavior but deliberately does not add a
+	// workspace attribute to the canonical span payload.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
+	if result := auth.FromContext(ctx); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
+		ck := auth.CacheKeyFromContext(ctx)
+		var err error
+		routed, err = h.s.routeSimulation(ctx, result, req.Traces())
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "simulation routing temporarily unavailable")
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			return partialSuccessResponse(routed), nil
+		}
+		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
+		}
+		if dropped > 0 {
+			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
+		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
+		}
+	}
+
+	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
+	if err != nil {
+		return ptraceotlp.NewExportResponse(), err
+	}
+	h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
+
+	payloadBytes, _ := req.MarshalProto()
+	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
+
+	return ptraceotlp.NewExportResponse(), nil
+}
+
+// Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
+// the conservative default in the upstream OTel collector receiver and
+// covers a 5000-span batch carrying ~3 KiB of attrs each. Larger bodies
+// almost certainly indicate a misconfigured exporter (no batching) and
+// would let a single client consume memory unboundedly.
+const maxOTLPHTTPBodyBytes = 16 << 20
+
+// handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
+// (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
+// `application/x-protobuf` and `application/json`, either uncompressed or
+// with `Content-Encoding: gzip` (the spec requires servers to support gzip).
+// Any other method, content type or content coding is rejected with the
+// canonical status code.
+//
+// The project may also come from the X-Project-Name header (alias
+// FI-Project-Name), for exporters that can set headers but not resource
+// attributes; a resource attribute `project_name` still wins (see
+// auth.ProjectNameHeader).
+//
+// Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
+// in the response media type that matches the request — the spec requires
+// echoing the content-type so client SDKs can decode the partial-success
+// field. We always return the fully-successful response since our pipeline
+// is at-least-once + dead-letter for failed inserts.
+func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	// Strip any `;charset=...` suffix. The spec only mentions the two base
+	// types but charset is allowed and common (esp. from JSON clients).
+	if i := indexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = trimSpace(ct)
+	if ct != "application/x-protobuf" && ct != "application/json" {
+		// The spec is explicit: unsupported media types return 415.
+		w.Header().Set("Accept", "application/x-protobuf, application/json")
+		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+		return
+	}
+
+	gzipped, ok := otlpContentCoding(r.Header)
+	if !ok {
+		// RFC 7694: a 415 caused by the content coding lists the codings
+		// the server does accept.
+		w.Header().Set("Accept-Encoding", "gzip, identity")
+		http.Error(w, "unsupported content encoding: "+strings.Join(r.Header.Values("Content-Encoding"), ", "),
+			http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// The 16 MiB cap applies to the body as sent and, for gzip, again after
+	// decompression. A gzip body is read in full, then reserves 16 MiB for the
+	// count pass. On success that shrinks to the exact decompressed size and
+	// remains leased until the handler returns. The lease covers decompressed
+	// body bytes only.
+	body, release, err := readOTLPHTTPBody(w, r, gzipped, maxOTLPHTTPBodyBytes, s.inflate)
+	defer release()
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooLarge) || errors.Is(err, errInflatedBodyTooLarge):
+			// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+			// equally visible server-side.
+			if ok, held := s.inflate.overCapLog.allow(time.Now()); ok {
+				s.log.Error("http body over size cap, request rejected",
+					"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes, "gzip", gzipped, "suppressed", held)
+			}
+			http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		case errors.Is(err, errInflateBudgetBusy):
+			s.rejectBusy(w, r)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+
+	req := ptraceotlp.NewExportRequest()
+	switch ct {
+	case "application/x-protobuf":
+		// pdata's protobuf decoder has no depth limit and a deep enough body
+		// overflows the stack, killing the process; jsoniter already stops
+		// JSON at the same depth.
+		if err := checkProtoNesting(body); err != nil {
+			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := req.UnmarshalProto(body); err != nil {
+			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "application/json":
+		if err := req.UnmarshalJSON(body); err != nil {
+			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// X-Project-Name only fills ResourceSpans that do not name a project.
+	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if check, ok := s.checkUsage(r.Context()); !ok {
+		http.Error(w, check.Reason, http.StatusTooManyRequests)
+		return
+	}
+
+	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
+	if result := auth.FromContext(r.Context()); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
+		ck := auth.CacheKeyFromContext(r.Context())
+		var err error
+		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			writeExportResponse(w, ct, partialSuccessResponse(routed))
+			return
+		}
+		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
+		if err != nil {
+			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if dropped > 0 {
+			s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
+		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			return
+		}
+	}
+
+	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
+	if err != nil {
+		// 4xx — the SDK shouldn't retry a malformed conversion.
+		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
+
+	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
+
+	// ExportTraceServiceResponse — same wire shape, encoded to match the
+	// request's content-type. The spec requires the response media type to
+	// match the request.
+	writeExportResponse(w, ct, ptraceotlp.NewExportResponse())
+}
+
+// writeExportResponse answers 200 with resp in the request's media type.
+func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.ExportResponse) {
+	var out []byte
+	var err error
+	switch ct {
+	case "application/json":
+		out, err = resp.MarshalJSON()
+	default:
+		out, err = resp.MarshalProto()
+	}
+	if err != nil {
+		http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
+}
+
+// dropNoRouter is the reason given for a sandbox-key request that arrives
+// where nothing can route it.
+const dropNoRouter = "no_router"
+
+// routeSimulation sends the spans of a sandbox key to the hidden project of
+// its agent. An error means the request must be refused as retryable; nothing
+// of it has been stored or changed.
+func (s *Server) routeSimulation(ctx context.Context, result *auth.ResolveResult, traces ptrace.Traces) (auth.RouteOutcome, error) {
+	if s.router == nil {
+		if result.KeyType != auth.KeyTypeIngest {
+			return auth.RouteOutcome{}, nil
+		}
+		// Storing the spans under their own project name would put a
+		// sandbox run in a production project.
+		spans := traces.SpanCount()
+		traces.ResourceSpans().RemoveIf(func(ptrace.ResourceSpans) bool { return true })
+		var out auth.RouteOutcome
+		if spans > 0 {
+			out.Dropped = map[string]int{dropNoRouter: spans}
+			if s.refusalLog.Allow(dropNoRouter, time.Now()) {
+				s.log.Error("simulation span dropped: the server has no router for sandbox keys",
+					"reason", dropNoRouter, "spans", spans)
+			}
+		}
+		return out, nil
+	}
+	outcome, err := s.router.RouteSimulation(ctx, auth.CacheKeyFromContext(ctx), traces, result)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRoutingNotReady):
+		// Expected until the first column check, or for the first request
+		// after a cached key is read again.
+		s.log.Debug("simulation routing is not ready; request refused", "err", err)
+	case s.refusalLog.Allow("refused", time.Now()):
+		s.log.Warn("simulation routing refused a request as retryable", "err", err)
+	}
+	return outcome, err
+}
+
+// partialSuccessResponse is the empty success response, carrying the count
+// and reasons of the spans routing dropped when there were any.
+func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	if n := routed.DroppedSpans(); n > 0 {
+		partial := resp.PartialSuccess()
+		partial.SetRejectedSpans(int64(n))
+		partial.SetErrorMessage("simulation routing dropped " + strconv.Itoa(n) + " spans: " + routed.Summary())
+	}
+	return resp
+}
+
+// enqueueRouted parks the rows of a request. Rows of a hidden project, whether
+// routing put the whole request there or another key's request names one,
+// neither the observed catalog nor the stored-root notifier may see, so they
+// are parked without a tenant scope: both then skip them, and the catalog does
+// not record a scope failure for every drain that carries them.
+func (s *Server) enqueueRouted(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	routed auth.RouteOutcome,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+	hiddenProjectIDs map[string]struct{},
+) {
+	if routed.Hidden != "" {
+		s.enqueue(rows, ids)
+		return
+	}
+	if len(hiddenProjectIDs) > 0 {
+		var visible, hidden []map[string]any
+		for _, row := range rows {
+			if projectID, _ := row["project_id"].(string); projectID != "" {
+				if _, isHidden := hiddenProjectIDs[projectID]; isHidden {
+					hidden = append(hidden, row)
+					continue
+				}
+			}
+			visible = append(visible, row)
+		}
+		if len(hidden) > 0 {
+			// The payload's identities go with the visible rows, or with the
+			// hidden ones when nothing else is left.
+			if len(visible) == 0 {
+				s.enqueue(hidden, ids)
+				return
+			}
+			s.enqueue(hidden, nil)
+			rows = visible
+		}
+	}
+	s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
+}
+
+// indexByte and trimSpace are lifted here so the file doesn't grow a
+// strings import just for content-type parsing. Inline 5-line helpers are
+// cheaper than a stdlib pull when we already share package boundaries.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpace(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// rejectBusy answers a gzip request that did not get its share of the inflate
+// budget in time with 503 + Retry-After, which the OTLP spec makes retryable.
+func (s *Server) rejectBusy(w http.ResponseWriter, r *http.Request) {
+	if ok, held := s.inflate.busyLog.allow(time.Now()); ok {
+		s.log.Warn("gzip inflate budget busy, request rejected",
+			"path", r.URL.Path, "budget_bytes", s.inflate.size, "in_use_bytes", s.inflate.inUse.Load(), "suppressed", held)
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "server busy decompressing other requests, retry later", http.StatusServiceUnavailable)
+}
+
+// enqueue parks rows on the pending buffer and signals the flusher.
+// We choose non-blocking signalling: if the channel already holds a tick
+// the flusher will already wake up and see this batch.
+//
+// `ids` are the CURATED dimension identities collected for this same payload;
+// they ride alongside `rows` so the curated dual-write flushes with the span
+// batch. A nil / empty Batch is skipped (the common no-user/no-session case).
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
+	s.enqueueScoped(rows, ids, "", "", nil)
+}
+
+// enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
+// The sidecar is only allocated when the default-off observed writer is
+// installed, and no field is added to the canonical span row.
+func (s *Server) enqueueScoped(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+) {
+	if len(rows) == 0 {
+		return
+	}
+	s.pendMu.Lock()
+	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
+	}
+	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
+		for _, row := range rows {
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if workspaceProjectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
+	if ids != nil && !ids.Empty() {
+		if s.pendCurated == nil {
+			s.pendCurated = curatedwriter.NewBatch()
+		}
+		s.pendCurated.Merge(ids)
+	}
+	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
+	s.pendMu.Unlock()
+	if shouldKick {
+		select {
+		case s.pendCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// flushLoop runs until stopCh closes. Wakes on either an explicit kick
+// (row-count threshold) or the time-based ticker.
+func (s *Server) flushLoop() {
+	defer s.wg.Done()
+	t := time.NewTicker(s.cfg.BatchMaxAge)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-t.C:
+			s.drainNow(context.Background())
+		case <-s.pendCh:
+			s.drainNow(context.Background())
+		}
+	}
+}
+
+// drainNow swaps the pending buffer and flushes it. Uses a fresh slice so
+// the next request can immediately start filling without contending.
+func (s *Server) drainNow(ctx context.Context) {
+	s.pendMu.Lock()
+	batch := s.pend
+	curated := s.pendCurated
+	property := s.pendProperty
+	roots := s.pendRoots
+	s.pend = nil
+	s.pendCurated = nil
+	s.pendProperty = nil
+	s.pendRoots = nil
+	s.pendMu.Unlock()
+	if len(batch) == 0 {
+		return
+	}
+	spanErr := s.writer.Insert(ctx, batch)
+	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
+		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {
+			s.log.Warn("error feed stored-root notification gap", "error", err)
+		}
+	}
+	// Insert returns an error on dead-letter; the writer already persisted
+	// the rows + bumped stats. We swallow here because the flusher's job
+	// is to make progress, not propagate per-batch failures. /healthz
+	// surfaces the writer's failure counter.
+
+	// Transfer observation ownership to the fsync-backed catalog spool only
+	// after confirmed canonical success. Backfill repairs the preceding crash
+	// gap. Catalog errors never change canonical writer health or dead-letter.
+	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
+		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
+			observedcatalog.LogHandoffGap(s.log, property, err)
+		}
+	}
+
+	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
+	// drain-scoped curated end_users / trace_sessions identities AFTER the span
+	// insert. curated.Write uses chwriter.InsertBestEffort (single POST, no
+	// retry, no dead-letter — see its doc), so even on a CH outage this adds at
+	// most two bounded requests and can NEVER stall span draining or pollute the
+	// span dead-letter. The result is swallowed — the span insert above already
+	// completed and Django's backfill reconciles any curated gap. One `now`
+	// stamps version/first_seen for every curated row in this drain.
+	if curated != nil && !curated.Empty() {
+		_ = s.curated.Write(ctx, curated, time.Now().UTC())
+	}
+}

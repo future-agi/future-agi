@@ -55,6 +55,7 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
         required_keys = eval_template.config.get("required_keys", [])
         optional_keys = eval_template.config.get("optional_keys", [])
         compulsory_keys = set(required_keys) - set(optional_keys)
+        is_user_custom_eval = bool(eval_template.config.get("custom_eval", False))
 
         if not isinstance(inputs, dict):
             raise serializers.ValidationError(
@@ -69,11 +70,16 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
                 }
             )
 
-        missing_keys = [key for key in compulsory_keys if key not in inputs]
-        if missing_keys:
-            raise serializers.ValidationError(
-                {"inputs": f"Missing required keys: {', '.join(missing_keys)}"}
-            )
+        # System evals: every required key must be present in the SDK
+        # payload. User-built custom evals get the partial-input rule —
+        # missing keys flow through and the shared validator at execute
+        # time decides whether to fail (all-empty) or run with a warning.
+        if not is_user_custom_eval:
+            missing_keys = [key for key in compulsory_keys if key not in inputs]
+            if missing_keys:
+                raise serializers.ValidationError(
+                    {"inputs": f"Missing required keys: {', '.join(missing_keys)}"}
+                )
 
         if inputs:
             input_values = list(inputs.values())

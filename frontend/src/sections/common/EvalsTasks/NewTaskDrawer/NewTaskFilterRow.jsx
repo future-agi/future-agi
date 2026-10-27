@@ -11,7 +11,7 @@ import { debounce } from "lodash";
 import CustomTooltip from "src/components/tooltip";
 
 const FilterTypes = [
-  { label: "Span Type", value: "observationType" },
+  { label: "Span Type", value: "observation_type" },
   { label: "Attributes", value: "attributes" },
 ];
 
@@ -23,6 +23,7 @@ const NewTaskFilterRow = ({
   update,
   getValues,
   compact = true,
+  onAttributeSearchChange,
 }) => {
   const filterData =
     useWatch({ control, name: "filters", defaultValue: [] })?.[index] ?? {};
@@ -91,8 +92,15 @@ const NewTaskFilterRow = ({
             label="Property"
             showClear={false}
             fullWidth={!compact ? false : Boolean(property !== "")}
+            onChange={(event) =>
+              updateFilter({
+                property: event.target.value,
+                propertyId: "",
+                registryId: undefined,
+              })
+            }
           />
-          <ShowComponent condition={property === "observationType"}>
+          <ShowComponent condition={property === "observation_type"}>
             <Typography
               variant="s2"
               fontWeight={"fontWeightRegular"}
@@ -164,6 +172,22 @@ const NewTaskFilterRow = ({
               fullWidth={compact}
               showClear={false}
               placeholder="Select Attribute"
+              onSearchChange={onAttributeSearchChange}
+              onChange={(event) => {
+                const nativePropertyId = event.target.value;
+                const selected = (attributes || []).find(
+                  (option) => option.value === nativePropertyId,
+                );
+                updateFilter({
+                  propertyId: nativePropertyId,
+                  registryId:
+                    selected?.registryId ||
+                    selected?.property_id ||
+                    (nativePropertyId
+                      ? `custom_attribute:${nativePropertyId}`
+                      : undefined),
+                });
+              }}
             />
             {/* </Box> */}
             {propertyId && (
@@ -221,6 +245,7 @@ NewTaskFilterRow.propTypes = {
   update: PropTypes.func,
   getValues: PropTypes.func,
   compact: PropTypes,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default NewTaskFilterRow;

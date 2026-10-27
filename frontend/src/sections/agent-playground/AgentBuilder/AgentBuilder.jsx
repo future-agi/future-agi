@@ -32,11 +32,14 @@ import { VERSION_STATUS } from "../utils/constants";
 import { useParams, useSearchParams, Navigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import useExecutionSync from "../hooks/useExecutionSync";
+import useCanEditAgent from "../hooks/useCanEditAgent";
+import { PLAYGROUND_AGENTS_PATH } from "../agentsTabs";
 
 const SELECTION_PANEL_WIDTH = "230px";
 
 export default function AgentBuilder() {
   const { agentId } = useParams();
+  const { isReadOnly } = useCanEditAgent();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawUrlversionId = searchParams.get("version");
   const { globalVariablesDrawerOpen, setGlobalVariablesDrawerOpen } =
@@ -246,7 +249,7 @@ export default function AgentBuilder() {
 
   if (!agentId) {
     enqueueSnackbar("Missing agent", { variant: "error" });
-    return <Navigate to="/dashboard/agents" replace />;
+    return <Navigate to={PLAYGROUND_AGENTS_PATH} replace />;
   }
 
   return (
@@ -261,7 +264,9 @@ export default function AgentBuilder() {
         >
           <NodeSelectionPanel
             width={SELECTION_PANEL_WIDTH}
-            disabled={isLoadingTemplate || isRunning || isVersionLoading}
+            disabled={
+              isLoadingTemplate || isRunning || isVersionLoading || isReadOnly
+            }
           />
           <Box
             sx={{

@@ -1,10 +1,27 @@
 """
-Shared helper for resolving the set of project IDs a request is allowed to see.
+Shared helpers for the error-feed views: accessible-project resolution and
+the Enterprise license gate.
 """
 
 from typing import List, Optional
 
 from tracer.models.project import Project
+
+
+class ErrorFeedLicenseRequired:
+    """Mixin denying error-feed APIs without the error_feed entitlement.
+
+    Error feed is an Enterprise feature: the code is public but
+    use requires a valid EE license (or a cloud plan). Raises
+    FeatureUnavailable (HTTP 402) via check_ee_feature otherwise.
+    """
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None)
+        check_ee_feature(EEFeature.ERROR_FEED, org_id=str(org.id) if org else None)
 
 
 def get_accessible_project_ids(request) -> List[str]:

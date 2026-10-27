@@ -18,6 +18,10 @@ import {
   Box,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import {
+  buildCustomPropertyPayload,
+  getDefaultValueError,
+} from "./customPropertyForm";
 
 const PROPERTY_TYPES = [
   { value: "string", label: "String" },
@@ -87,25 +91,16 @@ const CreateEditPropertyDialog = ({
     }));
 
   const handleSubmit = () => {
-    const payload = { ...form };
-    if (payload.property_type !== "enum") {
-      payload.allowed_values = [];
-    }
-    // Parse default value based on type
-    if (payload.default_value === "") {
-      payload.default_value = null;
-    } else if (payload.property_type === "number") {
-      payload.default_value = Number(payload.default_value);
-    } else if (payload.property_type === "boolean") {
-      payload.default_value = payload.default_value === "true";
-    }
+    const payload = buildCustomPropertyPayload(form);
     if (isEdit) payload.id = property.id;
     onSubmit(payload);
   };
 
+  const defaultValueError = getDefaultValueError(form);
   const isValid =
     form.name.trim() &&
-    (form.property_type !== "enum" || form.allowed_values.length > 0);
+    (form.property_type !== "enum" || form.allowed_values.length > 0) &&
+    !defaultValueError;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -195,6 +190,8 @@ const CreateEditPropertyDialog = ({
             label="Default Value (optional)"
             value={form.default_value}
             onChange={handleField("default_value")}
+            error={Boolean(defaultValueError)}
+            helperText={defaultValueError}
             fullWidth
             placeholder={
               form.property_type === "boolean"

@@ -34,8 +34,7 @@ const UserList = () => {
   const activeViewConfig = useMemo(() => {
     if (!activeTab?.startsWith?.("view-")) return null;
     const id = activeTab.slice(5);
-    const list =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const list = savedViewsData?.custom_views ?? [];
     return list.find((v) => v.id === id)?.config ?? null;
   }, [activeTab, savedViewsData]);
 
@@ -133,11 +132,13 @@ const UserList = () => {
                     Users
                   </Typography>
                 </Box>
+                {/* The API lists one row per user *within a project*; say so
+                    rather than implying de-duplicated people (TH-5037). */}
                 <Typography
                   variant="caption"
                   sx={{ color: "text.secondary", ml: 0.5 }}
                 >
-                  All users across your projects
+                  One row per user per project
                 </Typography>
               </Box>
             </Box>

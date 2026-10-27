@@ -262,7 +262,7 @@ const CreateEditOptimizationForm = ({ onClose, defaultValues, onSuccess }) => {
             <Typography
               variant="s3"
               fontWeight={"fontWeightRegular"}
-              color={"text.disabled"}
+              color={"text.secondary"}
             >
               These are the recommended parameters which give a good balance
               between speed and quality of the prompt optimization run

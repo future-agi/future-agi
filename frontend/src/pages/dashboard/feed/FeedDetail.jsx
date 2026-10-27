@@ -1,14 +1,7 @@
 import React from "react";
-import { Helmet } from "react-helmet-async";
-import FeedDetailView from "./FeedDetailView";
+import { Navigate, useParams } from "react-router-dom";
 
 export default function FeedDetail() {
-  return (
-    <>
-      <Helmet>
-        <title>Feed</title>
-      </Helmet>
-      <FeedDetailView />
-    </>
-  );
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/error-feed/${id}`} replace />;
 }

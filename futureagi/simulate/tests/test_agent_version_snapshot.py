@@ -9,6 +9,12 @@ These tests ensure the snapshot is correctly populated.
 import pytest
 
 from simulate.models import AgentDefinition, AgentVersion
+from tracer.tests.test_observability_switch import (
+    _agent_with_row,
+    _delete_project,
+    _delete_row,
+    _stored_agent,
+)
 
 
 @pytest.fixture
@@ -55,7 +61,6 @@ class TestAgentVersionSnapshot:
         )
         snapshot = version.configuration_snapshot
         expected_keys = {
-            "api_key",
             "inbound",
             "languages",
             "provider",
@@ -75,6 +80,11 @@ class TestAgentVersionSnapshot:
         for key in expected_keys:
             assert key in snapshot, f"Missing snapshot key: {key}"
 
+        # Credential fields must NOT be in the snapshot (refactor invariant)
+        forbidden_keys = {"api_key", "livekit_api_key", "livekit_api_secret"}
+        for key in forbidden_keys:
+            assert key not in snapshot, f"Credential field leaked into snapshot: {key}"
+
     def test_snapshot_reads_from_agent(self, agent_definition):
         version = agent_definition.create_version(
             description="Test",
@@ -85,7 +95,6 @@ class TestAgentVersionSnapshot:
         assert snapshot["agent_name"] == "Snapshot Test Agent"
         assert snapshot["agent_type"] == "voice"
         assert snapshot["provider"] == "vapi"
-        assert snapshot["api_key"] == "test-api-key"
         assert snapshot["assistant_id"] == "asst_test_123"
         assert snapshot["contact_number"] == "+12345678901"
         assert snapshot["inbound"] is True
@@ -155,3 +164,29 @@ class TestAgentVersionSnapshot:
         # observability_enabled is False by default, may be excluded by exclude_none
         obs_value = snapshot.get("observability_enabled", False)
         assert obs_value is False
+
+    def test_snapshot_observability_flag_of_a_live_link(
+        self, organization, workspace
+    ):
+        agent = _agent_with_row(organization, workspace, enabled=True)
+        version = agent.create_version(
+            description="Test",
+            commit_message="Live",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        assert version.configuration_snapshot["observability_enabled"] is True
+
+    @pytest.mark.parametrize("delete", [_delete_project, _delete_row])
+    def test_snapshot_observability_flag_of_a_dead_link_is_off(
+        self, organization, workspace, delete
+    ):
+        # The row's own flag still says on; the link is dead, so the snapshot
+        # the agent page starts from must say off.
+        agent = _agent_with_row(organization, workspace, enabled=True)
+        delete(agent)
+        version = _stored_agent(agent).create_version(
+            description="Test",
+            commit_message="Dead",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        assert version.configuration_snapshot["observability_enabled"] is False

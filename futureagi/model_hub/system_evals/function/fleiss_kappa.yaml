@@ -17,17 +17,33 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
+        raw = kwargs.get("output", output)
         try:
-            matrix = json.loads(str(kwargs.get("output", output))) if isinstance(kwargs.get("output", output), str) else kwargs.get("output", output)
-        except: return {"score": 0.0, "reason": "Cannot parse matrix"}
-        if not isinstance(matrix, list) or not matrix: return {"score": 0.0, "reason": "Invalid matrix"}
-        n = len(matrix)
+            matrix = json.loads(str(raw)) if isinstance(raw, str) else raw
+        except Exception:
+            return {"score": 0.0, "reason": "Cannot parse matrix"}
+        if not isinstance(matrix, list) or not matrix:
+            return {"score": 0.0, "reason": "Invalid matrix"}
+        if not all(isinstance(row, list) for row in matrix):
+            return {"score": 0.0, "reason": "Matrix must be a list of lists"}
         k = len(matrix[0])
-        N = sum(matrix[0])
-        if n == 0 or k == 0 or N == 0: return {"score": 0.0, "reason": "Empty matrix"}
-        pi = [sum(r*(r-1) for r in row)/(N*(N-1)) if N > 1 else 0 for row in matrix]
-        P = sum(pi)/n
-        pj = [sum(matrix[i][j] for i in range(n))/(n*N) for j in range(k)]
-        Pe = sum(p**2 for p in pj)
-        kappa = (P - Pe)/(1 - Pe) if Pe < 1 else (1.0 if P == 1 else 0.0)
-        return {"score": float((kappa+1)/2), "reason": f"Fleiss Kappa: {kappa:.4f}"}
+        if k == 0:
+            return {"score": 0.0, "reason": "Empty matrix"}
+        if any(len(row) != k for row in matrix):
+            return {"score": 0.0, "reason": "Matrix rows must have identical column count"}
+        if not all(isinstance(v, (int, float)) and v >= 0 for row in matrix for v in row):
+            return {"score": 0.0, "reason": "Matrix values must be non-negative numbers"}
+        row_sums = [sum(row) for row in matrix]
+        N = row_sums[0]
+        if N == 0:
+            return {"score": 0.0, "reason": "Empty matrix"}
+        if any(s != N for s in row_sums):
+            return {"score": 0.0, "reason": "Each row must have the same total rater count"}
+        n = len(matrix)
+        pi = [sum(r * (r - 1) for r in row) / (N * (N - 1)) if N > 1 else 0 for row in matrix]
+        P = sum(pi) / n
+        pj = [sum(matrix[i][j] for i in range(n)) / (n * N) for j in range(k)]
+        Pe = sum(p ** 2 for p in pj)
+        kappa = (P - Pe) / (1 - Pe) if Pe < 1 else (1.0 if P == 1 else 0.0)
+        kappa = max(-1.0, min(1.0, kappa))
+        return {"score": float((kappa + 1) / 2), "reason": f"Fleiss Kappa: {kappa:.4f}"}

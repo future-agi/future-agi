@@ -17,6 +17,9 @@ const BulkDeleteDialog = ({ open, count, onConfirm, onCancel, isLoading }) => (
       <DialogContentText>
         This action cannot be undone. System evaluations will not be deleted.
       </DialogContentText>
+      <DialogContentText sx={{ mt: 1, fontSize: "0.8rem", color: "text.secondary" }}>
+        This will also remove evaluation results from linked datasets.
+      </DialogContentText>
     </DialogContent>
     <DialogActions>
       <Button onClick={onCancel} disabled={isLoading}>

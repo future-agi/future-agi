@@ -9,7 +9,7 @@ import {
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import PropTypes from "prop-types";
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -24,6 +24,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import PersonaCreateEditDrawer from "./PersonaCreateEdit/PersonaCreateEditDrawer";
+import DuplicatePersonas from "./PersonaCreateEdit/DuplicatePersonas";
 import PersonaInfoDrawer from "./PersonaInfo/PersonaInfoDrawer";
 import PersonasBulkActionsBar from "./components/PersonasBulkActionsBar";
 import PersonasBulkDeleteDialog from "./components/PersonasBulkDeleteDialog";
@@ -82,18 +83,24 @@ const PersonaListView = ({
   onToggleSelect,
   onCreatePersona,
   personaCreateEditType = null,
+  lockedFilters = null,
+  toolbarActions = null,
 }) => {
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
+
+  const pickLockedValue = (v) => (Array.isArray(v) ? v[0] : v) ?? null;
+  const lockedSimulationType =
+    pickLockedValue(lockedFilters?.simulation_type) ??
+    (isSelectable ? personaCreateEditType : null);
+  const lockedType = pickLockedValue(lockedFilters?.type);
 
   // State
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [typeFilter, setTypeFilter] = useState(null);
-  const [simulationFilter, setSimulationFilter] = useState(
-    isSelectable ? personaCreateEditType : null,
-  );
+  const [typeFilter, setTypeFilter] = useState(lockedType);
+  const [simulationFilter, setSimulationFilter] = useState(lockedSimulationType);
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -106,6 +113,10 @@ const PersonaListView = ({
     persona: null,
     personaCreateEditType: null,
   });
+  const [duplicateDialog, setDuplicateDialog] = useState({
+    open: false,
+    persona: null,
+  });
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
 
@@ -113,8 +124,8 @@ const PersonaListView = ({
     page: page + 1,
     pageSize,
     search: debouncedSearch || null,
-    type: typeFilter,
-    simulationType: simulationFilter,
+    type: lockedType ?? typeFilter,
+    simulationType: lockedSimulationType ?? simulationFilter,
   });
 
   const items = useMemo(() => data?.results || [], [data]);
@@ -376,27 +387,45 @@ const PersonaListView = ({
               id: "actions",
               accessorKey: "id",
               header: "",
-              size: 56,
+              size: 88,
               enableSorting: false,
               cell: ({ row }) => {
                 const persona = row.original;
                 const canEdit = !persona?.isDefault && canCreate;
-                if (!canEdit) return null;
+                if (!canCreate) return null;
                 return (
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditDrawer({
-                        mode: "edit",
-                        persona,
-                        personaCreateEditType: persona?.simulationType,
-                      });
-                    }}
-                    sx={{ color: "text.secondary" }}
+                  <Box
+                    sx={{ display: "flex", alignItems: "center", gap: 0.25 }}
                   >
-                    <Iconify icon="solar:pen-linear" width={16} />
-                  </IconButton>
+                    <IconButton
+                      size="small"
+                      aria-label={`Duplicate persona ${persona?.name || ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDuplicateDialog({ open: true, persona });
+                      }}
+                      sx={{ color: "text.secondary" }}
+                    >
+                      <Iconify icon="solar:copy-linear" width={16} />
+                    </IconButton>
+                    {canEdit && (
+                      <IconButton
+                        size="small"
+                        aria-label={`Edit persona ${persona?.name || ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditDrawer({
+                            mode: "edit",
+                            persona,
+                            personaCreateEditType: persona?.simulationType,
+                          });
+                        }}
+                        sx={{ color: "text.secondary" }}
+                      >
+                        <Iconify icon="solar:pen-linear" width={16} />
+                      </IconButton>
+                    )}
+                  </Box>
                 );
               },
             },
@@ -411,47 +440,51 @@ const PersonaListView = ({
   );
 
   const filterFields = useMemo(() => {
-    const fields = [
-      {
+    const fields = [];
+    if (!lockedType) {
+      fields.push({
         value: "type",
         label: "Category",
         type: "enum",
         choices: ["prebuilt", "custom"],
-      },
-    ];
-    if (!(isSelectable && personaCreateEditType)) {
+        operators: ["is"],
+        single: true,
+      });
+    }
+    if (!lockedSimulationType) {
       fields.push({
         value: "simulation_type",
         label: "Agent Type",
         type: "enum",
         choices: [AGENT_TYPES.VOICE, AGENT_TYPES.CHAT],
-        // Bridge the legacy API value "text" to the user-facing label
-        // "Chat" so the AI filter can resolve "chat personas" → text.
         choiceLabels: {
           [AGENT_TYPES.VOICE]: "Voice",
           [AGENT_TYPES.CHAT]: "Chat",
         },
+        operators: ["is"],
+        single: true,
       });
     }
     return fields;
-  }, [isSelectable, personaCreateEditType]);
+  }, [lockedType, lockedSimulationType]);
 
   const currentFilters = useMemo(() => {
     const f = {};
-    if (typeFilter) f.type = [typeFilter];
-    if (simulationFilter) f.simulation_type = [simulationFilter];
+    if (!lockedType && typeFilter) f.type = [typeFilter];
+    if (!lockedSimulationType && simulationFilter)
+      f.simulation_type = [simulationFilter];
     return Object.keys(f).length ? f : null;
-  }, [typeFilter, simulationFilter]);
+  }, [typeFilter, simulationFilter, lockedType, lockedSimulationType]);
 
-  const activeFilterCount = (typeFilter ? 1 : 0) + (simulationFilter ? 1 : 0);
+  const activeFilterCount =
+    (lockedType ? 0 : typeFilter ? 1 : 0) +
+    (lockedSimulationType ? 0 : simulationFilter ? 1 : 0);
 
   const handleFilterApply = useCallback(
     (result) => {
-      const lockedSim =
-        isSelectable && personaCreateEditType ? personaCreateEditType : null;
       if (!result) {
-        setTypeFilter(null);
-        setSimulationFilter(lockedSim);
+        setTypeFilter(lockedType ?? null);
+        setSimulationFilter(lockedSimulationType ?? null);
         setPage(0);
         return;
       }
@@ -466,15 +499,19 @@ const PersonaListView = ({
               : [];
           if (val.length) flat[t.field] = val;
         }
-        setTypeFilter(pickFirst(flat.type));
-        setSimulationFilter(lockedSim ?? pickFirst(flat.simulation_type));
+        setTypeFilter(lockedType ?? pickFirst(flat.type));
+        setSimulationFilter(
+          lockedSimulationType ?? pickFirst(flat.simulation_type),
+        );
       } else {
-        setTypeFilter(pickFirst(result.type));
-        setSimulationFilter(lockedSim ?? pickFirst(result.simulation_type));
+        setTypeFilter(lockedType ?? pickFirst(result.type));
+        setSimulationFilter(
+          lockedSimulationType ?? pickFirst(result.simulation_type),
+        );
       }
       setPage(0);
     },
-    [isSelectable, personaCreateEditType],
+    [lockedType, lockedSimulationType],
   );
 
   const handleToggleColumn = useCallback((field) => {
@@ -553,7 +590,7 @@ const PersonaListView = ({
           </Button>
         </Box>
 
-        <Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           {!isSelectable && selectedItems.length > 0 ? (
             <PersonasBulkActionsBar
               selectedCount={selectedItems.length}
@@ -562,26 +599,29 @@ const PersonaListView = ({
               onCancel={handleCancelSelection}
             />
           ) : (
-            <Button
-              variant="contained"
-              color="primary"
-              disabled={!canCreate}
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
-              onClick={() => {
-                if (onCreatePersona) {
-                  onCreatePersona();
-                  return;
-                }
-                setEditDrawer({
-                  mode: "create",
-                  persona: null,
-                  personaCreateEditType: null,
-                });
-              }}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
-            >
-              Create persona
-            </Button>
+            <>
+              {toolbarActions}
+              <Button
+                variant="contained"
+                color="primary"
+                disabled={!canCreate}
+                startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+                onClick={() => {
+                  if (onCreatePersona) {
+                    onCreatePersona();
+                    return;
+                  }
+                  setEditDrawer({
+                    mode: "create",
+                    persona: null,
+                    personaCreateEditType: null,
+                  });
+                }}
+                sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              >
+                Create persona
+              </Button>
+            </>
           )}
         </Box>
       </Box>
@@ -595,50 +635,58 @@ const PersonaListView = ({
           alignItems: "center",
         }}
       >
-        {QUICK_FILTERS.map((f) => {
-          const isActive = typeFilter === f.value;
-          return (
-            <Chip
-              key={f.label}
-              icon={<Iconify icon={f.icon} width={14} />}
-              label={f.label}
-              size="small"
-              variant={isActive ? "filled" : "outlined"}
-              color={isActive ? "primary" : "default"}
-              onClick={() => {
-                setTypeFilter(f.value);
-                setPage(0);
+        {!lockedType &&
+          QUICK_FILTERS.map((f) => {
+            const isActive = typeFilter === f.value;
+            return (
+              <Chip
+                key={f.label}
+                icon={<Iconify icon={f.icon} width={14} />}
+                label={f.label}
+                size="small"
+                variant={isActive ? "filled" : "outlined"}
+                color={isActive ? "primary" : "default"}
+                onClick={() => {
+                  setTypeFilter(f.value);
+                  setPage(0);
+                }}
+                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              />
+            );
+          })}
+
+        {!lockedSimulationType && (
+          <>
+            <Box
+              sx={{
+                width: "1px",
+                height: 18,
+                bgcolor: "divider",
+                mx: 0.5,
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          );
-        })}
-        <Box
-          sx={{
-            width: "1px",
-            height: 18,
-            bgcolor: "divider",
-            mx: 0.5,
-          }}
-        />
-        {SIMULATION_FILTERS.map((f) => {
-          const isActive = simulationFilter === f.value;
-          return (
-            <Chip
-              key={f.label}
-              icon={f.icon ? <Iconify icon={f.icon} width={14} /> : undefined}
-              label={f.label}
-              size="small"
-              variant={isActive ? "filled" : "outlined"}
-              color={isActive ? "primary" : "default"}
-              onClick={() => {
-                setSimulationFilter(f.value);
-                setPage(0);
-              }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          );
-        })}
+            {SIMULATION_FILTERS.map((f) => {
+              const isActive = simulationFilter === f.value;
+              return (
+                <Chip
+                  key={f.label}
+                  icon={
+                    f.icon ? <Iconify icon={f.icon} width={14} /> : undefined
+                  }
+                  label={f.label}
+                  size="small"
+                  variant={isActive ? "filled" : "outlined"}
+                  color={isActive ? "primary" : "default"}
+                  onClick={() => {
+                    setSimulationFilter(f.value);
+                    setPage(0);
+                  }}
+                  sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+                />
+              );
+            })}
+          </>
+        )}
       </Box>
 
       {/* Table */}
@@ -732,6 +780,11 @@ const PersonaListView = ({
         editPersona={editDrawer.persona}
         personaCreateEditType={editDrawer.personaCreateEditType}
       />
+      <DuplicatePersonas
+        open={duplicateDialog.open}
+        personaId={duplicateDialog.persona?.id}
+        onClose={() => setDuplicateDialog({ open: false, persona: null })}
+      />
       <PersonaInfoDrawer
         open={infoDrawer.open}
         persona={infoDrawer.persona || {}}
@@ -743,10 +796,13 @@ const PersonaListView = ({
 
 PersonaListView.propTypes = {
   isSelectable: PropTypes.bool,
+  lockedFilters: PropTypes.object,
   selectedPersonas: PropTypes.array,
   onToggleSelect: PropTypes.func,
   onCreatePersona: PropTypes.func,
   personaCreateEditType: PropTypes.string,
+  // Extra buttons shown just before Create persona (hidden while rows are selected).
+  toolbarActions: PropTypes.node,
 };
 
 export default PersonaListView;

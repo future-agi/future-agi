@@ -16,17 +16,18 @@ import _ from "lodash";
 
 const DocumentDatapointCard = ({ value, column }) => {
   const theme = useTheme();
-  const hasDocument = Boolean(value?.cellValue);
+  const cellValue = value?.cell_value;
+  const valueInfos = value?.value_infos;
+  const hasDocument = Boolean(cellValue);
   const { fileName, fileType } = useMemo(() => {
-    const fileName = value?.cellValue?.split("/")?.pop() || value?.cellValue;
-    let fileType = getFileType(value?.cellValue?.split(".")?.pop());
-    if (!value?.cellValue?.startsWith("data:")) {
+    const fileName = cellValue?.split("/")?.pop() || cellValue;
+    let fileType = getFileType(cellValue?.split(".")?.pop());
+    if (!cellValue?.startsWith("data:")) {
       if (
-        value?.valueInfos?.documentName &&
-        value?.cellValue?.split(".")?.pop()?.includes("/")
+        valueInfos?.documentName &&
+        cellValue?.split(".")?.pop()?.includes("/")
       ) {
-        const mimeMatch =
-          value?.valueInfos?.documentName?.match(/data:([^;]+)/);
+        const mimeMatch = valueInfos?.documentName?.match(/data:([^;]+)/);
         if (mimeMatch) {
           const mimeType = mimeMatch[1];
           fileType = getFileType(getFileTypeFromMime(mimeType));
@@ -37,7 +38,7 @@ const DocumentDatapointCard = ({ value, column }) => {
       fileName,
       fileType,
     };
-  }, [value]);
+  }, [cellValue, valueInfos]);
 
   return (
     <Accordion defaultExpanded disableGutters>

@@ -9,15 +9,13 @@ import React, {
   useState,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
-import { formatDate } from "src/utils/report-utils";
-import { endOfToday, sub } from "date-fns";
 import { useUrlState } from "src/routes/hooks/use-url-state";
-import axios, { endpoints } from "src/utils/axios";
-import { useQuery } from "@tanstack/react-query";
+import { endpoints } from "src/utils/axios";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
@@ -31,6 +29,11 @@ import ObserveToolbar from "../LLMTracing/ObserveToolbar";
 import FilterChips from "../LLMTracing/FilterChips";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
 import { useLLMTracingFilters } from "../LLMTracing/useLLMTracingFilters";
+import {
+  reorderColumns,
+  columnStateToOrder,
+  isColumnOrderDirty,
+} from "../LLMTracing/savedViewColumns";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 
 // Lazy-load graph
@@ -42,9 +45,16 @@ const PrimaryGraph = lazy(
 import useUsersStore from "./Store/usersStore";
 import { getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
+import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
 import { filtersContentEqual } from "../saved-view-utils";
+import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import {
+  DEFAULT_OBSERVE_LIST_DATE_OPTION,
+  getDefaultObserveListDateRangeForMode,
+} from "../dateRangeDefaults";
 
 // ---------------------------------------------------------------------------
 // User filter fields for TraceFilterPanel
@@ -98,24 +108,18 @@ const USER_FILTER_FIELDS = [
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
-const getDefaultDateRange = () => ({
-  dateFilter: [
-    formatDate(sub(new Date(), { days: 90 })),
-    formatDate(endOfToday()),
-  ],
-  dateOption: "3M",
-});
+const getDefaultDateRange = () => getDefaultObserveListDateRangeForMode(false);
 
 const getDateLabel = (dateFilter) => {
-  if (!dateFilter) return "Past 3M";
+  if (!dateFilter) return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   return dateFilter.dateOption === "Custom"
     ? "Custom range"
-    : dateFilter.dateOption || "Past 3M";
+    : dateFilter.dateOption || `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
 };
 
 const noopExtraProperties = () => ({});
@@ -128,6 +132,9 @@ const UsersView = ({
   activeViewConfig: activeViewConfigProp,
 }) => {
   const { observeId } = useParams();
+  // Cross-project page (no project in the route): rows carry a Project column.
+  const includeProject = !observeId;
+  const { currentWorkspaceId } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
   const isObservePath = location.pathname.includes("observe");
@@ -143,6 +150,8 @@ const UsersView = ({
     removeCustomColumns,
     openCustomColumnDialog,
     setOpenCustomColumnDialog,
+    searchQuery,
+    sortParams,
   } = useUsersStore(
     useShallow((state) => ({
       clearSelection: state.clearSelection,
@@ -155,6 +164,8 @@ const UsersView = ({
       removeCustomColumns: state.removeCustomColumns,
       openCustomColumnDialog: state.openCustomColumnDialog,
       setOpenCustomColumnDialog: state.setOpenCustomColumnDialog,
+      searchQuery: state.searchQuery,
+      sortParams: state.sortParams,
     })),
   );
 
@@ -179,19 +190,25 @@ const UsersView = ({
     }
   }, [gridApi, autoSizeAllCols]);
 
-  // --- Eval attributes for custom column dialog (mirrors LLMTracingView) ---
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
+  // --- Cursor-backed attributes for custom columns ---
+  const [customAttributeSearch, setCustomAttributeSearch] = useState("");
+  const preservedCustomAttributeKeys = useMemo(
+    () =>
+      (columns || [])
+        .filter((column) => column?.groupBy === "Custom Columns")
+        .map((column) => column.id)
+        .filter(Boolean),
+    [columns],
+  );
+  const { attributes, inventoryControlProps } = useCursorAttributeInventory({
+    projectId: observeId,
+    workspaceScope: !observeId,
+    workspaceScopeKey: currentWorkspaceId,
+    discoveryMode: "eval_mapping",
+    search: customAttributeSearch,
+    preservedKeys: preservedCustomAttributeKeys,
+    enabled: openCustomColumnDialog && Boolean(observeId || currentWorkspaceId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   // --- Observe header refresh wiring (TH-4023) ---
   // Expose a refresh callback to the shared ObserveHeader so the refresh
@@ -202,7 +219,6 @@ const UsersView = ({
     activeViewConfig: activeViewConfigCtx,
     setActiveViewConfig,
     registerGetViewConfig,
-    registerGetTabType,
   } = useObserveHeader();
   // Prefer prop (set by UserList for /dashboard/users) over context
   // (set by ObservePage for the Users fixed tab).
@@ -213,14 +229,6 @@ const UsersView = ({
       gridApi.refreshServerSide();
     }
   }, [gridApi]);
-
-  useEffect(() => {
-    setHeaderConfig((prev) => ({
-      ...prev,
-      text: "Users",
-      refreshData: refreshUsers,
-    }));
-  }, [refreshUsers, setHeaderConfig]);
 
   // --- Filter & date state ---
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
@@ -238,6 +246,10 @@ const UsersView = ({
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
   const [isFilterOpen, setIsFilterOpen] = useUrlState("userFilterOpen", false);
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
 
@@ -253,48 +265,10 @@ const UsersView = ({
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so useGetValidatedFilters in UsersGrid accepts them
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
-
-    // ObserveToolbar number operators → Zod AllowedOperators
-    const opFixMap = {
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_between: "not_in_between",
-    };
-
-    const normalized = extraFilters.map((f) => {
-      const rawOp =
-        f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals";
-      const rawType =
-        f.filter_config?.filter_type || f.filterConfig?.filterType || "text";
-      const rawValue =
-        f.filter_config?.filter_value ?? f.filterConfig?.filterValue ?? "";
-
-      // Number values arrive as comma-joined strings; Zod expects arrays
-      let filterValue = rawValue;
-      if (rawType === "number" && typeof rawValue === "string") {
-        filterValue = rawValue.includes(",") ? rawValue.split(",") : [rawValue];
-      }
-
-      return {
-        columnId: f.column_id || f.columnId || "",
-        _meta: { parentProperty: "" },
-        filterConfig: {
-          filterType: rawType,
-          filterOp: opFixMap[rawOp] || rawOp,
-          filterValue,
-          ...(f.filter_config?.col_type && {
-            col_type: f.filter_config.col_type,
-          }),
-        },
-      };
-    });
-    return [...validatedFilters, ...normalized];
+    return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
   // --- Row height ---
@@ -310,33 +284,48 @@ const UsersView = ({
     useUsersStore.setState({ filters: finalFilters });
   }, [finalFilters]);
 
-  // ---------------------------------------------------------------------------
-  // Saved-view api — populates a ref that the parent UsersPageTabBar drives.
-  // Captures display + filter state into config, and restores it on activation.
-  // ---------------------------------------------------------------------------
+  // Must live after finalFilters so the export button sees the current filter set.
+  // search + sort ride along too, so the CSV matches a searched/sorted grid.
+  useEffect(() => {
+    setHeaderConfig((prev) => ({
+      ...prev,
+      text: "Users",
+      filterUsers: finalFilters,
+      searchUsers: searchQuery,
+      sortUsers: sortParams,
+      refreshData: refreshUsers,
+    }));
+  }, [refreshUsers, finalFilters, searchQuery, sortParams, setHeaderConfig]);
+
+  // Saved-view api — populates a ref the parent UsersPageTabBar drives.
   const getConfig = useCallback(() => {
     const visibleColumns = (columns || []).reduce((acc, col) => {
       acc[col.id] = col.isVisible !== false;
       return acc;
     }, {});
-    // Capture full grid column state (widths, order, sort) so saved views
-    // restore the user's exact column layout. Stash inside `display` since
-    // the backend serializer's allowed_keys whitelists `display` for
-    // arbitrary subkeys but does not whitelist a separate `columnState`.
-    const columnState = gridApi?.getColumnState?.() ?? undefined;
+    // columnState lives inside `display` because the backend serializer
+    // whitelists `display` for arbitrary sub-keys (no top-level columnState).
+    const rawColumnState = gridApi?.getColumnState?.() ?? undefined;
+    const columnState = rawColumnState
+      ? sanitizeUserColumnState(rawColumnState)
+      : undefined;
+    // customColumns separately: AG Grid won't recreate them from columnState
+    // alone since the backend doesn't know about custom cols.
+    const customColumns = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
     return {
       display: {
         cellHeight,
         showErrors,
         showNonAnnotated,
         hasEvalFilter,
+        dateFilter,
         visibleColumns,
         ...(columnState ? { columnState } : {}),
+        ...(customColumns.length > 0 ? { customColumns } : {}),
       },
-      filters: {
-        extraFilters,
-        dateFilter,
-      },
+      extra_filters: extraFilters || [],
     };
   }, [
     columns,
@@ -349,9 +338,95 @@ const UsersView = ({
     gridApi,
   ]);
 
-  // Pending column state from a saved view that arrived before the grid was
-  // ready. Drained by the effect below when gridApi becomes available.
+  // Drained when gridApi becomes available (saved view arrived before grid mount).
   const pendingColumnStateRef = useRef(null);
+  // Saved visibility queued when `columns` isn't loaded yet at load; the
+  // [columns] effect re-applies it once they land (else it never hydrates).
+  const pendingVisibilityRef = useRef(null);
+  // Armed on switch-to-default; the [columns] effect resets order to the default.
+  const pendingDefaultReorderRef = useRef(false);
+
+  const displayStorageKey = `observe-users-display-${observeId}`;
+
+  // hydratedKeyRef gates the hydrate to once per project. The columns gate
+  // below ensures UsersGrid's schema seed has landed first — without it,
+  // addCustomColumns would race the seed and the customs would be wiped.
+  const hydratedKeyRef = useRef(null);
+  // Skips the save effect's next fire after a hydrate so the pre-hydrate
+  // closure can't overwrite what we just loaded.
+  const skipNextSaveRef = useRef(false);
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (!columns || columns.length === 0) return;
+    if (hydratedKeyRef.current === displayStorageKey) return;
+    hydratedKeyRef.current = displayStorageKey;
+    try {
+      const raw = localStorage.getItem(displayStorageKey);
+      if (!raw) return;
+      skipNextSaveRef.current = true;
+      const saved = JSON.parse(raw);
+      if (saved.cellHeight) setCellHeight(saved.cellHeight);
+      if (typeof saved.showErrors === "boolean")
+        setShowErrors(saved.showErrors);
+      if (typeof saved.showNonAnnotated === "boolean") {
+        setShowNonAnnotated(saved.showNonAnnotated);
+      }
+      if (typeof saved.hasEvalFilter === "boolean") {
+        setHasEvalFilter(saved.hasEvalFilter);
+      }
+      if (saved.visibleColumns && typeof saved.visibleColumns === "object") {
+        updateColumnVisibility(saved.visibleColumns);
+      }
+      if (
+        Array.isArray(saved.customColumns) &&
+        saved.customColumns.length > 0
+      ) {
+        addCustomColumns(saved.customColumns);
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns, displayStorageKey]);
+
+  // Default tab only — saved views own their persistence via the explicit
+  // Save view button.
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current !== displayStorageKey) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    const visibleColumns = (columns || []).reduce((acc, col) => {
+      acc[col.id] = col.isVisible !== false;
+      return acc;
+    }, {});
+    const customColumns = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    const payload = {
+      cellHeight,
+      showErrors,
+      showNonAnnotated,
+      hasEvalFilter,
+      visibleColumns,
+      ...(customColumns.length > 0 ? { customColumns } : {}),
+    };
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
+    } catch {
+      /* quota exceeded */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    displayStorageKey,
+    columns,
+    cellHeight,
+    showErrors,
+    showNonAnnotated,
+    hasEvalFilter,
+  ]);
 
   const applyConfig = useCallback(
     (config) => {
@@ -364,25 +439,59 @@ const UsersView = ({
         setHasEvalFilter(false);
         setDateFilter(getDefaultDateRange());
         pendingColumnStateRef.current = null;
-        // Reset column visibility to the column-config defaults so going back
-        // to All Users from a saved view with limited columns shows everything
-        // again.
-        const defaultsVisibility = (getUsersColumnConfig() || []).reduce(
-          (acc, col) => {
-            acc[col.field] = col.hide === undefined ? true : !col.hide;
-            return acc;
-          },
-          {},
-        );
+        const currentCustomIds = (columns || [])
+          .filter((c) => c.groupBy === "Custom Columns")
+          .map((c) => c.id);
+        if (currentCustomIds.length > 0) {
+          removeCustomColumns(currentCustomIds);
+        }
+        const defaultsVisibility = (
+          getUsersColumnConfig({ includeProject }) || []
+        ).reduce((acc, col) => {
+          acc[col.field] = col.hide === undefined ? true : !col.hide;
+          return acc;
+        }, {});
         if (Object.keys(defaultsVisibility).length > 0) {
           updateColumnVisibility(defaultsVisibility);
         }
-        // Reset AG Grid column state (widths/order/sort) to coldef defaults.
         if (gridApi?.resetColumnState) gridApi.resetColumnState();
+        // Re-hydrate from localStorage — the mount hydrate is keyed on
+        // displayStorageKey and won't re-fire on a same-project saved-view
+        // → default transition.
+        try {
+          const raw = localStorage.getItem(displayStorageKey);
+          if (raw) {
+            skipNextSaveRef.current = true;
+            const saved = JSON.parse(raw);
+            if (saved.cellHeight) setCellHeight(saved.cellHeight);
+            if (typeof saved.showErrors === "boolean") {
+              setShowErrors(saved.showErrors);
+            }
+            if (typeof saved.showNonAnnotated === "boolean") {
+              setShowNonAnnotated(saved.showNonAnnotated);
+            }
+            if (typeof saved.hasEvalFilter === "boolean") {
+              setHasEvalFilter(saved.hasEvalFilter);
+            }
+            if (
+              saved.visibleColumns &&
+              typeof saved.visibleColumns === "object"
+            ) {
+              updateColumnVisibility(saved.visibleColumns);
+            }
+            if (
+              Array.isArray(saved.customColumns) &&
+              saved.customColumns.length > 0
+            ) {
+              addCustomColumns(saved.customColumns);
+            }
+          }
+        } catch {
+          /* ignore corrupted localStorage */
+        }
         return;
       }
       const display = config.display || {};
-      const filtersCfg = config.filters || {};
       if (display.cellHeight) setCellHeight(display.cellHeight);
       if (typeof display.showErrors === "boolean")
         setShowErrors(display.showErrors);
@@ -390,24 +499,55 @@ const UsersView = ({
         setShowNonAnnotated(display.showNonAnnotated);
       if (typeof display.hasEvalFilter === "boolean")
         setHasEvalFilter(display.hasEvalFilter);
-      if (display.visibleColumns && columns?.length) {
-        updateColumnVisibility(display.visibleColumns);
+      // Strip pre-existing customs so view → view doesn't stack, and
+      // default → view doesn't leak default-tab customs into the saved view.
+      const existingCustomIds = (columns || [])
+        .filter((c) => c.groupBy === "Custom Columns")
+        .map((c) => c.id);
+      if (existingCustomIds.length > 0) {
+        removeCustomColumns(existingCustomIds);
       }
-      if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-        if (gridApi?.applyColumnState) {
-          gridApi.applyColumnState({
-            state: display.columnState,
-            applyOrder: true,
-          });
+      const savedCustomCols = Array.isArray(display.customColumns)
+        ? display.customColumns
+        : [];
+      if (savedCustomCols.length > 0) {
+        addCustomColumns(savedCustomCols);
+      }
+      if (display.visibleColumns) {
+        if (columns?.length) {
+          updateColumnVisibility(display.visibleColumns);
         } else {
-          pendingColumnStateRef.current = display.columnState;
+          // Grid columns not loaded yet — re-apply once they land.
+          pendingVisibilityRef.current = display.visibleColumns;
         }
       }
-      if (Array.isArray(filtersCfg.extraFilters)) {
-        setExtraFilters(filtersCfg.extraFilters);
+      if (
+        Array.isArray(display.columnState) &&
+        display.columnState.length > 0
+      ) {
+        const columnState = sanitizeUserColumnState(display.columnState);
+        // Defer columnState when custom cols are being added — AG Grid's
+        // columnDefs prop only flips next render, so applying this tick
+        // would drop entries for the custom colIds. Drained by the
+        // `columns` effect once the store update propagates.
+        if (savedCustomCols.length > 0) {
+          pendingColumnStateRef.current = columnState;
+        } else if (gridApi?.applyColumnState) {
+          gridApi.applyColumnState({
+            state: columnState,
+            applyOrder: true,
+          });
+          // Bake order into the array too (applyColumnState is clobbered on rebuild).
+          setColumns(reorderColumns(columns, columnStateToOrder(columnState)));
+        } else {
+          pendingColumnStateRef.current = columnState;
+        }
       }
-      if (filtersCfg.dateFilter) {
-        setDateFilter(filtersCfg.dateFilter);
+      if (Array.isArray(config.extra_filters)) {
+        setExtraFilters(hydrateStoredFilterList(config.extra_filters));
+      }
+      if (display.dateFilter) {
+        setDateFilter(display.dateFilter);
       }
     },
     [
@@ -418,21 +558,48 @@ const UsersView = ({
       setDateFilter,
       setExtraFilters,
       updateColumnVisibility,
+      addCustomColumns,
+      removeCustomColumns,
+      setColumns,
       columns,
       gridApi,
+      displayStorageKey,
+      includeProject,
     ],
   );
 
-  // Drain any column state queued before the grid was ready.
+  // Drains pendingColumnStateRef on two triggers: gridApi becoming
+  // available, or `columns` changing (custom cols just landed → AG Grid
+  // columnDefs prop updated → safe to apply state for the custom colIds).
   useEffect(() => {
+    // Saved visibility queued before columns loaded — apply now they're here.
+    if (pendingVisibilityRef.current && columns?.length) {
+      updateColumnVisibility(pendingVisibilityRef.current);
+      pendingVisibilityRef.current = null;
+    }
     if (gridApi?.applyColumnState && pendingColumnStateRef.current) {
+      const order = columnStateToOrder(pendingColumnStateRef.current);
       gridApi.applyColumnState({
         state: pendingColumnStateRef.current,
         applyOrder: true,
       });
       pendingColumnStateRef.current = null;
+      // Bake order into the array too (applyColumnState is clobbered on rebuild).
+      setColumns(reorderColumns(columns, order));
     }
-  }, [gridApi]);
+  }, [gridApi, columns, setColumns, updateColumnVisibility]);
+
+  // After switch-to-default, reset order to the config default (the view's order
+  // was baked into the store); disarms at the fixpoint so manual drags persist.
+  useEffect(() => {
+    if (!pendingDefaultReorderRef.current) return;
+    const canonical = (getUsersColumnConfig({ includeProject }) || []).map(
+      (c) => c.field,
+    );
+    const next = reorderColumns(columns, canonical);
+    if (next !== columns) setColumns(next);
+    else pendingDefaultReorderRef.current = false;
+  }, [columns, setColumns, includeProject]);
 
   // Keep the ref's handles in sync with the latest closures
   useEffect(() => {
@@ -442,16 +609,22 @@ const UsersView = ({
   }, [savedViewApiRef, getConfig, applyConfig]);
 
   // "Save view" surfaces only on a custom saved-view tab when the live state
-  // diverges from its saved baseline. UsersView's config nests dateFilter
-  // inside `filters` (not `display` like LLMTracingView/SessionsView).
+  // diverges from its saved baseline. User saved-view metadata lives in
+  // `display`; filter lists are first-class top-level config keys.
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineFilters = activeViewConfig.filters || {};
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineExtraFilters = baselineFilters.extraFilters || [];
-    const baselineDateOption =
-      baselineFilters.dateFilter?.dateOption ?? null;
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
+
+    // The `actions` column is an always-present UI column (not user data); its
+    // visibility/position must not count toward "modified" (TH-6119).
+    const comparableColumns = (columns || []).filter(
+      (c) => c?.id !== "actions",
+    );
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -486,7 +659,7 @@ const UsersView = ({
       baselineDisplay.visibleColumns &&
       typeof baselineDisplay.visibleColumns === "object"
     ) {
-      const currentVisibility = (columns || []).reduce((acc, col) => {
+      const currentVisibility = comparableColumns.reduce((acc, col) => {
         acc[col.id] = col.isVisible !== false;
         return acc;
       }, {});
@@ -500,6 +673,26 @@ const UsersView = ({
           return true;
         }
       }
+    }
+    // Custom cols: order is captured by columnState, so we only diff the set.
+    const currentCustomIds = (columns || [])
+      .filter((c) => c.groupBy === "Custom Columns")
+      .map((c) => c.id)
+      .sort();
+    const baselineCustomIds = (
+      Array.isArray(baselineDisplay.customColumns)
+        ? baselineDisplay.customColumns
+        : []
+    )
+      .map((c) => c.id)
+      .sort();
+    if (currentCustomIds.length !== baselineCustomIds.length) return true;
+    for (let i = 0; i < currentCustomIds.length; i += 1) {
+      if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
+    }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(comparableColumns, baselineDisplay.columnState)) {
+      return true;
     }
     return false;
   }, [
@@ -515,20 +708,13 @@ const UsersView = ({
 
   const canSaveViewDeferred = useDeferredValue(canSaveView);
 
-  // Update mutations for the explicit Save view button. Project-scoped on
-  // ObservePage's Users fixed tab; workspace-scoped (USERS_TAB_TYPE) on the
-  // top-level /dashboard/users page rendered by UserList.
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USERS_TAB_TYPE);
 
-  // Active saved-view id from URL — "tab" key on ObservePage, "usersTab" on
-  // UserList. Re-derived when the active config flips.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    const key = isObservePath
-      ? params.get("tab")
-      : params.get("usersTab");
+    const key = isObservePath ? params.get("tab") : params.get("usersTab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isObservePath]);
 
@@ -559,28 +745,28 @@ const UsersView = ({
     setActiveViewConfig,
   ]);
 
-  // Register with ObserveHeaderContext so ObserveTabBar's "+" save flow can
-  // snapshot the current Users config when the user is on this fixed tab —
-  // without this, the save POSTs `config: {}` (TH-4578).
+  // ObserveTabBar's "+" save flow needs this — without it the save POSTs
+  // `config: {}` (TH-4578).
   useEffect(() => {
     registerGetViewConfig(getConfig);
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, getConfig]);
 
+  // Deps watch only activeViewConfig — applyConfig's identity changes with
+  // columns, and it mutates columns, so keeping it in deps would loop.
+  // wasOnSavedViewRef gates the null-branch reset to genuine saved-view →
+  // default transitions (not initial mount with no view selected).
+  const wasOnSavedViewRef = useRef(false);
   useEffect(() => {
-    registerGetTabType(() => "users");
-    return () => registerGetTabType(null);
-  }, [registerGetTabType]);
-
-  // Apply a saved view's config when activeViewConfig changes. Reuses the
-  // existing applyConfig — handles extraFilters, dateFilter, display state,
-  // column visibility.
-  // Dep array intentionally only watches `activeViewConfig`. `applyConfig`'s
-  // identity changes whenever `columns` does, and `applyConfig` itself
-  // mutates `columns` via `updateColumnVisibility` — keeping it in deps
-  // creates an infinite re-apply loop.
-  useEffect(() => {
-    if (!activeViewConfig) return;
+    if (!activeViewConfig) {
+      const wasOnSavedView = wasOnSavedViewRef.current;
+      wasOnSavedViewRef.current = false;
+      if (!wasOnSavedView) return;
+      pendingDefaultReorderRef.current = true;
+      applyConfig(null);
+      return;
+    }
+    wasOnSavedViewRef.current = true;
     applyConfig(activeViewConfig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
@@ -599,13 +785,11 @@ const UsersView = ({
     searchState === "empty" &&
     !hasActiveFilter;
 
-  const shouldShowGrid =
-    hasData === true ||
-    (isLoading && searchState !== "empty") ||
-    searchState === "searching" ||
-    hasActiveFilter;
-
-  const shouldShowLoading = isLoading && hasData === null;
+  // Every state shows either the confirmed empty screen or the grid. A reload
+  // of a confirmed-empty page, or a first page paused at the continuation
+  // limit (its "Continue search" button lives in the grid), matched neither
+  // an enumerated grid state nor the empty screen and left the page blank.
+  const shouldShowGrid = !shouldShowEmptyLayout;
 
   return (
     <>
@@ -618,6 +802,8 @@ const UsersView = ({
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="users"
+        projectId={observeId}
+        allowWorkspaceScope={!observeId}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
@@ -628,7 +814,13 @@ const UsersView = ({
         onSaveView={handleSaveView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         filterFields={USER_FILTER_FIELDS}
         onApplyExtraFilters={setExtraFilters}
         // Columns (Display panel)
@@ -695,9 +887,23 @@ const UsersView = ({
             USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
         }))}
         onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
         }}
-        onClearAll={() => setExtraFilters([])}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       {/* Graph — hidden in cross-project mode (no project context to
@@ -728,45 +934,31 @@ const UsersView = ({
           pt: 1,
         }}
       >
-        {/* Loading spinner */}
-        {shouldShowLoading && (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <CircularProgress />
-          </Box>
-        )}
+        <Box
+          sx={{
+            flex: 1,
+            display: shouldShowEmptyLayout ? "flex" : "none",
+            justifyContent: "center",
+          }}
+        >
+          {shouldShowEmptyLayout && <UsersEmptyScreen />}
+        </Box>
 
-        {/* Empty state */}
-        {shouldShowEmptyLayout && (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-            }}
-          >
-            <UsersEmptyScreen />
-          </Box>
-        )}
-
-        {/* Grid */}
-        {shouldShowGrid && (
-          <Box sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            <UsersGrid
-              setHasData={setHasData}
-              setIsLoading={setIsLoading}
-              setSearchState={setSearchState}
-              hasActiveFilter={hasActiveFilter}
-              cellHeight={cellHeight}
-            />
-          </Box>
-        )}
+        <Box
+          sx={{
+            flex: 1,
+            display: shouldShowGrid ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <UsersGrid
+            setHasData={setHasData}
+            setIsLoading={setIsLoading}
+            setSearchState={setSearchState}
+            hasActiveFilter={hasActiveFilter}
+            cellHeight={cellHeight}
+          />
+        </Box>
       </Box>
 
       {/* Column visibility popover */}
@@ -788,6 +980,8 @@ const UsersView = ({
         existingColumns={columns}
         onAddColumns={addCustomColumns}
         onRemoveColumns={removeCustomColumns}
+        onAttributeSearchChange={setCustomAttributeSearch}
+        inventoryControlProps={inventoryControlProps}
       />
     </>
   );

@@ -9,23 +9,13 @@ import React, {
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAgTheme } from "src/hooks/use-ag-theme";
-import {
-  Box,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { useAgThemeWith } from "src/hooks/use-ag-theme";
+import { Box, Button, Skeleton, Typography, useTheme } from "@mui/material";
 import {
   getCallLogsColumnDefs,
   useCallLogs,
   prefetchCallLogs,
 } from "../helper";
-import Iconify from "src/components/iconify";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import TestDetailSideDrawer from "src/sections/test-detail/TestDetailDrawer/TestDetailSideDrawer";
 import {
@@ -36,8 +26,77 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { useShallowToggleAnnotationsStore } from "../store";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
+import { APP_CONSTANTS } from "src/utils/constants";
+import {
+  getQueryReadMessage,
+  getQueryReadState,
+} from "src/utils/queryReadState";
+import {
+  LIST_CURSOR_CONTINUATION_NOTICE,
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  isListCursorProtocolError,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
+import { applyQuickFilters } from "src/sections/projects/LLMTracing/common";
+import { OBSERVE_LIST_DEFAULT_PAGE_SIZE } from "src/config/runtime_limits";
+import { dispatchObservePageChanged } from "src/sections/projects/observeEvents";
+import {
+  getListPagerState,
+  hasBufferedOverflowPage,
+  pickPagerMetadata,
+  pagerMetadataEquals,
+} from "src/sections/projects/LLMTracing/listPagerState";
+import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
+
+// Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
+// the rest of the row.
+const CustomColCellRenderer = (params) => {
+  const v = params?.value;
+  const display = v == null || v === "" ? "-" : v;
+  return (
+    <Box
+      sx={{
+        px: 1.5,
+        py: 0.5,
+        display: "flex",
+        alignItems: "center",
+        height: "100%",
+      }}
+    >
+      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+        {String(display)}
+      </Typography>
+    </Box>
+  );
+};
+
+const CustomColLoadingSkeleton = () => (
+  <Skeleton
+    variant="rectangular"
+    width="80%"
+    height={15}
+    sx={{ mx: 1, borderRadius: 0.5 }}
+  />
+);
+
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "dropped",
+  "ended",
+  "error",
+  "failed",
+  "not-connected",
+  "ok",
+]);
+
+const isSelectableForAnnotation = (row) => {
+  const status = String(row?.status || "").toLowerCase();
+  return TERMINAL_CALL_STATUSES.has(status);
+};
 
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
@@ -48,41 +107,80 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     onConfigLoaded = () => {},
     enabled = true,
     onSelectionChanged,
-    // Optional richer selection callback — fires alongside onSelectionChanged
-    // with {traceIds, isAllOnPageSelected, currentPageSize, totalPages,
-    // pageLimit}. Used by LLMTracingView's simulator branch to decide when
-    // to show the "select all matching filter" banner (Phase 9 of the
-    // annotation-queue-bulk-select revamp).
+    // Richer selection callback used by LLMTracingView's simulator branch
+    // to decide when to show the "select all matching filter" banner.
     onSelectionMeta,
     cellHeight = "Short",
     columnVisibility,
+    onColumnsChange,
     hideDrawer = false,
     showErrors = false,
+    setExtraFilters,
   },
   forwardedRef,
 ) {
-  const agTheme = useAgTheme();
   const theme = useTheme();
+  const gridThemeParams = useMemo(
+    () => ({
+      columnBorder: false,
+      headerColumnBorder: false,
+      wrapperBorder: { width: 0 },
+      wrapperBorderRadius: 0,
+      rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+      headerFontSize: "13px",
+      headerFontWeight: 500,
+      headerBackgroundColor: "transparent",
+      headerTextColor: theme.palette.text.primary,
+      rowHoverColor: "rgba(120,87,252,0.04)",
+    }),
+    [theme],
+  );
+  const agTheme = useAgThemeWith(gridThemeParams);
   const queryClient = useQueryClient();
+  const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
   const [page, setPage] = useState(1);
-  const [pageLimit, setPageLimit] = useState(25);
-  const [totalPages, setTotalPages] = useState(1);
-  const [lastFilters, setLastFilters] = useState(params?.filters);
+  const [pageLimit, setPageLimit] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
+  const [pagerState, setPagerState] = useState({
+    hasMore: false,
+    provenNext: false,
+  });
+  const [cursorTransportRevision, advanceCursorTransport] = useState(0);
+  const cursorPagination = useRef(
+    createListCursorPagination({ pageParam: "page", pageOffset: 1 }),
+  );
   const { selectedVersion } = useAgentDetailsStore();
+  const cursorQuerySignature = JSON.stringify({
+    id,
+    module,
+    // Project call logs do not use the agent-definition version. Including
+    // that unrelated global store value reset the visible page and cursor
+    // chain whenever another agent view hydrated its selected version.
+    ...(module === "project" ? {} : { selectedVersion }),
+    params,
+  });
+  // LLMTracingView builds request params inline. Keep the latest equivalent
+  // object available to effects without making its reference an effect
+  // dependency: otherwise any unrelated parent render re-runs a stale
+  // next-page prefetch for the same semantic query.
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+  const [lastCursorQuerySignature, setLastCursorQuerySignature] =
+    useState(cursorQuerySignature);
   const [callLogsColumnDefs, setCallLogsColumnDefs] = useState(null);
   const previousConfigRef = useRef({
-    configLength: undefined,
+    configIdentity: undefined,
     showMetricsIds: undefined,
     isLoading: undefined,
   });
+  const lastUsableRowsRef = useRef([]);
+  const retainedRefreshRowsRef = useRef([]);
+  const preserveRowsDuringRefreshRef = useRef(false);
   const { reset: resetToggleAnnotationsStore } =
     useShallowToggleAnnotationsStore((state) => ({
       reset: state.reset,
     }));
 
-  // Highlight the row whose detail drawer is currently open. Mirrors the
-  // TraceGrid activeTraceId pattern so the experience matches the trace
-  // detail drawer the user referenced.
+  // Highlight the row whose detail drawer is open (mirrors TraceGrid).
   const { testDetailDrawerOpen } = useTestDetailSideDrawerStoreShallow(
     (state) => ({
       testDetailDrawerOpen: state.testDetailDrawerOpen,
@@ -103,11 +201,19 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     },
     [activeCallId],
   );
-  // Derived state: reset page synchronously when filters change (avoids extra API call)
-  if (lastFilters !== params?.filters) {
-    setLastFilters(params?.filters);
+  // Reset the opaque chain synchronously whenever any query-shaping input
+  // changes. A cursor is signed against the complete normalized request, not
+  // only the visible filter array.
+  if (lastCursorQuerySignature !== cursorQuerySignature) {
+    lastUsableRowsRef.current = [];
+    retainedRefreshRowsRef.current = [];
+    preserveRowsDuringRefreshRef.current = false;
+    cursorPagination.current.reset();
+    setLastCursorQuerySignature(cursorQuerySignature);
     setPage(1);
   }
+
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
 
   const defaultColDef = useMemo(
     () => ({
@@ -118,14 +224,21 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
       minWidth: 180,
-      suppressMultiSort: true,
       cellStyle: {
         padding: "0px",
         display: "flex",
         alignItems: "center",
       },
+      ...(setExtraFilters && {
+        cellRendererParams: {
+          applyQuickFilters: applyQuickFilters(
+            setExtraFilters,
+            setOpenQuickFilter,
+          ),
+        },
+      }),
     }),
-    [],
+    [setExtraFilters],
   );
 
   useEffect(() => {
@@ -136,30 +249,277 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     showMetricsIds: state.showMetricsIds,
   }));
   const gridRef = useRef(null);
+  const refreshRows = useCallback(
+    ({ preserveRows = false } = {}) => {
+      if (module === "project") {
+        // Project pages use a forward-only signed cursor chain. Replaying the
+        // currently visible page can return a different signed successor, so
+        // every explicit refresh starts a new page-one generation. Auto-refresh
+        // snapshots the proven page-one rows while that replacement is read.
+        preserveRowsDuringRefreshRef.current =
+          preserveRows && lastUsableRowsRef.current.length > 0;
+        retainedRefreshRowsRef.current = preserveRows
+          ? lastUsableRowsRef.current
+          : [];
+        cursorPagination.current.reset();
+        setPage(1);
+        if (!preserveRowsDuringRefreshRef.current)
+          setPagerState({ hasMore: false, provenNext: false });
+        advanceCursorTransport((revision) => revision + 1);
+        return true;
+      }
+      queryClient.invalidateQueries({ queryKey: ["callLogs", module, id] });
+      return true;
+    },
+    [id, module, queryClient],
+  );
+  const autoRefreshRows = useCallback(() => {
+    if (!enabled) return false;
+    if (module === "project" && page > 1) {
+      dispatchObservePageChanged(page);
+      return false;
+    }
+    return refreshRows({ preserveRows: true });
+  }, [enabled, module, page, refreshRows]);
   useImperativeHandle(
     forwardedRef,
     () => ({
       deselectAll: () => gridRef.current?.api?.deselectAll(),
+      refresh: refreshRows,
+      autoRefresh: autoRefreshRows,
       // Read api lazily so callers always hit the live grid instance,
       // not a null captured at forwardRef-mount time.
       get api() {
         return gridRef.current?.api;
       },
     }),
-    [],
+    [autoRefreshRows, refreshRows],
   );
-  const { data, isLoading, queryKey } = useCallLogs({
+  const bufferedPage =
+    module === "project"
+      ? cursorPagination.current.bufferedVisiblePage(page - 1)
+      : null;
+  const paginationRequest =
+    module === "project"
+      ? {
+          generation: cursorPagination.current.generation(),
+          // Terminal overflow is already buffered by the preceding visible
+          // page and intentionally has no continuation cursor.
+          params:
+            bufferedPage?.metadata?.has_more === false
+              ? undefined
+              : cursorPagination.current.requestParams(page - 1, {
+                  page_size: pageLimit,
+                }),
+        }
+      : { generation: null, params: undefined };
+  const { data, isLoading, error, queryKey } = useCallLogs({
     module,
     id: id,
     version: selectedVersion,
     page,
     pageLimit,
     params,
+    paginationParams: paginationRequest.params,
+    paginationRevision: cursorTransportRevision,
+    cursorPagination:
+      module === "project" ? cursorPagination.current : undefined,
+    paginationGeneration: paginationRequest.generation,
     enabled,
   });
+  const exactPage = data?.__exactPage || data?.result?.__exactPage || null;
+  const hasBufferedSameGenerationError =
+    module === "project" &&
+    Boolean(error) &&
+    cursorPagination.current.isCurrent(paginationRequest.generation) &&
+    Boolean(bufferedPage) &&
+    !isListCursorProtocolError(error);
+  const cursorContinuationPaused =
+    module === "project" &&
+    (exactPage?.pending === true ||
+      isListCursorContinuationLimitError(error) ||
+      hasBufferedSameGenerationError);
+  const readState = useMemo(
+    () =>
+      getQueryReadState(data, {
+        isError: Boolean(error) && !cursorContinuationPaused,
+      }),
+    [cursorContinuationPaused, data, error],
+  );
+  const responseRows = useMemo(
+    () =>
+      isListCursorContinuationLimitError(error) ||
+      hasBufferedSameGenerationError
+        ? bufferedPage?.rows || []
+        : Array.isArray(data?.results)
+          ? data.results
+          : [],
+    [bufferedPage, data, error, hasBufferedSameGenerationError],
+  );
+  const hasCursorContinuation =
+    module === "project" &&
+    (exactPage
+      ? exactPage.pending === true || exactPage.isLastPage === false
+      : data?.has_more === true &&
+        typeof data?.next_cursor === "string" &&
+        data.next_cursor.length > 0);
+  const readMessage =
+    cursorContinuationPaused ||
+    responseRows.length > 0 ||
+    readState === "sampled" ||
+    hasCursorContinuation
+      ? null
+      : getQueryReadMessage(readState);
+  const isCompleteRead = readState === "complete";
+  const isUsableListRead =
+    !error &&
+    (isCompleteRead || responseRows.length > 0 || hasCursorContinuation);
+  const hasRetainedRefreshRows =
+    preserveRowsDuringRefreshRef.current &&
+    retainedRefreshRowsRef.current.length > 0 &&
+    (isLoading || Boolean(error));
+  const showLoadingSkeletons = isLoading && !hasRetainedRefreshRows;
+
+  useEffect(() => {
+    if (isLoading || error || !data || !isUsableListRead) return;
+    lastUsableRowsRef.current = responseRows;
+    preserveRowsDuringRefreshRef.current = false;
+    retainedRefreshRowsRef.current = [];
+  }, [data, error, isLoading, isUsableListRead, responseRows]);
+
+  useEffect(() => {
+    if (
+      module !== "project" ||
+      isLoading ||
+      error ||
+      !data ||
+      !cursorPagination.current.isCurrent(paginationRequest.generation)
+    ) {
+      return;
+    }
+    try {
+      if (exactPage) {
+        return;
+      }
+      if (responseRows.length === 0 && hasCursorContinuation) {
+        cursorPagination.current.recordEmptyContinuation(page - 1, data);
+        // Keep the same visible pagination page. The project query key includes
+        // the advanced opaque cursor, so this rerender fetches the next bounded
+        // transport prefix without flashing an empty page to the user.
+        advanceCursorTransport((revision) => revision + 1);
+        return;
+      }
+      cursorPagination.current.recordResponse(page - 1, data);
+    } catch (cursorError) {
+      if (
+        cursorPagination.current.canRecoverFromContinuationError(
+          page - 1,
+          cursorError,
+        )
+      ) {
+        cursorPagination.current.disableCursor();
+        setPage(1);
+      }
+    }
+  }, [
+    data,
+    error,
+    exactPage,
+    hasCursorContinuation,
+    isLoading,
+    module,
+    page,
+    paginationRequest.generation,
+    responseRows.length,
+  ]);
+
+  const continueCursorSearch = useCallback(() => {
+    if (!cursorContinuationPaused) return;
+    advanceCursorTransport((revision) => revision + 1);
+  }, [cursorContinuationPaused]);
+
+  // The field list lives with its reader: pickPagerMetadata plucks exactly
+  // what getListPagerState consumes, so a field added there is picked up here
+  // with no hand-synced copy. Keep the object identity stable across renders
+  // that rebuild `data` (this file's own test mocks do) — the pager effect
+  // below depends on it, and a fresh object per render would refire it
+  // forever.
+  const pagerMetadataRef = useRef(null);
+  const nextPagerMetadata = pickPagerMetadata(data);
+  if (
+    pagerMetadataRef.current === null ||
+    !pagerMetadataEquals(pagerMetadataRef.current, nextPagerMetadata)
+  ) {
+    pagerMetadataRef.current = nextPagerMetadata;
+  }
+  const pagerMetadata = pagerMetadataRef.current;
+  const exactPageIsLastPage = exactPage ? exactPage.isLastPage : null;
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isUsableListRead) {
+      setPagerState((prev) =>
+        prev.hasMore === false && prev.provenNext === false
+          ? prev
+          : { hasMore: false, provenNext: false },
+      );
+      return;
+    }
+    const { hasMore, provenNext } = getListPagerState({
+      metadata: pagerMetadata,
+      startRow: (page - 1) * pageLimit,
+      rowCount: responseRows.length,
+    });
+    // A page that is not terminal while the transport reports no further
+    // search window can only be a terminal response whose surplus rows are
+    // already buffered for the next page. Those rows are proven by
+    // construction, so they must stay reachable.
+    const bufferedOverflowPage = hasBufferedOverflowPage(
+      exactPageIsLastPage,
+      pagerMetadata,
+    );
+    const nextHasMore = hasMore || bufferedOverflowPage;
+    const nextProvenNext = provenNext || bufferedOverflowPage;
+    setPagerState((prev) =>
+      prev.hasMore === nextHasMore && prev.provenNext === nextProvenNext
+        ? prev
+        : { hasMore: nextHasMore, provenNext: nextProvenNext },
+    );
+  }, [
+    exactPageIsLastPage,
+    isLoading,
+    isUsableListRead,
+    page,
+    pageLimit,
+    pagerMetadata,
+    responseRows.length,
+  ]);
+
+  // CursorGridPagination is a controlled navigation surface; preserve the
+  // reset/dispatch side effects the removed MUI <Pagination> handlers used
+  // to run on every explicit user navigation.
+  const handlePageChange = useCallback(
+    (value) => {
+      if (value === page) return;
+      preserveRowsDuringRefreshRef.current = false;
+      retainedRefreshRowsRef.current = [];
+      if (module === "project") dispatchObservePageChanged(value);
+      setPage(value);
+    },
+    [module, page],
+  );
+
+  const handlePageSizeChange = useCallback((size) => {
+    preserveRowsDuringRefreshRef.current = false;
+    retainedRefreshRowsRef.current = [];
+    cursorPagination.current.reset();
+    setPage(1);
+    setPageLimit(size);
+  }, []);
 
   const rows = useMemo(() => {
-    if (isLoading) {
+    if (hasRetainedRefreshRows) return retainedRefreshRowsRef.current;
+    if (showLoadingSkeletons) {
       return Array.from({ length: 10 }, (_, index) => ({
         id: index,
         call_summary: "",
@@ -168,22 +528,20 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         overall_score: "",
         status: "",
       }));
-    } else {
-      setTotalPages(data?.total_pages || 1);
     }
-    return data?.results || [];
-  }, [data, isLoading]);
+    return responseRows;
+  }, [hasRetainedRefreshRows, responseRows, showLoadingSkeletons]);
 
   // Pass full column list to parent (base + eval/annotation) for DisplayPanel.
-  // Use a ref to avoid re-firing when callLogsColumnDefs reference changes
-  // but content is the same (prevents render loops).
-  const lastReportedDefsLenRef = useRef(null);
+  // Hidden grids mount before the project source is known. Do not consume
+  // their initial config, and do not use column count as a content identity.
+  const lastReportedConfigRef = useRef(null);
   useEffect(() => {
-    if (
-      callLogsColumnDefs?.length > 0 &&
-      callLogsColumnDefs.length !== lastReportedDefsLenRef.current
-    ) {
-      lastReportedDefsLenRef.current = callLogsColumnDefs.length;
+    if (!enabled) {
+      lastReportedConfigRef.current = null;
+      return;
+    }
+    if (callLogsColumnDefs?.length > 0) {
       const colConfig = callLogsColumnDefs
         .filter((c) => c.field)
         .map((c) => ({
@@ -195,45 +553,71 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             ? "Evaluation Metrics"
             : "Call Columns",
         }));
-      onConfigLoaded(colConfig);
+      const identity = JSON.stringify([module, id, colConfig]);
+      if (identity !== lastReportedConfigRef.current) {
+        lastReportedConfigRef.current = identity;
+        onConfigLoaded(colConfig);
+      }
     }
-  }, [callLogsColumnDefs, onConfigLoaded]);
+  }, [callLogsColumnDefs, enabled, id, module, onConfigLoaded]);
 
-  // Prefetch next page so pagination feels instant
+  // Numbered agent-definition pages are safe to prefetch. Project pages use
+  // a mutable, forward-only signed cursor chain; speculative reads can be
+  // replayed by React Query when they become visible, racing the same chain
+  // and multiplying expensive list calls.
   useEffect(() => {
-    if (data?.results?.length > 0 && page < totalPages) {
+    // Decided from this page's own read: pagerState still describes the
+    // previous page for a render after a page change, and trusting it here
+    // asks for a page past the end.
+    const currentPageProvesNext = getListPagerState({
+      metadata: pagerMetadata,
+      startRow: (page - 1) * pageLimit,
+      rowCount: responseRows.length,
+    }).provenNext;
+    if (
+      module !== "project" &&
+      isUsableListRead &&
+      responseRows.length > 0 &&
+      currentPageProvesNext &&
+      (!exactPage || exactPage.canPrefetch)
+    ) {
       prefetchCallLogs(queryClient, {
         module,
         id,
         version: selectedVersion,
         page: page + 1,
         pageLimit,
-        params,
+        params: paramsRef.current,
       });
     }
   }, [
-    data,
     page,
-    totalPages,
+    pagerMetadata,
     queryClient,
     module,
     id,
     selectedVersion,
     pageLimit,
-    params,
+    exactPage,
+    isUsableListRead,
+    responseRows.length,
   ]);
 
-  const configLength = data?.config?.length;
+  const configIdentity = JSON.stringify([module, id, data?.config]);
   if (
-    previousConfigRef.current.configLength !== configLength ||
+    previousConfigRef.current.configIdentity !== configIdentity ||
     previousConfigRef.current.showMetricsIds !== showMetricsIds ||
-    previousConfigRef.current.isLoading !== isLoading
+    previousConfigRef.current.isLoading !== showLoadingSkeletons
   ) {
-    previousConfigRef.current = { configLength, showMetricsIds, isLoading };
+    previousConfigRef.current = {
+      configIdentity,
+      showMetricsIds,
+      isLoading: showLoadingSkeletons,
+    };
     setCallLogsColumnDefs(
       getCallLogsColumnDefs(
         rows,
-        isLoading,
+        showLoadingSkeletons,
         null,
         module,
         data?.config,
@@ -247,19 +631,24 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     if (!callLogsColumnDefs) return callLogsColumnDefs;
 
     const visMap = {};
+    const orderIndex = new Map();
     const customCols = [];
-    (columnVisibility || []).forEach((c) => {
-      if (c.field) visMap[c.field] = c.isVisible !== false;
-      if (c.groupBy === "Custom Columns") customCols.push(c);
+    (columnVisibility || []).forEach((c, i) => {
+      if (c.field) {
+        visMap[c.field] = c.isVisible !== false;
+        orderIndex.set(c.field, i);
+      }
+      if (c.groupBy === "Custom Columns") {
+        customCols.push(c);
+        // colId key so customs sort into their own store position.
+        orderIndex.set(c.id, i);
+      }
     });
 
-    // Toggle visibility on existing defs
-    const updated = callLogsColumnDefs.map((col) => {
-      if (col.field && col.field in visMap) {
-        return { ...col, hide: !visMap[col.field] };
-      }
-      return col;
-    });
+    const updated = callLogsColumnDefs.map((col) => ({
+      ...col,
+      ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
+    }));
 
     // Add column defs for custom columns not already in the grid
     const existingFields = new Set(callLogsColumnDefs.map((c) => c.field));
@@ -267,20 +656,92 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       .filter((c) => !existingFields.has(c.id))
       .map((c) => ({
         headerName: c.name,
-        field: c.id,
+        // colId (not field) so AG Grid doesn't deep-resolve the dotted path
+        // — list_voice_calls returns flat rows; the valueGetter below handles
+        // the resolution.
+        colId: c.id,
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        valueGetter: (params) => params.data?.[c.id] ?? "-",
+        cellRenderer: showLoadingSkeletons
+          ? CustomColLoadingSkeleton
+          : CustomColCellRenderer,
+        valueGetter: (params) => {
+          if (!params.data) return null;
+          let value = params.data[c.id];
+          if (value === undefined && c.id.includes(".")) {
+            value = c.id
+              .split(".")
+              .reduce((obj, key) => obj?.[key], params.data);
+          }
+          // /eval-attributes serves Vapi attribute paths with namespace
+          // prefixes (call.*, vapi.*) but /list_voice_calls returns them
+          // as flat keys. Whitelisted — a generic "drop leading segments"
+          // would false-positive on paths like phone_number.id → row.id.
+          const VOICE_FLAT_NAMESPACE_PREFIXES = ["call.", "vapi."];
+          if (value === undefined) {
+            const matchedPrefix = VOICE_FLAT_NAMESPACE_PREFIXES.find((p) =>
+              c.id.startsWith(p),
+            );
+            if (matchedPrefix) {
+              value = params.data[c.id.slice(matchedPrefix.length)];
+            }
+          }
+          if (value === undefined || value === null) return null;
+          if (Array.isArray(value) || typeof value === "object") {
+            return JSON.stringify(value);
+          }
+          return String(value);
+        },
       }));
 
-    return [...updated, ...newCustomDefs];
-  }, [callLogsColumnDefs, columnVisibility]);
+    // Sort base + custom together so customs sit flat at their own positions.
+    const combined = [...updated, ...newCustomDefs];
+    combined.sort((a, b) => {
+      const ai = orderIndex.get(a?.field ?? a?.colId) ?? Infinity;
+      const bi = orderIndex.get(b?.field ?? b?.colId) ?? Infinity;
+      return ai - bi;
+    });
+    return combined;
+  }, [callLogsColumnDefs, columnVisibility, showLoadingSkeletons]);
   useEffect(() => {
     return () => {
       resetToggleAnnotationsStore();
     };
   }, []);
+
+  // Propagate reorder to parent so the View columns dropdown stays in sync.
+  const onColumnMoved = useCallback(
+    (params) => {
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
+      // User drags only — a programmatic move would rebuild the shared trace
+      // `columns` from this grid's voice-only state and corrupt it.
+      if (params.source !== "uiColumnMoved") return;
+      const newOrder = (params?.api?.getColumnState() ?? [])
+        .map((s) => s.colId)
+        .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
+
+      const cols = columnVisibility || [];
+      const byColId = new Map(cols.map((c) => [c.field || c.id, c]));
+      const reordered = newOrder.map((id) => byColId.get(id)).filter(Boolean);
+      const matched = new Set(newOrder);
+      const unmatched = cols.filter((c) => !matched.has(c.field || c.id));
+      const next = [...reordered, ...unmatched];
+
+      const sameOrder =
+        next.length === cols.length &&
+        next.every(
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+        );
+      if (!sameOrder) onColumnsChange(next);
+    },
+    [columnVisibility, onColumnsChange],
+  );
 
   return (
     <Box sx={{ height: "78vh", display: "flex" }}>
@@ -300,51 +761,103 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           },
         }}
       >
+        {cursorContinuationPaused && (
+          <Box
+            role="status"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
+              px: 1.5,
+              py: 0.75,
+              color: "text.secondary",
+              bgcolor: "action.hover",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="caption">
+              {LIST_CURSOR_CONTINUATION_NOTICE}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={continueCursorSearch}
+            >
+              Continue search
+            </Button>
+          </Box>
+        )}
+        {readMessage && (
+          <Box
+            role="status"
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              fontSize: 12,
+              color: "warning.main",
+              bgcolor: "warning.lighter",
+              borderBottom: "1px solid",
+              borderColor: "warning.light",
+            }}
+          >
+            {readMessage}
+          </Box>
+        )}
         {/* Grid fills available space */}
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <AgGridReact
             ref={gridRef}
             className="clean-data-table"
-            theme={agTheme.withParams({
-              columnBorder: false,
-              headerColumnBorder: false,
-              wrapperBorder: { width: 0 },
-              wrapperBorderRadius: 0,
-              rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
-              headerFontSize: "13px",
-              headerFontWeight: 500,
-              headerBackgroundColor: "transparent",
-              headerTextColor: theme.palette.text.primary,
-              rowHoverColor: "rgba(120,87,252,0.04)",
-            })}
+            theme={agTheme}
             rowHeight={CELL_HEIGHT_MAP[cellHeight] || 40}
             columnDefs={effectiveDefs}
+            onColumnMoved={onColumnMoved}
             defaultColDef={defaultColDef}
             rowData={rows}
+            loading={false}
             suppressServerSideFullWidthLoadingRow={true}
-            suppressRowClickSelection
-            rowSelection={onSelectionChanged ? { mode: "multiRow" } : undefined}
+            rowSelection={
+              onSelectionChanged
+                ? { mode: "multiRow", enableClickSelection: false }
+                : undefined
+            }
             selectionColumnDef={
               onSelectionChanged
                 ? { pinned: true, lockPinned: true }
                 : undefined
             }
             pagination={false}
-            serverSideInitialRowCount={5}
             noRowsOverlayComponent={() =>
-              NoRowsOverlay(
-                <Typography
-                  sx={{
-                    fontSize: 14,
-                    fontWeight: 400,
-                    color: "text.secondary",
-                  }}
-                >
-                  {showErrors ? "No error found" : "No calls found"}
-                </Typography>,
-              )
+              cursorContinuationPaused
+                ? null
+                : NoRowsOverlay(
+                    <Typography
+                      sx={{
+                        fontSize: 14,
+                        fontWeight: 400,
+                        color: "text.secondary",
+                      }}
+                    >
+                      {readMessage ||
+                        (showErrors ? "No error found" : "No calls found")}
+                    </Typography>,
+                  )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              const colDef = params?.column?.getColDef?.();
+              const sourceColumn = colDef?.context?.sourceColumn;
+              const isEvalCell =
+                sourceColumn?.groupBy === "Evaluation Metrics" ||
+                String(colDef?.field || "").startsWith("eval_outputs.");
+              if (isEvalCell) {
+                setEvalFocus(true);
+              } else {
+                removeEvalFocus();
+              }
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}
@@ -358,21 +871,34 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                     onSelectionChanged(traceIds);
                     if (onSelectionMeta) {
                       const currentPageSize = rows?.length || 0;
-                      // `data.count` is the exact matching-row count from
-                      // the backend (CH or PG), not `totalPages * pageLimit`
-                      // which rounds up to a page multiple and overstates
-                      // the banner by up to `pageLimit - 1` rows.
+                      // Keep the backend's explicit lower-bound marker with
+                      // the count; callers must not present it as exact.
                       const totalMatching =
                         typeof data?.count === "number" ? data.count : null;
+                      const unavailableSelectedCount = selectedRows.filter(
+                        (row) =>
+                          row?.trace_id && !isSelectableForAnnotation(row),
+                      ).length;
                       onSelectionMeta({
                         traceIds,
+                        selectedCount: traceIds.length,
+                        unavailableSelectedCount,
                         isAllOnPageSelected:
                           currentPageSize > 0 &&
                           selectedRows.length === currentPageSize,
                         currentPageSize,
-                        totalPages,
+                        // LLMTracingView's "select all matching filter" banner
+                        // still reads totalPages as an upper-bound estimate
+                        // (totalPages * pageLimit) when the backend hasn't
+                        // reported an exact count. Publish only what the
+                        // cursor contract has proven — page+1 when a further
+                        // page is proven to have rows, otherwise page — never
+                        // an unproven guess.
+                        totalPages: page + (pagerState.provenNext ? 1 : 0),
                         pageLimit,
                         totalMatching,
+                        totalMatchingIsLowerBound:
+                          data?.count_is_lower_bound === true,
                       });
                     }
                   }
@@ -393,88 +919,23 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           />
         </ShowComponent>
 
-        {/* Footer controls */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, borderTop: "1px solid var(--border-default)" }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
+        <NumberQuickFilterPopover
+          open={Boolean(openQuickFilter)}
+          filterData={openQuickFilter}
+          onClose={() => setOpenQuickFilter(null)}
+          setFilters={setExtraFilters}
+        />
 
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={(e) => {
-                setPage(1);
-                setPageLimit(Number(e.target.value));
-              }}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {[10, 25, 50].map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Pagination
-            count={totalPages}
-            variant="outlined"
-            shape="rounded"
-            page={page}
-            color="primary"
-            onChange={(e, value) => {
-              setPage(value);
-            }}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={{
-                  borderRadius: "4px",
-                  bgcolor: "background.paper",
-                }}
-                slots={{
-                  previous: () => (
-                    <Box display={"flex"} alignItems={"center"} gap={0.5}>
-                      <Iconify
-                        icon="octicon:chevron-left-24"
-                        width={18}
-                        height={18}
-                        sx={{
-                          path: { strokeWidth: 1.5 },
-                        }}
-                      />{" "}
-                      Back
-                    </Box>
-                  ),
-                  next: () => (
-                    <Box display={"flex"} alignItems={"center"} gap={0.5}>
-                      Next{" "}
-                      <Iconify
-                        icon="octicon:chevron-right-24"
-                        width={18}
-                        height={18}
-                        sx={{
-                          path: { strokeWidth: 1.5 },
-                        }}
-                      />
-                    </Box>
-                  ),
-                }}
-              />
-            )}
-          />
-        </Stack>
+        <CursorGridPagination
+          disabled={isLoading || !isUsableListRead}
+          loading={isLoading}
+          page={isUsableListRead ? page : 1}
+          pageSize={pageLimit}
+          hasMore={pagerState.hasMore}
+          provenNext={pagerState.provenNext}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+        />
       </Box>
     </Box>
   );
@@ -493,6 +954,8 @@ CallLogsGrid.propTypes = {
   onSelectionMeta: PropTypes.func,
   cellHeight: PropTypes.string,
   columnVisibility: PropTypes.array,
+  onColumnsChange: PropTypes.func,
   hideDrawer: PropTypes.bool,
   showErrors: PropTypes.bool,
+  setExtraFilters: PropTypes.func,
 };

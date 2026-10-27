@@ -4,11 +4,11 @@ import CreateScenarioHeader from "./CreateScenarioHeader";
 import SvgColor from "src/components/svg-color";
 import SwitchField from "src/components/Switch/SwitchField";
 import PropTypes from "prop-types";
-import { useFieldArray, useWatch } from "react-hook-form";
+import { useFieldArray, useWatch, useFormState } from "react-hook-form";
 import { ShowComponent } from "src/components/show";
 import PersonaDrawer from "../persona/PersonaDrawer";
 import GenericCard from "../persona/GenericCard/GenericCard";
-import { extractTagsFromPersona } from "../persona/common";
+import { PERSONAS_DOCS_URL, extractTagsFromPersona } from "../persona/common";
 import CustomTooltip from "src/components/tooltip";
 
 const PersonaSection = ({ control, description = "" }) => {
@@ -26,6 +26,13 @@ const PersonaSection = ({ control, description = "" }) => {
     control,
     name: "agentType",
   });
+  const { errors } = useFormState({ control });
+  const personaError =
+    typeof errors?.personas?.message === "string"
+      ? errors.personas.message
+      : typeof errors?.personas?.root?.message === "string"
+        ? errors.personas.root.message
+        : "";
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: "12px" }}>
       <CreateScenarioHeader
@@ -35,7 +42,7 @@ const PersonaSection = ({ control, description = "" }) => {
           "Persona type defines user behavior, tone, and intent for your scenario tests"
         }
         docLink={{
-          url: "https://docs.futureagi.com/docs/simulation/concepts/personas",
+          url: PERSONAS_DOCS_URL,
           sx: {
             color: "blue.500",
             fontWeight: "fontWeightMedium",
@@ -88,7 +95,7 @@ const PersonaSection = ({ control, description = "" }) => {
           <Typography
             typography="s2_1"
             fontWeight="fontWeightRegular"
-            color="text.disabled"
+            color="text.secondary"
           >
             Auto-adds all active personas to your scenarios
           </Typography>
@@ -118,6 +125,11 @@ const PersonaSection = ({ control, description = "" }) => {
           </Box>
         </CustomTooltip>
       </Box>
+      <ShowComponent condition={!addPersonaAutomatically && !!personaError}>
+        <Typography typography="s2_1" color="error.main">
+          {personaError}
+        </Typography>
+      </ShowComponent>
       <ShowComponent condition={!addPersonaAutomatically}>
         <Box
           sx={{

@@ -90,7 +90,7 @@ func TestCreateImage_Success(t *testing.T) {
 	}
 }
 
-func TestCreateImage_ModelPrefixStripped(t *testing.T) {
+func TestCreateImage_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.ImageRequest
@@ -109,8 +109,8 @@ func TestCreateImage_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateImage error: %v", err)
 	}
-	if receivedModel != "dall-e-3" {
-		t.Errorf("model sent to upstream = %q, want %q", receivedModel, "dall-e-3")
+	if receivedModel != "openai/dall-e-3" {
+		t.Errorf("model sent to upstream = %q, want %q", receivedModel, "openai/dall-e-3")
 	}
 }
 
@@ -272,7 +272,7 @@ func TestCreateSpeech_Success(t *testing.T) {
 	}
 }
 
-func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
+func TestCreateSpeech_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.SpeechRequest
@@ -294,8 +294,8 @@ func TestCreateSpeech_ModelPrefixStripped(t *testing.T) {
 	}
 	body.Close()
 
-	if receivedModel != "tts-1-hd" {
-		t.Errorf("model sent = %q, want tts-1-hd", receivedModel)
+	if receivedModel != "openai/tts-1-hd" {
+		t.Errorf("model sent = %q, want openai/tts-1-hd", receivedModel)
 	}
 }
 
@@ -495,7 +495,7 @@ func TestCreateTranscription_Success(t *testing.T) {
 	}
 }
 
-func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
+func TestCreateTranscription_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mediaType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -527,8 +527,8 @@ func TestCreateTranscription_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTranscription error: %v", err)
 	}
-	if receivedModel != "whisper-1" {
-		t.Errorf("model = %q, want whisper-1", receivedModel)
+	if receivedModel != "openai/whisper-1" {
+		t.Errorf("model = %q, want openai/whisper-1", receivedModel)
 	}
 }
 
@@ -866,7 +866,7 @@ func TestCreateEmbedding_Success(t *testing.T) {
 	}
 }
 
-func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
+func TestCreateEmbedding_ModelPrefixPreserved(t *testing.T) {
 	var receivedModel string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req models.EmbeddingRequest
@@ -885,8 +885,8 @@ func TestCreateEmbedding_ModelPrefixStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
-	if receivedModel != "text-embedding-3-large" {
-		t.Errorf("model = %q, want text-embedding-3-large", receivedModel)
+	if receivedModel != "openai/text-embedding-3-large" {
+		t.Errorf("model = %q, want openai/text-embedding-3-large", receivedModel)
 	}
 }
 
@@ -937,297 +937,6 @@ func TestCreateEmbedding_ProviderError(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────
-// Batch API tests
-// ─────────────────────────────────────────────────────────────
-
-func TestSubmitBatch_Success(t *testing.T) {
-	var fileUploadCalled, batchCreateCalled bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/files" && r.Method == "POST":
-			fileUploadCalled = true
-			// Verify multipart with purpose=batch.
-			if err := r.ParseMultipartForm(10 * 1024 * 1024); err != nil {
-				t.Errorf("parse multipart: %v", err)
-			}
-			if got := r.FormValue("purpose"); got != "batch" {
-				t.Errorf("purpose = %q, want batch", got)
-			}
-			// Verify file field exists.
-			file, _, err := r.FormFile("file")
-			if err != nil {
-				t.Errorf("missing file field: %v", err)
-			} else {
-				file.Close()
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"id": "file-abc123"})
-
-		case r.URL.Path == "/v1/batches" && r.Method == "POST":
-			batchCreateCalled = true
-			var req struct {
-				InputFileID      string `json:"input_file_id"`
-				Endpoint         string `json:"endpoint"`
-				CompletionWindow string `json:"completion_window"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			if req.InputFileID != "file-abc123" {
-				t.Errorf("input_file_id = %q, want file-abc123", req.InputFileID)
-			}
-			if req.Endpoint != "/v1/chat/completions" {
-				t.Errorf("endpoint = %q, want /v1/chat/completions", req.Endpoint)
-			}
-			if req.CompletionWindow != "24h" {
-				t.Errorf("completion_window = %q, want 24h", req.CompletionWindow)
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"id": "batch_xyz"})
-
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	batchID, err := p.SubmitBatch(context.Background(), []models.BatchRequest{
-		{
-			CustomID: "req-1",
-			Method:   "POST",
-			URL:      "/v1/chat/completions",
-			Body: models.ChatCompletionRequest{
-				Model:    "gpt-4o",
-				Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"Hello"`)}},
-			},
-		},
-		{
-			CustomID: "req-2",
-			Method:   "POST",
-			URL:      "/v1/chat/completions",
-			Body: models.ChatCompletionRequest{
-				Model:    "openai/gpt-4o",
-				Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"World"`)}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("SubmitBatch error: %v", err)
-	}
-	if batchID != "batch_xyz" {
-		t.Errorf("batchID = %q, want batch_xyz", batchID)
-	}
-	if !fileUploadCalled {
-		t.Error("file upload was not called")
-	}
-	if !batchCreateCalled {
-		t.Error("batch create was not called")
-	}
-}
-
-func TestSubmitBatch_FileUploadError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(models.ErrorResponse{
-			Error: models.ErrorDetail{Type: "invalid_request_error", Message: "file too large"},
-		})
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	_, err := p.SubmitBatch(context.Background(), []models.BatchRequest{
-		{CustomID: "r1", Body: models.ChatCompletionRequest{Model: "gpt-4o"}},
-	})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	apiErr, ok := err.(*models.APIError)
-	if !ok {
-		t.Fatalf("expected *models.APIError, got %T", err)
-	}
-	if apiErr.Message != "file too large" {
-		t.Errorf("message = %q, want %q", apiErr.Message, "file too large")
-	}
-}
-
-func TestGetBatch_Success(t *testing.T) {
-	completedAt := int64(1700000100)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		if r.URL.Path != "/v1/batches/batch_123" {
-			t.Errorf("path = %s, want /v1/batches/batch_123", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("auth = %q, want %q", got, "Bearer test-key")
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":             "batch_123",
-			"status":         "completed",
-			"output_file_id": "file-out-456",
-			"error_file_id":  "",
-			"created_at":     1700000000,
-			"completed_at":   completedAt,
-			"request_counts": map[string]int{
-				"total":     10,
-				"completed": 9,
-				"failed":    1,
-			},
-		})
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	status, err := p.GetBatch(context.Background(), "batch_123")
-	if err != nil {
-		t.Fatalf("GetBatch error: %v", err)
-	}
-	if status.ID != "batch_123" {
-		t.Errorf("id = %q, want batch_123", status.ID)
-	}
-	if status.Status != models.BatchStatusCompleted {
-		t.Errorf("status = %q, want %q", status.Status, models.BatchStatusCompleted)
-	}
-	if status.Total != 10 {
-		t.Errorf("total = %d, want 10", status.Total)
-	}
-	if status.Completed != 9 {
-		t.Errorf("completed = %d, want 9", status.Completed)
-	}
-	if status.Failed != 1 {
-		t.Errorf("failed = %d, want 1", status.Failed)
-	}
-	if status.OutputFileID != "file-out-456" {
-		t.Errorf("output_file_id = %q, want file-out-456", status.OutputFileID)
-	}
-}
-
-func TestGetBatch_StatusMapping(t *testing.T) {
-	tests := []struct {
-		oaiStatus  string
-		wantStatus string
-	}{
-		{"validating", models.BatchStatusProcessing},
-		{"in_progress", models.BatchStatusProcessing},
-		{"completed", models.BatchStatusCompleted},
-		{"failed", models.BatchStatusFailed},
-		{"cancelled", models.BatchStatusCancelled},
-		{"cancelling", models.BatchStatusCancelled},
-		{"expired", models.BatchStatusExpired},
-		{"unknown", models.BatchStatusQueued},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.oaiStatus, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"id":             "b1",
-					"status":         tc.oaiStatus,
-					"created_at":     1700000000,
-					"request_counts": map[string]int{"total": 1, "completed": 0, "failed": 0},
-				})
-			}))
-			defer ts.Close()
-
-			p := newTestProvider(t, ts.URL)
-			status, err := p.GetBatch(context.Background(), "b1")
-			if err != nil {
-				t.Fatalf("error: %v", err)
-			}
-			if status.Status != tc.wantStatus {
-				t.Errorf("status = %q, want %q", status.Status, tc.wantStatus)
-			}
-		})
-	}
-}
-
-func TestGetBatch_NotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(models.ErrorResponse{
-			Error: models.ErrorDetail{Type: "not_found_error", Message: "batch not found"},
-		})
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	_, err := p.GetBatch(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestCancelBatch_Success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/v1/batches/batch_123/cancel" {
-			t.Errorf("path = %s, want /v1/batches/batch_123/cancel", r.URL.Path)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":     "batch_123",
-			"status": "cancelling",
-		})
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	err := p.CancelBatch(context.Background(), "batch_123")
-	if err != nil {
-		t.Fatalf("CancelBatch error: %v", err)
-	}
-}
-
-func TestCancelBatch_NotFound(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(models.ErrorResponse{
-			Error: models.ErrorDetail{Type: "not_found_error", Message: "batch not found"},
-		})
-	}))
-	defer ts.Close()
-
-	p := newTestProvider(t, ts.URL)
-	err := p.CancelBatch(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestMapOpenAIBatchStatus(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"validating", models.BatchStatusProcessing},
-		{"in_progress", models.BatchStatusProcessing},
-		{"completed", models.BatchStatusCompleted},
-		{"failed", models.BatchStatusFailed},
-		{"cancelled", models.BatchStatusCancelled},
-		{"cancelling", models.BatchStatusCancelled},
-		{"expired", models.BatchStatusExpired},
-		{"anything_else", models.BatchStatusQueued},
-	}
-	for _, tc := range tests {
-		got := mapOpenAIBatchStatus(tc.input)
-		if got != tc.want {
-			t.Errorf("mapOpenAIBatchStatus(%q) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
-
 func TestNewProvider_TrailingSlashStripped(t *testing.T) {
 	p, err := New("test", config.ProviderConfig{
 		BaseURL: "https://api.openai.com/",
@@ -1238,5 +947,149 @@ func TestNewProvider_TrailingSlashStripped(t *testing.T) {
 	}
 	if p.baseURL != "https://api.openai.com" {
 		t.Errorf("baseURL = %q, want no trailing slash", p.baseURL)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// max_tokens → max_completion_tokens normalization
+// ─────────────────────────────────────────────────────────────
+
+func TestIsOfficialAPI(t *testing.T) {
+	tests := []struct {
+		baseURL string
+		want    bool
+	}{
+		{"https://api.openai.com", true},
+		{"https://api.openai.com/v1", true},
+		{"http://localhost:8000/v1", false},
+		{"https://my-vllm.internal/v1", false},
+		{"https://example.azure.com/openai", false},
+		{"https://api.openai.com.evil.test/v1", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isOfficialAPI(tt.baseURL); got != tt.want {
+			t.Errorf("isOfficialAPI(%q) = %v, want %v", tt.baseURL, got, tt.want)
+		}
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+// captureBody starts a server that records the raw JSON body it receives.
+func captureBody(t *testing.T, got *map[string]any, sse bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		if sse {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "chatcmpl-1", Model: "m"})
+	}))
+}
+
+func TestNormalizeMaxTokens(t *testing.T) {
+	tests := []struct {
+		name        string
+		officialAPI bool
+		req         models.ChatCompletionRequest
+		wantMCT     any // expected max_completion_tokens (nil = key absent)
+		wantMax     any // expected max_tokens (nil = key absent)
+	}{
+		{
+			name:        "official API rewrites max_tokens",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64)},
+			wantMCT:     float64(64),
+			wantMax:     nil,
+		},
+		{
+			// Model-agnostic by design: every official-API model accepts
+			// max_completion_tokens, so non-reasoning models are rewritten too.
+			name:        "official API rewrites for non-reasoning models too",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-4o", MaxTokens: intPtr(64)},
+			wantMCT:     float64(64),
+			wantMax:     nil,
+		},
+		{
+			// Both set is a 400 upstream; the client's explicit value wins.
+			name:        "both set keeps max_completion_tokens and drops max_tokens",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64), MaxCompletionTokens: intPtr(128)},
+			wantMCT:     float64(128),
+			wantMax:     nil,
+		},
+		{
+			name:        "official API with neither set adds neither",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4"},
+			wantMCT:     nil,
+			wantMax:     nil,
+		},
+		{
+			// vLLM/Ollama and friends only understand max_tokens.
+			name:        "non-official upstream passes max_tokens through untouched",
+			officialAPI: false,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64)},
+			wantMCT:     nil,
+			wantMax:     float64(64),
+		},
+	}
+
+	for _, tt := range tests {
+		for _, streaming := range []bool{false, true} {
+			name := tt.name
+			if streaming {
+				name += " (streaming)"
+			}
+			t.Run(name, func(t *testing.T) {
+				var got map[string]any
+				ts := captureBody(t, &got, streaming)
+				defer ts.Close()
+
+				p := newTestProvider(t, ts.URL)
+				p.openAIAPI = tt.officialAPI
+
+				req := tt.req
+				req.Messages = []models.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}
+
+				if streaming {
+					chunks, errs := p.StreamChatCompletion(context.Background(), &req)
+					for chunks != nil || errs != nil {
+						select {
+						case _, ok := <-chunks:
+							if !ok {
+								chunks = nil
+							}
+						case _, ok := <-errs:
+							if !ok {
+								errs = nil
+							}
+						}
+					}
+				} else if _, err := p.ChatCompletion(context.Background(), &req); err != nil {
+					t.Fatalf("ChatCompletion() error: %v", err)
+				}
+
+				if got["max_completion_tokens"] != tt.wantMCT {
+					t.Errorf("max_completion_tokens = %v, want %v", got["max_completion_tokens"], tt.wantMCT)
+				}
+				if got["max_tokens"] != tt.wantMax {
+					t.Errorf("max_tokens = %v, want %v", got["max_tokens"], tt.wantMax)
+				}
+
+				// The caller's request must survive untouched — the cache plugin
+				// hashes it, so mutating it would poison cache keys.
+				if tt.req.MaxTokens != nil && req.MaxTokens == nil {
+					t.Error("caller's request was mutated: MaxTokens cleared")
+				}
+			})
+		}
 	}
 }

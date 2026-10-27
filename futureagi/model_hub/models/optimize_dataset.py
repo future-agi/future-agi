@@ -3,6 +3,8 @@ import uuid
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
+from accounts.models.organization import Organization
+from accounts.models.workspace import Workspace
 from model_hub.models.kb import KnowledgeBase
 from tfc.utils.base_model import BaseModel
 
@@ -88,6 +90,20 @@ class OptimizeDataset(BaseModel):
     )
     start_date = models.DateTimeField(null=True)
     end_date = models.DateTimeField(null=True)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="optimize_datasets",
+        null=True,
+        blank=True,
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="optimize_datasets",
+        null=True,
+        blank=True,
+    )
     knowledge_base_filters = models.JSONField(default=list, blank=True, null=True)
     knowledge_base_metrics = models.JSONField(default=list, blank=True, null=True)
     variables = models.JSONField(default=dict, blank=True, null=True)

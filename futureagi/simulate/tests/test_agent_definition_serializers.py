@@ -76,6 +76,14 @@ class TestAgentDefinitionCreateRequestSerializer:
         serializer = AgentDefinitionCreateRequestSerializer(data=_text_agent_payload())
         assert serializer.is_valid(), serializer.errors
 
+    def test_valid_bland_inbound_voice_agent(self):
+        # Bland has no web bridge, so an inbound Bland agent is reached over the
+        # phone path — a contact_number is the only provider-specific requirement.
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(provider="bland")
+        )
+        assert serializer.is_valid(), serializer.errors
+
     def test_missing_agent_name(self):
         data = _voice_agent_payload()
         del data["agent_name"]
@@ -125,6 +133,17 @@ class TestAgentDefinitionCreateRequestSerializer:
         assert not serializer.is_valid()
         assert "contact_number" in serializer.errors
 
+    def test_provider_identity_without_secret_accepts_missing_contact_number(self):
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(
+                contact_number=None,
+                assistant_id="assistant_123",
+                api_key=None,
+            )
+        )
+
+        assert serializer.is_valid(), serializer.errors
+
     def test_invalid_contact_number_format(self):
         serializer = AgentDefinitionCreateRequestSerializer(
             data=_voice_agent_payload(contact_number="+123abc456")
@@ -160,6 +179,23 @@ class TestAgentDefinitionCreateRequestSerializer:
         )
         assert not serializer.is_valid()
         assert "assistant_id" in serializer.errors
+
+    def test_outbound_livekit_does_not_require_api_key_or_assistant_id(self):
+        # Outbound WebRTC via LiveKit reaches the target by managed dispatch —
+        # no Bearer api_key/assistant_id and no phone number. The provider-blind
+        # outbound check must not reject it.
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(
+                provider="livekit_bridge",
+                inbound=False,
+                contact_number="",
+                livekit_url="wss://example.livekit.cloud",
+                livekit_api_key="APIexamplekey",
+                livekit_api_secret="example-secret",
+                livekit_agent_name="test-agent",
+            )
+        )
+        assert serializer.is_valid(), serializer.errors
 
     def test_observability_requires_api_key(self):
         serializer = AgentDefinitionCreateRequestSerializer(
@@ -345,6 +381,17 @@ class TestFetchAssistantRequestSerializer:
         assert not serializer.is_valid()
         assert "provider" in serializer.errors
 
+    def test_bland_provider_accepted(self):
+        # Bland is a supported voice provider; assistant_id carries the pathway id.
+        serializer = FetchAssistantRequestSerializer(
+            data={
+                "assistant_id": "a0f0d4ed-f5f5-4f16-b3f9-22166594d7a7",
+                "api_key": "bland_key_123",
+                "provider": "bland",
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+
 
 # ============================================================================
 # TestAgentVersionCreateRequestSerializer
@@ -394,6 +441,26 @@ class TestAgentVersionCreateRequestSerializer:
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["observability_enabled"] is True
 
+    def test_livekit_max_concurrency_capped(self):
+        # This path had no concurrency cap before it started carrying vapi/retell
+        # values; the field must reject anything above DEFAULT_ORG_LIMIT.
+        from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+
+        serializer = AgentVersionCreateRequestSerializer(
+            data={"livekit_max_concurrency": DEFAULT_ORG_LIMIT + 1}
+        )
+        assert not serializer.is_valid()
+        assert "livekit_max_concurrency" in serializer.errors
+
+    def test_livekit_max_concurrency_at_cap_allowed(self):
+        from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+
+        serializer = AgentVersionCreateRequestSerializer(
+            data={"livekit_max_concurrency": DEFAULT_ORG_LIMIT}
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["livekit_max_concurrency"] == DEFAULT_ORG_LIMIT
+
 
 # ============================================================================
 # TestAgentDefinitionResponseSerializer (needs DB)
@@ -429,6 +496,7 @@ class TestAgentDefinitionResponseSerializer:
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -446,6 +514,11 @@ class TestAgentDefinitionResponseSerializer:
             "updated_at",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_agent_name",
+            "livekit_config_json",
+            "livekit_max_concurrency",
         }
         assert set(data.keys()) == expected_fields
 
@@ -491,7 +564,7 @@ class TestAgentVersionResponseSerializer:
     """Tests for AgentVersionResponseSerializer output shape."""
 
     def test_serializes_all_fields(self, db, organization, workspace):
-        from simulate.models import AgentDefinition, AgentVersion
+        from simulate.models import AgentDefinition
         from simulate.serializers.response.agent_version import (
             AgentVersionResponseSerializer,
         )
@@ -531,6 +604,8 @@ class TestAgentVersionResponseSerializer:
             "configuration_snapshot",
             "is_active",
             "is_latest",
+            "agent_kind",
+            "api_key",
             "created_at",
             "updated_at",
         }
@@ -560,9 +635,9 @@ class TestAgentVersionResponseSerializer:
         assert isinstance(snapshot, dict)
         # No raw UUID objects — all values should be JSON-serializable primitives
         for key, value in snapshot.items():
-            assert not hasattr(
-                value, "hex"
-            ), f"Snapshot key '{key}' contains a UUID object instead of a string"
+            assert not hasattr(value, "hex"), (
+                f"Snapshot key '{key}' contains a UUID object instead of a string"
+            )
 
     def test_version_name_display(self, db, organization, workspace):
         from simulate.models import AgentDefinition
@@ -585,3 +660,89 @@ class TestAgentVersionResponseSerializer:
 
         data = AgentVersionResponseSerializer(version).data
         assert data["version_name_display"] == "v1"
+
+    def test_old_snapshot_reads_off_once_the_link_is_dead(
+        self, db, organization, workspace
+    ):
+        from simulate.serializers.response.agent_version import (
+            AgentVersionResponseSerializer,
+        )
+        from tracer.tests.test_observability_switch import (
+            _agent_with_row,
+            _delete_project,
+        )
+
+        agent = _agent_with_row(organization, workspace, enabled=True)
+        version = agent.create_version(
+            description="Test", commit_message="While on", status="active"
+        )
+        live = AgentVersionResponseSerializer(version).data
+        assert live["configuration_snapshot"]["observability_enabled"] is True
+
+        _delete_project(agent)
+        version = type(version).objects.get(pk=version.pk)
+        assert version.configuration_snapshot["observability_enabled"] is True
+        dead = AgentVersionResponseSerializer(version).data
+        assert dead["configuration_snapshot"]["observability_enabled"] is False
+        # What is stored is left as it was.
+        assert version.configuration_snapshot["observability_enabled"] is True
+
+    def test_old_snapshot_that_says_off_stays_off_while_the_link_is_on(
+        self, db, organization, workspace
+    ):
+        from simulate.serializers.response.agent_version import (
+            AgentVersionResponseSerializer,
+        )
+        from tracer.models.observability_provider import ObservabilityProvider
+        from tracer.tests.test_observability_switch import (
+            _agent_with_row,
+            _stored_agent,
+        )
+
+        # The override only turns an on into an off. It never turns an off on.
+        agent = _agent_with_row(organization, workspace, enabled=False)
+        version = agent.create_version(
+            description="Test", commit_message="While off", status="active"
+        )
+        assert version.configuration_snapshot["observability_enabled"] is False
+        ObservabilityProvider.no_workspace_objects.filter(
+            pk=agent.observability_provider_id
+        ).update(enabled=True)
+        stored = _stored_agent(agent)
+        assert stored.observability_provider.enabled
+        assert not stored.observability_provider.project.deleted
+
+        version = type(version).objects.get(pk=version.pk)
+        data = AgentVersionResponseSerializer(version).data
+        assert data["configuration_snapshot"]["observability_enabled"] is False
+
+
+@pytest.mark.integration
+class TestAgentDefinitionSerializerObservability:
+    """An update that does not say reads the agent's switch from its link."""
+
+    def _errors(self, agent):
+        from simulate.serializers.agent_definition import AgentDefinitionSerializer
+
+        serializer = AgentDefinitionSerializer(
+            agent, data={"description": "Edited"}, partial=True
+        )
+        serializer.is_valid()
+        return serializer.errors
+
+    def test_live_link_that_is_on_needs_the_key(self, db, organization, workspace):
+        from tracer.tests.test_observability_switch import _agent_with_row
+
+        agent = _agent_with_row(organization, workspace, enabled=True, api_key="")
+        assert "api_key" in self._errors(agent)
+
+    def test_deleted_project_reads_as_off(self, db, organization, workspace):
+        from tracer.tests.test_observability_switch import (
+            _agent_with_row,
+            _delete_project,
+            _stored_agent,
+        )
+
+        agent = _agent_with_row(organization, workspace, enabled=True, api_key="")
+        _delete_project(agent)
+        assert "api_key" not in self._errors(_stored_agent(agent))

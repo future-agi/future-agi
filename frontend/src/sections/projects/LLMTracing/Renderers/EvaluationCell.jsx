@@ -4,8 +4,12 @@ import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
 import PropTypes from "prop-types";
 import NumericCell from "../../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
+import EvalResultChips from "./EvalResultChips";
+import { buildEvalCellModel } from "../evalCellModel";
 
-const EvaluationCell = ({ value, column }) => {
+const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   const shouldReverse = column?.reverseOutput;
 
   // No eval value (missing / not yet evaluated) — render dash so callers
@@ -20,47 +24,52 @@ const EvaluationCell = ({ value, column }) => {
     !Array.isArray(value) &&
     value.error === true;
 
-  if (isError) {
+  // Non-score states (queued/running/skipped) and errored all render through
+  // the shared EvalStatusIndicator so every surface stays visually unified.
+  // The wrapper fills the cell so the "Evaluating…" skeleton covers it like a
+  // real result does.
+  const indicatorStatus =
+    getEvalNonScoreStatusFromValue(value) || (isError ? "errored" : null);
+  if (indicatorStatus) {
     return (
-      <div
-        style={{
-          padding: "0 12px",
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          height: "100%",
-          color: "#b91c1c",
-          fontSize: "13px",
-          fontWeight: 500,
-        }}
-        title="Eval errored"
-      >
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "14px",
-            height: "14px",
-            borderRadius: "50%",
-            background: "#fee2e2",
-            color: "#b91c1c",
-            fontSize: "10px",
-            fontWeight: 700,
-            lineHeight: 1,
-          }}
-        >
-          !
-        </span>
-        Error
+      <div style={{ width: "100%", height: "100%" }}>
+        <EvalStatusIndicator
+          status={indicatorStatus}
+          skippedReason={value?.skipped_reason}
+        />
       </div>
+    );
+  }
+
+  const isCountCell =
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(
+      (count) => typeof count === "number" && Number.isFinite(count),
+    );
+  if (isCountCell) {
+    return (
+      <EvalResultChips
+        value={value}
+        outputType={column?.outputType}
+        choicesMap={column?.choicesMap}
+      />
     );
   }
 
   if (column?.outputType === OutputTypes.NUMERIC) {
     if (isMissing) {
       return (
-        <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+        <div
+          style={{
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            height: "100%",
+          }}
+        >
           -
         </div>
       );
@@ -68,11 +77,22 @@ const EvaluationCell = ({ value, column }) => {
     return <NumericCell value={value} sx={{ padding: "0 12px" }} />;
   }
 
-  // Pass/Fail type
-  if (column?.outputType === "Pass/Fail") {
+  // Pass/Fail columns: a single span is always 0 or 100, so span-level cells
+  // render a binary "Pass"/"Fail" label. Aggregated trace/voice cells carry the
+  // averaged pass rate (a trace with 2 of 3 spans passing arrives as 66.67), so
+  // they fall through to the numeric-percentage path below ("66.67%") — a binary
+  // label there would drop the average across the trace's spans.
+  if (isSpanLevel && column?.outputType === "Pass/Fail") {
     if (isMissing) {
       return (
-        <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+        <div
+          style={{
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            height: "100%",
+          }}
+        >
           -
         </div>
       );
@@ -81,6 +101,33 @@ const EvaluationCell = ({ value, column }) => {
     const { bgcolor: backgroundColor, color } =
       interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
 
+    return (
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          backgroundColor,
+          padding: "0 12px",
+          margin: 0,
+          fontSize: "14px",
+          color,
+        }}
+      >
+        {isPass ? "Pass" : "Fail"}
+      </div>
+    );
+  }
+
+  // Voice keeps scalar Pass/Fail output rather than count-mode cells. Normalize
+  // its historical casing/boolean variants before the numeric fallback so a
+  // literal "Fail" never becomes a missing value or a passing result.
+  const scalarModel = buildEvalCellModel(value, column?.outputType);
+  if (scalarModel.kind === "verdict") {
+    const isPass = scalarModel.verdict === "pass";
+    const { bgcolor: backgroundColor, color } =
+      interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
     return (
       <div
         style={{
@@ -130,7 +177,14 @@ const EvaluationCell = ({ value, column }) => {
   // instead of "0.00%" to distinguish no-data from an actual zero score.
   if (isMissing) {
     return (
-      <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+      <div
+        style={{
+          padding: "0 12px",
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+        }}
+      >
         -
       </div>
     );
@@ -138,7 +192,14 @@ const EvaluationCell = ({ value, column }) => {
   const numericValue = parseFloat(value);
   if (isNaN(numericValue)) {
     return (
-      <div style={{ padding: "0 12px", display: "flex", alignItems: "center", height: "100%" }}>
+      <div
+        style={{
+          padding: "0 12px",
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+        }}
+      >
         -
       </div>
     );
@@ -177,4 +238,5 @@ export default EvaluationCell;
 EvaluationCell.propTypes = {
   value: PropTypes.any,
   column: PropTypes.object,
+  isSpanLevel: PropTypes.bool,
 };

@@ -20,6 +20,20 @@ export const CELL_STATE = {
   EMPTY: "__EMPTY__",
 };
 
+// Unsaved local row: flagged _isLocal on add (cleared once persisted). Not
+// sniffing __EMPTY__ cells, which misfires after the row is run or compared.
+export const isUnsavedRow = (rowData) => !!rowData?._isLocal;
+
+export const mergeUnsavedRows = (next, prev) => {
+  if (!Array.isArray(next) || !Array.isArray(prev)) return next;
+  if (!next.every((row) => row?.id != null)) return next;
+  const nextIds = new Set(next.map((row) => row.id));
+  const unsaved = prev.filter(
+    (row) => isUnsavedRow(row) && row.id != null && !nextIds.has(row.id),
+  );
+  return unsaved.length ? [...next, ...unsaved] : next;
+};
+
 export const COLUMNIDS = {
   COMPARISON: "Comparison",
 };

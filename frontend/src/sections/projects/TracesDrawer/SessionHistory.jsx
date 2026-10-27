@@ -27,6 +27,8 @@ const SessionHistory = ({
     <Box
       sx={{
         flex: 1,
+        minWidth: 0,
+        maxWidth: "100%",
       }}
     >
       <ShowComponent condition={loading}>
@@ -34,7 +36,11 @@ const SessionHistory = ({
         <SessionSkeleton />
       </ShowComponent>
 
-      <Stack direction={"column"} gap={2}>
+      <Stack
+        direction={"column"}
+        gap={2}
+        sx={{ minWidth: 0, maxWidth: "100%" }}
+      >
         {interactions.map((interaction, index) => (
           <ShowTrace
             key={index}

@@ -1,7 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
-export const useGetProjectDetails = (projectId, enabled = true) => {
+export const useGetProjectDetails = (
+  projectId,
+  enabled = true,
+  keepPrevious = false,
+) => {
   return useQuery({
     queryKey: ["project-detail", projectId],
     queryFn: () =>
@@ -9,6 +13,10 @@ export const useGetProjectDetails = (projectId, enabled = true) => {
     select: (d) => d?.data?.result,
     enabled: enabled,
     staleTime: 1 * 60 * 1000, // 1 min stale time
+    // Opt-in: hold last value across refetch so `source` never flickers
+    // undefined. Off by default — callers whose projectId is user-switchable
+    // rely on undefined-while-fetching to gate project-kind resolution.
+    ...(keepPrevious ? { placeholderData: keepPreviousData } : {}),
   });
 };
 

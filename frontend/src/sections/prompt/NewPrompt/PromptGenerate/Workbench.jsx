@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Box, Button, CircularProgress, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useFieldArray } from "react-hook-form";
 import { getRandomId } from "src/utils/utils";
 import Iconify from "src/components/iconify";
@@ -71,23 +72,14 @@ const Workbench = ({
           mb: 3,
         }}
       >
-        <Typography fontSize="12px" color="text.disabled">
+        <Typography fontSize="12px" color="text.secondary">
           Test, Evaluate, and refine your prompts before running them on the
           full dataset, ensuring optimal results
         </Typography>
       </Box>
 
       {loading ? (
-        <Box
-          sx={{
-            alignItems: "center",
-            display: "flex",
-            flex: 1,
-            justifyContent: "center",
-          }}
-        >
-          <CircularProgress />
-        </Box>
+        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {fields?.length > 0 &&

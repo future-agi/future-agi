@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS = {
   },
   numeric: { min: 0, max: 10, step_size: 1, display_type: "slider" },
   text: {
-    placeholder: "Enter your feedback...",
+    placeholder: "",
     max_length: 500,
     min_length: 0,
   },
@@ -76,9 +76,15 @@ CreateLabelDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   editLabel: PropTypes.object,
+  onCreated: PropTypes.func,
 };
 
-export default function CreateLabelDrawer({ open, onClose, editLabel }) {
+export default function CreateLabelDrawer({
+  open,
+  onClose,
+  editLabel,
+  onCreated,
+}) {
   const isEdit = editLabel && editLabel.id && !editLabel._isDuplicate;
   const { mutate: createLabel, isPending: isCreating } =
     useCreateAnnotationLabel();
@@ -160,7 +166,12 @@ export default function CreateLabelDrawer({ open, onClose, editLabel }) {
         { onSuccess: () => onClose() },
       );
     } else {
-      createLabel(payload, { onSuccess: () => onClose() });
+      createLabel(payload, {
+        onSuccess: (response) => {
+          onCreated?.(response?.data?.result || response?.data);
+          onClose();
+        },
+      });
     }
   };
 
@@ -430,7 +441,7 @@ export default function CreateLabelDrawer({ open, onClose, editLabel }) {
  * Build a settings object suitable for the LabelInput preview.
  * Maps form field names to what LabelInput expects.
  */
-function buildPreviewSettings(type, settings) {
+export function buildPreviewSettings(type, settings) {
   if (!settings) return {};
 
   if (type === "categorical") {
@@ -448,6 +459,7 @@ function buildPreviewSettings(type, settings) {
       min: settings.min ?? 0,
       max: settings.max ?? 10,
       step: settings.step_size ?? settings.step ?? 1,
+      display_type: settings.display_type || "slider",
     };
   }
 

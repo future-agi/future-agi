@@ -38,6 +38,7 @@ import RunPromptButton from "./RunPromptButton";
 import StopGeneratingButton from "./StopGeneratingButton";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { usePromptStore } from "../../../workbench-v2/store/usePromptStore";
 import { NavLink } from "react-router-dom";
@@ -60,6 +61,7 @@ const PromptActions = () => {
 
   const [saveCommitOpen, setSaveCommitOpen] = useState(false);
   const { role: userRole } = useAuthContext();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
 
   const {
     setOpenSelectModel,
@@ -114,10 +116,10 @@ const PromptActions = () => {
       reset();
       trackEvent(Events.promptTemplateCreated, {
         [PropertyName.click]: true,
-        [PropertyName.promptId]: data?.data?.result?.rootTemplate,
+        [PropertyName.promptId]: data?.data?.result?.root_template,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
         { replace: true },
       );
     },
@@ -140,13 +142,20 @@ const PromptActions = () => {
   //   filledPlaceholderLabels.includes(label),
   // );
 
-  const isVariablesDefined = useIsVariablesDefined(prompts, variableData, templateFormat);
+  const isVariablesDefined = useIsVariablesDefined(
+    prompts,
+    variableData,
+    templateFormat,
+  );
 
   const isSingleVersion = selectedVersions.length === 1;
 
   const noModelIndex = modelConfig?.findIndex((m) => !m?.model);
 
   const buttonTooltip = useMemo(() => {
+    if (!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]) {
+      return "You don't have permission to run prompts.";
+    }
     if (isAddingDraft) {
       return "Creating new version...";
     }
@@ -166,6 +175,7 @@ const PromptActions = () => {
     isVariablesDefined,
     noModelIndex,
     isAddingDraft,
+    userRole,
     // areAllPlaceholdersPresent,
   ]);
 
@@ -309,6 +319,7 @@ const PromptActions = () => {
     () => !!selectedVersions?.some((version) => version?.isDraft),
     [selectedVersions],
   );
+  const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
 
   // const selectedVersion = useMemo(() => {
   //   return versions?.find(
@@ -465,6 +476,9 @@ const PromptActions = () => {
               </ShowComponent>
 
               {(() => {
+                if (!isSingleVersion) {
+                  return null;
+                }
                 const versionLabels =
                   baseVersion?.labels?.length > 0
                     ? baseVersion.labels
@@ -489,7 +503,7 @@ const PromptActions = () => {
                           height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
-                              ?.backgroundColor,
+                              ?.hoverBackgroundColor,
                             cursor: "default",
                           },
                         }}
@@ -532,6 +546,61 @@ const PromptActions = () => {
         <Box display="flex" gap={theme.spacing(1.5)} alignItems={"flex-start"}>
           {/* Hide More Actions, Variables, and Run Prompt on Simulation tab */}
           <ShowComponent condition={currentTab !== "Simulation"}>
+            <ShowComponent
+              condition={RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
+            >
+              <CustomTooltip
+                show
+                title={
+                  disableCommit
+                    ? "Please run the prompt before saving and committing"
+                    : "Save your prompt changes with a clear message, so every update becomes a trackable version."
+                }
+                arrow
+                size="small"
+                type="black"
+                slotProps={{
+                  tooltip: {
+                    sx: {
+                      maxWidth: "200px !important",
+                    },
+                  },
+                }}
+              >
+                <span style={{ display: "inline-block" }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    sx={{
+                      borderRadius: "4px",
+                      height: "30px",
+                      whiteSpace: "nowrap",
+                    }}
+                    disabled={
+                      disableCommit ||
+                      currentTab === "Evaluation" ||
+                      currentTab === "Metrics"
+                    }
+                    onClick={() => {
+                      setSaveCommitOpen(true);
+                      trackEvent(Events.promptCommitClicked, {
+                        [PropertyName.promptId]: id,
+                      });
+                    }}
+                    startIcon={
+                      <SvgColor
+                        sx={{ width: "20px", height: "20px" }}
+                        src="/assets/icons/ic_commit.svg"
+                      />
+                    }
+                  >
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Commit
+                    </Typography>
+                  </Button>
+                </span>
+              </CustomTooltip>
+            </ShowComponent>
             <MoreActions
               isMoreOpen={isMoreOpen}
               setMoreOpen={setMoreOpen}
@@ -542,9 +611,7 @@ const PromptActions = () => {
               Events={Events}
               PropertyName={PropertyName}
               id={id}
-              isAnyPromptDraft={isAnyPromptDraft}
               selectedVersions={selectedVersions}
-              setSaveCommitOpen={setSaveCommitOpen}
               theme={theme}
               isAddingDraft={isAddingDraft}
               addToCompare={addToCompare}
@@ -624,66 +691,68 @@ const PromptActions = () => {
               title={buttonTooltip || ""}
               arrow
             >
-              <ShowComponent condition={isGenerating}>
-                <StopGeneratingButton
-                  disabled={loadingPrompt}
-                  onClick={onStopGenerating}
-                  loading={isStoppingGenerating}
-                >
-                  <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                    Stop Generating
-                  </Typography>
-                </StopGeneratingButton>
-              </ShowComponent>
-              <ShowComponent condition={!isGenerating}>
-                <RunPromptButton
-                  disabled={
-                    loadingPrompt ||
-                    currentTab === "Evaluation" ||
-                    currentTab === "Metrics" ||
-                    !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
-                  }
-                  onClick={() => {
-                    if (buttonTooltip) {
-                      if (noModelIndex !== -1) {
-                        setOpenSelectModel(noModelIndex);
-                        trackEvent(Events.promptSelectModelClicked, {
-                          [PropertyName.promptId]: id,
-                          [PropertyName.type]: "system",
-                          [PropertyName.version]: selectedVersions?.map(
-                            (item) => item?.version,
-                          ),
-                        });
-                      } else if (!isVariablesDefined) {
-                        setVariableDrawerOpen(true);
+              <span style={{ display: "inline-flex" }}>
+                <ShowComponent condition={isGenerating}>
+                  <StopGeneratingButton
+                    disabled={loadingPrompt}
+                    onClick={onStopGenerating}
+                    loading={isStoppingGenerating}
+                  >
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Stop Generating
+                    </Typography>
+                  </StopGeneratingButton>
+                </ShowComponent>
+                <ShowComponent condition={!isGenerating}>
+                  <RunPromptButton
+                    disabled={
+                      loadingPrompt ||
+                      currentTab === "Evaluation" ||
+                      currentTab === "Metrics" ||
+                      !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
+                    }
+                    onClick={() => {
+                      if (buttonTooltip) {
+                        if (noModelIndex !== -1) {
+                          setOpenSelectModel(noModelIndex);
+                          trackEvent(Events.promptSelectModelClicked, {
+                            [PropertyName.promptId]: id,
+                            [PropertyName.type]: "system",
+                            [PropertyName.version]: selectedVersions?.map(
+                              (item) => item?.version,
+                            ),
+                          });
+                        } else if (!isVariablesDefined) {
+                          setVariableDrawerOpen(true);
+                        }
+                        return;
                       }
-                      return;
-                    }
-                    trackEvent(Events.promptRunPromptClicked, {
-                      [PropertyName.promptId]: id,
-                      [PropertyName.type]: "overall",
-                      [PropertyName.version]: selectedVersions?.map(
-                        (item) => item?.version,
-                      ),
-                    });
-                    if (
-                      !checkIfAudioModelHasAudioContent(modelConfig, prompts)
-                    ) {
-                      enqueueSnackbar(
-                        "Audio input is missing. Please add audio before running the prompt.",
-                        { variant: "error" },
-                      );
-                      return;
-                    }
-                    saveAndRun();
-                  }}
-                >
-                  {" "}
-                  <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                    Run Prompt
-                  </Typography>
-                </RunPromptButton>
-              </ShowComponent>
+                      trackEvent(Events.promptRunPromptClicked, {
+                        [PropertyName.promptId]: id,
+                        [PropertyName.type]: "overall",
+                        [PropertyName.version]: selectedVersions?.map(
+                          (item) => item?.version,
+                        ),
+                      });
+                      if (
+                        !checkIfAudioModelHasAudioContent(modelConfig, prompts)
+                      ) {
+                        enqueueSnackbar(
+                          "Audio input is missing. Please add audio before running the prompt.",
+                          { variant: "error" },
+                        );
+                        return;
+                      }
+                      saveAndRun();
+                    }}
+                  >
+                    {" "}
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Run Prompt
+                    </Typography>
+                  </RunPromptButton>
+                </ShowComponent>
+              </span>
             </CustomTooltip>
           </ShowComponent>
         </Box>
@@ -792,38 +861,40 @@ const PromptActions = () => {
             value="Metrics"
           />
 
-          <Tab
-            icon={
-              <Iconify
-                icon="mdi:chat-processing-outline"
-                width={18}
-                height={18}
-              />
-            }
-            iconPosition="start"
-            label={
-              versions.length === 0 ||
-              isAnyPromptDraft ||
-              isContentEmpty ||
-              isGenerating ? (
-                <CustomTooltip
-                  size="small"
-                  title={
-                    versions.length === 0
-                      ? "You need to submit at least one prompt before running simulations."
-                      : "Save your prompt to run simulations"
-                  }
-                  show
-                  arrow
-                >
-                  <span>Simulation</span>
-                </CustomTooltip>
-              ) : (
-                "Simulation"
-              )
-            }
-            value="Simulation"
-          />
+          {!restrictSimulateToEnvironments && (
+            <Tab
+              icon={
+                <Iconify
+                  icon="mdi:chat-processing-outline"
+                  width={18}
+                  height={18}
+                />
+              }
+              iconPosition="start"
+              label={
+                versions.length === 0 ||
+                isAnyPromptDraft ||
+                isContentEmpty ||
+                isGenerating ? (
+                  <CustomTooltip
+                    size="small"
+                    title={
+                      versions.length === 0
+                        ? "You need to submit at least one prompt before running simulations."
+                        : "Save your prompt to run simulations"
+                    }
+                    show
+                    arrow
+                  >
+                    <span>Simulation</span>
+                  </CustomTooltip>
+                ) : (
+                  "Simulation"
+                )
+              }
+              value="Simulation"
+            />
+          )}
         </Tabs>
       </Box>
       <SaveAndCommit

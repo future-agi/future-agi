@@ -20,7 +20,6 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { GOOGLE_SITE_KEY } from "src/config-global";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -28,10 +27,11 @@ import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { Box, Button, CircularProgress } from "@mui/material";
 import axiosInstance, { endpoints } from "src/utils/axios";
+import { LOGIN_ERROR_CODES } from "src/utils/constants";
 import { useSnackbar } from "src/components/snackbar";
 import { useMutation } from "@tanstack/react-query";
 import { useParams } from "src/routes/hooks";
-import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
+import { getRecaptchaToken } from "src/utils/recaptchaService";
 import logger from "src/utils/logger";
 import { FormCheckboxField } from "src/components/FormCheckboxField";
 import SvgColor from "src/components/svg-color";
@@ -42,31 +42,43 @@ import {
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
-import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
 export default function JwtLoginView() {
   const { login } = useAuthContext();
   const postLoginPath = usePostLoginPath();
-  const { executeRecaptcha } = useGoogleReCaptcha();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
+  // Persist returnTo on a login action so it survives flows that drop the
+  // URL param (OAuth round-trip, login → setup-org).
+  const persistReturnTo = () => {
+    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      localStorage.setItem("redirectUrl", returnTo);
+    }
+  };
   const password = useBoolean();
   const navigate = useNavigate();
   const { search } = useLocation();
   const { enqueueSnackbar } = useSnackbar();
   const { uuid, token } = useParams();
 
+  // Only apply OSS treatment on a confirmed "oss" response; a failed
+  // deployment-info read falls back to the full login (social/SSO shown).
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  const showSocial = !(modeConfirmed && isOSS);
+
   const [inviteFailed, setInviteFailed] = useState(false);
 
   const { mutate: acceptInvitation } = useMutation({
     mutationFn: () =>
-      axiosInstance.get(
-        `${endpoints.invite.accept_invitation}${uuid}/${token}/`,
-      ),
+      axiosInstance.get(endpoints.invite.accept_invitation(uuid, token)),
     onSuccess: (response) => {
       navigate(`/auth/jwt/invitation/set-password/${uuid}/${token}`, {
         state: {
@@ -185,14 +197,17 @@ export default function JwtLoginView() {
   } = methods;
 
   const onSubmit = handleSubmit(async (data) => {
-    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
+    persistReturnTo();
+    let token;
+    try {
+      token = await getRecaptchaToken("login");
+    } catch (err) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",
       });
       return;
     }
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -203,7 +218,7 @@ export default function JwtLoginView() {
         email: data.email,
         password: data.password,
         remember_me: data.rememberMe,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       // trackEvent(Events.loginCompleted);
 
@@ -232,44 +247,103 @@ export default function JwtLoginView() {
           localStorage.setItem("signupProvider", "email");
           navigate(paths.auth.jwt.setup_org);
         } else {
+          if (returnTo) localStorage.setItem("initial-render", "done");
           router.push(returnTo || postLoginPath);
+          localStorage.removeItem("redirectUrl");
         }
       }
     } catch (error) {
-      const raw = error;
-      const message =
-        typeof raw === "object" && raw?.[0] === "I"
-          ? Object.keys(raw)
-              .filter((key) => !isNaN(key)) // only numeric keys
-              .sort((a, b) => a - b) // sort keys in order
-              .map((key) => raw[key])
-              .join("")
-          : error?.detail || error?.result?.error || "Login failed";
-      if (message.includes("IP address temporarily blocked")) {
-        enqueueSnackbar(message, { variant: "error" });
-        return;
-      }
-      if (error?.detail === "User not found") {
-        setErrorMsg(
-          "No account found with this email. Please sign up to create one",
-        );
-      } else if (error?.result?.error === "Account deactivated") {
-        setErrorMsg(
-          error?.result?.message ||
-            "Your account has been deactivated. Please contact your organization admin.",
-        );
-      } else if (error?.result?.error === "Invalid credentials") {
-        setErrorMsg("Enter a valid Email and password combination");
-      } else {
-        setErrorMsg(
-          typeof error === "string"
-            ? error
-            : error?.detail ||
+      const errorCode = error?.result?.error_code || error?.error_code;
+      if (errorCode) {
+        switch (errorCode) {
+          case LOGIN_ERROR_CODES.IP_BLOCKED:
+          case LOGIN_ERROR_CODES.IP_RATE_LIMITED:
+            enqueueSnackbar(
+              error?.result?.error ||
+                "Your IP has been temporarily blocked. Please try again later.",
+              { variant: "error" },
+            );
+            break;
+
+          case LOGIN_ERROR_CODES.ACCOUNT_BLOCKED:
+          case LOGIN_ERROR_CODES.TOO_MANY_ATTEMPTS: {
+            const remaining = error?.result?.block_time_remaining;
+            const minutes = remaining ? Math.ceil(remaining / 60) : null;
+            setErrorMsg(
+              minutes
+                ? `Account temporarily blocked. Please try again in ${minutes} minutes.`
+                : "Account temporarily blocked due to too many failed attempts.",
+            );
+            break;
+          }
+
+          case LOGIN_ERROR_CODES.RECAPTCHA_FAILED:
+            setErrorMsg("reCAPTCHA verification failed. Please try again.");
+            break;
+
+          case LOGIN_ERROR_CODES.INVALID_CREDENTIALS:
+            setErrorMsg("Enter a valid Email and password combination");
+            break;
+
+          case LOGIN_ERROR_CODES.ACCOUNT_DEACTIVATED:
+            setErrorMsg(
+              error?.result?.message ||
+                "Your account has been deactivated. Please contact your organization admin.",
+            );
+            break;
+
+          case LOGIN_ERROR_CODES.SERVICE_UNAVAILABLE:
+          case LOGIN_ERROR_CODES.UNEXPECTED_ERROR:
+          default:
+            setErrorMsg(
+              error?.result?.message ||
                 error?.result?.error ||
                 "An unexpected error occurred",
-        );
+            );
+            break;
+        }
+      } else {
+        // Backward compatibility fallback for responses without error_code
+        const raw = error;
+        const message =
+          typeof raw === "object" && raw?.[0] === "I"
+            ? Object.keys(raw)
+                .filter((key) => !isNaN(key))
+                .sort((a, b) => a - b)
+                .map((key) => raw[key])
+                .join("")
+            : error?.detail || error?.result?.error || "Login failed";
+        if (message.includes("IP address temporarily blocked")) {
+          enqueueSnackbar(message, { variant: "error" });
+        } else if (error?.detail === "User not found") {
+          setErrorMsg(
+            "No account found with this email. Please sign up to create one",
+          );
+        } else if (error?.result?.error === "Account deactivated") {
+          setErrorMsg(
+            error?.result?.message ||
+              "Your account has been deactivated. Please contact your organization admin.",
+          );
+        } else if (error?.result?.error === "Invalid credentials") {
+          setErrorMsg("Enter a valid Email and password combination");
+        } else {
+          setErrorMsg(
+            typeof error === "string"
+              ? error
+              : error?.detail ||
+                  error?.result?.error ||
+                  "An unexpected error occurred",
+          );
+        }
       }
-      logger.error("Login attempt failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login attempt failed (expected)", error);
+      } else {
+        logger.error("Login attempt failed", error);
+      }
     }
   });
 
@@ -277,6 +351,7 @@ export default function JwtLoginView() {
 
   const handlePasskeyLogin = async () => {
     try {
+      persistReturnTo();
       setPasskeyLoading(true);
       // Get authentication options from server
       const optionsRes = await axiosInstance.post(
@@ -300,7 +375,9 @@ export default function JwtLoginView() {
 
       if (verifyRes.status === 200) {
         await login(verifyRes);
+        if (returnTo) localStorage.setItem("initial-render", "done");
         router.push(returnTo || postLoginPath);
+        localStorage.removeItem("redirectUrl");
       }
     } catch (error) {
       if (error?.name === "NotAllowedError") {
@@ -313,18 +390,27 @@ export default function JwtLoginView() {
           { variant: "error" },
         );
       }
-      logger.error("Passkey login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Passkey login failed (expected)", error);
+      } else {
+        logger.error("Passkey login failed", error);
+      }
     } finally {
       setPasskeyLoading(false);
     }
   };
 
   const handleSsoLogin = () => {
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
 
   const handleServiceProvider = async (provider) => {
+    persistReturnTo();
     trackEvent(Events.ssoLoginClicked, {
       [PropertyName.mode]: provider,
     });
@@ -355,7 +441,14 @@ export default function JwtLoginView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {
@@ -527,13 +620,15 @@ export default function JwtLoginView() {
         </Link>
         .
       </Typography>
-      <Divider>
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          or
-        </Typography>
-      </Divider>
+      {showSocial && (
+        <Divider>
+          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+            or
+          </Typography>
+        </Divider>
+      )}
       <Stack spacing={1.5}>
-        {browserSupportsWebAuthn() && (
+        {showSocial && browserSupportsWebAuthn() && (
           <LoadingButton
             sx={{
               border: "1px solid",
@@ -554,24 +649,29 @@ export default function JwtLoginView() {
             </Typography>
           </LoadingButton>
         )}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+        {showSocial && (
+          <>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            color: "text.primary",
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("google")}
-          startIcon={<Iconify icon="logos:google-icon" width={20} />}
-        >
-          <Typography fontWeight={"fontWeightMedium"} sx={{ fontSize: "15px" }}>
-            Continue with Google
-          </Typography>
-        </Button>
+                color: "text.primary",
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("google")}
+              startIcon={<Iconify icon="logos:google-icon" width={20} />}
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px" }}
+              >
+                Continue with Google
+              </Typography>
+            </Button>
 
-        {/* <Button
+            {/* <Button
         sx={{
           border: "1px solid",
           borderColor: "divider",
@@ -599,56 +699,56 @@ export default function JwtLoginView() {
           Continue with Microsoft
         </Typography>
       </Button> */}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("github")}
-          startIcon={
-            <Iconify
-              icon="bi:github"
-              width={24}
-              sx={{ color: "text.primary" }}
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", color: "text.primary" }}
-          >
-            Continue with Github
-          </Typography>
-        </Button>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("github")}
+              startIcon={
+                <Iconify
+                  icon="bi:github"
+                  width={24}
+                  sx={{ color: "text.primary" }}
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", color: "text.primary" }}
+              >
+                Continue with Github
+              </Typography>
+            </Button>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-            color: "text.primary",
-          }}
-          onClick={handleSsoLogin}
-          startIcon={
-            <SvgColor
-              sx={{ marginLeft: 2 }}
-              src="/assets/icons/ic_sso_saml.svg"
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", marginRight: -1.5 }}
-          >
-            Continue with SSO/SAML
-          </Typography>
-        </Button>
-
-        {/* 🔹 New SAML/SSO Login Button */}
+                height: 44,
+                color: "text.primary",
+              }}
+              onClick={handleSsoLogin}
+              startIcon={
+                <SvgColor
+                  sx={{ marginLeft: 2 }}
+                  src="/assets/icons/ic_sso_saml.svg"
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", marginRight: -1.5 }}
+              >
+                Continue with SSO/SAML
+              </Typography>
+            </Button>
+          </>
+        )}
 
         {/* ✅ Added Create Account Link */}
         <Typography
@@ -684,6 +784,7 @@ export default function JwtLoginView() {
             justifyContent: "center",
             alignItems: "center",
             bgcolor: "background.paper",
+            overflowY: "auto",
           }}
         >
           <Stack spacing={2} alignItems="center">
@@ -696,6 +797,7 @@ export default function JwtLoginView() {
             </Typography>
           </Stack>
         </Box>
+
         <Box
           sx={{
             width: "50%",

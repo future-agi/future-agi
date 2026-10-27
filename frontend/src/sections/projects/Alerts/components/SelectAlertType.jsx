@@ -114,6 +114,7 @@ export default function SelectAlertType({
             fullWidth
             color="primary"
             variant="contained"
+            data-alert-type-action="next"
           >
             Next
           </Button>

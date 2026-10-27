@@ -53,7 +53,7 @@ const GetStartedDemoVideo = ({
               <Typography
                 variant="s2"
                 fontWeight={"fontWeightRegular"}
-                color="text.disabled"
+                color="text.secondary"
               >
                 {headingDescription}
               </Typography>
@@ -105,7 +105,7 @@ const GetStartedDemoVideo = ({
                 onClick={buttonAction}
                 sx={{
                   bgcolor: "primary.main",
-                  color: "common.white",
+                  color: "primary.contrastText",
                   fontWeight: "500",
                   fontSize: 14,
                   px: "24px",

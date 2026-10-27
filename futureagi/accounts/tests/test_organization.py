@@ -9,6 +9,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert field_name in response.json()["details"]
+
+
 @pytest.fixture
 def second_organization(db):
     """Create a second organization for testing."""
@@ -158,6 +163,20 @@ class TestSwitchOrganizationAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_switch_organization_rejects_unknown_fields(
+        self, auth_client, organization
+    ):
+        """Switch organization accepts the canonical snake_case body only."""
+        response = auth_client.post(
+            "/accounts/organizations/switch/",
+            {
+                "organization_id": str(organization.id),
+                "organizationId": str(organization.id),
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "organizationId")
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -239,6 +258,20 @@ class TestOrganizationSelectionAPI:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_select_organization_rejects_unknown_fields(
+        self, auth_client, organization
+    ):
+        """Select organization rejects camelCase aliases and stray fields."""
+        response = auth_client.post(
+            "/accounts/organizations/",
+            {
+                "organization_id": str(organization.id),
+                "organizationId": str(organization.id),
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "organizationId")
 
 
 @pytest.mark.integration

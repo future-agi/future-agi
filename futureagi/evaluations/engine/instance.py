@@ -14,6 +14,47 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 logger = structlog.get_logger(__name__)
 
 
+# Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
+# the runtime-tunable surface — both evaluators accept ``**kwargs`` so
+# unknown keys would silently pass through rather than raise. ``model`` is
+# excluded from CustomPromptEvaluator: ``prepare_eval_config`` derives
+# api_key / provider from the resolved model upstream (see line ~301-320),
+# and overwriting ``config["model"]`` after that derivation would leave
+# stale auth on the config dict. ``error_localizer_enabled`` is handled at
+# the surface-runner layer (Temporal activities, inline-eval polling,
+# dataset runner), not on the evaluator instance — kept out of both
+# allow-lists.
+_RUNTIME_ALLOWED_KEYS = {
+    "AgentEvaluator": {
+        "model",
+        "agent_mode",
+        "check_internet",
+        "knowledge_base_id",
+        "knowledge_bases",
+        "tools",
+        "data_injection",
+        "summary",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+        "multi_choice",
+    },
+    "CustomPromptEvaluator": {
+        "check_internet",
+        "multi_choice",
+        "pass_threshold",
+        "output_type",
+        "choices",
+        "choice_scores",
+        "reverse_output",
+        "knowledge_base_id",
+        "knowledge_bases",
+    },
+}
+
+
 def resolve_version(eval_template, version_number=None, organization=None):
     """
     Resolve the eval template version to use.
@@ -25,6 +66,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -48,9 +90,16 @@ def resolve_version(eval_template, version_number=None, organization=None):
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
 
         if resolved:
-            EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                usage_count=models.F("usage_count") + 1
-            )
+            try:
+                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
+                    usage_count=models.F("usage_count") + 1
+                )
+            except (DatabaseError, ProgrammingError):
+                logger.warning(
+                    "usage_count_update_failed",
+                    version_id=str(resolved.id),
+                    exc_info=True,
+                )
 
         return resolved
 
@@ -91,6 +140,50 @@ def apply_version_overrides(config, resolved_version, criteria=None):
         config["model"] = resolved_version.model
 
     return config, criteria
+
+
+def resolve_pass_threshold(
+    eval_template,
+    runtime_config: dict | None = None,
+    resolved_version=None,
+) -> float:
+    """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+            return float(run_config["pass_threshold"])
+        if runtime_config.get("pass_threshold") is not None:
+            return float(runtime_config["pass_threshold"])
+
+    if resolved_version is not None:
+        version_threshold = getattr(resolved_version, "pass_threshold", None)
+        if version_threshold is not None:
+            return float(version_threshold)
+
+    template_threshold = getattr(eval_template, "pass_threshold", None)
+    if template_threshold is not None:
+        return float(template_threshold)
+
+    return 0.5
+
+
+def resolve_binding_model(
+    runtime_config: dict | None,
+    eval_template,
+) -> str | None:
+    """Priority: runtime_config[run_config][model] > runtime_config[model] > eval_template.config[model]."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict):
+            nested = run_config.get("model")
+            if nested:
+                return nested
+        top_level = runtime_config.get("model")
+        if top_level:
+            return top_level
+
+    template_config = getattr(eval_template, "config", None) or {}
+    return template_config.get("model")
 
 
 def _get_api_key(model, organization_id, workspace_id=None):
@@ -207,7 +300,9 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -235,6 +330,7 @@ def prepare_eval_config(
         config["knowledge_bases"] = eval_template.config.get("knowledge_bases", [])
         config["data_injection"] = eval_template.config.get("data_injection", {})
         config["summary"] = eval_template.config.get("summary", {"type": "concise"})
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
         # Pass org/workspace context for tool resolution
         config["organization_id"] = (
             str(eval_template.organization.id) if eval_template.organization else None
@@ -248,8 +344,12 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
-        config["system_prompt"] = eval_template.config.get("system_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
+        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
+            "system_prompt"
+        )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
             config["output_type"] = "choices"
@@ -259,7 +359,14 @@ def prepare_eval_config(
         if eval_template.config.get("messages"):
             config["messages"] = eval_template.config.get("messages")
         if eval_template.config.get("few_shot_examples"):
-            config["few_shot_examples"] = eval_template.config.get("few_shot_examples")
+            from model_hub.utils.few_shot_examples import (
+                expand_static_few_shot_examples,
+            )
+
+            config["few_shot_examples"] = expand_static_few_shot_examples(
+                eval_template.config.get("few_shot_examples"),
+                organization=eval_template.organization,
+            )
 
         # Resolve model
         raw_model = model or eval_template.config.get("model")
@@ -284,6 +391,10 @@ def prepare_eval_config(
                 else None
             )
             config["api_key"] = _get_api_key(raw_model, org_id, ws_id)
+            if not config.get("provider"):
+                from model_hub.utils.llm_providers import get_provider_for_model
+
+                config["provider"] = get_provider_for_model(raw_model, org_id, ws_id)
 
         config["check_internet"] = eval_template.config.get("check_internet", False)
         config["multi_choice"] = eval_template.config.get("multi_choice")
@@ -293,6 +404,7 @@ def prepare_eval_config(
             else []
         )
         config["choice_scores"] = eval_template.choice_scores
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     # FutureAGI evals (DeterministicEvaluator, RankingEvaluator)
     if is_futureagi:
@@ -364,36 +476,35 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
-    # Runtime override merge for AgentEvaluator.
+    from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
+
+    _template_config = eval_template.config or {}
+    if not _template_config.get("function_eval") and not is_function_eval(
+        _template_config.get("eval_type_id", "")
+    ):
+        config["pass_threshold"] = resolve_pass_threshold(
+            eval_template, runtime_config, resolved_version
+        )
+
+    # Runtime override merge.
     #
     # Priority (lowest to highest): template default → UserEvalMetric.run_config
     #                              → API-level runtime_config.run_config
     #
-    # The caller passes the merged UserEvalMetric.config as `runtime_config`,
-    # so any `run_config` sub-dict it contains is the user's per-attachment
-    # override. Additional API-level overrides can be stacked on top by the
-    # caller before invoking create_eval_instance — callers should merge those
-    # into runtime_config["run_config"] themselves.
+    # The caller passes the merged binding config (UserEvalMetric.config /
+    # CustomEvalConfig.config / SimulateEvalConfig.config) as `runtime_config`,
+    # so any `run_config` sub-dict it contains holds the user's per-attachment
+    # toggles from the EvalPicker (model, agent_mode, check_internet, tools,
+    # knowledge_bases, data_injection, summary, pass_threshold, choice_scores,
+    # multi_choice, reverse_output, error_localizer_enabled).
+    #
+    # We use an explicit `is not None` check rather than truthy `or` so that
+    # explicit False / 0 / "" overrides survive (e.g. check_internet=False on
+    # a binding when the template default is True).
     eval_type_id_for_overrides = eval_template.config.get("eval_type_id", "")
-    if eval_type_id_for_overrides == "AgentEvaluator" and runtime_config:
+    _allowed = _RUNTIME_ALLOWED_KEYS.get(eval_type_id_for_overrides)
+    if _allowed and runtime_config:
         _overrides = (runtime_config or {}).get("run_config") or {}
-        # Whitelist: only keys that AgentEvaluator actually accepts.
-        _allowed = {
-            "model",
-            "agent_mode",
-            "check_internet",
-            "knowledge_base_id",
-            "knowledge_bases",
-            "tools",
-            "data_injection",
-            "summary",
-            "pass_threshold",
-            "output_type",
-            "choices",
-            "choice_scores",
-            "reverse_output",
-            "error_localizer_enabled",
-        }
         for key, value in _overrides.items():
             if key in _allowed and value is not None:
                 config[key] = value

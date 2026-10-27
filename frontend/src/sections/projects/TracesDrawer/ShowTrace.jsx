@@ -26,6 +26,8 @@ const ShowTrace = ({
         cursor: onTraceClick ? "pointer" : "default",
         minHeight: "440px",
         height: "440px",
+        width: "100%",
+        minWidth: 0,
         overflow: "hidden",
         ...(onTraceClick && {
           transition: "box-shadow 0.2s",
@@ -43,6 +45,8 @@ const ShowTrace = ({
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
+          minWidth: 0,
+          overflow: "hidden",
           borderTopLeftRadius: "10px",
           borderBottomLeftRadius: "10px",
           position: "relative",
@@ -56,7 +60,15 @@ const ShowTrace = ({
       </Grid>
 
       {/* Right Section */}
-      <Grid item xs={4} sx={{ backgroundColor: "background.paper" }}>
+      <Grid
+        item
+        xs={4}
+        sx={{
+          backgroundColor: "background.paper",
+          minWidth: 0,
+          overflow: "hidden",
+        }}
+      >
         <Box>
           <TraceCardRightSection
             traceId={traceId}

@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { format } from "date-fns";
@@ -10,6 +10,10 @@ import CellMarkdown from "src/sections/common/CellMarkdown";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import { allExpanded, defaultStyles } from "react-json-view-lite";
 import { isJsonValue } from "src/utils/utils";
+import {
+  ToolCallCard,
+  ToolResultCard,
+} from "src/components/tool-call/ToolCallCard";
 
 const ColorMap = (role) => {
   switch (role) {
@@ -52,6 +56,7 @@ const ConversationCard = ({
   callType,
   simulationCallType,
   highlightedContent,
+  rawContent,
 }) => {
   // Check if content is JSON and parse it
   const isJsonContent = useMemo(() => isJsonValue(content), [content]);
@@ -168,6 +173,34 @@ const ConversationCard = ({
           </Typography>
         </Box>
         {renderContent()}
+        <ShowComponent
+          condition={Array.isArray(rawContent) && rawContent.length > 0}
+        >
+          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            {rawContent.flatMap((message, index) => {
+              if (message.role === "tool") {
+                return [
+                  <ToolResultCard
+                    key={`result-${index}`}
+                    content={message.content}
+                  />,
+                ];
+              }
+              if (message.tool_calls?.length > 0) {
+                return message.tool_calls.map((toolCall) => (
+                  <ToolCallCard
+                    key={toolCall.id}
+                    toolCall={{
+                      name: toolCall.function.name,
+                      arguments: toolCall.function.arguments,
+                    }}
+                  />
+                ));
+              }
+              return [];
+            })}
+          </Stack>
+        </ShowComponent>
       </Box>
 
       <ShowComponent
@@ -209,6 +242,7 @@ ConversationCard.propTypes = {
   callType: PropTypes.string,
   simulationCallType: PropTypes.string,
   highlightedContent: PropTypes.node,
+  rawContent: PropTypes.arrayOf(PropTypes.object),
 };
 
 export default ConversationCard;

@@ -7,7 +7,30 @@ import {
 } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
+import { apiPath } from "src/api/contracts/api-surface";
 import { scoreKeys } from "src/api/scores/scores";
+import { selectContractedList } from "src/api/contract-validation";
+import { ModelHubAnnotationQueuesForSourceResponse } from "src/generated/api-contracts/api.zod";
+import { paramsSerializer } from "src/utils/utils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import {
+  INTERACTIVE_REQUEST_TIMEOUT_MS,
+  MAX_ADD_QUEUE_CONTINUATION_PAGES,
+  MAX_ADD_QUEUE_CONTINUATION_WALL_MS,
+} from "src/config/runtime_limits";
+import {
+  AUTOMATION_RULE_LIST_PAGE_SIZE,
+  readAutomationRulePage,
+} from "./automation-rule-list-read";
+
+const QUEUE_ENTRY_CONSUMED_FIELDS = [
+  "queue",
+  "item",
+  "labels",
+  "existing_scores",
+  "existing_notes",
+  "existing_label_notes",
+];
 
 // ---------------------------------------------------------------------------
 // Helper – extract response payload consistently across endpoints that may
@@ -16,15 +39,180 @@ import { scoreKeys } from "src/api/scores/scores";
 const extractData = (d, fallback = null) =>
   d.data?.result ?? d.data?.results ?? d.data ?? fallback;
 
+export const extractErrorMessage = (error, fallback) => {
+  const payload = error?.response?.data || error;
+  const nestedError = payload?.error;
+  const nestedErrorDetail = nestedError?.detail;
+  const message =
+    payload?.result ||
+    payload?.detail ||
+    payload?.message ||
+    nestedError?.message ||
+    (typeof nestedErrorDetail === "string" ? nestedErrorDetail : null) ||
+    nestedError ||
+    payload?.non_field_errors ||
+    fallback;
+
+  if (Array.isArray(message)) return message.join(", ");
+  if (message && typeof message === "object") return JSON.stringify(message);
+  return message || fallback;
+};
+
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
 export const annotationQueueEndpoints = {
-  list: "/model-hub/annotation-queues/",
-  create: "/model-hub/annotation-queues/",
-  detail: (id) => `/model-hub/annotation-queues/${id}/`,
-  restore: (id) => `/model-hub/annotation-queues/${id}/restore/`,
-  updateStatus: (id) => `/model-hub/annotation-queues/${id}/update-status/`,
+  list: apiPath("/model-hub/annotation-queues/"),
+  create: apiPath("/model-hub/annotation-queues/"),
+  detail: (id) => apiPath("/model-hub/annotation-queues/{id}/", { id }),
+  restore: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/restore/", { id }),
+  hardDelete: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/hard-delete/", { id }),
+  updateStatus: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/update-status/", { id }),
+  forSource: apiPath("/model-hub/annotation-queues/for-source/"),
+  getOrCreateDefault: apiPath(
+    "/model-hub/annotation-queues/get-or-create-default/",
+  ),
+  addLabel: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/add-label/", { id }),
+  removeLabel: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/remove-label/", { id }),
+  agreement: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/agreement/", { id }),
+  analytics: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/analytics/", { id }),
+  exportFields: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/export-fields/", { id }),
+  exportToDataset: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/export-to-dataset/", { id }),
+  export: (id) => apiPath("/model-hub/annotation-queues/{id}/export/", { id }),
+  progress: (id) =>
+    apiPath("/model-hub/annotation-queues/{id}/progress/", { id }),
+  automationRules: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/", {
+      queue_id: queueId,
+    }),
+  automationRuleDetail: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+      queue_id: queueId,
+      id,
+    }),
+  automationRuleEvaluate: (queueId, id) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/evaluate/",
+      {
+        queue_id: queueId,
+        id,
+      },
+    ),
+  items: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/", {
+      queue_id: queueId,
+    }),
+  addItems: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/add-items/", {
+      queue_id: queueId,
+    }),
+  assignItems: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/assign/", {
+      queue_id: queueId,
+    }),
+  bulkRemoveItems: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/bulk-remove/", {
+      queue_id: queueId,
+    }),
+  bulkReviewItems: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/bulk-review/", {
+      queue_id: queueId,
+    }),
+  nextItem: (queueId) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/next-item/", {
+      queue_id: queueId,
+    }),
+  itemDetail: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/", {
+      queue_id: queueId,
+      id,
+    }),
+  annotateDetail: (queueId, id) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+      {
+        queue_id: queueId,
+        id,
+      },
+    ),
+  itemAnnotations: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/", {
+      queue_id: queueId,
+      id,
+    }),
+  submitAnnotations: (queueId, id) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+      {
+        queue_id: queueId,
+        id,
+      },
+    ),
+  completeItem: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/complete/", {
+      queue_id: queueId,
+      id,
+    }),
+  skipItem: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/skip/", {
+      queue_id: queueId,
+      id,
+    }),
+  reviewItem: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/review/", {
+      queue_id: queueId,
+      id,
+    }),
+  discussion: (queueId, id) =>
+    apiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/", {
+      queue_id: queueId,
+      id,
+    }),
+  discussionResolve: (queueId, id, threadId) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/{thread_id}/resolve/",
+      {
+        queue_id: queueId,
+        id,
+        thread_id: threadId,
+      },
+    ),
+  discussionReopen: (queueId, id, threadId) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/{thread_id}/reopen/",
+      {
+        queue_id: queueId,
+        id,
+        thread_id: threadId,
+      },
+    ),
+  discussionReaction: (queueId, id, commentId) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/comments/{comment_id}/reaction/",
+      {
+        queue_id: queueId,
+        id,
+        comment_id: commentId,
+      },
+    ),
+  discussionComment: (queueId, id, commentId) =>
+    apiPath(
+      "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/comments/{comment_id}/",
+      {
+        queue_id: queueId,
+        id,
+        comment_id: commentId,
+      },
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -34,6 +222,7 @@ export const annotationQueueKeys = {
   all: ["annotation-queues"],
   list: (filters) => ["annotation-queues", "list", filters],
   detail: (id) => ["annotation-queues", "detail", id],
+  exportFields: (id) => ["annotation-queues", "export-fields", id],
   progress: (queueId) => ["annotation-queues", "progress", queueId],
   analytics: (queueId) => ["annotation-queues", "analytics", queueId],
   agreement: (queueId) => ["annotation-queues", "agreement", queueId],
@@ -49,7 +238,8 @@ export const useAnnotationQueuesList = (filters = {}, options = {}) => {
     queryFn: () =>
       axios.get(annotationQueueEndpoints.list, { params: filters }),
     select: (d) => d.data,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -58,8 +248,10 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.detail(id),
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
-    select: (d) => d.data,
+    select: (d) => extractData(d),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -73,7 +265,7 @@ export const useCreateAnnotationQueue = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to create queue";
+      const msg = extractErrorMessage(error, "Failed to create queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -86,12 +278,15 @@ export const useUpdateAnnotationQueue = () => {
   return useMutation({
     mutationFn: ({ id, ...data }) =>
       axios.patch(annotationQueueEndpoints.detail(id), data),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.detail(variables.id),
+      });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to update queue";
+      const msg = extractErrorMessage(error, "Failed to update queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -99,11 +294,17 @@ export const useUpdateAnnotationQueue = () => {
   });
 };
 
-export const useDeleteAnnotationQueue = () => {
+// "Delete" in the UI is a soft archive — the queue gets `deleted=true` and
+// rules attached to it go dormant. Restoration brings them back. For
+// truly destructive removal use `useHardDeleteAnnotationQueue` below.
+export const useArchiveAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => axios.delete(annotationQueueEndpoints.detail(id)),
     onSuccess: () => {
+      enqueueSnackbar("Queue archived. Rules paused; you can restore later.", {
+        variant: "info",
+      });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
@@ -112,12 +313,35 @@ export const useDeleteAnnotationQueue = () => {
   });
 };
 
+// Backwards-compat alias — call sites still use this name.
+export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
+
+export const useHardDeleteAnnotationQueue = () => {
+  return useMutation({
+    mutationFn: ({ id, name }) =>
+      axios.post(annotationQueueEndpoints.hardDelete(id), {
+        force: true,
+        confirm_name: name,
+      }),
+    onSuccess: () => {
+      enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
 export const useRestoreAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id)),
+    mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id), {}),
     onSuccess: () => {
-      enqueueSnackbar("Queue restored", { variant: "success" });
+      enqueueSnackbar("Queue restored. Rule cadence reset.", {
+        variant: "success",
+      });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
@@ -157,14 +381,17 @@ export const useUpdateAnnotationQueueStatus = () => {
         },
       );
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       enqueueSnackbar("Queue status updated", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.detail(variables.id),
+      });
     },
     onError: (error) => {
       // Revert optimistic update on error
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
-      const msg = error?.result || error?.detail || "Failed to update status";
+      const msg = extractErrorMessage(error, "Failed to update status");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -185,8 +412,9 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
   return useInfiniteQuery({
     queryKey: queueItemKeys.list(queueId, restFilters),
     queryFn: ({ pageParam = 1 }) =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/items/`, {
+      axios.get(annotationQueueEndpoints.items(queueId), {
         params: { ...restFilters, page: pageParam, limit: limit || 25 },
+        paramsSerializer: paramsSerializer(),
       }),
     getNextPageParam: (lastPage) => {
       const data = lastPage.data;
@@ -203,19 +431,245 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
       };
     },
     enabled: !!queueId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
+};
+
+export const ADD_QUEUE_ITEMS_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
+const MAX_ADD_QUEUE_CURSOR_LENGTH = 4096;
+const MAX_ADD_QUEUE_ERROR_SAMPLES = 20;
+const MAX_ADD_QUEUE_ERROR_SAMPLE_CHARS = 512;
+
+const ADD_QUEUE_ITEMS_UNKNOWN_OUTCOME_TRANSPORT_CODES = new Set([
+  "ERR_CANCELED",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ERR_NETWORK",
+  "ECONNRESET",
+]);
+
+const emptyAddResult = () => ({
+  added: 0,
+  duplicates: 0,
+  errors: [],
+  error_count: 0,
+  queue_status: null,
+  total_matching: 0,
+  total_matching_is_lower_bound: false,
+  has_more: false,
+  next_cursor: null,
+  next_cursor_fingerprint: undefined,
+});
+
+const responseAddResult = (response) =>
+  response?.data?.result || response?.data || {};
+
+const mergeAddResult = (aggregate, response) => {
+  const result = responseAddResult(response);
+  const pageErrors = Array.isArray(result.errors) ? result.errors : [];
+  const remainingErrorSlots = Math.max(
+    MAX_ADD_QUEUE_ERROR_SAMPLES - aggregate.errors.length,
+    0,
+  );
+  const errorSamples = [];
+  for (
+    let index = 0;
+    index < pageErrors.length && errorSamples.length < remainingErrorSlots;
+    index += 1
+  ) {
+    const error = pageErrors[index];
+    if (typeof error === "string") {
+      errorSamples.push(error.slice(0, MAX_ADD_QUEUE_ERROR_SAMPLE_CHARS));
+    }
+  }
+  return {
+    added: aggregate.added + (Number(result.added) || 0),
+    duplicates: aggregate.duplicates + (Number(result.duplicates) || 0),
+    errors: [...aggregate.errors, ...errorSamples],
+    error_count: Math.min(
+      Number.MAX_SAFE_INTEGER,
+      aggregate.error_count + pageErrors.length,
+    ),
+    queue_status: result.queue_status ?? aggregate.queue_status,
+    // The resumable backend reports cumulative selection progress, so retain
+    // the latest value rather than summing it across pages.
+    total_matching:
+      Number.isSafeInteger(result.total_matching) && result.total_matching >= 0
+        ? result.total_matching
+        : aggregate.total_matching,
+    total_matching_is_lower_bound:
+      result.total_matching_is_lower_bound === true,
+    has_more: result.has_more === true,
+    next_cursor: result.next_cursor ?? null,
+    next_cursor_fingerprint:
+      result.next_cursor_fingerprint === undefined
+        ? aggregate.next_cursor_fingerprint
+        : result.next_cursor_fingerprint,
+  };
+};
+
+const continuationError = (message, aggregate, code) => {
+  const error = new Error(message);
+  error.code = code;
+  error.partialAddResult = aggregate;
+  return error;
+};
+
+const validContinuationCursor = (cursor) =>
+  typeof cursor === "string" &&
+  cursor.trim().length > 0 &&
+  cursor.length <= MAX_ADD_QUEUE_CURSOR_LENGTH;
+
+const ADD_QUEUE_CURSOR_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+
+const queueContinuationIdentity = ({
+  next_cursor,
+  next_cursor_fingerprint,
+}) => {
+  if (next_cursor_fingerprint === undefined) {
+    return `opaque-token:${next_cursor}`;
+  }
+  if (
+    typeof next_cursor_fingerprint !== "string" ||
+    !ADD_QUEUE_CURSOR_FINGERPRINT_PATTERN.test(next_cursor_fingerprint)
+  ) {
+    return null;
+  }
+  return `boundary:${next_cursor_fingerprint}`;
+};
+
+const postFilterAddPage = async (endpoint, selection, timeoutMs) => {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await axios.post(
+      endpoint,
+      { selection },
+      {
+        signal: controller.signal,
+        timeout: timeoutMs,
+      },
+    );
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+};
+
+export const postAddQueueItems = async ({
+  queueId,
+  items,
+  selection,
+  project_id,
+}) => {
+  const endpoint = annotationQueueEndpoints.addItems(queueId);
+  const payload = selection
+    ? { selection }
+    : { items, ...(project_id ? { project_id } : {}) };
+  if (!selection) {
+    return axios.post(endpoint, payload);
+  }
+
+  if (selection.cursor && !validContinuationCursor(selection.cursor)) {
+    throw continuationError(
+      "The add-items continuation cursor is invalid. Refresh the queue before retrying.",
+      emptyAddResult(),
+      "invalid_bulk_continuation",
+    );
+  }
+  const startedAt = Date.now();
+  const consumedCursorIdentities = new Set(
+    selection.cursor ? [`opaque-token:${selection.cursor}`] : [],
+  );
+  let aggregate = emptyAddResult();
+  let currentSelection = selection;
+  let lastResponse = null;
+
+  for (let page = 0; page < MAX_ADD_QUEUE_CONTINUATION_PAGES; page += 1) {
+    const remainingWallMs =
+      MAX_ADD_QUEUE_CONTINUATION_WALL_MS - (Date.now() - startedAt);
+    if (remainingWallMs <= 0) {
+      throw continuationError(
+        "Adding the full selection exceeded the browser continuation wall. Refresh the queue before retrying.",
+        aggregate,
+        "bulk_continuation_wall_exceeded",
+      );
+    }
+    try {
+      lastResponse = await postFilterAddPage(
+        endpoint,
+        currentSelection,
+        Math.min(ADD_QUEUE_ITEMS_TIMEOUT_MS, remainingWallMs),
+      );
+    } catch (error) {
+      if (error && typeof error === "object") {
+        error.partialAddResult = aggregate;
+      }
+      throw error;
+    }
+    const pageResult = responseAddResult(lastResponse);
+    if (
+      pageResult.has_more !== true &&
+      (pageResult.next_cursor != null ||
+        pageResult.next_cursor_fingerprint != null)
+    ) {
+      const partialAddResult = mergeAddResult(aggregate, lastResponse);
+      throw continuationError(
+        "The server returned contradictory terminal add-items metadata. Refresh the queue before retrying.",
+        partialAddResult,
+        "invalid_bulk_continuation",
+      );
+    }
+    aggregate = mergeAddResult(aggregate, lastResponse);
+    if (!aggregate.has_more) {
+      const terminal = {
+        ...aggregate,
+        total_matching_is_lower_bound: false,
+        has_more: false,
+        next_cursor: null,
+        next_cursor_fingerprint: null,
+      };
+      return {
+        ...lastResponse,
+        data: {
+          ...(lastResponse?.data || {}),
+          result: terminal,
+        },
+      };
+    }
+
+    const nextCursor = aggregate.next_cursor;
+    const nextCursorIdentity = queueContinuationIdentity(aggregate);
+    if (!validContinuationCursor(nextCursor) || !nextCursorIdentity) {
+      throw continuationError(
+        "The server returned an invalid add-items continuation. Refresh the queue before retrying.",
+        aggregate,
+        "invalid_bulk_continuation",
+      );
+    }
+    if (consumedCursorIdentities.has(nextCursorIdentity)) {
+      throw continuationError(
+        "The server repeated an add-items continuation. Refresh the queue before retrying.",
+        aggregate,
+        "repeated_bulk_continuation",
+      );
+    }
+    consumedCursorIdentities.add(nextCursorIdentity);
+    currentSelection = { ...selection, cursor: nextCursor };
+  }
+
+  throw continuationError(
+    "Adding the full selection exceeded the safe continuation limit. Refresh the queue before retrying.",
+    aggregate,
+    "bulk_continuation_limit_exceeded",
+  );
 };
 
 export const useAddQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, items, selection }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/items/add-items/`,
-        selection ? { selection } : { items },
-      ),
+    mutationFn: postAddQueueItems,
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
@@ -224,15 +678,51 @@ export const useAddQueueItems = () => {
         queryKey: annotationQueueKeys.all,
       });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const partial = error?.partialAddResult;
+      const confirmedAdded = Number(partial?.added) || 0;
+      const semanticCode = error?.response?.data?.code || error?.code;
+      const transportCode = error?.transportCode || error?.code;
+      const possiblyCommitted =
+        partial != null ||
+        ADD_QUEUE_ITEMS_UNKNOWN_OUTCOME_TRANSPORT_CODES.has(transportCode);
+      if (possiblyCommitted && variables?.queueId) {
+        queryClient.invalidateQueries({
+          queryKey: queueItemKeys.all(variables.queueId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: annotationQueueKeys.all,
+        });
+      }
+      if (ADD_QUEUE_ITEMS_UNKNOWN_OUTCOME_TRANSPORT_CODES.has(transportCode)) {
+        enqueueSnackbar(
+          confirmedAdded > 0
+            ? `${confirmedAdded} item${confirmedAdded === 1 ? " was" : "s were"} confirmed added, but we couldn't confirm the next batch. Refresh the queue and check before retrying.`
+            : "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+        return;
+      }
+      if (semanticCode === "add_items_deadline_exceeded") {
+        enqueueSnackbar(
+          confirmedAdded > 0
+            ? `${confirmedAdded} item${confirmedAdded === 1 ? " was" : "s were"} added before continuation timed out. Retry to finish the selection.`
+            : extractErrorMessage(
+                error,
+                "Adding matching items took too long. Nothing was added. Please retry.",
+              ),
+          { variant: "error" },
+        );
+        return;
+      }
       // Filter-mode bulk add can exceed the backend cap; surface the
       // structured error so the user sees the exact count and limit.
-      const structured = error?.response?.data?.error;
+      const structured = error?.error || error?.response?.data?.error;
       if (structured?.type === "selection_too_large") {
         enqueueSnackbar(structured.message, { variant: "error" });
         return;
       }
-      const msg = error?.result || error?.detail || "Failed to add items";
+      const msg = extractErrorMessage(error, "Failed to add items");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -244,7 +734,7 @@ export const useRemoveQueueItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ queueId, itemId }) =>
-      axios.delete(`/model-hub/annotation-queues/${queueId}/items/${itemId}/`),
+      axios.delete(annotationQueueEndpoints.itemDetail(queueId, itemId)),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
@@ -263,7 +753,7 @@ export const useBulkRemoveQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ queueId, itemIds }) =>
-      axios.post(`/model-hub/annotation-queues/${queueId}/items/bulk-remove/`, {
+      axios.post(annotationQueueEndpoints.bulkRemoveItems(queueId), {
         item_ids: itemIds,
       }),
     onSuccess: (data, variables) => {
@@ -287,8 +777,7 @@ export const useBulkRemoveQueueItems = () => {
 export const useQueueProgress = (queueId, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.progress(queueId),
-    queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/progress/`),
+    queryFn: () => axios.get(annotationQueueEndpoints.progress(queueId)),
     select: (d) => extractData(d),
     enabled: !!queueId,
     staleTime: 1000 * 30,
@@ -296,24 +785,207 @@ export const useQueueProgress = (queueId, options = {}) => {
   });
 };
 
+const getAssignmentUserId = (user) => user?.user_id ?? user?.id;
+
+const normalizeAssignmentUser = (user, fallbackId) => {
+  const id = String(getAssignmentUserId(user) ?? fallbackId ?? "");
+  if (!id) return null;
+  const { user_id: _userId, ...assignmentUser } = user || {};
+  return {
+    ...assignmentUser,
+    id,
+    name: user?.name || user?.email || id,
+  };
+};
+
+const optimisticAssignmentUsers = (variables, assignedUsers = []) => {
+  const ids = (variables.userIds || []).map((id) => String(id)).filter(Boolean);
+  const assignees = [...(variables.assignees || []), ...assignedUsers];
+
+  return ids
+    .map((id) => {
+      const assignee = assignees.find(
+        (candidate) => String(getAssignmentUserId(candidate)) === id,
+      );
+      return normalizeAssignmentUser(assignee, id);
+    })
+    .filter(Boolean);
+};
+
+const applyOptimisticAssignment = (assignedUsers = [], variables) => {
+  const action = variables.action || "add";
+  const nextUsers = optimisticAssignmentUsers(variables, assignedUsers);
+
+  if (action === "set") return nextUsers;
+
+  const nextUserIds = new Set(nextUsers.map((user) => String(user.id)));
+  if (!nextUserIds.size) return assignedUsers;
+
+  const usersById = new Map();
+  assignedUsers.forEach((user) => {
+    const normalized = normalizeAssignmentUser(user);
+    if (normalized) usersById.set(String(normalized.id), normalized);
+  });
+
+  if (action === "remove") {
+    nextUserIds.forEach((id) => usersById.delete(id));
+  } else {
+    nextUsers.forEach((user) => usersById.set(String(user.id), user));
+  }
+
+  return Array.from(usersById.values());
+};
+
+const patchAssignmentItem = (item, variables) => {
+  if (!item?.id) return item;
+  const targetIds = new Set((variables.itemIds || []).map((id) => String(id)));
+  if (!targetIds.has(String(item.id))) return item;
+
+  const assignedUsers = applyOptimisticAssignment(
+    item.assigned_users || [],
+    variables,
+  );
+  return {
+    ...item,
+    assigned_users: assignedUsers,
+    assigned_to_name:
+      assignedUsers
+        .map((user) => user.name || user.email)
+        .filter(Boolean)
+        .join(", ") || null,
+  };
+};
+
+const patchAssignmentCacheValue = (value, variables) => {
+  if (!value || typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => patchAssignmentCacheValue(entry, variables));
+  }
+
+  if (Array.isArray(value.pages)) {
+    return {
+      ...value,
+      pages: value.pages.map((page) =>
+        patchAssignmentCacheValue(page, variables),
+      ),
+    };
+  }
+
+  if (value.data) {
+    return {
+      ...value,
+      data: patchAssignmentCacheValue(value.data, variables),
+    };
+  }
+
+  if (value.result) {
+    return {
+      ...value,
+      result: patchAssignmentCacheValue(value.result, variables),
+    };
+  }
+
+  if (Array.isArray(value.results)) {
+    return {
+      ...value,
+      results: value.results.map((item) =>
+        patchAssignmentItem(item, variables),
+      ),
+    };
+  }
+
+  if (value.item) {
+    return {
+      ...value,
+      item: patchAssignmentItem(value.item, variables),
+    };
+  }
+
+  return patchAssignmentItem(value, variables);
+};
+
 export const useAssignQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemIds, userId, userIds, action }) =>
-      axios.post(`/model-hub/annotation-queues/${queueId}/items/assign/`, {
+    // Own the error toast here so the global handler (app.jsx) doesn't also fire one.
+    meta: { errorHandled: true },
+    mutationFn: ({ queueId, itemIds, userIds, action }) => {
+      const normalizedUserIds = userIds ?? [];
+      return axios.post(annotationQueueEndpoints.assignItems(queueId), {
         item_ids: itemIds,
-        ...(userIds
-          ? { user_ids: userIds, action: action || "add" }
-          : { user_id: userId }),
-      }),
+        user_ids: normalizedUserIds,
+        action: action || "add",
+      });
+    },
+    onMutate: async (variables) => {
+      const itemIds = variables.itemIds || [];
+
+      await Promise.all([
+        queryClient.cancelQueries({
+          queryKey: queueItemKeys.all(variables.queueId),
+          exact: false,
+        }),
+        ...itemIds.map((itemId) =>
+          queryClient.cancelQueries({
+            queryKey: annotateKeys.detail(variables.queueId, itemId),
+            exact: false,
+          }),
+        ),
+      ]);
+
+      const previousQueueItems = queryClient.getQueriesData({
+        queryKey: queueItemKeys.all(variables.queueId),
+        exact: false,
+      });
+      const previousDetails = itemIds.flatMap((itemId) =>
+        queryClient.getQueriesData({
+          queryKey: annotateKeys.detail(variables.queueId, itemId),
+          exact: false,
+        }),
+      );
+
+      queryClient.setQueriesData(
+        { queryKey: queueItemKeys.all(variables.queueId), exact: false },
+        (old) => patchAssignmentCacheValue(old, variables),
+      );
+      itemIds.forEach((itemId) => {
+        queryClient.setQueriesData(
+          {
+            queryKey: annotateKeys.detail(variables.queueId, itemId),
+            exact: false,
+          },
+          (old) => patchAssignmentCacheValue(old, variables),
+        );
+      });
+
+      return { previousQueueItems, previousDetails };
+    },
     onSuccess: (data, variables) => {
       enqueueSnackbar("Assignees updated", { variant: "success" });
+      (variables.itemIds || []).forEach((itemId) => {
+        invalidateAnnotateItem(queryClient, variables.queueId, itemId);
+      });
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotateKeys.nextItem(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to assign items", { variant: "error" });
+    onError: (error, _variables, context) => {
+      context?.previousQueueItems?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      context?.previousDetails?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
+      enqueueSnackbar(extractErrorMessage(error, "Failed to assign items"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -322,7 +994,7 @@ export const useUpdateQueueItemStatus = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ queueId, itemId, status }) =>
-      axios.patch(`/model-hub/annotation-queues/${queueId}/items/${itemId}/`, {
+      axios.patch(annotationQueueEndpoints.itemDetail(queueId, itemId), {
         status,
       }),
     onSuccess: (_, variables) => {
@@ -341,17 +1013,79 @@ export const useUpdateQueueItemStatus = () => {
 // ---------------------------------------------------------------------------
 
 export const annotateKeys = {
-  detail: (queueId, itemId) => ["annotate-detail", queueId, itemId],
-  nextItem: (queueId) => ["annotate-next-item", queueId],
+  detail: (queueId, itemId, annotatorId, filters) => {
+    const key = annotatorId
+      ? ["annotate-detail", queueId, itemId, annotatorId]
+      : ["annotate-detail", queueId, itemId];
+    return filters && Object.keys(filters).length ? [...key, filters] : key;
+  },
+  discussion: (queueId, itemId) => ["annotate-discussion", queueId, itemId],
+  nextItem: (queueId, filters) =>
+    filters && Object.keys(filters).length
+      ? ["annotate-next-item", queueId, filters]
+      : ["annotate-next-item", queueId],
   annotations: (queueId, itemId) => ["item-annotations", queueId, itemId],
 };
 
-export const useAnnotateDetail = (queueId, itemId, options = {}) => {
-  return useQuery({
+const invalidateAnnotateItem = (queryClient, queueId, itemId) => {
+  if (!queueId || !itemId) return;
+  queryClient.invalidateQueries({
     queryKey: annotateKeys.detail(queueId, itemId),
+  });
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.annotations(queueId, itemId),
+  });
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.discussion(queueId, itemId),
+  });
+};
+
+const invalidateAnnotateDiscussion = (queryClient, queueId, itemId) => {
+  if (!queueId || !itemId) return;
+  queryClient.invalidateQueries({
+    queryKey: annotateKeys.discussion(queueId, itemId),
+  });
+};
+
+export const useAnnotateDetail = (
+  queueId,
+  itemId,
+  {
+    annotatorId,
+    includeCompleted,
+    viewMode,
+    reviewStatus,
+    excludeReviewStatus,
+    reserve,
+    ...options
+  } = {},
+) => {
+  const params = {
+    ...(annotatorId ? { annotator_id: annotatorId } : {}),
+    ...(includeCompleted ? { include_completed: true } : {}),
+    ...(viewMode ? { view_mode: viewMode } : {}),
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+    ...(reserve ? { reserve: true } : {}),
+  };
+  const requestOptions = Object.keys(params).length ? { params } : undefined;
+  const detailFilters = {
+    ...(includeCompleted ? { include_completed: true } : {}),
+    ...(viewMode ? { view_mode: viewMode } : {}),
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+    ...(reserve ? { reserve: true } : {}),
+  };
+  return useQuery({
+    queryKey: annotateKeys.detail(queueId, itemId, annotatorId, detailFilters),
     queryFn: () =>
       axios.get(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotate-detail/`,
+        annotationQueueEndpoints.annotateDetail(queueId, itemId),
+        requestOptions,
       ),
     select: (d) => extractData(d),
     enabled: !!queueId && !!itemId,
@@ -361,28 +1095,48 @@ export const useAnnotateDetail = (queueId, itemId, options = {}) => {
 };
 
 export const useNextItem = (queueId, options = {}) => {
+  const {
+    viewMode,
+    reviewStatus,
+    excludeReviewStatus,
+    includeCompleted,
+    ...queryOptions
+  } = options;
+  const params = {
+    ...(viewMode ? { view_mode: viewMode } : {}),
+    ...(reviewStatus ? { review_status: reviewStatus } : {}),
+    ...(excludeReviewStatus
+      ? { exclude_review_status: excludeReviewStatus }
+      : {}),
+    ...(includeCompleted ? { include_completed: true } : {}),
+  };
+  const requestOptions = Object.keys(params).length ? { params } : undefined;
   return useQuery({
-    queryKey: annotateKeys.nextItem(queueId),
+    queryKey: annotateKeys.nextItem(queueId, params),
     queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/items/next-item/`),
+      axios.get(annotationQueueEndpoints.nextItem(queueId), requestOptions),
     select: (d) => extractData(d)?.item,
     enabled: !!queueId,
-    ...options,
+    staleTime: 0,
+    refetchOnMount: "always",
+    ...queryOptions,
   });
 };
 
 export const useSubmitAnnotations = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, annotations, notes }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotations/submit/`,
-        { annotations, notes },
-      ),
+    mutationFn: ({ queueId, itemId, annotations, notes, itemNotes }) => {
+      const payload = { annotations };
+      if (notes !== undefined) payload.notes = notes;
+      if (itemNotes !== undefined) payload.item_notes = itemNotes;
+      return axios.post(
+        annotationQueueEndpoints.submitAnnotations(queueId, itemId),
+        payload,
+      );
+    },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: annotateKeys.detail(variables.queueId, variables.itemId),
-      });
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
@@ -395,8 +1149,7 @@ export const useSubmitAnnotations = () => {
       queryClient.invalidateQueries({ queryKey: scoreKeys.all });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to submit annotations";
+      const msg = extractErrorMessage(error, "Failed to submit annotations");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -407,17 +1160,35 @@ export const useSubmitAnnotations = () => {
 export const useCompleteItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/complete/`,
-        exclude ? { exclude } : undefined,
-      ),
+    mutationFn: ({
+      queueId,
+      itemId,
+      exclude,
+      excludeReviewStatus,
+      includeCompleted,
+    }) => {
+      const payload = {
+        ...(exclude ? { exclude } : {}),
+        ...(excludeReviewStatus
+          ? { exclude_review_status: excludeReviewStatus }
+          : {}),
+        ...(includeCompleted ? { include_completed: true } : {}),
+      };
+      return axios.post(
+        annotationQueueEndpoints.completeItem(queueId, itemId),
+        Object.keys(payload).length ? payload : undefined,
+      );
+    },
     onSuccess: (_, variables) => {
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
       queryClient.invalidateQueries({
         queryKey: annotateKeys.nextItem(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
       });
       queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.all,
@@ -433,11 +1204,25 @@ export const useCompleteItem = () => {
 export const useSkipItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, exclude }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/skip/`,
-        exclude ? { exclude } : undefined,
-      ),
+    mutationFn: ({
+      queueId,
+      itemId,
+      exclude,
+      excludeReviewStatus,
+      includeCompleted,
+    }) => {
+      const payload = {
+        ...(exclude ? { exclude } : {}),
+        ...(excludeReviewStatus
+          ? { exclude_review_status: excludeReviewStatus }
+          : {}),
+        ...(includeCompleted ? { include_completed: true } : {}),
+      };
+      return axios.post(
+        annotationQueueEndpoints.skipItem(queueId, itemId),
+        Object.keys(payload).length ? payload : undefined,
+      );
+    },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
@@ -458,8 +1243,7 @@ export const useSkipItem = () => {
 export const useQueueAnalytics = (queueId, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.analytics(queueId),
-    queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/analytics/`),
+    queryFn: () => axios.get(annotationQueueEndpoints.analytics(queueId)),
     select: (d) => extractData(d),
     enabled: !!queueId,
     staleTime: 1000 * 60,
@@ -473,17 +1257,32 @@ export const useQueueAnalytics = (queueId, options = {}) => {
 export const useReviewItem = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, itemId, action, notes }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/review/`,
-        { action, notes },
-      ),
+    mutationFn: ({ queueId, itemId, action, notes, labelComments = [] }) =>
+      axios.post(annotationQueueEndpoints.reviewItem(queueId, itemId), {
+        action,
+        notes,
+        label_comments: labelComments,
+      }),
     onSuccess: (data, variables) => {
       const action = variables.action;
+      const requestedChanges =
+        action === "request_changes" || action === "reject";
       enqueueSnackbar(
-        action === "approve" ? "Item approved" : "Item rejected",
-        { variant: action === "approve" ? "success" : "warning" },
+        action === "approve"
+          ? "Item approved"
+          : requestedChanges
+            ? "Changes requested"
+            : "Review comment saved",
+        {
+          variant:
+            action === "approve"
+              ? "success"
+              : requestedChanges
+                ? "warning"
+                : "info",
+        },
       );
+      invalidateAnnotateItem(queryClient, variables.queueId, variables.itemId);
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
@@ -500,6 +1299,243 @@ export const useReviewItem = () => {
   });
 };
 
+export const useBulkReviewItems = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemIds, action, notes }) =>
+      axios.post(annotationQueueEndpoints.bulkReviewItems(queueId), {
+        item_ids: itemIds,
+        action,
+        ...(notes ? { notes } : {}),
+      }),
+    onSuccess: (response, variables) => {
+      const result = response?.data?.result || response?.data || {};
+      const reviewed = result?.reviewed ?? 0;
+      const errorCount = Array.isArray(result?.errors)
+        ? result.errors.length
+        : 0;
+      enqueueSnackbar(
+        errorCount
+          ? `${reviewed} items reviewed, ${errorCount} skipped`
+          : `${reviewed} items reviewed`,
+        { variant: errorCount ? "warning" : "success" },
+      );
+      queryClient.invalidateQueries({
+        queryKey: queueItemKeys.all(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotateKeys.nextItem(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.analytics(variables.queueId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.all,
+      });
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to review items"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useItemDiscussion = (queueId, itemId, options = {}) => {
+  return useQuery({
+    queryKey: annotateKeys.discussion(queueId, itemId),
+    queryFn: () =>
+      axios.get(annotationQueueEndpoints.discussion(queueId, itemId)),
+    select: (d) => {
+      const payload = extractData(d, {
+        review_comments: [],
+        review_threads: [],
+      });
+      // Older backend responses returned the discussion endpoint as a bare
+      // comments array. Normalize both shapes so the collaboration drawer can
+      // poll this endpoint without caring which backend build served it.
+      if (Array.isArray(payload)) {
+        return { review_comments: payload, review_threads: [] };
+      }
+      return {
+        review_comments: payload?.review_comments || [],
+        review_threads: payload?.review_threads || [],
+      };
+    },
+    enabled: !!queueId && !!itemId,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    ...options,
+  });
+};
+
+export const useCreateDiscussionComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      queueId,
+      itemId,
+      comment,
+      threadId,
+      labelId,
+      targetAnnotatorId,
+      mentionedUserIds = [],
+    }) =>
+      axios.post(annotationQueueEndpoints.discussion(queueId, itemId), {
+        comment,
+        ...(threadId ? { thread_id: threadId } : {}),
+        ...(labelId ? { label_id: labelId } : {}),
+        ...(targetAnnotatorId
+          ? { target_annotator_id: targetAnnotatorId }
+          : {}),
+        mentioned_user_ids: mentionedUserIds,
+      }),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Comment added", { variant: "success" });
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to add comment"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useUpdateDiscussionComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      queueId,
+      itemId,
+      commentId,
+      comment,
+      mentionedUserIds = [],
+    }) =>
+      axios.patch(
+        annotationQueueEndpoints.discussionComment(queueId, itemId, commentId),
+        {
+          comment,
+          mentioned_user_ids: mentionedUserIds,
+        },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Comment updated", { variant: "success" });
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to update comment"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useDeleteDiscussionComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, commentId }) =>
+      axios.delete(
+        annotationQueueEndpoints.discussionComment(queueId, itemId, commentId),
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Comment deleted", { variant: "info" });
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to delete comment"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useResolveDiscussionThread = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, threadId, comment }) =>
+      axios.post(
+        annotationQueueEndpoints.discussionResolve(queueId, itemId, threadId),
+        { ...(comment ? { comment } : {}) },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Thread resolved", { variant: "success" });
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to resolve thread"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useReopenDiscussionThread = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, threadId, comment }) =>
+      axios.post(
+        annotationQueueEndpoints.discussionReopen(queueId, itemId, threadId),
+        { ...(comment ? { comment } : {}) },
+      ),
+    onSuccess: (_, variables) => {
+      enqueueSnackbar("Thread reopened", { variant: "info" });
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to reopen thread"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useToggleDiscussionReaction = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ queueId, itemId, commentId, emoji }) =>
+      axios.post(
+        annotationQueueEndpoints.discussionReaction(queueId, itemId, commentId),
+        { emoji },
+      ),
+    onSuccess: (_, variables) => {
+      invalidateAnnotateDiscussion(
+        queryClient,
+        variables.queueId,
+        variables.itemId,
+      );
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to update reaction"), {
+        variant: "error",
+      });
+    },
+  });
+};
+
 // ---------------------------------------------------------------------------
 // Automation Rules hooks
 // ---------------------------------------------------------------------------
@@ -509,13 +1545,46 @@ export const automationRuleKeys = {
 };
 
 export const useAutomationRules = (queueId, options = {}) => {
-  return useQuery({
-    queryKey: automationRuleKeys.list(queueId),
-    queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/automation-rules/`),
-    select: (d) => extractData(d),
-    enabled: !!queueId,
+  const enabled = !!queueId && (options.enabled ?? true);
+  return useInfiniteQuery({
     ...options,
+    queryKey: automationRuleKeys.list(queueId),
+    queryFn: ({ pageParam = 1, signal }) =>
+      readAutomationRulePage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(annotationQueueEndpoints.automationRules(queueId), {
+            signal: requestSignal,
+            timeout,
+            params: {
+              page: pageParam,
+              limit: AUTOMATION_RULE_LIST_PAGE_SIZE,
+            },
+          }),
+        signal,
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.currentPage < lastPage.totalPages
+        ? lastPage.currentPage + 1
+        : undefined,
+    select: (data) => {
+      const seen = new Set();
+      const results = data.pages.flatMap((page) =>
+        page.results.filter((rule) => {
+          const key = String(rule.id);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      );
+      const lastPage = data.pages[data.pages.length - 1];
+      return {
+        results,
+        count: lastPage.count,
+      };
+    },
+    enabled,
+    retry: false,
   });
 };
 
@@ -523,18 +1592,17 @@ export const useCreateAutomationRule = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ queueId, ...data }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/automation-rules/`,
-        data,
-      ),
+      axios.post(annotationQueueEndpoints.automationRules(queueId), data),
     onSuccess: (_, variables) => {
       enqueueSnackbar("Rule created", { variant: "success" });
       queryClient.invalidateQueries({
         queryKey: automationRuleKeys.all(variables.queueId),
       });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to create rule", { variant: "error" });
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to create rule"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -544,7 +1612,7 @@ export const useUpdateAutomationRule = () => {
   return useMutation({
     mutationFn: ({ queueId, ruleId, ...data }) =>
       axios.patch(
-        `/model-hub/annotation-queues/${queueId}/automation-rules/${ruleId}/`,
+        annotationQueueEndpoints.automationRuleDetail(queueId, ruleId),
         data,
       ),
     onSuccess: (_, variables) => {
@@ -563,7 +1631,7 @@ export const useDeleteAutomationRule = () => {
   return useMutation({
     mutationFn: ({ queueId, ruleId }) =>
       axios.delete(
-        `/model-hub/annotation-queues/${queueId}/automation-rules/${ruleId}/`,
+        annotationQueueEndpoints.automationRuleDetail(queueId, ruleId),
       ),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
@@ -579,25 +1647,63 @@ export const useDeleteAutomationRule = () => {
 export const useEvaluateRule = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, ruleId }) =>
       axios.post(
-        `/model-hub/annotation-queues/${queueId}/automation-rules/${ruleId}/evaluate/`,
+        annotationQueueEndpoints.automationRuleEvaluate(queueId, ruleId),
+        {},
       ),
-    onSuccess: (data, variables) => {
-      const result = data?.data?.result || data?.data;
-      enqueueSnackbar(
-        `Rule evaluated: ${result?.added || 0} items added, ${result?.duplicates || 0} duplicates skipped`,
-        { variant: "success" },
-      );
+    onSuccess: (response, variables) => {
+      // 200 → ran inline (≤ sync threshold). 202 → too large; backend
+      // handed it to a worker and will email creator + queue managers
+      // when done.
+      const status = response?.status;
+      const data = response?.data || {};
+      if (status === 202) {
+        enqueueSnackbar(
+          data.message ||
+            "We're preparing your data — you'll get an email when it's ready.",
+          { variant: "info", autoHideDuration: 6000 },
+        );
+      } else {
+        const result = data.result || data;
+        if (result?.error) {
+          enqueueSnackbar(result.error, { variant: "error" });
+        } else {
+          enqueueSnackbar(
+            `Rule evaluated: ${result?.added || 0} items added, ${result?.duplicates || 0} duplicates skipped`,
+            { variant: "success" },
+          );
+        }
+      }
       queryClient.invalidateQueries({
         queryKey: automationRuleKeys.all(variables.queueId),
       });
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.progress(variables.queueId),
+      });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to evaluate rule", { variant: "error" });
+    onError: (error) => {
+      // 409 = "a run is already in progress" — show a friendly message
+      // instead of a generic failure (the backend guards against duplicate
+      // workflows fired within 30s of each other).
+      if (error?.response?.status === 409 || error?.statusCode === 409) {
+        const msg = extractErrorMessage(
+          error,
+          "A run is already in progress for this rule.",
+        );
+        enqueueSnackbar(typeof msg === "string" ? msg : "Run already running", {
+          variant: "warning",
+        });
+        return;
+      }
+      enqueueSnackbar(extractErrorMessage(error, "Failed to evaluate rule"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -605,10 +1711,7 @@ export const useEvaluateRule = () => {
 export const useExportToDataset = () => {
   return useMutation({
     mutationFn: ({ queueId, ...data }) =>
-      axios.post(
-        `/model-hub/annotation-queues/${queueId}/export-to-dataset/`,
-        data,
-      ),
+      axios.post(annotationQueueEndpoints.exportToDataset(queueId), data),
     onSuccess: (data) => {
       const result = data?.data?.result || data?.data;
       enqueueSnackbar(
@@ -617,9 +1720,40 @@ export const useExportToDataset = () => {
       );
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to export to dataset";
+      const msg = extractErrorMessage(error, "Failed to export to dataset");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+        variant: "error",
+      });
+    },
+  });
+};
+
+export const useDownloadAnnotationQueueExport = () => {
+  return useMutation({
+    mutationFn: ({ queueId, status }) =>
+      axios.get(annotationQueueEndpoints.export(queueId), {
+        params: {
+          export_format: "json",
+          ...(status ? { status } : {}),
+        },
+      }),
+    onSuccess: (response, variables) => {
+      const payload = extractData(response, []);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `annotation-queue-${variables.queueId}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      enqueueSnackbar("Annotation export downloaded", { variant: "success" });
+    },
+    onError: (error) => {
+      enqueueSnackbar(extractErrorMessage(error, "Failed to download export"), {
         variant: "error",
       });
     },
@@ -629,9 +1763,19 @@ export const useExportToDataset = () => {
 export const useQueueAgreement = (queueId, options = {}) => {
   return useQuery({
     queryKey: annotationQueueKeys.agreement(queueId),
-    queryFn: () =>
-      axios.get(`/model-hub/annotation-queues/${queueId}/agreement/`),
+    queryFn: () => axios.get(annotationQueueEndpoints.agreement(queueId)),
     select: (d) => extractData(d),
+    enabled: !!queueId,
+    staleTime: 1000 * 60 * 2,
+    ...options,
+  });
+};
+
+export const useAnnotationQueueExportFields = (queueId, options = {}) => {
+  return useQuery({
+    queryKey: annotationQueueKeys.exportFields(queueId),
+    queryFn: () => axios.get(annotationQueueEndpoints.exportFields(queueId)),
+    select: (d) => extractData(d, { fields: [], default_mapping: [] }),
     enabled: !!queueId,
     staleTime: 1000 * 60 * 2,
     ...options,
@@ -642,9 +1786,7 @@ export const useItemAnnotations = (queueId, itemId, options = {}) => {
   return useQuery({
     queryKey: annotateKeys.annotations(queueId, itemId),
     queryFn: () =>
-      axios.get(
-        `/model-hub/annotation-queues/${queueId}/items/${itemId}/annotations/`,
-      ),
+      axios.get(annotationQueueEndpoints.itemAnnotations(queueId, itemId)),
     select: (d) => extractData(d),
     enabled: !!queueId && !!itemId,
     ...options,
@@ -657,10 +1799,16 @@ export const useItemAnnotations = (queueId, itemId, options = {}) => {
 export const useOrgMembers = (orgId, options = {}) => {
   return useQuery({
     queryKey: ["org-members", orgId],
-    queryFn: () => axios.get(`/model-hub/organizations/${orgId}/users/`),
+    queryFn: () =>
+      axios.get(
+        apiPath("/model-hub/organizations/{organization_id}/users/", {
+          organization_id: orgId,
+        }),
+      ),
     select: (d) => extractData(d, []),
     enabled: !!orgId,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -669,9 +1817,14 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
   return useInfiniteQuery({
     queryKey: ["org-members-infinite", orgId, search],
     queryFn: ({ pageParam }) =>
-      axios.get(`/model-hub/organizations/${orgId}/users/`, {
-        params: { page: pageParam, limit: 30, ...(search && { search }) },
-      }),
+      axios.get(
+        apiPath("/model-hub/organizations/{organization_id}/users/", {
+          organization_id: orgId,
+        }),
+        {
+          params: { page: pageParam, limit: 30, ...(search && { search }) },
+        },
+      ),
     initialPageParam: 1,
     getNextPageParam: (lastPage) => {
       const data = lastPage?.data;
@@ -681,7 +1834,8 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
     },
     select: (d) => d?.pages?.flatMap((p) => p?.data?.results ?? []) ?? [],
     enabled: !!orgId,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -691,26 +1845,43 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
 // ---------------------------------------------------------------------------
 /**
  * Fetch annotation queue items for one or more sources.
- * @param {Array<{sourceType: string, sourceId: string}>} sources
+ *
+ * The same trace / span id can exist in several projects, each with its own
+ * queue items; `projectId` lists only the items of the copy the drawer shows.
+ * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} sources
  */
-export const useQueueItemsForSource = (sources = [], options = {}) => {
+export const useQueueItemsForSource = (
+  sources = [],
+  { projectId, ...options } = {},
+) => {
   // Filter out entries with missing values
   const validSources = sources.filter((s) => s.sourceType && s.sourceId);
 
   return useQuery({
-    queryKey: ["annotation-queues", "for-source", validSources],
+    // The project goes last, so invalidating ["annotation-queues",
+    // "for-source"] also refreshes every project-pinned read.
+    queryKey: projectId
+      ? ["annotation-queues", "for-source", validSources, projectId]
+      : ["annotation-queues", "for-source", validSources],
     queryFn: () =>
-      axios.get("/model-hub/annotation-queues/for-source/", {
+      axios.get(annotationQueueEndpoints.forSource, {
         params: {
           sources: JSON.stringify(
             validSources.map((s) => ({
               source_type: s.sourceType,
               source_id: s.sourceId,
+              span_notes_source_id: s.spanNotesSourceId,
             })),
           ),
+          ...(projectId ? { project_id: projectId } : {}),
         },
       }),
-    select: (d) => extractData(d, []),
+    select: (d) =>
+      selectContractedList(d, {
+        schema: ModelHubAnnotationQueuesForSourceResponse,
+        requiredItemKeys: QUEUE_ENTRY_CONSUMED_FIELDS,
+        label: "annotation-queues/for-source",
+      }),
     enabled: validSources.length > 0,
     staleTime: 1000 * 30,
     ...options,
@@ -721,21 +1892,36 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
 // Default queue hooks
 // ---------------------------------------------------------------------------
 
-export const useGetOrCreateDefaultQueue = () => {
+export const useGetOrCreateDefaultQueue = ({ notifyOnError = true } = {}) => {
   const queryClient = useQueryClient();
   return useMutation({
+    // This hook owns notification policy.  Marking the mutation handled keeps
+    // the app-level MutationCache from stacking a generic "Something went
+    // wrong" toast beside the exact entitlement response.
+    meta: { errorHandled: true },
     mutationFn: ({ projectId, datasetId, agentDefinitionId }) =>
-      axios.post("/model-hub/annotation-queues/get-or-create-default/", {
+      axios.post(annotationQueueEndpoints.getOrCreateDefault, {
         ...(projectId && { project_id: projectId }),
         ...(datasetId && { dataset_id: datasetId }),
         ...(agentDefinitionId && { agent_definition_id: agentDefinitionId }),
       }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      // Backend returns action ∈ {"created", "restored", "fetched"}.
+      // "restored" means a previously archived default queue for this scope
+      // came back online — surface it explicitly so users understand their
+      // old rules + items are now visible again.
+      const result = response?.data?.result || response?.data || {};
+      if (result.action === "restored") {
+        enqueueSnackbar(
+          "Restored your archived default queue. Rules and items are back.",
+          { variant: "info" },
+        );
+      }
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to get default queue";
+      if (!notifyOnError) return;
+      const msg = extractErrorMessage(error, "Failed to get default queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -746,8 +1932,11 @@ export const useGetOrCreateDefaultQueue = () => {
 export const useAddLabelToQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    // This mutation owns its user-facing failure state. Suppress the global
+    // MutationCache toast so one request cannot render two error messages.
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, labelId }) =>
-      axios.post(`/model-hub/annotation-queues/${queueId}/add-label/`, {
+      axios.post(annotationQueueEndpoints.addLabel(queueId), {
         label_id: labelId,
       }),
     onSuccess: () => {
@@ -757,9 +1946,11 @@ export const useAddLabelToQueue = () => {
       });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to add label to queue";
-      enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+      const msg = getSafeActionErrorMessage(
+        error,
+        "Failed to add label to queue",
+      );
+      enqueueSnackbar(msg, {
         variant: "error",
       });
     },
@@ -769,8 +1960,9 @@ export const useAddLabelToQueue = () => {
 export const useRemoveLabelFromQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, labelId }) =>
-      axios.post(`/model-hub/annotation-queues/${queueId}/remove-label/`, {
+      axios.post(annotationQueueEndpoints.removeLabel(queueId), {
         label_id: labelId,
       }),
     onSuccess: () => {
@@ -780,9 +1972,11 @@ export const useRemoveLabelFromQueue = () => {
       });
     },
     onError: (error) => {
-      const msg =
-        error?.result || error?.detail || "Failed to remove label from queue";
-      enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+      const msg = getSafeActionErrorMessage(
+        error,
+        "Failed to remove label from queue",
+      );
+      enqueueSnackbar(msg, {
         variant: "error",
       });
     },

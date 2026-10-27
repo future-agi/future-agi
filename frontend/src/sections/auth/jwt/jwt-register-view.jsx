@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Divider from "@mui/material/Divider";
-import { Box, Button } from "@mui/material";
+import { Box, Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
@@ -22,40 +22,72 @@ import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
-import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
+import { getRecaptchaToken } from "src/utils/recaptchaService";
 import PasswordSentView from "./password-sent-view";
 import { useBoolean } from "src/hooks/use-boolean";
 import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
-import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
+import { getSignupFieldErrors } from "src/utils/errorUtils";
+import { isWorkEmail } from "src/utils/workEmail";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
-  const { register, login, awsRegister } = useAuthContext();
-  const { executeRecaptcha } = useGoogleReCaptcha();
+  const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  // Confirmed read only: the hook falls back to "oss" when deployment-info
+  // errors, and a cloud user must never be shown the password fields.
+  const {
+    isOSS: ossMode,
+    isCloud: cloudMode,
+    isSuccess: modeConfirmed,
+  } = useDeploymentMode();
+  const isOSS = modeConfirmed && ossMode;
+  const requireWorkEmail = modeConfirmed && cloudMode;
+  const postLoginPath = usePostLoginPath();
   const password = useBoolean();
+  const confirmPassword = useBoolean();
   const navigate = useNavigate();
   const { search } = useLocation();
   const [loading, setLoading] = useState(false);
   const queryParams = new URLSearchParams(location.search);
   const onboarding_token = queryParams.get("onboarding_token");
+  const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
   const RegisterSchema = Yup.object().shape({
     fullName: Yup.string().required("Full name required"),
     email: Yup.string()
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
-      .email("Email must be a valid email address"),
-    password: Yup.string().when("$registerSuccess", {
-      is: true,
-      then: (schema) => schema.required("Password is required"),
-      otherwise: (schema) => schema.notRequired(),
-    }),
+      .email("Email must be a valid email address")
+      .test(
+        "work-email",
+        "Please sign up with your work email address",
+        (value) => !requireWorkEmail || isWorkEmail(value),
+      ),
+    // OSS sets the password here at sign-up (name → email → password →
+    // confirm, one screen). Cloud still sets it via an emailed link.
+    password: isOSS
+      ? Yup.string()
+          .required("Password is required")
+          .min(8, "Password must be at least 8 characters")
+      : Yup.string().when("$registerSuccess", {
+          is: true,
+          then: (schema) => schema.required("Password is required"),
+          otherwise: (schema) => schema.notRequired(),
+        }),
+    confirmPassword: isOSS
+      ? Yup.string()
+          .required("Please confirm your password")
+          .oneOf([Yup.ref("password")], "Passwords do not match")
+      : Yup.string().notRequired(),
   });
 
   const locallyExtractUtmParams = useCallback(() => {
@@ -90,7 +122,17 @@ export default function JwtRegisterView() {
     locallyExtractUtmParams();
   }, [locallyExtractUtmParams]);
 
+  // Persist returnTo on an auth action so it survives flows that drop the
+  // URL param (OAuth / SSO round-trip, register → setup-org).
+  const persistReturnTo = () => {
+    const returnTo = new URLSearchParams(search).get("returnTo");
+    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      localStorage.setItem("redirectUrl", returnTo);
+    }
+  };
+
   const handleSsoLogin = () => {
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
@@ -98,6 +140,7 @@ export default function JwtRegisterView() {
     fullName: "",
     email: "",
     password: "",
+    confirmPassword: "",
   };
 
   const methods = useForm({
@@ -106,11 +149,24 @@ export default function JwtRegisterView() {
     context: { registerSuccess },
   });
 
-  const { handleSubmit, watch } = methods;
+  const { handleSubmit, watch, setError } = methods;
   const email = watch("email");
 
   const handleSignup = async (data) => {
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
+    persistReturnTo();
+    // No site key on self-hosted, and the backend skips verification there.
+    let token = "";
+    if (!isOSS) {
+      try {
+        token = await getRecaptchaToken("signup");
+      } catch (err) {
+        enqueueSnackbar({
+          message: "reCAPTCHA not ready. Please try again",
+          variant: "error",
+        });
+        return;
+      }
+    }
     setErrorMsg("");
     try {
       setLoading(true);
@@ -118,27 +174,42 @@ export default function JwtRegisterView() {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
-        "recaptcha-response": token,
+        recaptcha_response: token,
         allow_email: true,
+        // OSS: password chosen on this screen, no emailed set-password link.
+        ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
-      if (onboarding_token) {
-        response = await awsRegister({
-          ...payload,
-          onboarding_token: onboarding_token,
-        });
+      const marketplaceToken = onboarding_gcp_token || onboarding_token;
+      if (marketplaceToken) {
+        response = await marketplaceRegister(
+          onboarding_gcp_token
+            ? endpoints.auth.gcpSignUp
+            : endpoints.auth.awsSignUp,
+          // Both marketplace endpoints reject unknown fields, so send only the
+          // three they declare. company_name, recaptcha and allow_email are
+          // meaningless here: the onboarding token is the proof of purchase.
+          {
+            onboarding_token: marketplaceToken,
+            email: payload.email,
+            full_name: payload.full_name,
+          },
+        );
       } else {
         response = await register(payload);
       }
       if (response?.result) {
-        enqueueSnackbar({
-          variant: "success",
-          message:
-            response?.result?.message ||
-            "Thanks for registering! Please check your email.",
-          autoHideDuration: 3000,
-        });
-        setRegisterSuccess(true);
+        if (!isOSS) {
+          // Cloud: the password is set via an emailed link.
+          enqueueSnackbar({
+            variant: "success",
+            message:
+              response?.result?.message ||
+              "Thanks for registering! Please check your email.",
+            autoHideDuration: 3000,
+          });
+          setRegisterSuccess(true);
+        }
         trackEvent(Events.newUserSignUp, {
           [PropertyName.method]: "email",
           [PropertyName.email]: data.email,
@@ -163,17 +234,65 @@ export default function JwtRegisterView() {
           userId: response?.result?.user_id,
         });
 
-        // Always navigate to login after registration
-        // navigate(paths.auth.jwt.login);
+        if (isOSS) {
+          try {
+            if (!response.result?.access) {
+              throw new Error("signup response carried no access token");
+            }
+            await login({ status: 200, data: response.result });
+            // Stops the auth guard re-firing the conversions sent above.
+            localStorage.setItem("signupProvider", "email");
+
+            if (response.result.new_org) {
+              navigate(paths.auth.jwt.setup_org + search);
+            } else {
+              const returnTo = new URLSearchParams(search).get("returnTo");
+              if (returnTo) localStorage.setItem("initial-render", "done");
+              navigate(returnTo || postLoginPath);
+              localStorage.removeItem("redirectUrl");
+            }
+          } catch (loginErr) {
+            logger.info("OSS auto-login after signup failed", loginErr);
+            enqueueSnackbar({
+              variant: "info",
+              message: "Account created. Please sign in to continue.",
+              autoHideDuration: 4000,
+            });
+            navigate(paths.auth.jwt.login + search);
+          }
+          setLoading(false);
+          return;
+        }
       }
       setLoading(false);
     } catch (error) {
       setLoading(false);
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
+      const signupErrors = getSignupFieldErrors(error);
+      if (signupErrors) {
+        signupErrors.fields.forEach(({ name, message }) =>
+          setError(name, { type: "server", message }, { shouldFocus: true }),
+        );
+        setErrorMsg(signupErrors.message);
+        return;
+      }
+
       setErrorMsg(
         typeof error === "string"
           ? error
-          : error.error || error.detail || error.result,
+          : error.error ||
+              error.detail ||
+              // An object `result` would throw inside the Alert.
+              (typeof error.result === "string"
+                ? error.result
+                : error.result?.error),
       );
     } finally {
       setLoading(false);
@@ -181,7 +300,17 @@ export default function JwtRegisterView() {
   };
 
   const handleLogin = async (data) => {
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
+    persistReturnTo();
+    let token;
+    try {
+      token = await getRecaptchaToken("login");
+    } catch (err) {
+      enqueueSnackbar({
+        message: "reCAPTCHA not ready. Please try again",
+        variant: "error",
+      });
+      return;
+    }
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -191,7 +320,7 @@ export default function JwtRegisterView() {
       const response = await axios.post(endpoints.auth.login, {
         email: data.email,
         password: data.password,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       if (response.status === 200) {
         await login(response);
@@ -219,26 +348,29 @@ export default function JwtRegisterView() {
             : error?.detail || error?.result?.error,
         );
       }
-      logger.error("Login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login failed (expected)", error);
+      } else {
+        logger.error("Login failed", error);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const onSubmit = handleSubmit(async (data) => {
-    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
-      enqueueSnackbar({
-        message: "reCAPTCHA not ready. Please try again",
-        variant: "error",
-      });
-      return;
-    }
     (await registerSuccess) ? handleLogin(data) : handleSignup(data);
   });
 
   const handleServiceProvider = async (provider) => {
+    persistReturnTo();
     try {
-      const response = await axios.get(endpoints.auth.service(provider));
+      const response = await axios.get(
+        endpoints.auth.service(provider, onboarding_gcp_token),
+      );
       logger.debug("Service provider response:", {
         provider,
         response: response.data,
@@ -255,7 +387,14 @@ export default function JwtRegisterView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {
@@ -307,8 +446,60 @@ export default function JwtRegisterView() {
         placeholder="Enter Email address"
         size="small"
         name="email"
-        label="Business Email ID"
+        label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
+      {isOSS && (
+        <>
+          <RHFTextField
+            placeholder="Enter password"
+            size="small"
+            name="password"
+            label="Set Password"
+            type={password.value ? "text" : "password"}
+            autoComplete="new-password"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={password.onToggle} edge="end">
+                    <Iconify
+                      icon={
+                        password.value
+                          ? "solar:eye-bold"
+                          : "solar:eye-closed-bold"
+                      }
+                    />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+          <RHFTextField
+            placeholder="Re-enter password"
+            size="small"
+            name="confirmPassword"
+            label="Confirm Password"
+            type={confirmPassword.value ? "text" : "password"}
+            autoComplete="new-password"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={confirmPassword.onToggle} edge="end">
+                    <Iconify
+                      icon={
+                        confirmPassword.value
+                          ? "solar:eye-bold"
+                          : "solar:eye-closed-bold"
+                      }
+                    />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </>
+      )}
       {!!errorMsg && (
         <Alert
           icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
@@ -372,29 +563,38 @@ export default function JwtRegisterView() {
           Your login credentials have been sent to your email.
         </Alert>
       )} */}
-      <Divider>
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          or
-        </Typography>
-      </Divider>
-      <Stack spacing={1.5}>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
-
-            color: "text.primary",
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("google")}
-          startIcon={<Iconify icon="logos:google-icon" width={20} />}
-        >
-          <Typography fontWeight={"fontWeightMedium"} sx={{ fontSize: "15px" }}>
-            Continue with Google
+      {/* Self-hosted has no OAuth apps and no IdP, so social and SSO sign-up
+          are hidden entirely — only local email/password auth works. */}
+      {!isOSS && (
+        <Divider>
+          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+            or
           </Typography>
-        </Button>
-        {/*
+        </Divider>
+      )}
+      <Stack spacing={1.5}>
+        {!isOSS && (
+          <>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
+
+                color: "text.primary",
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("google")}
+              startIcon={<Iconify icon="logos:google-icon" width={20} />}
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px" }}
+              >
+                Continue with Google
+              </Typography>
+            </Button>
+            {/*
       <Button
         sx={{
           border: "1px solid",
@@ -424,54 +624,58 @@ export default function JwtRegisterView() {
           Continue with Microsoft
         </Typography>
       </Button> */}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("github")}
-          startIcon={
-            <Iconify
-              icon="bi:github"
-              width={24}
-              sx={{ color: "text.primary" }}
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", color: "text.primary" }}
-          >
-            Continue with Github
-          </Typography>
-        </Button>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("github")}
+              startIcon={
+                <Iconify
+                  icon="bi:github"
+                  width={24}
+                  sx={{ color: "text.primary" }}
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", color: "text.primary" }}
+              >
+                Continue with Github
+              </Typography>
+            </Button>
+            {!onboarding_gcp_token && (
+              <Button
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 0.5,
 
-            height: 44,
-            color: "text.primary",
-          }}
-          onClick={handleSsoLogin}
-          startIcon={
-            <SvgColor
-              sx={{ marginLeft: 2 }}
-              src="/assets/icons/ic_sso_saml.svg"
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", marginRight: -1.5 }}
-          >
-            Continue with SSO/SAML
-          </Typography>
-        </Button>
+                  height: 44,
+                  color: "text.primary",
+                }}
+                onClick={handleSsoLogin}
+                startIcon={
+                  <SvgColor
+                    sx={{ marginLeft: 2 }}
+                    src="/assets/icons/ic_sso_saml.svg"
+                  />
+                }
+              >
+                <Typography
+                  fontWeight={"fontWeightMedium"}
+                  sx={{ fontSize: "15px", marginRight: -1.5 }}
+                >
+                  Continue with SSO/SAML
+                </Typography>
+              </Button>
+            )}
+          </>
+        )}
 
         <Typography
           fontSize={"15px"}

@@ -122,7 +122,9 @@ export default function TwoFactorVerifyView() {
     // login() expects a response-shaped object with { status, data }
     await login({ status: 200, data });
 
+    localStorage.setItem("initial-render", "done");
     router.push(postLoginPath);
+    localStorage.removeItem("redirectUrl");
   };
 
   // --------------- TOTP verification ---------------

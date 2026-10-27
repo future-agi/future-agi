@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Union
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -22,6 +22,23 @@ from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
 )
+from simulate.services.scoring_status import (
+    CALL_SCORING_OPEN_Q,
+    SCORING_SWEEP_BATCH_SIZE,
+    SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    SETTLE_FROM_STATUSES,
+    SWEEP_COUNT_KEYS,
+    SWEEP_RUN_STATUSES,
+    TRANSPORT_RUN_STATUSES,
+    close_due_scoring,
+    live_and_runnable_eval_names,
+    needs_write,
+    scoring_due,
+    scoring_input_from_values,
+    scoring_values,
+    settle_run,
+    settleable_run_ids,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -29,12 +46,11 @@ from simulate.services.test_executor import (
 from simulate.utils.chat_simulation import (
     _aggregate_chat_metrics,
     _calculate_tokens_from_messages,
-    _swap_user_assistant_roles,
 )
 from simulate.utils.websocket_notifications import notify_simulation_update
+from tfc.temporal.drop_in import temporal_activity
 
 logger = structlog.get_logger(__name__)
-from tfc.temporal.drop_in import temporal_activity
 
 
 @temporal_activity(
@@ -45,12 +61,12 @@ def store_chat_messages(
     call_execution_id: str,
     organization_id: str,
     workspace_id: str,
-    input_messages: List[Union[ChatMessage, dict]],
-    output_messages: List[Union[ChatMessage, dict]],
+    input_messages: list[ChatMessage | dict],
+    output_messages: list[ChatMessage | dict],
     chat_ended: bool,
     chat_session_id: str,
     create_timestamp: datetime,
-    metrics: Optional[dict[str, Optional[float | int]]] = None,
+    metrics: dict[str, float | int | None] | None = None,
 ):
     try:
         organization = Organization.objects.get(id=organization_id)
@@ -73,12 +89,12 @@ def store_chat_messages(
         # - input_messages (from agent via SDK) come as role="user" (SDK converts assistant->user)
         # - output_messages (from simulator) are role="user" (simulator is the customer)
         # So we extract ALL content, not filtering by role.
-        input_messages_content: List[str] = [
+        input_messages_content: list[str] = [
             (msg.content if hasattr(msg, "content") else msg.get("content", ""))
             for msg in input_messages
             if (msg.content if hasattr(msg, "content") else msg.get("content"))
         ]
-        output_messages_content: List[str] = [
+        output_messages_content: list[str] = [
             (msg.content if hasattr(msg, "content") else msg.get("content", ""))
             for msg in output_messages
             if (msg.content if hasattr(msg, "content") else msg.get("content"))
@@ -218,16 +234,12 @@ def store_chat_messages(
 
             # run evals for this call exec
             call_metadata = call_execution.call_metadata or {}
+            should_start_evals = False
 
             if not call_metadata.get("eval_started"):
                 call_metadata["eval_started"] = True
                 call_execution.call_metadata = call_metadata
-                _run_simulate_evaluations_task.apply_async(
-                    args=(str(call_execution.id),)
-                )
-                logger.info(
-                    f"Started evaluations for call after completion {call_execution.id}"
-                )
+                should_start_evals = True
 
             call_execution.save(
                 update_fields=[
@@ -240,12 +252,77 @@ def store_chat_messages(
                 ]
             )
 
+            if should_start_evals:
+                try:
+                    _run_simulate_evaluations_task.apply_async(
+                        args=(str(call_execution.id),)
+                    )
+                    logger.info(
+                        f"Started evaluations for call after completion {call_execution.id}"
+                    )
+                except Exception as dispatch_error:
+                    call_metadata = call_execution.call_metadata or {}
+                    call_metadata["eval_started"] = False
+                    call_metadata["eval_dispatch_failed"] = str(dispatch_error)
+                    call_execution.call_metadata = call_metadata
+                    call_execution.save(update_fields=["call_metadata"])
+                    logger.exception(
+                        "chat_eval_dispatch_failed",
+                        call_execution_id=str(call_execution.id),
+                        error=str(dispatch_error),
+                    )
+
             logger.info(f"CallExecution {call_execution.id} marked as COMPLETED")
 
             # Trigger test execution monitoring to update TestExecution status
-            monitor_test_execution_for_chat.apply_async(
-                args=(str(call_execution.test_execution_id),)
-            )
+            try:
+                monitor_test_execution_for_chat.apply_async(
+                    args=(str(call_execution.test_execution_id),)
+                )
+            except Exception as dispatch_error:
+                monitor_original = getattr(
+                    monitor_test_execution_for_chat, "_original_func", None
+                )
+                if callable(monitor_original):
+                    try:
+                        monitor_original(str(call_execution.test_execution_id))
+                    except Exception as monitor_error:
+                        test_execution = call_execution.test_execution
+                        test_execution.execution_metadata = (
+                            test_execution.execution_metadata or {}
+                        )
+                        test_execution.execution_metadata[
+                            "chat_monitor_dispatch_failed"
+                        ] = str(monitor_error)
+                        test_execution.picked_up_by_executor = False
+                        test_execution.save(
+                            update_fields=[
+                                "execution_metadata",
+                                "picked_up_by_executor",
+                            ]
+                        )
+                        logger.exception(
+                            "chat_monitor_sync_fallback_failed",
+                            test_execution_id=str(call_execution.test_execution_id),
+                            error=str(monitor_error),
+                        )
+                else:
+                    test_execution = call_execution.test_execution
+                    test_execution.execution_metadata = (
+                        test_execution.execution_metadata or {}
+                    )
+                    test_execution.execution_metadata[
+                        "chat_monitor_dispatch_failed"
+                    ] = str(dispatch_error)
+                    test_execution.picked_up_by_executor = False
+                    test_execution.save(
+                        update_fields=["execution_metadata", "picked_up_by_executor"]
+                    )
+                logger.exception(
+                    "chat_monitor_dispatch_failed_falling_back_sync",
+                    test_execution_id=str(call_execution.test_execution_id),
+                    error=str(dispatch_error),
+                )
 
         return True
     except Exception as e:
@@ -306,6 +383,14 @@ def monitor_test_execution_for_chat(test_execution_id: str):
     try:
         test_execution = TestExecution.objects.get(id=test_execution_id)
 
+        # A stopped run is finished by the settle once its scoring is closed,
+        # never moved from here.
+        if test_execution.status in (
+            TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.CANCELLING,
+        ):
+            return None
+
         call_executions = CallExecution.objects.filter(
             test_execution=test_execution
         ).exclude(status=CallExecution.CallStatus.CANCELLED)
@@ -330,7 +415,6 @@ def monitor_test_execution_for_chat(test_execution_id: str):
 
             return
 
-        is_evaluating = False
         all_terminal = True
         has_any_completed = False
         has_any_failed = False
@@ -343,62 +427,46 @@ def monitor_test_execution_for_chat(test_execution_id: str):
             ]:
                 all_terminal = False
 
-            call_metadata = call_execution.call_metadata or {}
-
             if call_execution.status == CallExecution.CallStatus.FAILED:
                 has_any_failed = True
 
             if call_execution.status == CallExecution.CallStatus.COMPLETED:
                 has_any_completed = True
 
-                eval_started = call_metadata.get("eval_started")
-                eval_completed = call_metadata.get("eval_completed")
-
-                if eval_started and not eval_completed:
-                    is_evaluating = True
-                    all_terminal = False
-
-                if not eval_started:
-                    # Evals haven't started yet for this completed call
-                    all_terminal = False
-
-        status_changed = False
-
-        if is_evaluating and not all_terminal:
-            test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-            test_execution.save(update_fields=["status"])
-            status_changed = True
+        if all_terminal and has_any_completed:
+            # Every call has left transport, but scoring may still be open: the
+            # run is evaluating until the native settle says it is done.
+            moved = TestExecution.objects.filter(
+                id=test_execution.id, status__in=TRANSPORT_RUN_STATUSES
+            ).update(status=TestExecution.ExecutionStatus.EVALUATING)
+            settle_run(test_execution.id)
+            if moved:
+                notify_simulation_update(
+                    organization_id=test_execution.run_test.organization_id,
+                    run_test_id=str(test_execution.run_test_id),
+                    test_execution_id=str(test_execution.id),
+                )
 
         # All calls reached a terminal state but none completed successfully
         elif all_terminal and not has_any_completed and has_any_failed:
-            test_execution.status = TestExecution.ExecutionStatus.FAILED
-            test_execution.save(update_fields=["status"])
-            status_changed = True
-            logger.info(
-                f"Test execution {test_execution.id} marked as FAILED (all calls failed)"
-            )
+            # Only a run still open takes this verdict: the status read above
+            # may be stale, and a run since stopped or finished must not be
+            # overwritten. A scoring run counts as open: with no completed
+            # call left the settle can never complete it, and it would keep
+            # one of the dispatcher's ten slots for good.
+            moved = TestExecution.objects.filter(
+                id=test_execution.id, status__in=SETTLE_FROM_STATUSES
+            ).update(status=TestExecution.ExecutionStatus.FAILED)
+            if moved:
+                logger.info(
+                    f"Test execution {test_execution.id} marked as FAILED (all calls failed)"
+                )
+                notify_simulation_update(
+                    organization_id=test_execution.run_test.organization_id,
+                    run_test_id=str(test_execution.run_test_id),
+                    test_execution_id=str(test_execution.id),
+                )
 
-        elif all_terminal and has_any_completed:
-            test_execution.status = TestExecution.ExecutionStatus.COMPLETED
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
-            )
-            test_execution.save(
-                update_fields=["status", "eval_explanation_summary_status"]
-            )
-            status_changed = True
-
-            # Lazy import to avoid circular dependency
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-            run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-
-        if status_changed:
-            notify_simulation_update(
-                organization_id=test_execution.run_test.organization_id,
-                run_test_id=str(test_execution.run_test_id),
-                test_execution_id=str(test_execution.id),
-            )
         else:
             logger.info(
                 f"Test execution {test_execution.id} set to {test_execution.status} status"
@@ -438,7 +506,7 @@ def monitor_chat_timeout_call_executions():
                 .values_list("id", flat=True)[:50]
             )
 
-            updated = CallExecution.objects.filter(id__in=ids).update(
+            CallExecution.objects.filter(id__in=ids).update(
                 status=CallExecution.CallStatus.FAILED,
                 completed_at=now,
                 updated_at=now,  # because .update() won't auto-update updated_at
@@ -448,6 +516,127 @@ def monitor_chat_timeout_call_executions():
     except Exception as e:
         logger.exception(f"Error monitoring chat call executions: {str(e)}")
         return
+
+
+_SWEEP_CALL_FIELDS = (
+    "id",
+    "status",
+    "call_metadata",
+    "eval_outputs",
+    "conversation_metrics_data",
+    "overall_score",
+    "completed_at",
+    "ended_at",
+    "created_at",
+    "test_execution",
+    "test_execution__status",
+    "test_execution__run_test",
+)
+
+
+def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
+    """One pass of the scoring sweeper at ``now``; returns the sweep counts."""
+    counts = dict.fromkeys(SWEEP_COUNT_KEYS, 0)
+    # Runs are chosen by status alone, with no age limit, so a run stuck
+    # since any date is still reached.
+    open_calls = CallExecution.objects.filter(
+        CALL_SCORING_OPEN_Q,
+        test_execution__status__in=SWEEP_RUN_STATUSES,
+        status=CallExecution.CallStatus.COMPLETED,
+        deleted=False,
+    )
+    rows = list(
+        scoring_values(
+            open_calls.order_by("created_at", "id"),
+            "test_execution__status",
+            "test_execution__run_test_id",
+        )
+    )
+    counts["scanned"] = len(rows)
+    live_names, names = live_and_runnable_eval_names(
+        {row["test_execution__run_test_id"] for row in rows}
+    )
+    # Due calls are picked unlocked, before the batch cut, so open calls that
+    # are not due never take a slot from calls that are.
+    due_ids = []
+    for row in rows:
+        inp = scoring_input_from_values(row)
+        due = scoring_due(
+            inp,
+            runnable_ids=names.get(row["test_execution__run_test_id"], {}).keys(),
+            live_ids=live_names.get(row["test_execution__run_test_id"], {}).keys(),
+            cancelled=row["test_execution__status"] == "cancelling",
+            now=now,
+        )
+        if needs_write(inp, due):
+            due_ids.append(row["id"])
+    counts["due"] = len(due_ids)
+    if due_ids:
+        with transaction.atomic():
+            locked = (
+                open_calls.select_for_update(skip_locked=True, of=("self",))
+                .select_related("test_execution")
+                .filter(id__in=due_ids[:SCORING_SWEEP_BATCH_SIZE])
+                .only(*_SWEEP_CALL_FIELDS)
+                .order_by("created_at", "id")
+            )
+            for call in locked:
+                try:
+                    # A savepoint per row, so one bad row cannot sink the
+                    # batch; the locked copy is decided again, not trusted.
+                    with transaction.atomic():
+                        run_test_id = call.test_execution.run_test_id
+                        key = close_due_scoring(
+                            call,
+                            names.get(run_test_id, {}),
+                            now,
+                            live_names.get(run_test_id, {}),
+                        )
+                except Exception:
+                    counts["errors"] += 1
+                    logger.exception(
+                        "simulate_scoring_sweep_call_failed",
+                        call_execution_id=str(call.id),
+                    )
+                    continue
+                if key:
+                    counts[key] += 1
+    # Retries every settle that was missed: two calls closing in parallel,
+    # a settle that swallowed an error, or this pass dying after its commit.
+    # One run that raises must not starve the runs after it.
+    for test_execution_id in list(settleable_run_ids()[:SCORING_SWEEP_BATCH_SIZE]):
+        try:
+            # Strict, so a settle that fails is counted and logged here
+            # instead of being swallowed, and only a run it moved is counted.
+            moved = settle_run(test_execution_id, strict=True)
+        except Exception:
+            counts["errors"] += 1
+            logger.exception(
+                "simulate_scoring_sweep_settle_failed",
+                test_execution_id=str(test_execution_id),
+            )
+            continue
+        if moved:
+            counts["settled"] += 1
+    logger.info("simulate_scoring_sweep_finished", **counts)
+    return counts
+
+
+# No retry: the body catches its own errors, so only a pass that outlives its
+# time limit would be retried, and that retry would start beside the thread of
+# the pass it replaces. The next minute's pass picks the work up instead.
+@temporal_activity(
+    time_limit=SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    max_retries=0,
+    queue="tasks_s",
+)
+def sweep_stuck_scoring() -> dict[str, int]:
+    """Time out stuck eval and CSAT scoring in evaluating and cancelling runs."""
+    try:
+        return _sweep_stuck_scoring_pass(timezone.now())
+    except Exception:
+        logger.exception("simulate_scoring_sweep_failed")
+        return dict.fromkeys(SWEEP_COUNT_KEYS, 0)
 
 
 @temporal_activity(
@@ -466,7 +655,6 @@ def process_prompt_based_chat_simulations():
     For each CallExecution, it initiates the chat and runs the full conversation.
     """
     # Lazy import: simulate.services.chat_sim imports from this module (circular)
-    from simulate.services.chat_sim import initiate_chat, run_prompt_based_conversation
 
     try:
         # Per-organisation concurrency limit.  Each org uses its own LLM API
@@ -572,12 +760,15 @@ def run_single_prompt_chat(call_execution_id: str):
         except ImportError:
             check_usage = None
 
-        usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
-        if not usage_check.allowed:
-            call_execution.status = CallExecution.CallStatus.FAILED
-            call_execution.ended_reason = usage_check.reason or "Usage limit exceeded"
-            call_execution.save(update_fields=["status", "ended_reason"])
-            return False
+        if check_usage is not None and BillingEventType is not None:
+            usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
+            if not usage_check.allowed:
+                call_execution.status = CallExecution.CallStatus.FAILED
+                call_execution.ended_reason = (
+                    usage_check.reason or "Usage limit exceeded"
+                )
+                call_execution.save(update_fields=["status", "ended_reason"])
+                return False
 
         logger.info(
             "prompt_chat_simulation_starting",
@@ -604,6 +795,7 @@ def run_single_prompt_chat(call_execution_id: str):
             from django.db.models import Sum
 
             from simulate.models import ChatMessageModel
+
             try:
                 from ee.usage.schemas.events import UsageEvent
             except ImportError:

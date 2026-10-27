@@ -24,7 +24,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.17'
+          node-version: '22.18'
 
       - name: Install dependencies
         run: yarn
@@ -33,6 +33,7 @@ jobs:
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=production
+          VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_HOST_API=${{ secrets.PROD_VITE_HOST_API }}
           VITE_ASSETS_API=${{ secrets.PROD_VITE_ASSETS_API }}
           VITE_GENERATE_LINK=${{ secrets.PROD_VITE_GENERATE_LINK }}
@@ -71,9 +72,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.PROD_AWS_REGION }}
 
-      - name: Sync dist/ to S3
+      # Hashed assets (Vite emits content-hashed filenames in /assets/) —
+      # safe to cache forever. The --delete flag here cleans up old hashes
+      # left behind by previous deploys.
+      - name: Upload hashed assets with long-lived immutable cache
         run: |
-          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/ --delete
+          aws s3 sync dist/assets/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/assets/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
+
+      # Non-hashed files (index.html, config.js, favicons) — must NOT be
+      # cached. Browsers/CDN must re-validate on every request so a new
+      # deploy is picked up immediately. --exclude "assets/*" prevents
+      # this step from re-uploading or deleting hashed assets.
+      - name: Upload root files with no-cache
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/ \
+            --delete \
+            --exclude "assets/*" \
+            --cache-control "no-cache, must-revalidate"
 
       - name: Invalidate CloudFront cache
         run: |

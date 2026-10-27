@@ -14,9 +14,13 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import requests
+import structlog
 
 from agentic_eval.core.utils.model_config import LiteLlmProvider
+from agentic_eval.core_evals.fi_utils.exceptions import MediaNotAccessibleError
 from tfc.utils.storage import download_image_from_url
+
+logger = structlog.get_logger(__name__)
 
 ContentBlock = Dict[str, Any]
 Message = Dict[str, Any]
@@ -439,10 +443,17 @@ def build_media_content_block(
                 # Uses download_image_from_url which validates with Pillow.
                 try:
                     img_bytes = download_image_from_url(img_str)
-                    mime = mimetypes.guess_type(img_str)[0] or "image/jpeg"
-                    url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
-                except Exception:
-                    url = img_str
+                except Exception as e:
+                    logger.warning(
+                        "media_download_failed",
+                        key=key,
+                        url=img_str[:200],
+                        media_type="image",
+                        error=str(e),
+                    )
+                    raise MediaNotAccessibleError(key=key) from e
+                mime = mimetypes.guess_type(img_str)[0] or "image/jpeg"
+                url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
             else:
                 url = standardize_to_data_uri(img, "image/jpeg")
             tag = f"{key}_{img_num}" if len(image_inputs) > 1 else key
@@ -463,7 +474,17 @@ def build_media_content_block(
         elif val_str.startswith(("http://", "https://")):
             from agentic_eval.core.llm.audio_utils import download_audio_url_to_base64
 
-            b64_data, audio_fmt = download_audio_url_to_base64(val_str)
+            try:
+                b64_data, audio_fmt = download_audio_url_to_base64(val_str)
+            except Exception as e:
+                logger.warning(
+                    "media_download_failed",
+                    key=key,
+                    url=val_str[:200],
+                    media_type="audio",
+                    error=str(e),
+                )
+                raise MediaNotAccessibleError(key=key) from e
             data_uri = f"data:audio/{audio_fmt};base64,{b64_data}"
         else:
             data_uri = standardize_to_data_uri(value, "audio/mp3")
@@ -568,11 +589,12 @@ def detect_and_build_media_blocks(
             elif str(media_type).lower() == "file":
                 val = remaining.get(key, "") if isinstance(remaining, dict) else ""
                 if isinstance(val, str) and val.startswith(("http://", "https://")):
-                    raise ValueError(
-                        f"Media file is not accessible for '{key}'. "
-                        f"The file could not be downloaded — please ensure "
-                        f"the URL is valid and accessible."
+                    logger.warning(
+                        "media_unreachable_stage2",
+                        key=key,
+                        url=val[:200],
                     )
+                    raise MediaNotAccessibleError(key=key)
 
     # Build content blocks from detected types
     media_blocks: List[ContentBlock] = []
@@ -591,3 +613,141 @@ def detect_and_build_media_blocks(
                 media_blocks.append({"type": "image_url", "image_url": {"url": url.strip()}})
 
     return media_blocks, key_media_types
+
+
+def response_format_schema(
+    output_type: str,
+    choices: list[str] | None = None,
+    multi_choice: bool = False,
+) -> dict:
+    """Build the json_schema response_format dict for the eval LLM judge."""
+    if output_type in ("score", "numeric"):
+        result_schema: dict = {"type": "number"}
+    elif output_type == "Pass/Fail":
+        result_schema = {"type": "string", "enum": ["Pass", "Fail"]}
+    elif output_type == "choices" and choices:
+        if multi_choice:
+            # NOTE: minItems / uniqueItems are NOT supported by OpenAI's
+            # structured-outputs strict mode (returns 400). Keep the
+            # array shape with an enum-constrained item type only;
+            # "at least one, no duplicates" is enforced downstream.
+            result_schema = {
+                "type": "array",
+                "items": {"type": "string", "enum": list(choices)},
+            }
+        else:
+            result_schema = {"type": "string", "enum": list(choices)}
+    else:
+        result_schema = {"type": "string"}
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "eval_result",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "result": result_schema,
+                    "explanation": {"type": "string"},
+                },
+                "required": ["result", "explanation"],
+            },
+        },
+    }
+
+
+def choices_judge_instructions(
+    choices: list[str],
+    multi_choice: bool = False,
+    score_hint: str = "",
+) -> str:
+    """Choices-typed judge instructions shared across evaluators.
+
+    Returns the system-prompt block describing the choices contract:
+    selection wording, JSON object structure, and an optional score hint.
+    Identical across AgentEvaluator and CustomPromptEvaluator so both speak
+    the same language to the model.
+    """
+    choices_str = ", ".join(f"'{c}'" for c in choices)
+    if multi_choice:
+        return (
+            f"You MUST select ONE OR MORE of these choices: {choices_str}\n"
+            "Do NOT make up new choices. Do NOT return a number. "
+            "Return ONLY values from the listed choices.\n"
+            "Select every choice that applies — multiple choices are "
+            "allowed when more than one is supported by the input.\n"
+            f"{score_hint}"
+            "You MUST return a JSON object with the following fields:\n"
+            f"- result: An ARRAY of strings. Each element MUST be one of: "
+            f"{choices_str}. No other values allowed. Do not repeat the same choice.\n"
+            "- explanation: An explanation of why you selected those choices.\n"
+        )
+    return (
+        f"You MUST select EXACTLY ONE of these choices: {choices_str}\n"
+        "Do NOT make up new choices. Do NOT return a number. "
+        "Return ONLY one of the listed choices.\n"
+        f"{score_hint}"
+        "You MUST return a JSON object with the following fields:\n"
+        f"- result: MUST be exactly one of: {choices_str}. No other value is allowed.\n"
+        "- explanation: An explanation of why you selected this choice.\n"
+    )
+
+
+def is_valid_choices_result(
+    result_value,
+    choices: list[str],
+    multi_choice: bool = False,
+) -> bool:
+    """True if ``result_value`` is a recognised verdict for the eval's choices."""
+    valid = {str(c).strip().lower() for c in (choices or [])}
+    if multi_choice and isinstance(result_value, list):
+        actual_list = [str(c).strip().lower() for c in result_value]
+        return bool(actual_list) and all(a in valid for a in actual_list)
+    return str(result_value).strip().lower() in valid
+
+
+def compute_choices_failure(
+    result_value,
+    choices: list[str],
+    choice_scores: dict | None,
+    pass_threshold: float,
+    multi_choice: bool = False,
+) -> bool:
+    """Pass/fail decision for a ``choices``-typed eval verdict.
+
+    With ``choice_scores``: looks up each picked label and compares against
+    ``pass_threshold`` (mean over picks for multi_choice). Without: ordinal
+    convention — the first declared choice is the pass label.
+    """
+    def _norm(s) -> str:
+        return str(s).strip().lower()
+
+    if multi_choice and isinstance(result_value, list):
+        actual_list = [_norm(c) for c in result_value]
+        if choice_scores:
+            scores_lower = {_norm(k): v for k, v in choice_scores.items()}
+            picked: list[float] = []
+            for a in actual_list:
+                v = scores_lower.get(a)
+                if v is not None:
+                    try:
+                        picked.append(float(v))
+                    except (ValueError, TypeError):
+                        pass
+            if not picked:
+                return True
+            return (sum(picked) / len(picked)) < pass_threshold
+        return any(a != _norm(choices[0]) for a in actual_list)
+
+    actual = _norm(result_value)
+    if choice_scores:
+        for key, val in choice_scores.items():
+            if _norm(key) == actual:
+                try:
+                    return float(val) < pass_threshold
+                except (ValueError, TypeError):
+                    return True
+        return True
+    return actual != _norm(choices[0])
+
+

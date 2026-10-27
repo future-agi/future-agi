@@ -23,6 +23,7 @@ import { useTestRunsSelectedCount } from "../common";
 import { useTestRunSdkStoreShallow } from "./state";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { SIMULATION_TYPE } from "src/components/run-tests/common";
+import { SCENARIO_STATUS } from "src/pages/dashboard/scenarios/common";
 
 const ScenarioPopover = lazy(() => import("./ScenarioPopover"));
 const TestRunsSelection = lazy(() => import("./TestRunsSelection"));
@@ -71,7 +72,7 @@ const TestRunHeader = () => {
       axios.post(
         endpoint,
         isPromptSimulation
-          ? undefined
+          ? {}
           : {
               select_all: false,
               scenario_ids: selectedScenarios,
@@ -88,9 +89,20 @@ const TestRunHeader = () => {
   const isAgentDefinitionDeleted =
     !isPromptSimulation &&
     !(testData?.agent_definition ?? testData?.agentDefinition);
+
+  const selectedScenarioIds = new Set(selectedScenarios || []);
+  const scenarioDetails = testData?.scenarios_detail ?? [];
+  const hasIncompleteScenario = scenarioDetails.some(
+    (s) =>
+      selectedScenarioIds.has(s.id) && s.status !== SCENARIO_STATUS.COMPLETED,
+  );
+  const hasEmptyScenario = scenarioDetails.some(
+    (s) => selectedScenarioIds.has(s.id) && (s.dataset_rows || 0) === 0,
+  );
   const agentType = isPromptSimulation
     ? AGENT_TYPES.CHAT
-    : testData?.agent_version?.configuration_snapshot?.agent_type ??
+    : testData?.agent_definition_detail?.agent_type ??
+      testData?.agent_version?.configuration_snapshot?.agent_type ??
       testData?.agentVersion?.configurationSnapshot?.agentType;
 
   return (
@@ -176,7 +188,7 @@ const TestRunHeader = () => {
               simulationType={agentType}
             />
           </Suspense>
-          <CustomTooltip
+          {/* <CustomTooltip
             show
             title="In beta, send early access request"
             size="small"
@@ -222,13 +234,22 @@ const TestRunHeader = () => {
                 Github Actions
               </Button>
             </Box>
-          </CustomTooltip>
+          </CustomTooltip> */}
           <CustomTooltip
-            show={isAgentDefinitionDeleted || selectedScenarios.length === 0}
+            show={
+              isAgentDefinitionDeleted ||
+              selectedScenarios.length === 0 ||
+              hasEmptyScenario ||
+              hasIncompleteScenario
+            }
             title={
               isAgentDefinitionDeleted
                 ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
-                : "Select atleast one scenario to run test"
+                : selectedScenarios.length === 0
+                  ? "Select atleast one scenario to run test"
+                  : hasEmptyScenario
+                    ? "Some selected scenarios have no datapoints. Remove them from the selection to run."
+                    : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
             }
             size="small"
             arrow
@@ -261,7 +282,9 @@ const TestRunHeader = () => {
                     PERMISSIONS.RUN_SIMULATION_TEST
                   ][role] ||
                   selectedScenarios.length === 0 ||
-                  isAgentDefinitionDeleted
+                  isAgentDefinitionDeleted ||
+                  hasEmptyScenario ||
+                  hasIncompleteScenario
                 }
               >
                 Run New Simulation

@@ -27,7 +27,10 @@ config:
                 return [float(x.strip()) for x in v.split(",") if x.strip()]
             return [float(v)]
         yp, yt = _p(kwargs.get("output", output)), _p(kwargs.get("expected", expected))
-        if len(yp) != len(yt) or len(yt) < 2: return {"score": 0.0, "reason": "Invalid input"}
+        if len(yp) != len(yt):
+            return {"score": 0.0, "reason": f"R2 score requires the same number of predicted and actual values; received {len(yp)} predicted and {len(yt)} actual values."}
+        if len(yt) < 2:
+            return {"score": 0.0, "reason": f"R2 score requires at least 2 predicted/actual value pairs; received {len(yt)} pair."}
         m = sum(yt)/len(yt)
         ss_res = sum((a-b)**2 for a,b in zip(yt,yp))
         ss_tot = sum((a-m)**2 for a in yt)

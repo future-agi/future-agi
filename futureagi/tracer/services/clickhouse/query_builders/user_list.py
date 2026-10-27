@@ -1,0 +1,3103 @@
+"""ClickHouse query builder for Observe end-user list and detail metrics."""
+
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any, Literal, NamedTuple
+
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.list_cursor import canonical_filter_leaf
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    _unix_microseconds,
+)
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    EvalFilterMetadata,
+)
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    bounded_survivor_map_subquery,
+    literal_survivor_map_subquery,
+    resolved_id_expr,
+    survivor_map_subquery,
+)
+
+# Native span dimensions the Users table has no per-user aggregate for.
+# ``SYSTEM_METRIC_MAP`` resolves each of these to a physical ``spans`` column,
+# and none of them has an ``OUTPUT_FILTER_MAP`` entry, so a Users filter on one
+# is answered from the user's own spans — the same any-span population the
+# users graph aggregates — instead of being looked up in the span attribute
+# maps, where a native column has no key and every user reads NULL.
+USER_NATIVE_SPAN_DIMENSIONS: dict[str, str] = {
+    column_id: ClickHouseFilterBuilder.SYSTEM_METRIC_MAP[column_id]
+    for column_id in (
+        "status",
+        "model",
+        "provider",
+        "observation_type",
+        "span_kind",
+        "node_type",
+        "name",
+        "span_name",
+        "trace_name",
+    )
+}
+
+
+class MembershipTerm(NamedTuple):
+    """One ``countIf(alias) <comparison>`` term of a user membership condition.
+
+    ``> 0`` is an existence term, ``= 0`` an absence term
+    (``exact_graph_reads.compile_user_membership_leaf``).
+    """
+
+    alias: str
+    predicate: str
+    comparison: Literal["> 0", "= 0"]
+
+
+class UnsupportedBoundedUserListQuery(ValueError):
+    """Raised when an exact user page cannot use the bounded query path."""
+
+
+@dataclass(frozen=True)
+class MatchingActivityWitness:
+    """The one physical-row predicate the matching-activity walk discovers on.
+
+    ``family`` is ``raw`` (a span-attribute leaf, served by the deployed key
+    and value blooms) or ``native`` (a native span-dimension leaf, the users
+    graph's own per-span flag). ``sql``/``params`` are the predicate every
+    slice, instant, existence and estimate statement puts in ``WHERE``. A raw
+    witness names its attribute ``key`` and ``kind`` (``text``, ``number`` or
+    ``boolean``); a native one the filter index of its leaf (``leaf_index``)
+    and its column (``key``, display only). ``index_pruned`` says whether a skip index
+    is known to serve the predicate, so an empty slice costs only its fixed
+    overhead; it is False for a native witness (only ``idx_status`` serves one
+    of them, and not by design).
+
+    ``identity`` is the leaf as the signed cursor binds it
+    (``canonical_filter_leaf``): the same for every request a cursor admits,
+    whatever position the leaf holds in it. ``leaf_index`` is only the
+    namespace of the leaf's parameters in this request. The choice among
+    witnesses ranks on ``identity``, never on position, and the walk binds
+    the chosen one into its cursor (``users_matching_walk``). It is left out
+    of equality: the predicate is what a witness is.
+    """
+
+    family: Literal["raw", "native"]
+    key: str
+    kind: Literal["text", "number", "boolean", "native"]
+    sql: str
+    params: dict[str, Any] = field(default_factory=dict)
+    leaf_index: int | None = None
+    index_pruned: bool = True
+    identity: str = field(default="", compare=False)
+
+
+# How selective a walk witness is expected to be, most selective first
+# (``witness_selectivity_rank``). A witness the page's matches are rare
+# under, but that matches most users, finds the same users again in every
+# slice: each request certifies them, rejects them and publishes nothing, for
+# as many requests as the window has slices. The static rank guesses the
+# rarest leaf from what it asks for, without reading anything:
+#
+# 0  a raw text equality/``in``: a value of a key the user chose, served by
+#    the key and value blooms;
+# 1  ``status`` equal to ERROR alone: errors are the exception by definition;
+# 2  a span or trace name: one per operation, the widest native vocabulary;
+# 3  a model;
+# 4  a provider or an observation type (a handful of values), and a raw
+#    number or boolean (a range, or one of two values);
+# 5  a native pattern (``contains``, ``starts_with``, ``ends_with``);
+# 6  ``status`` with OK or UNSET among its values: what almost every span is;
+# 7  a native negation or null test: every span without the named value,
+#    or with any value at all.
+#
+# The rank is a guess: a common raw value (``env = production``) outranks a
+# rare ``status = ERROR``. So it only orders the walk's measured choice, which
+# falls back to it (``users_matching_walk._choose_witness`` states the rule).
+_WITNESS_RANK_NATIVE_EQUALITY = {
+    "name": 2,
+    "trace_name": 2,
+    "model": 3,
+    "provider": 4,
+    "observation_type": 4,
+}
+_WITNESS_RANK_DENSE_STATUS = frozenset({"ok", "unset"})
+_WITNESS_RANK_PATTERN_OPS = frozenset({"contains", "starts_with", "ends_with"})
+
+
+def witness_selectivity_rank(
+    item: dict[str, Any], witness: MatchingActivityWitness
+) -> int:
+    """The static selectivity rank of ``witness``, the witness of leaf ``item``."""
+
+    if witness.family == "raw":
+        return 0 if witness.kind == "text" else 4
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    operation = config.get("filter_op") or config.get("filterOp")
+    if operation in {"equals", "in"}:
+        if witness.key == "status":
+            raw = config.get("filter_value", config.get("filterValue"))
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            dense = any(
+                str(value).strip().lower() in _WITNESS_RANK_DENSE_STATUS
+                for value in values
+            )
+            return 6 if dense else 1
+        return _WITNESS_RANK_NATIVE_EQUALITY.get(witness.key, 4)
+    if operation in _WITNESS_RANK_PATTERN_OPS:
+        return 5
+    return 7
+
+
+# The page metrics ``build_requested_page_metric_queries`` reads, one
+# statement per group that has a requested field: sessions, then spans.
+REQUESTED_PAGE_SESSION_METRIC_FIELDS = ("num_sessions", "avg_session_duration")
+REQUESTED_PAGE_SPAN_METRIC_FIELDS = (
+    "avg_trace_latency",
+    "num_llm_calls",
+    "num_guardrails_triggered",
+    "num_active_days",
+    "num_traces_with_errors",
+)
+# The estimate table ``EXPLAIN ESTIMATE`` returns on ClickHouse 25.3; the
+# matching-activity walk reads its ``rows`` to cost a tail existence statement.
+_MATCHING_ACTIVITY_ESTIMATE_COLUMNS = frozenset(
+    {"database", "table", "parts", "rows", "marks"}
+)
+
+
+# Execution shape of a SEEDED candidate page (a scalar attribute witness or a
+# finite candidate id set). In-order reads (``optimize_*_in_order``) stream a
+# DISTINCT or GROUP BY over the sorting key without a hash table, at the price
+# of one merged stream per selected part. For the UNSEEDED page that is the
+# right trade: its collapse spans the whole window, and a hash table over every
+# identity in it would be the unbounded structure. A seeded page replays only
+# the population its seed bounds, and there the per-part streams are the
+# footprint: measured on production, the seeded acquisition held most of its
+# peak memory in the in-order machinery alone and released it, with a third of
+# its wall, under hash execution - identical rows and bytes, since the
+# statement's DISTINCT and GROUP BY are unchanged. Stated on the statement so
+# the primary-key IN sets ClickHouse builds while planning run under it too;
+# the v2 boundary keeps an explicit aggregation choice.
+_SEEDED_PAGE_READ_SETTINGS = (
+    "SETTINGS optimize_aggregation_in_order = 0, "
+    "optimize_distinct_in_order = 0, optimize_read_in_order = 0"
+)
+
+
+def _touched_survivor_map_subquery(
+    *, remap_table: str, candidate_cte: str, candidate_column: str
+) -> str:
+    """Resolve only consolidation groups reached by a finite candidate CTE."""
+
+    return f"""
+        SELECT
+            any_id,
+            argMin(survivor_id, toString(survivor_id)) AS survivor_id
+        FROM (
+            SELECT
+                arrayJoin(
+                    arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))
+                ) AS any_id,
+                argMin(old_id, toString(old_id)) AS survivor_id
+            FROM {remap_table} FINAL
+            WHERE new_id IN (
+                SELECT DISTINCT new_id
+                FROM {remap_table} FINAL
+                WHERE old_id IN (
+                    SELECT {candidate_column} FROM {candidate_cte}
+                )
+                   OR new_id IN (
+                    SELECT {candidate_column} FROM {candidate_cte}
+                )
+            )
+            GROUP BY new_id
+        )
+        GROUP BY any_id
+    """
+
+
+class UserListQueryBuilder(BaseQueryBuilder):
+    """Build the Observe Users table query from ClickHouse.
+
+    The output shape intentionally mirrors ``SQLQueryHandler.get_spans_by_end_users``
+    so the existing frontend contract does not need a translation layer.
+    """
+
+    TABLE = "spans"
+    # Preserve rollout-configured storage for the legacy builder while giving
+    # the V2 wrapper an explicit direct-write injection point.
+    _EVAL_LOGGER_SOURCE = staticmethod(eval_logger_source)
+
+    OUTPUT_FILTER_MAP: dict[str, str] = {
+        "user_id": "user_id",
+        "user_id_type": "user_id_type",
+        "user_id_hash": "user_id_hash",
+        "activated_at": "activated_at",
+        "created_at": "activated_at",
+        "last_active": "last_active",
+        "num_active_days": "num_active_days",
+        "active_days": "num_active_days",
+        "total_cost": "total_cost",
+        "cost": "total_cost",
+        "avg_cost": "total_cost",
+        "total_tokens": "total_tokens",
+        "tokens": "total_tokens",
+        "input_tokens": "input_tokens",
+        "prompt_tokens": "input_tokens",
+        "output_tokens": "output_tokens",
+        "completion_tokens": "output_tokens",
+        "num_traces": "num_traces",
+        "traffic": "num_traces",
+        "num_sessions": "num_sessions",
+        "avg_session_duration": "avg_session_duration",
+        "avg_trace_latency": "avg_trace_latency",
+        "avg_latency": "avg_trace_latency",
+        "latency": "avg_trace_latency",
+        "latency_ms": "avg_trace_latency",
+        "num_llm_calls": "num_llm_calls",
+        "num_guardrails_triggered": "num_guardrails_triggered",
+        "num_traces_with_errors": "num_traces_with_errors",
+        "bool_eval_pass_rate": "bool_eval_pass_rate",
+        "avg_output_float": "avg_output_float",
+        "project_id": "project_id",
+        "end_user_id": "end_user_id",
+    }
+
+    _RELATION_FILTER_COL_TYPES = frozenset({"EVAL_METRIC", "ANNOTATION"})
+
+    @staticmethod
+    def _filter_col_type(item: dict[str, Any]) -> str:
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        return str(
+            config.get("col_type")
+            or config.get("colType")
+            or item.get("col_type")
+            or item.get("colType")
+            or ""
+        ).upper()
+
+    @classmethod
+    def _is_relation_filter(cls, item: dict[str, Any]) -> bool:
+        """Whether a Users filter is backed by eval/annotation relations."""
+
+        return cls._filter_col_type(item) in cls._RELATION_FILTER_COL_TYPES
+
+    # Columns selected by the shared exact latest-span page query. Cursor reads
+    # aggregate canonical users before LIMIT, then evaluate additional filters
+    # through the manager's existing finite enrichment pipeline.
+    # Raw-derived metrics that are hydrated only after
+    # pagination remain unsupported as page filters/sorts because applying them
+    # after ``LIMIT`` would also change membership/order.
+    _CANDIDATE_FIRST_COLUMNS = frozenset(
+        {
+            "user_id",
+            "user_id_type",
+            "user_id_hash",
+            "activated_at",
+            "created_at",
+            "last_active",
+            "total_cost",
+            "cost",
+            "avg_cost",
+            "total_tokens",
+            "tokens",
+            "input_tokens",
+            "prompt_tokens",
+            "output_tokens",
+            "completion_tokens",
+            "num_traces",
+            "traffic",
+            "project_id",
+            "end_user_id",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str | None = None,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
+        filters: list[dict[str, Any]] | None = None,
+        search: str | None = None,
+        sort_params: list[dict[str, Any]] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        max_rows: int | None = None,
+        end_user_id: str | None = None,
+        candidate_end_user_ids: list[str] | tuple[str, ...] | None = None,
+        candidate_scan_end_user_ids: list[str] | tuple[str, ...] | None = None,
+        candidate_end_user_id_map: dict[str, str] | None = None,
+        include_num_sessions: bool = False,
+        include_null_workspace: bool = False,
+        empty_scope: bool = False,
+    ) -> None:
+        # CH25 EndUser cutover (DESIGN §4.3): the curated source is now the v2
+        # `end_users` RMT, which — unlike the legacy CDC `tracer_enduser` — has
+        # NO `workspace_id` column (schema 017). Workspace isolation therefore
+        # can no longer key on the entity's own workspace; the caller resolves
+        # the workspace's projects and passes them as `project_ids`, scoping the
+        # enduser set by `project_id IN (...)`. `workspace_id` /
+        # `include_null_workspace` are retained for signature compatibility but
+        # no longer drive any SQL (the project set already encodes the
+        # is_default / null-workspace fan-out the legacy filter expressed).
+        super().__init__(project_id=project_id, project_ids=project_ids)
+        self.organization_id = str(organization_id)
+        self.workspace_id = str(workspace_id) if workspace_id else None
+        self.filters = filters or []
+        self.search = search.strip() if search else None
+        self.sort_params = sort_params or []
+        self.limit = limit
+        self.offset = offset
+        # Export-only hard row cap (applied as a LIMIT *without* the window
+        # count), so an unpaginated export can't `.all()` an unbounded result
+        # into worker memory. Independent of `limit`/`offset` paging.
+        self.max_rows = max_rows
+        self.end_user_id = str(end_user_id) if end_user_id else None
+        self.candidate_end_user_ids = tuple(
+            str(value) for value in (candidate_end_user_ids or ())
+        )
+        self.candidate_scan_end_user_ids = tuple(
+            str(value)
+            for value in (candidate_scan_end_user_ids or self.candidate_end_user_ids)
+        )
+        supplied_map = {
+            str(any_id): str(survivor_id)
+            for any_id, survivor_id in (candidate_end_user_id_map or {}).items()
+            if any_id and survivor_id
+        }
+        if self.candidate_end_user_ids and not supplied_map:
+            supplied_map = {
+                candidate_id: candidate_id
+                for candidate_id in self.candidate_scan_end_user_ids
+            }
+        if supplied_map:
+            missing_aliases = (
+                set(self.candidate_scan_end_user_ids) - supplied_map.keys()
+            )
+            invalid_survivors = set(supplied_map.values()) - set(
+                self.candidate_end_user_ids
+            )
+            if missing_aliases or invalid_survivors:
+                raise ValueError("candidate end-user remap is inconsistent")
+        self.candidate_end_user_id_map = tuple(supplied_map.items())
+        self.include_num_sessions = bool(
+            include_num_sessions and self.candidate_end_user_ids
+        )
+        self.embedded_page_metric_fields = (
+            frozenset({"num_sessions"}) if self.include_num_sessions else frozenset()
+        )
+        self.include_null_workspace = include_null_workspace
+        # When the caller resolved an EMPTY workspace-project set, the read must
+        # return nothing — NOT fall through to an org-wide scan. (BaseQueryBuilder
+        # treats `project_ids=[]` as falsy and would otherwise drop project
+        # scoping entirely, re-introducing a cross-workspace leak.)
+        self.empty_scope = empty_scope
+        # The witness the matching-activity walk chose for this page, set once
+        # by the walk (``UsersListManager.matching_activity_walk_applies``
+        # decides it); every slice, instant and probe statement reads it and
+        # none recomputes it.
+        self.walk_witness: MatchingActivityWitness | None = None
+
+    def _finite_end_user_map(
+        self,
+        *,
+        candidate_param: str,
+    ) -> tuple[str, dict[str, list[str]]]:
+        """Return a literal page map when the cursor already resolved one."""
+
+        if not self.candidate_end_user_id_map:
+            return (
+                bounded_survivor_map_subquery(
+                    "end_user_id_remap", candidate_param=candidate_param
+                ),
+                {},
+            )
+        any_ids, survivor_ids = zip(
+            *self.candidate_end_user_id_map,
+            strict=True,
+        )
+        return (
+            literal_survivor_map_subquery(
+                any_ids_param="candidate_remap_any_ids",
+                survivor_ids_param="candidate_remap_survivor_ids",
+            ),
+            {
+                "candidate_remap_any_ids": list(any_ids),
+                "candidate_remap_survivor_ids": list(survivor_ids),
+            },
+        )
+
+    def build_attribute_user_candidates_query(
+        self,
+        *,
+        text_values_by_key: dict[str, tuple[str, ...]],
+        window_start: Any,
+        window_end: Any,
+        candidate_scan_ids: tuple[str, ...],
+    ) -> tuple[str, dict[str, Any]]:
+        """Find physical user witnesses, never published filter results.
+
+        OR is deliberate: different user-level predicates can match different
+        spans/aliases. Stale versions are an allowed superset; the existing
+        all-spans latest replay remains responsible for actual membership.
+        Scan only the finite, alias-expanded dimension batch. This is not an
+        all-users/window scan and cannot return more than the supplied IDs.
+        """
+        if (
+            not text_values_by_key
+            or not candidate_scan_ids
+            or window_start >= window_end
+        ):
+            raise ValueError("invalid attribute user candidate request")
+        params: dict[str, Any] = {
+            "attribute_window_start_us": _unix_microseconds(window_start),
+            "attribute_window_end_us": _unix_microseconds(window_end),
+            "attribute_scan_ids": candidate_scan_ids,
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+        predicates = []
+        for index, (key, values) in enumerate(sorted(text_values_by_key.items())):
+            key_param = f"attribute_seed_key_{index}"
+            values_param = f"attribute_seed_values_{index}"
+            params[key_param] = key
+            params[values_param] = tuple(values)
+            predicate = (
+                f"mapContains(attrs_string, %({key_param})s) "
+                f"AND lowerUTF8(attrs_string[%({key_param})s]) IN %({values_param})s"
+            )
+            # Match the deployed value-index expression only for decimal IDs.
+            # lower() and lowerUTF8() differ for Unicode text: a generic index
+            # gate could otherwise discard a valid case-insensitive match.
+            if values and all(
+                value.isascii() and value.isdecimal() for value in values
+            ):
+                params[f"attribute_seed_index_values_{index}"] = list(values)
+                predicate += (
+                    " AND hasAny(arrayMap(x -> lower(x), mapValues(attrs_string)), "
+                    f"%(attribute_seed_index_values_{index})s)"
+                )
+            predicates.append(f"({predicate})")
+        return (
+            f"""
+            SELECT DISTINCT toString(end_user_id) AS end_user_id
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND start_time >= fromUnixTimestamp64Micro(%(attribute_window_start_us)s, 'UTC')
+              AND start_time < fromUnixTimestamp64Micro(%(attribute_window_end_us)s, 'UTC')
+              AND isNotNull(end_user_id)
+              AND end_user_id IN %(attribute_scan_ids)s
+              AND ({" OR ".join(predicates)})
+              {"AND 0 = 1" if self.empty_scope else ""}
+            """,
+            params,
+        )
+
+    def build_dimension_candidate_query(
+        self,
+        *,
+        limit: int,
+        before_first_seen: Any | None = None,
+        before_end_user_id: str | None = None,
+        window_start: Any | None = None,
+        window_end: Any | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Page canonical users by exact activity; never order raw aliases/rollups."""
+        if limit <= 0:
+            raise ValueError("dimension candidate limit must be positive")
+        if before_first_seen is not None and before_end_user_id is None:
+            raise ValueError("dimension candidate cursor must be provided together")
+        if (window_start is None) != (window_end is None):
+            raise ValueError("dimension candidate window must be provided together")
+        if window_start is None:
+            window_start, window_end = self.parse_time_range(self.filters)
+        if window_start is None or window_end is None or window_start >= window_end:
+            raise ValueError("dimension candidate window is invalid")
+        # Keep filter semantics in the manager. Only a compiler-proven necessary
+        # witness may narrow acquisition, never the public activity aggregation.
+        builder = UserListQueryBuilder(
+            organization_id=self.organization_id,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+            search=self.search,
+            empty_scope=self.empty_scope,
+            limit=limit,
+            offset=0,
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            window_start.isoformat(),
+                            window_end.isoformat(),
+                        ],
+                    },
+                }
+            ],
+        )
+        witness, witness_params = self._positive_scalar_user_witness()
+        label_witness, label_params = self._positive_user_id_witness()
+        return builder.build_candidate_page_query(
+            cursor_mode=True,
+            cursor_before=(before_first_seen, str(before_end_user_id))
+            if before_end_user_id is not None
+            else None,
+            scalar_witness=witness,
+            scalar_witness_params=witness_params,
+            label_witness=label_witness,
+            label_witness_params=label_params,
+        )
+
+    def _positive_user_id_witness(self) -> tuple[str, dict[str, Any]]:
+        """Narrow canonical labels without changing the manager's final match."""
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        for index, item in enumerate(self.filters):
+            if (
+                item.get("column_id") != "user_id"
+                or not self._is_output_filter(item)
+                or self._is_relation_filter(item)
+            ):
+                continue
+            config = item.get("filter_config") or {}
+            op = config.get("filter_op")
+            if op not in {"equals", "in"}:
+                continue
+            value = config.get("filter_value")
+            values = value if op == "in" and isinstance(value, list) else [value]
+            # The manager canonicalizes JSON and boolean-looking strings. Keep
+            # those shapes on its full path instead of approximating that rule.
+            if not values or any(
+                not isinstance(v, str)
+                or not v.isascii()
+                or v.strip().startswith(("{", "["))
+                or v.strip().lower() in {"true", "false"}
+                for v in values
+            ):
+                continue
+            key = f"candidate_user_label_{index}"
+            if config.get("filter_type") in {"text", "string"}:
+                params[key] = tuple(v.lower() for v in values)
+                # Python and ClickHouse Unicode lowercasing need not agree.
+                # Preserve every non-ASCII label for exact manager evaluation.
+                clauses.append(
+                    f"(NOT match(user_id, '^[[:ascii:]]*$') OR lower(user_id) IN %({key})s)"
+                )
+            else:
+                params[key] = tuple(values)
+                clauses.append(f"user_id IN %({key})s")
+        return " AND ".join(clauses), params
+
+    def _positive_scalar_user_witness(self) -> tuple[str, dict[str, Any]]:
+        """Reuse complete numeric or ordinary text witnesses for group acquisition.
+
+        The seeded page keeps exactly the witnesses it always had: the first
+        text or number filter whose compiler graph witness compares a value.
+        The witnesses that qualify only the matching-activity walk (boolean,
+        and a positive equality the graph witness declines) are skipped here;
+        seeding the whole-window statement on them would move that statement
+        out of its reviewed shapes for no measured gain.
+        """
+        for _item, _kind, witness, params, seedable in self._scalar_user_witnesses():
+            if seedable:
+                return witness, params
+        return "", {}
+
+    def matching_activity_witnesses(self) -> list[MatchingActivityWitness]:
+        """Every witness the walk may discover on, the most selective first.
+
+        Raw span-attribute witnesses (``_scalar_user_witnesses``) and native
+        leaves with an existence term (``_native_user_witnesses``), ranked by
+        ``witness_selectivity_rank`` (a static order: the walk's measured
+        choice costs its candidates in it and falls back to it), then a raw
+        witness before a native one (the
+        blooms serve it, so an empty slice costs only its overhead), then one
+        the seeded page could seed on before one that qualifies the walk
+        alone, then the least ``identity``. Never by position in the request:
+        the cursor binds the filters without their order, so every request a
+        cursor admits ranks them the same. Whether the walk accepts a raw
+        witness is the manager's decision
+        (``UsersListManager.matching_activity_walk_applies``); which accepted
+        one it walks is the walk's (``users_matching_walk._choose_witness``).
+        """
+        ranked: list[tuple[int, int, bool, str, MatchingActivityWitness]] = []
+        for item, kind, witness, params, seedable in self._scalar_user_witnesses():
+            found = MatchingActivityWitness(
+                family="raw",
+                key=str(item.get("column_id") or item.get("columnId")),
+                kind=kind,
+                sql=witness,
+                params=params,
+                identity=canonical_filter_leaf(item),
+            )
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 0, not seedable, found.identity, found))
+        for item, found in self._native_user_witnesses():
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 1, False, found.identity, found))
+        ranked.sort(key=lambda entry: entry[:4])
+        return [entry[-1] for entry in ranked]
+
+    def _native_user_witnesses(
+        self,
+    ) -> Iterator[tuple[dict[str, Any], MatchingActivityWitness]]:
+        """Native leaves whose graph condition has an existence term, in filter order.
+
+        Each leaf comes with its witness.
+
+        A native leaf decides membership with the users graph's own condition
+        (``compile_user_membership_leaf``). When that condition holds a term
+        ``countIf(flag) > 0``, every member has a latest live span satisfying
+        ``flag``, and that span's latest version is a physical row satisfying
+        it at the same ``start_time``: the flag is an exhaustive physical-row
+        witness, and the member's newest such span is its order key. The rest
+        of the condition (a negation's ``countIf(forbidden) = 0``) and every
+        other leaf are decided at certification over the whole window. A
+        condition that is one absence term (``is_null`` without a family:
+        ``countIf(present) = 0``) is witnessed by ``NOT present``
+        (``_native_witness_flag``); its order key is then the
+        member's newest latest live span. The terms come from the compiler as
+        data, never from parsing its SQL.
+        """
+        for index, item in enumerate(self.filters):
+            if self._is_date_filter(item):
+                continue
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            _flags, _condition, params, existence = (
+                self.native_span_dimension_membership(item, index=index)
+            )
+            if existence is None:
+                continue
+            _alias, predicate = existence
+            yield (
+                item,
+                MatchingActivityWitness(
+                    family="native",
+                    key=column,
+                    kind="native",
+                    sql=f"({predicate})",
+                    params=dict(params),
+                    leaf_index=index,
+                    index_pruned=False,
+                    identity=canonical_filter_leaf(item),
+                ),
+            )
+
+    def _scalar_user_witnesses(self):
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            compile_trace_filter_plans,
+        )
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            rewrite_v1_sql_to_v2,
+        )
+
+        for item in self.filters:
+            if (
+                self._is_date_filter(item)
+                or self._is_relation_filter(item)
+                or self._is_output_filter(item)
+                # A native span column has no attribute-map witness: seeding
+                # it as one acquires only users carrying a same-named raw
+                # attribute, which is nobody.
+                or self.native_span_dimension(item)
+                or (
+                    item.get("column_id") == "eval_score"
+                    and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
+                )
+            ):
+                continue
+            config = dict(item.get("filter_config") or item.get("filterConfig") or {})
+            # This is an existing Users raw-attribute leaf, not a trace native alias.
+            config["col_type"] = "SPAN_ATTRIBUTE"
+            try:
+                plans = compile_trace_filter_plans([{**item, "filter_config": config}])
+            except (TypeError, ValueError):
+                continue
+            if len(plans) != 1:
+                continue
+            plan = plans[0]
+            operation = config.get("filter_op") or config.get("filterOp")
+            witness = plan.raw_graph_value_witness_predicate or ""
+            seedable = bool(witness)
+            if not witness and operation in {"equals", "in"}:
+                # The graph witness declines a positive equality whose missing
+                # key default could satisfy it (boolean false, number zero):
+                # its classifier aggregates key presence and value separately,
+                # so on a version tie those may come from different rows. The
+                # Users enrichment reads type and value of one row and drops an
+                # absent key as an empty value, so for it the compiler's raw
+                # witness (key present AND value equal on a physical row) is
+                # exhaustive: every latest live match has such a row. It
+                # qualifies the walk alone; the seeded page keeps declining it.
+                witness = plan.raw_witness_predicate or ""
+            raw_values = config.get("filter_value", config.get("filterValue"))
+            values = raw_values if isinstance(raw_values, list) else [raw_values]
+            # Users canonicalizes boolean/JSON-looking text and uses Python's
+            # Unicode lower(). Do not narrow those domains with a raw string
+            # comparison. Unsupported shapes keep the complete existing path.
+            plain_text = (
+                (config.get("filter_type") or config.get("filterType"))
+                in {"text", "string"}
+                and operation in {"equals", "in"}
+                and bool(values)
+                and all(
+                    isinstance(value, str)
+                    and value
+                    and value.isascii()
+                    and value.strip().lower() not in {"true", "false"}
+                    and not value.strip().startswith(("{", "["))
+                    for value in values
+                )
+            )
+            # One typed map, compared by value (``column[key]``), nothing else.
+            mentioned = {
+                name
+                for name in ("span_attr_str", "span_attr_num", "span_attr_bool")
+                if name in witness
+            }
+            kind = None
+            if mentioned == {"span_attr_num"} and "span_attr_num[" in witness:
+                kind = "number"
+            elif mentioned == {"span_attr_bool"} and "span_attr_bool[" in witness:
+                kind = "boolean"
+            elif (
+                plain_text
+                and mentioned == {"span_attr_str"}
+                and "span_attr_str[" in witness
+            ):
+                kind = "text"
+            if (
+                kind is not None
+                and plan.scope == "any"
+                and not plan.exclude_group_matches
+                and "JSONExtract" not in witness
+            ):
+                yield (
+                    item,
+                    kind,
+                    rewrite_v1_sql_to_v2(witness),
+                    dict(plan.params),
+                    seedable and kind != "boolean",
+                )
+
+    def build_dimension_survivor_query(
+        self,
+        candidate_end_user_ids: list[str] | tuple[str, ...],
+        *,
+        window_start: Any | None = None,
+        window_end: Any | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Expand aliases of an already canonical page, without recomputing order."""
+        ids = tuple(str(value) for value in candidate_end_user_ids if value)
+        if not ids:
+            return "", {}
+        remap = bounded_survivor_map_subquery(
+            "end_user_id_remap", candidate_param="dimension_candidate_ids"
+        )
+        return (
+            f"SELECT toString(any_id) AS any_id, toString(survivor_id) AS survivor_id "
+            f"FROM ({remap})",
+            {"dimension_candidate_ids": ids},
+        )
+
+    def build_matching_activity_slice_query(
+        self,
+        *,
+        slice_start: Any,
+        slice_end: Any,
+        limit: int,
+        before: tuple[Any, str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Newest-first witnessed RAW user ids of one time slice.
+
+        ``before`` continues a truncated slice past its last returned raw id in
+        ``(raw_newest DESC, raw_end_user_id DESC)`` order, so ids tied on the
+        floor's timestamp cannot be re-served for ever; it filters groups after
+        aggregation and adds no scan.
+
+        One PREWHERE-bounded scan of ``[slice_start, slice_end)`` through the
+        deployed key and value blooms, grouped by the raw ``end_user_id`` the
+        span carries. It touches no other table: an empty slice therefore costs
+        only the granules the blooms cannot exclude, and the statement carries
+        no ``IN (subquery)`` over the sorting key, so ClickHouse materialises
+        nothing while planning; its work is bounded by the slice, never by the
+        window. Aliases are resolved afterwards, and only for a populated
+        slice, by the existing bounded survivor statement
+        (``build_dimension_survivor_query``) over exactly the ids returned.
+        Rows are a raw superset (stale versions, moved users, tombstones); the
+        page certifies each resolved user afterwards against latest state over
+        the whole window. ``raw_newest`` is only the slice's coverage floor
+        when the LIMIT truncates: every raw id with a witnessed row newer than
+        the last returned row is in the result, so every resolved user with
+        such a row is too.
+        """
+        if limit <= 0:
+            raise ValueError("matching activity slice limit must be positive")
+        params = self._witnessed_range_params(slice_start, slice_end)
+        params["slice_user_limit"] = int(limit)
+        keyset = ""
+        if before is not None:
+            before_time, before_id = before
+            params["slice_before_us"] = _unix_microseconds(before_time)
+            params["slice_before_end_user_id"] = str(before_id)
+            keyset = """
+        HAVING raw_newest < fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+            OR (
+                raw_newest = fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+                AND raw_end_user_id < %(slice_before_end_user_id)s
+            )
+            """
+        query = f"""
+        SELECT toString(end_user_id) AS raw_end_user_id, max(start_time) AS raw_newest
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        WHERE {params.pop("_witness_sql")}
+        GROUP BY raw_end_user_id
+        {keyset}
+        ORDER BY raw_newest DESC, raw_end_user_id DESC
+        LIMIT %(slice_user_limit)s
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_instant_query(
+        self,
+        *,
+        instant: Any,
+        limit: int,
+        before_end_user_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Resolved users witnessed at exactly one instant, newest id first.
+
+        The slice statement orders RAW ids; the page orders resolved users by
+        ``(key DESC, id DESC)``. Inside one tied instant those orders differ
+        wherever an alias resolves to a survivor of another id, so a raw
+        position cannot say which resolved users at that instant are still
+        undecided. This statement reads the same witnessed rows as a slice of
+        ``[instant, instant + 1us)``, resolves each raw id through the
+        survivor map of exactly the groups those ids touch, and returns the
+        resolved ids in descending order, continued past
+        ``before_end_user_id``. Every resolved user with a witnessed row at
+        the instant and an id in ``[last returned, before)`` is in the result,
+        so a caller may treat that id range as decided.
+
+        Bounded by the instant: the spans scan is one microsecond of one
+        project, and the remap reads only the groups its raw ids touch.
+        """
+        if limit <= 0:
+            raise ValueError("matching activity instant limit must be positive")
+        params = self._witnessed_range_params(
+            instant, instant + timedelta(microseconds=1)
+        )
+        params["slice_user_limit"] = int(limit)
+        keyset = ""
+        if before_end_user_id is not None:
+            params["instant_before_end_user_id"] = str(before_end_user_id)
+            keyset = "HAVING instant_end_user_id < %(instant_before_end_user_id)s"
+        remap = _touched_survivor_map_subquery(
+            remap_table="end_user_id_remap",
+            candidate_cte="instant_raw",
+            candidate_column="instant_raw_id",
+        )
+        resolved = resolved_id_expr("instant_raw.instant_raw_id", "instant_remap")
+        query = f"""
+        WITH instant_raw AS (
+            SELECT DISTINCT end_user_id AS instant_raw_id
+            FROM spans
+            PREWHERE {self._matching_activity_range_predicate()}
+            WHERE {params.pop("_witness_sql")}
+        )
+        SELECT toString({resolved}) AS instant_end_user_id
+        FROM instant_raw
+        LEFT JOIN ({remap}) AS instant_remap
+            ON instant_raw.instant_raw_id = instant_remap.any_id
+        GROUP BY instant_end_user_id
+        {keyset}
+        ORDER BY instant_end_user_id DESC
+        LIMIT %(slice_user_limit)s
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_existence_query(
+        self,
+        *,
+        range_start: Any,
+        range_end: Any,
+        witness: MatchingActivityWitness | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """The newest witnessed row's time in ``[range_start, range_end)``, if any.
+
+        The same scan shape as a slice, with no aggregation: the newest row
+        (``ORDER BY start_time DESC LIMIT 1``) of the rows the blooms leave,
+        and for a value the blooms exclude everywhere it reads nothing but
+        index marks. The walk uses it to prove a long empty tail in one
+        statement instead of one statement per day, and when the tail is not
+        empty, to prove the range above its newest row empty: every slice
+        reads this predicate, so none would find a row there. It reads every
+        row its estimate counts, as the ``LIMIT 1`` existence statement it
+        replaced already did on dev (52,158 rows and 127 MiB for both), so it
+        is issued only after ``build_matching_activity_existence_estimate_query``
+        has costed it: nothing else bounds a statement wider than the slice
+        cap (application reads carry no server row, byte or time cap).
+        ``witness`` names a witness other than the walk's (``walk_witness``).
+        """
+        params = self._witnessed_range_params(range_start, range_end, witness=witness)
+        query = f"""
+        SELECT start_time AS witnessed
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        WHERE {params.pop("_witness_sql")}
+        ORDER BY start_time DESC
+        LIMIT 1
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_presence_query(
+        self, *, range_start: Any, range_end: Any
+    ) -> tuple[str, dict[str, Any]]:
+        """Whether any span with a user lies in ``[range_start, range_end)``.
+
+        The slice and existence statements' own range predicate - project,
+        time terms, ``isNotNull(end_user_id)``, the empty-scope guard - with
+        the same parameters and NO witness, ``LIMIT 1``. Every witnessed row
+        a slice or existence statement could return satisfies it, so no row
+        here proves those statements would return none over the same range;
+        a row proves nothing about any witness. ``isNotNull(end_user_id)`` is
+        answered through the projection keyed by end user, so a scope with no
+        end users reads only boundary granules. The walk sends it once per
+        request, when the existence statement's estimate does not license
+        that statement, under a server cap.
+        """
+        params = self._matching_activity_range_params(range_start, range_end)
+        query = f"""
+        SELECT 1 AS present
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        LIMIT 1
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_existence_estimate_query(
+        self,
+        *,
+        range_start: Any,
+        range_end: Any,
+        witness: MatchingActivityWitness | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """``EXPLAIN ESTIMATE`` of the existence statement, text for text.
+
+        Reads no column data: the server answers from the primary index and
+        the deployed key and value blooms with the parts, granules and rows
+        the existence statement WOULD read (verified on ClickHouse 25.3: a
+        value the value bloom excludes selects zero parts). It costs that
+        statement before the walk issues it; it never decides coverage,
+        because a planner's estimate is not a row read. The wrapped text is
+        exactly the existence statement, settings clause included, so the
+        rows it reports are the rows that statement reads. The estimate
+        itself is that statement's index analysis, and costs what the
+        analysis costs - the index granules of every selected part, read at
+        the caller's thread count and cache state - which is why the walk
+        runs it under the existence statement's own read settings and
+        inside the probe's wall. ``witness`` costs a witness other than the
+        walk's: the walk's choice among its eligible witnesses estimates each
+        one over the whole window before it walks any.
+        """
+        query, params = self.build_matching_activity_existence_query(
+            range_start=range_start, range_end=range_end, witness=witness
+        )
+        return "EXPLAIN ESTIMATE\n" + query.lstrip(), params
+
+    @staticmethod
+    def matching_activity_existence_estimate(
+        rows: Iterable[Mapping[str, Any]], columns: Iterable[str] | None
+    ) -> int | None:
+        """Reduce the estimate to the rows the existence statement would read.
+
+        Every ``spans`` row of the estimate table sums. ``None`` means the
+        answer cannot be read - the estimate table's columns are missing, a
+        row names another table or carries no integer, or the result is EMPTY.
+        ClickHouse 25.3 reports a selection of no part as a row of zeros, so
+        an empty result is a plan this reducer does not understand (the same
+        signal ``graph_dispatch`` refuses); the walk then slices at its cap
+        rather than issue a statement it has not costed.
+        """
+        names = {str(name) for name in (columns or ())}
+        if not _MATCHING_ACTIVITY_ESTIMATE_COLUMNS.issubset(names):
+            return None
+        estimate = 0
+        counted_any = False
+        for row in rows or ():
+            counted_any = True
+            if not isinstance(row, Mapping):
+                return None
+            if str(row.get("table") or "") != "spans":
+                return None
+            counted = row.get("rows")
+            if isinstance(counted, bool) or not isinstance(counted, (int, float)):
+                return None
+            estimate += max(0, int(counted))
+        return estimate if counted_any else None
+
+    def _matching_activity_range_params(
+        self, range_start: Any, range_end: Any
+    ) -> dict[str, Any]:
+        """The parameters of ``_matching_activity_range_predicate``."""
+        if range_start is None or range_end is None or range_start >= range_end:
+            raise ValueError("matching activity slice is invalid")
+        params: dict[str, Any] = {
+            "slice_start_date": range_start,
+            "slice_end_date": range_end,
+            "slice_start_us": _unix_microseconds(range_start),
+            "slice_end_us": _unix_microseconds(range_end),
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+        return params
+
+    def _witnessed_range_params(
+        self,
+        range_start: Any,
+        range_end: Any,
+        *,
+        witness: MatchingActivityWitness | None = None,
+    ) -> dict[str, Any]:
+        """The range parameters, the witness's own and its SQL (``_witness_sql``).
+
+        ``witness`` defaults to the walk's (``walk_witness``).
+        """
+        range_params = self._matching_activity_range_params(range_start, range_end)
+        witness = witness if witness is not None else self.walk_witness
+        if witness is None:
+            raise UnsupportedBoundedUserListQuery(
+                "the matching-activity walk chose no witness for this page"
+            )
+        return {**witness.params, **range_params, "_witness_sql": witness.sql}
+
+    def _matching_activity_range_predicate(self) -> str:
+        return f"""{self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN toDate(%(slice_start_date)s) AND toDate(%(slice_end_date)s)
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+          AND start_time >= fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+          AND start_time < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+          AND isNotNull(end_user_id)
+          {"AND 0 = 1" if self.empty_scope else ""}"""
+
+    def supports_candidate_first_page(self) -> bool:
+        """Whether the request can page exactly from latest physical spans.
+
+        Raw-span filters and raw-derived metric ordering cannot be moved after
+        pagination without changing which users belong on page N. Paginated
+        list/export callers fail closed for those shapes; this method is
+        deliberately conservative rather than returning a fast wrong page or
+        silently running the historical all-users aggregate.
+        """
+
+        if self._span_filters():
+            return False
+        for item in self.filters:
+            if self._is_date_filter(item):
+                continue
+            column_id = item.get("column_id") or item.get("columnId")
+            if column_id not in self._CANDIDATE_FIRST_COLUMNS:
+                return False
+        for item in self.sort_params:
+            column_id = item.get("column_id") or item.get("columnId")
+            # Preserve the existing API contract: unknown sort columns are
+            # ignored and the default ordering is used.
+            if column_id not in self.OUTPUT_FILTER_MAP:
+                continue
+            if column_id not in self._CANDIDATE_FIRST_COLUMNS:
+                return False
+        return True
+
+    def build_physical_user_presence_query(self) -> tuple[str, dict[str, Any]]:
+        """Return a cheap, conservative proof of physical user-span presence.
+
+        A negative result is exact: a live latest span with a user necessarily
+        has at least one physical version with a non-null user id.  A positive
+        result is intentionally only a hint because it may be a stale version
+        or tombstone; the full latest replay still decides membership.
+        """
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        params: dict[str, Any] = {
+            "presence_start_date": start_date,
+            "presence_end_date": end_date,
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+        query = f"""
+        SELECT 1 AS has_physical_user_span
+        FROM spans
+        PREWHERE {self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN
+              toDate(%(presence_start_date)s) AND toDate(%(presence_end_date)s)
+          AND start_time >= %(presence_start_date)s
+          AND start_time < %(presence_end_date)s
+          AND isNotNull(end_user_id)
+        LIMIT 1
+        """
+        return query, params
+
+    def _project_predicate(self, alias: str) -> str:
+        if self.project_ids is not None:
+            return f"{alias}.project_id IN %(project_ids)s"
+        return f"{alias}.project_id = %(project_id)s"
+
+    def _candidate_page_ctes(
+        self,
+        *,
+        cursor_mode: bool = False,
+        cursor_before: tuple[Any, str] | None = None,
+        scalar_witness: str = "",
+        scalar_witness_params: dict[str, Any] | None = None,
+        label_witness: str = "",
+        label_witness_params: dict[str, Any] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        """One six-key latest replay for finite, numbered and cursor user reads.
+
+        Raw predicates discover identity supersets only. Remaps, live membership,
+        exact window, metrics and order are resolved before public pagination.
+        """
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        self.params.update(
+            {
+                "org_id": self.organization_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "user_window_start_us": _unix_microseconds(start_date),
+                "user_window_end_us": _unix_microseconds(end_date),
+            }
+        )
+        if self.search:
+            self.params["search"] = self.search
+        if self.end_user_id:
+            self.params["end_user_id"] = self.end_user_id
+        if self.candidate_end_user_ids:
+            self.params["candidate_end_user_ids"] = self.candidate_end_user_ids
+            self.params["candidate_scan_end_user_ids"] = (
+                self.candidate_scan_end_user_ids
+            )
+        if self.limit is not None and self.offset is not None:
+            self.params["limit"] = int(self.limit)
+            self.params["offset"] = int(self.offset)
+        if self.max_rows is not None:
+            self.params["max_rows"] = int(self.max_rows)
+
+        output_where, output_params = self._output_where()
+        self.params.update(output_params)
+
+        empty_scope_filter = "AND 0 = 1" if self.empty_scope else ""
+        canonical_search_filter = (
+            "WHERE positionCaseInsensitive(user_id, %(search)s) > 0"
+            if self.search
+            else ""
+        )
+        end_user_filter = (
+            "AND eu.end_user_id = toUUID(%(end_user_id)s)" if self.end_user_id else ""
+        )
+        candidate_end_user_filter = (
+            "HAVING end_user_id IN %(candidate_end_user_ids)s"
+            if self.candidate_end_user_ids
+            else ""
+        )
+        candidate_curated_filter = (
+            "AND eu.end_user_id IN %(candidate_scan_end_user_ids)s"
+            if self.candidate_end_user_ids
+            else ""
+        )
+        final_filter = f"WHERE {output_where}" if output_where else ""
+        if label_witness:
+            self.params.update(label_witness_params or {})
+            final_filter = (
+                f"{final_filter} AND ({label_witness})"
+                if final_filter
+                else f"WHERE {label_witness}"
+            )
+        order_by = self._order_by()
+        if cursor_mode:
+            order_by = "ORDER BY last_active DESC NULLS LAST, end_user_id DESC"
+            if cursor_before is not None:
+                before_time, before_id = cursor_before
+                self.params["before_end_user_id"] = before_id
+                if before_time is None:
+                    keyset = "last_active IS NULL AND end_user_id < toUUID(%(before_end_user_id)s)"
+                else:
+                    self.params["before_activity_us"] = _unix_microseconds(before_time)
+                    bound = "fromUnixTimestamp64Micro(%(before_activity_us)s, 'UTC')"
+                    keyset = (
+                        f"last_active IS NULL OR last_active < {bound} OR "
+                        f"(last_active = {bound} AND end_user_id < toUUID(%(before_end_user_id)s))"
+                    )
+                final_filter = (
+                    f"{final_filter} AND ({keyset})"
+                    if final_filter
+                    else f"WHERE ({keyset})"
+                )
+        paginated = self.limit is not None and self.offset is not None
+        if paginated:
+            pagination = "LIMIT %(limit)s OFFSET %(offset)s"
+            total_count_select = (
+                "0 AS total_count" if cursor_mode else "count() OVER() AS total_count"
+            )
+        elif self.max_rows is not None:
+            pagination = "LIMIT %(max_rows)s"
+            total_count_select = "0 AS total_count"
+        else:
+            pagination = ""
+            total_count_select = "0 AS total_count"
+
+        if self.candidate_end_user_ids:
+            eu_map, finite_map_params = self._finite_end_user_map(
+                candidate_param="candidate_end_user_ids"
+            )
+            self.params.update(finite_map_params)
+        else:
+            eu_map = survivor_map_subquery("end_user_id_remap")
+        resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
+        resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
+        scalar_ctes = ""
+        candidate_span_filter = (
+            "AND end_user_id IN %(candidate_scan_end_user_ids)s"
+            if self.candidate_end_user_ids
+            else ""
+        )
+        if scalar_witness and not self.candidate_end_user_ids:
+            self.params.update(scalar_witness_params or {})
+            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+            resolved_witness_user = resolved_id_expr(
+                "witness.end_user_id", "witness_remap"
+            )
+            # Complete partition replay also covers independently chosen fields
+            # on equal-version rows and timestamp/user corrections. Never bind
+            # a raw value only to its historical user or prune by an inner LIMIT.
+            scalar_ctes = f"""
+        scalar_witness_identities AS (
+            SELECT DISTINCT {identity}
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+            WHERE {scalar_witness}
+        ),
+        scalar_candidate_users AS (
+            SELECT DISTINCT {resolved_witness_user} AS end_user_id
+            FROM spans AS witness
+            LEFT JOIN eu_survivor_map AS witness_remap ON witness.end_user_id = witness_remap.any_id
+            PREWHERE {self._project_predicate("witness")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND ({identity}) IN (SELECT * FROM scalar_witness_identities)
+            WHERE isNotNull(witness.end_user_id)
+        ),
+            """
+            # The curated dimension carries no HAVING on the witness set. The
+            # acquisition already binds it once, in the span filter below, and
+            # ClickHouse inlines a CTE at every use: a second binding replays
+            # the whole witness scan a second time. Membership is unchanged
+            # because `base_rows` INNER JOINs `exact_usage`, whose users are
+            # exactly the resolved users of the spans that filter admits. A row
+            # that survives the join without belonging to the witness set is a
+            # user whose latest state carries no witnessed span at all, so it
+            # cannot match the request; the manager's exact per-batch check
+            # rejects it and it is never published.
+            candidate_span_filter = """
+              AND end_user_id IN (
+                  SELECT arrayJoin(if(ifNull(aliases.present, 0) = 1,
+                      [users.end_user_id, aliases.any_id], [users.end_user_id]))
+                  FROM scalar_candidate_users AS users
+                  LEFT ALL JOIN (
+                      SELECT any_id, survivor_id, 1 AS present FROM eu_survivor_map
+                  ) AS aliases ON aliases.survivor_id = users.end_user_id
+              )
+            """
+        # ``end_user_id`` is mutable, so it cannot be pushed directly into
+        # a FINAL read: doing so can hide a newer reassignment/tombstone and
+        # resurrect an older version.  The first scan is only an identity
+        # superset.  The second scan replays *all* versions of each selected
+        # immutable identity and applies user/deletion predicates afterward.
+        embedded_session_state = (
+            "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,"
+            if self.include_num_sessions
+            else ""
+        )
+        if self.include_num_sessions:
+            # This presentation-only count deliberately skips canonical
+            # session-remap folding. The manager labels it approximate and
+            # never uses it to decide num_sessions filter membership.
+            embedded_session_projection = """
+            uniqExactIf(
+                latest_trace_session_id,
+                isNotNull(latest_trace_session_id)
+                AND latest_trace_session_id != toUUID(
+                    '00000000-0000-0000-0000-000000000000'
+                )
+            ) AS num_sessions,
+            """
+        else:
+            embedded_session_projection = "toUInt64(0) AS num_sessions,"
+        # With scalar acquisition, the final INNER JOIN already applies this
+        # dimension membership. Repeating it here expands the witness/dimension
+        # CTE branch again. Keep it for unseeded reads to bound aggregation.
+        usage_user_filter = (
+            ""
+            if scalar_ctes
+            else f"""
+          AND {resolved_latest_eu} IN (
+              SELECT end_user_id FROM filtered_end_users
+          )
+        """
+        )
+        identity_acquisition_cte = (
+            f"""
+    candidate_span_identities AS (
+        SELECT DISTINCT
+            project_id,
+            observation_type,
+            service_name,
+            toStartOfHour(start_time) AS identity_hour,
+            trace_id,
+            id
+        FROM spans
+        PREWHERE {self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+          AND start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+          AND start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+          {candidate_span_filter}
+    ),
+        """
+            if candidate_span_filter
+            else ""
+        )
+        # Without a user/scalar seed, every latest row in the exact window
+        # witnesses its own identity. Replay the intersecting immutable hours
+        # directly instead of constructing the same identity population twice.
+        # Seeded reads must retain the identity set: end_user_id is mutable.
+        replay_identity_filter = (
+            """
+          AND (
+              project_id,
+              observation_type,
+              service_name,
+              toStartOfHour(start_time),
+              trace_id,
+              id
+          ) IN (
+              SELECT
+                  project_id,
+                  observation_type,
+                  service_name,
+                  identity_hour,
+                  trace_id,
+                  id
+              FROM candidate_span_identities
+          )
+        """
+            if candidate_span_filter
+            else """
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(
+              %(user_window_end_us)s, 'UTC'
+          )
+        """
+        )
+        usage_ctes = f"""
+    {identity_acquisition_cte}
+    latest_candidate_spans AS (
+        SELECT
+            project_id,
+            observation_type,
+            service_name,
+            toStartOfHour(start_time) AS identity_hour,
+            trace_id,
+            id,
+            argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
+            argMax(start_time, _version) AS latest_start_time,
+            argMax(tuple(end_time), _version).1 AS latest_end_time,
+            argMax(cost, _version) AS latest_cost,
+            argMax(total_tokens, _version) AS latest_total_tokens,
+            argMax(prompt_tokens, _version) AS latest_prompt_tokens,
+            argMax(completion_tokens, _version) AS latest_completion_tokens,
+            {embedded_session_state}
+            argMax(is_deleted, _version) AS latest_is_deleted
+        FROM spans
+        PREWHERE {self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+          {replay_identity_filter}
+        GROUP BY
+            project_id,
+            observation_type,
+            service_name,
+            identity_hour,
+            trace_id,
+            id
+    ),
+    exact_usage AS (
+        SELECT
+            {resolved_latest_eu} AS end_user_id,
+            {embedded_session_projection}
+            sum(latest_cost) AS total_cost,
+            sum(toInt64(latest_total_tokens)) AS total_tokens,
+            sum(toInt64(latest_prompt_tokens)) AS input_tokens,
+            sum(toInt64(latest_completion_tokens)) AS output_tokens,
+            uniqExact(trace_id) AS num_traces,
+            max(latest_end_time) AS last_active
+        FROM latest_candidate_spans
+        LEFT JOIN eu_survivor_map AS span_eu_remap
+            ON latest_end_user_id = span_eu_remap.any_id
+        WHERE latest_is_deleted = 0
+          AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+          AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+          {usage_user_filter}
+        GROUP BY end_user_id
+    )
+        """
+        ctes = f"""
+        eu_survivor_map AS ({eu_map}),
+        {scalar_ctes}
+        filtered_end_users_raw AS (
+            SELECT
+                eu.project_id,
+                eu.end_user_id,
+                eu.user_id,
+                eu.user_id_type,
+                eu.user_id_hash,
+                eu.first_seen,
+                eu.version
+            FROM end_users AS eu FINAL
+            WHERE eu.organization_id = toUUID(%(org_id)s)
+              AND eu.is_deleted = 0
+              AND notEmpty(eu.user_id)
+              AND {self._project_predicate("eu")}
+              {empty_scope_filter}
+              {candidate_curated_filter}
+              {end_user_filter}
+        ),
+        filtered_end_users AS (
+            SELECT
+                {resolved_curated_eu} AS end_user_id,
+                argMax(eu.user_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id,
+                argMax(eu.user_id_type, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_type,
+                argMax(eu.user_id_hash, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_hash,
+                min(eu.first_seen) AS first_seen,
+                argMax(eu.project_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS project_id
+            FROM filtered_end_users_raw AS eu
+            LEFT JOIN eu_survivor_map AS eu_remap
+                ON eu.end_user_id = eu_remap.any_id
+            GROUP BY end_user_id
+            {candidate_end_user_filter}
+        ),
+        searched_end_users AS (
+            SELECT *
+            FROM filtered_end_users
+            {canonical_search_filter}
+        ),
+        {usage_ctes},
+        base_rows AS (
+            SELECT
+                eu.user_id AS user_id,
+                coalesce(xu.total_cost, 0) AS total_cost,
+                coalesce(xu.total_tokens, 0) AS total_tokens,
+                coalesce(xu.input_tokens, 0) AS input_tokens,
+                coalesce(xu.output_tokens, 0) AS output_tokens,
+                coalesce(xu.num_traces, 0) AS num_traces,
+                coalesce(xu.num_sessions, 0) AS num_sessions,
+                eu.first_seen AS activated_at,
+                xu.last_active AS last_active,
+                eu.project_id AS project_id,
+                eu.user_id_type AS user_id_type,
+                eu.user_id_hash AS user_id_hash,
+                eu.end_user_id AS end_user_id
+            FROM searched_end_users AS eu
+            INNER JOIN exact_usage AS xu ON xu.end_user_id = eu.end_user_id
+        ),
+        candidate_users AS (
+            SELECT
+                *,
+                {total_count_select}
+            FROM base_rows
+            {final_filter}
+            {order_by}
+            {pagination}
+        )
+        """
+        return ctes, order_by, dict(self.params)
+
+    def build_candidate_page_query(
+        self,
+        *,
+        cursor_mode: bool = False,
+        cursor_before: tuple[Any, str] | None = None,
+        scalar_witness: str = "",
+        scalar_witness_params: dict[str, Any] | None = None,
+        label_witness: str = "",
+        label_witness_params: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Return only the finite user page selected from compact dimensions."""
+
+        if not self.supports_candidate_first_page():
+            raise UnsupportedBoundedUserListQuery(
+                "user list filter/sort is not supported by the bounded query path"
+            )
+        ctes, order_by, params = self._candidate_page_ctes(
+            cursor_mode=cursor_mode,
+            cursor_before=cursor_before,
+            scalar_witness=scalar_witness,
+            scalar_witness_params=scalar_witness_params,
+            label_witness=label_witness,
+            label_witness_params=label_witness_params,
+        )
+        query = f"""
+        WITH
+        {ctes}
+        SELECT
+            user_id,
+            total_cost,
+            total_tokens,
+            input_tokens,
+            output_tokens,
+            num_traces,
+            num_sessions,
+            activated_at,
+            last_active,
+            project_id,
+            user_id_type,
+            user_id_hash,
+            end_user_id,
+            total_count
+        FROM candidate_users
+        {order_by}
+        """
+        if self.candidate_end_user_ids or scalar_witness:
+            query = f"{query.rstrip()}\n        {_SEEDED_PAGE_READ_SETTINGS}"
+        return query, params
+
+    def build_relation_filter_user_query(
+        self,
+        relation_filters: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        *,
+        eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
+        eval_filter_metadata_by_project: dict[str, dict[str, EvalFilterMetadata]]
+        | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Classify a finite Users page with eval/annotation filter semantics.
+
+        The unified picker uses UUID-like ``column_id`` values for custom evals
+        and annotation labels.  Those identifiers are relation keys, not span
+        attribute names. Replay only the already selected users' physical span
+        identities, evaluate each relation filter independently across all of a
+        user's spans, then intersect the resulting user-level booleans.
+
+        Negative filters require an existing relation and reject a user when
+        any span has the excluded value. Null checks likewise test absence over
+        the complete finite user span set, rather than accepting one unrelated
+        unannotated span as a witness.
+        """
+
+        if not self.candidate_end_user_ids or not relation_filters:
+            return "", {}
+        if any(not self._is_relation_filter(item) for item in relation_filters):
+            raise ValueError("user relation query received a non-relation filter")
+        if (
+            len(self.project_ids or ()) > 1
+            and eval_filter_metadata_by_project is None
+            and any(
+                self._filter_col_type(item) == "EVAL_METRIC"
+                for item in relation_filters
+            )
+        ):
+            raise ValueError("workspace eval filters require project-scoped metadata")
+
+        from tracer.services.clickhouse.query_builders.filters import (
+            normalize_filter_op,
+        )
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2,
+        )
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        params: dict[str, Any] = {
+            "candidate_end_user_ids": self.candidate_end_user_ids,
+            "candidate_scan_end_user_ids": self.candidate_scan_end_user_ids,
+            "start_date": start_date,
+            "end_date": end_date,
+            "user_window_start_us": _unix_microseconds(start_date),
+            "user_window_end_us": _unix_microseconds(end_date),
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+
+        eu_map, finite_map_params = self._finite_end_user_map(
+            candidate_param="candidate_end_user_ids"
+        )
+        params.update(finite_map_params)
+        resolved_latest_eu = resolved_id_expr(
+            "latest_spans.end_user_id", "relation_eu_remap"
+        )
+
+        # Preserve a top-level legacy col_type at the compiler boundary while
+        # keeping the request payload immutable.
+        normalized_filters: list[dict[str, Any]] = []
+        for item in relation_filters:
+            config = dict(item.get("filter_config") or item.get("filterConfig") or {})
+            config["col_type"] = self._filter_col_type(item)
+            normalized_filters.append(
+                {
+                    **item,
+                    "filter_config": config,
+                }
+            )
+
+        negative_to_positive = {
+            "not_equals": "equals",
+            "not_in": "in",
+            "not_contains": "contains",
+            "not_between": "between",
+        }
+        requirement_selects: list[str] = []
+        requirement_checks: list[str] = []
+
+        def with_operator(item: dict[str, Any], operation: str) -> dict[str, Any]:
+            config = dict(item.get("filter_config") or {})
+            config["filter_op"] = operation
+            return {**item, "filter_config": config}
+
+        def compile_requirement(
+            item: dict[str, Any],
+            *,
+            filter_index: int,
+            requirement_index: int,
+            required: bool,
+        ) -> None:
+            # Eval rows have no project column. Keep each config set paired
+            # with its owning physical span project before user aggregation.
+            project_metadata: list[
+                tuple[str | None, dict[str, EvalFilterMetadata] | None]
+            ] = [(None, eval_filter_metadata)]
+            if (
+                self._filter_col_type(item) == "EVAL_METRIC"
+                and eval_filter_metadata_by_project is not None
+            ):
+                project_metadata = [
+                    (
+                        str(project),
+                        eval_filter_metadata_by_project.get(str(project), {}),
+                    )
+                    for project in (self.project_ids or [self.project_id])
+                ]
+            predicates = []
+            for scope_index, (project, metadata) in enumerate(project_metadata):
+                filter_builder = ClickHouseFilterBuilderV2(
+                    table="relation_candidate_spans",
+                    project_ids=self.project_ids,
+                    project_id=self.project_id,
+                    query_mode=ClickHouseFilterBuilderV2.QUERY_MODE_SPAN,
+                    span_date_scope=True,
+                    score_date_scope=False,
+                    candidate_entities_table="relation_candidate_span_entities",
+                    resolved_candidate_spans_table="relation_candidate_spans",
+                    strict_trace_project_correlation=True,
+                    eval_filter_metadata=metadata,
+                )
+                prefix = f"relation_{filter_index}_{requirement_index}_{scope_index}"
+                eval_id = str(item.get("column_id") or item.get("columnId"))
+                if (
+                    self._filter_col_type(item) == "EVAL_METRIC"
+                    and metadata is not None
+                    and not metadata.get(
+                        eval_id, EvalFilterMetadata((), "SCORE")
+                    ).config_ids
+                ):
+                    predicate, predicate_params = "0 = 1", {}
+                else:
+                    predicate, predicate_params = filter_builder.translate([item])
+                predicate = predicate or "0 = 1"
+                for name, value in predicate_params.items():
+                    scoped_name = f"{prefix}_{name}"
+                    predicate = predicate.replace(f"%({name})s", f"%({scoped_name})s")
+                    params[scoped_name] = value
+                if project is not None:
+                    params[f"{prefix}_project"] = project
+                    predicate = (
+                        f"project_id = toUUID(%({prefix}_project)s) AND ({predicate})"
+                    )
+                predicates.append(f"({predicate})")
+            predicate = " OR ".join(predicates) or "0 = 1"
+            alias = f"relation_requirement_{len(requirement_selects)}"
+            requirement_selects.append(f"max(toUInt8({predicate})) AS {alias}")
+            requirement_checks.append(f"{alias} = {1 if required else 0}")
+
+        for filter_index, item in enumerate(normalized_filters):
+            config = item.get("filter_config") or {}
+            operation = normalize_filter_op(
+                config.get("filter_op") or config.get("filterOp")
+            )
+            if operation == "is_null":
+                compile_requirement(
+                    with_operator(item, "is_not_null"),
+                    filter_index=filter_index,
+                    requirement_index=0,
+                    required=False,
+                )
+                continue
+            positive_operation = negative_to_positive.get(operation or "")
+            if positive_operation is not None:
+                compile_requirement(
+                    with_operator(item, "is_not_null"),
+                    filter_index=filter_index,
+                    requirement_index=0,
+                    required=True,
+                )
+                compile_requirement(
+                    with_operator(item, positive_operation),
+                    filter_index=filter_index,
+                    requirement_index=1,
+                    required=False,
+                )
+                continue
+            compile_requirement(
+                item,
+                filter_index=filter_index,
+                requirement_index=0,
+                required=True,
+            )
+
+        requirement_select_sql = ",\n                ".join(requirement_selects)
+        requirement_where_sql = "\n          AND ".join(requirement_checks)
+
+        query = f"""
+        WITH
+        relation_eu_survivor_map AS ({eu_map}),
+        relation_candidate_span_identities AS (
+            SELECT DISTINCT
+                project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
+                trace_id,
+                id
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN
+                  toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND end_user_id IN %(candidate_scan_end_user_ids)s
+        ),
+        latest_relation_candidate_spans AS (
+            SELECT
+                project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
+                trace_id,
+                id,
+                argMax(start_time, _version) AS latest_start_time,
+                argMax(tuple(end_user_id), _version).1 AS end_user_id,
+                argMax(tuple(parent_span_id), _version).1 AS parent_span_id,
+                argMax(is_deleted, _version) AS is_deleted
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN
+                  toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND (
+                  project_id,
+                  observation_type,
+                  service_name,
+                  toStartOfHour(start_time),
+                  trace_id,
+                  id
+              ) IN (
+                  SELECT
+                      project_id,
+                      observation_type,
+                      service_name,
+                      identity_hour,
+                      trace_id,
+                      id
+                  FROM relation_candidate_span_identities
+              )
+            GROUP BY
+                project_id,
+                observation_type,
+                service_name,
+                identity_hour,
+                trace_id,
+                id
+        ),
+        relation_candidate_spans AS (
+            SELECT
+                latest_spans.project_id,
+                latest_spans.observation_type,
+                latest_spans.service_name,
+                latest_spans.trace_id,
+                latest_spans.id,
+                latest_spans.latest_start_time AS start_time,
+                latest_spans.parent_span_id,
+                toString({resolved_latest_eu}) AS resolved_end_user_id
+            FROM latest_relation_candidate_spans AS latest_spans
+            LEFT JOIN relation_eu_survivor_map AS relation_eu_remap
+                ON latest_spans.end_user_id = relation_eu_remap.any_id
+            WHERE latest_spans.is_deleted = 0
+              AND latest_spans.latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_spans.latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
+        ),
+        relation_candidate_span_entities AS (
+            SELECT DISTINCT trace_id, id
+            FROM relation_candidate_spans
+        )
+        SELECT end_user_id
+        FROM (
+            SELECT
+                resolved_end_user_id AS end_user_id,
+                {requirement_select_sql}
+            FROM relation_candidate_spans
+            GROUP BY resolved_end_user_id
+        ) AS relation_user_matches
+        WHERE {requirement_where_sql}
+        """
+        return query, params
+
+    def build_page_metrics_query(
+        self, end_user_ids: list[str]
+    ) -> tuple[str, dict[str, Any]]:
+        """Hydrate raw-derived metrics for one already-selected user page.
+
+        Every physical span identity is replayed with ``argMax(_version)``;
+        tombstones are rejected only after replay, and both end-user/session
+        ids are canonicalized through the remap survivor tables.
+        """
+
+        if not end_user_ids:
+            return "", {}
+        prefix, params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [
+                "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id",
+                "argMax(status, _version) AS latest_status",
+                "argMax(tuple(end_time), _version).1 AS latest_end_time",
+                "argMax(latency_ms, _version) AS latest_latency_ms",
+            ],
+            include_sessions=True,
+        )
+        resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
+        resolved_latest_session = resolved_id_expr(
+            "latest_trace_session_id", "span_ts_remap"
+        )
+
+        query = f"""
+        {prefix},
+        resolved_candidate_spans AS (
+            SELECT
+                {resolved_latest_eu} AS end_user_id,
+                {resolved_latest_session} AS trace_session_id,
+                trace_id,
+                latest_start_time AS start_time,
+                latest_end_time AS end_time,
+                latest_latency_ms AS latency_ms,
+                observation_type,
+                latest_status AS status
+            FROM latest_candidate_spans
+            LEFT JOIN eu_survivor_map AS span_eu_remap
+                ON latest_end_user_id = span_eu_remap.any_id
+            LEFT JOIN ts_survivor_map AS span_ts_remap
+                ON latest_trace_session_id = span_ts_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
+        ),
+        extra_metrics AS (
+            SELECT
+                end_user_id,
+                countIf(observation_type = 'llm') AS num_llm_calls,
+                uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
+                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
+                uniqExact(toDate(start_time)) AS num_active_days,
+                uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
+            FROM resolved_candidate_spans
+            GROUP BY end_user_id
+        ),
+        session_durations AS (
+            SELECT
+                end_user_id,
+                trace_session_id,
+                dateDiff('millisecond', min(start_time), max(end_time)) / 1000.0 AS duration_seconds
+            FROM resolved_candidate_spans
+            WHERE isNotNull(trace_session_id)
+              AND trace_session_id != toUUID('00000000-0000-0000-0000-000000000000')
+              AND isNotNull(end_time)
+            GROUP BY end_user_id, trace_session_id
+        ),
+        session_aggregates AS (
+            SELECT
+                end_user_id,
+                count() AS num_sessions,
+                round(avg(duration_seconds), 2) AS avg_session_duration
+            FROM session_durations
+            GROUP BY end_user_id
+        ),
+        metric_user_ids AS (
+            SELECT end_user_id FROM extra_metrics
+            UNION DISTINCT
+            SELECT end_user_id FROM session_aggregates
+        )
+        SELECT
+            ids.end_user_id AS end_user_id,
+            coalesce(sa.num_sessions, 0) AS num_sessions,
+            coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
+            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(em.num_llm_calls, 0) AS num_llm_calls,
+            coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
+            coalesce(em.num_active_days, 0) AS num_active_days,
+            coalesce(em.num_traces_with_errors, 0) AS num_traces_with_errors
+        FROM metric_user_ids AS ids
+        LEFT JOIN session_aggregates AS sa ON sa.end_user_id = ids.end_user_id
+        LEFT JOIN extra_metrics AS em ON em.end_user_id = ids.end_user_id
+        """
+        return query, params
+
+    def native_span_dimension_membership(
+        self, item: dict[str, Any], *, index: int
+    ) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[str, str] | None]:
+        """The users graph's membership SQL for native leaf ``index``.
+
+        The per-span flags, the per-user condition over them, their
+        parameters and the leaf's witness flag, compiled once by the graph's
+        own compiler (``compile_user_membership_leaf``) under a namespace
+        unique to the leaf. For a SYSTEM_METRIC leaf that is
+        ``countIf(<span predicate>) > 0``: a user matches when ANY latest live
+        span in the window satisfies the span compiler's predicate, which
+        treats ``''`` as null on these non-nullable text columns and compares
+        case-insensitively. The witness flag is ``_native_witness_flag`` of
+        the condition's terms.
+        """
+
+        # exact_graph_reads imports this module; resolve it at call time.
+        from tracer.services.clickhouse.exact_graph_reads import (
+            compile_user_membership_leaf,
+        )
+
+        project_id = self.project_id or (self.project_ids or [""])[0]
+        flags, condition, params, terms = compile_user_membership_leaf(
+            item, project_id=str(project_id), namespace=f"native_leaf_{index}"
+        )
+        return flags, condition, params, self._native_witness_flag(terms)
+
+    @staticmethod
+    def _native_witness_flag(
+        terms: tuple[MembershipTerm, ...],
+    ) -> tuple[str, str] | None:
+        """``(alias, predicate)`` of a native leaf's witness flag.
+
+        The first term of the graph's condition for the leaf that is
+        ``countIf(alias) > 0``.
+
+        A condition that is one absence term, ``countIf(present) = 0`` (an
+        ``is_null`` without a family), has a witness too: a member has a
+        latest live span in the window (the graph answers no row, and no
+        match, for a user without one) and ``present`` holds for none of
+        them, so its newest latest live span satisfies ``NOT present``, and
+        that span's latest version is a physical row satisfying it at the
+        same ``start_time``. The flag is ``NOT ifNull((present), 0)``: exactly
+        the spans ``countIf(present)`` does not count, a NULL included. Its
+        alias, ``<present alias>_absent``, is not among the leaf's own flags;
+        a statement that projects it adds it (``build_native_span_dimension_query``).
+        ``None`` for any other condition with no existence term.
+        """
+
+        for term in terms:
+            if term.comparison == "> 0":
+                return term.alias, term.predicate
+        if len(terms) == 1 and terms[0].comparison == "= 0":
+            alias, predicate, _comparison = terms[0]
+            return f"{alias}_absent", f"NOT ifNull(({predicate}), 0)"
+        return None
+
+    def build_native_span_dimension_query(
+        self,
+        end_user_ids: list[str],
+        leaves: Iterable[tuple[int, dict[str, Any]]],
+        *,
+        newest: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Decide each native span-dimension leaf for a finite user page.
+
+        ``leaves`` pairs each native leaf with its index in the request's
+        filters. One row per page user that has a latest live span in the
+        window, with a ``native_leaf_<index>`` boolean per leaf computed by
+        the users graph's own membership SQL over the user's latest-state
+        spans (``native_span_dimension_membership``); a page user with no
+        such span has no row and matches no leaf, as in the graph.
+
+        ``newest`` names the leaf a native matching-activity walk discovers
+        on: the row also carries ``native_leaf_<newest>_newest``, the newest
+        latest live span in the window satisfying that leaf's existence flag
+        (``_native_witness_flag``), the user's order key. A user
+        with no such span reads the epoch there (``maxIf`` over nothing).
+        """
+
+        compiled: list[tuple[int, tuple[str, ...], str]] = []
+        params: dict[str, Any] = {}
+        columns: dict[str, None] = {}
+        newest_alias: str | None = None
+        for index, item in leaves:
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            flags, condition, leaf_params, existence = (
+                self.native_span_dimension_membership(item, index=index)
+            )
+            if index == newest:
+                if existence is None:
+                    raise ValueError(f"native leaf {index} has no existence flag")
+                newest_alias, flag = existence
+                if newest_alias.endswith("_absent"):
+                    # An absence witness: its flag is not one of the leaf's.
+                    flags = (*flags, f"({flag}) AS {newest_alias}")
+            compiled.append((index, flags, condition))
+            params.update(leaf_params)
+            columns[column] = None
+        if newest is not None and newest_alias is None:
+            raise ValueError(f"native leaf {newest} is not among the leaves")
+        if not end_user_ids or not compiled:
+            return "", {}
+        # ``observation_type`` is part of the replay identity (grouped, so it
+        # is already its latest value); every other column is replayed.
+        replayed = [column for column in columns if column != "observation_type"]
+        prefix, replay_params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [f"argMax({column}, _version) AS latest_{column}" for column in replayed],
+        )
+        params.update(replay_params)
+        resolved_eu = resolved_id_expr("latest_end_user_id", "dimension_eu_remap")
+        projected = ",\n                    ".join(
+            column if column == "observation_type" else f"latest_{column} AS {column}"
+            for column in columns
+        )
+        flags_sql = ",\n                ".join(
+            flag for _index, flags, _condition in compiled for flag in flags
+        )
+        decisions = ",\n            ".join(
+            f"({condition}) AS native_leaf_{index}"
+            for index, _flags, condition in compiled
+        )
+        if newest_alias is not None:
+            decisions += (
+                ",\n            maxIf(native_span_start_time, "
+                f"{newest_alias}) AS native_leaf_{newest}_newest"
+            )
+        query = f"""
+        {prefix}
+        SELECT
+            end_user_id,
+            {decisions}
+        FROM (
+            SELECT
+                end_user_id,
+                native_span_start_time,
+                {flags_sql}
+            FROM (
+                SELECT
+                    toString({resolved_eu}) AS end_user_id,
+                    latest_start_time AS native_span_start_time,
+                    {projected}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS dimension_eu_remap
+                    ON latest_end_user_id = dimension_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(
+                      %(user_window_start_us)s, 'UTC'
+                  )
+                  AND latest_start_time < fromUnixTimestamp64Micro(
+                      %(user_window_end_us)s, 'UTC'
+                  )
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            ) AS native_span_rows
+        ) AS native_span_flags
+        GROUP BY end_user_id
+        """
+        return query, params
+
+    def _finite_user_activity_ctes(
+        self,
+        end_user_ids: list[str],
+        state_selects: list[str],
+        *,
+        include_sessions: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
+        """Shared finite six-key replay for metric and eval-summary consumers."""
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        base_params: dict[str, Any] = {
+            "candidate_end_user_ids": tuple(str(value) for value in end_user_ids),
+            "start_date": start_date,
+            "end_date": end_date,
+            "user_window_start_us": _unix_microseconds(start_date),
+            "user_window_end_us": _unix_microseconds(end_date),
+        }
+        if self.project_ids:
+            base_params["project_ids"] = tuple(self.project_ids)
+        else:
+            base_params["project_id"] = self.project_id
+
+        eu_map, finite_map_params = self._finite_end_user_map(
+            candidate_param="candidate_end_user_ids"
+        )
+        base_params.update(finite_map_params)
+
+        def common_prefix(
+            state_selects: list[str],
+            *,
+            include_sessions: bool,
+        ) -> str:
+            remap_ctes = f"eu_survivor_map AS ({eu_map})"
+            # Even count-only metrics need the latest timestamp. Raw exact
+            # window pruning here could hide a newer version in the same
+            # replacement hour and revive an old value or tombstone.
+            state_selects = [
+                "argMax(start_time, _version) AS latest_start_time",
+                *state_selects,
+            ]
+            state_projection = "".join(
+                f",\n                {state_select}" for state_select in state_selects
+            )
+            session_remap_ctes = ""
+            if include_sessions:
+                # Seed the finite session remap from the page-scoped latest
+                # replay. This prevents stale session ids from old physical
+                # versions from expanding unrelated remap groups.
+                session_remap_ctes = """,
+        candidate_session_ids AS (
+            SELECT DISTINCT latest_trace_session_id AS trace_session_id
+            FROM latest_candidate_spans
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND isNotNull(latest_trace_session_id)
+              AND latest_trace_session_id != toUUID(
+                  '00000000-0000-0000-0000-000000000000'
+              )
+        ),
+        touched_session_groups AS (
+            SELECT DISTINCT new_id
+            FROM trace_session_id_remap FINAL
+            WHERE old_id IN (SELECT trace_session_id FROM candidate_session_ids)
+               OR new_id IN (SELECT trace_session_id FROM candidate_session_ids)
+        ),
+        ts_survivor_map AS (
+            SELECT
+                arrayJoin(
+                    arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))
+                ) AS any_id,
+                argMin(old_id, toString(old_id)) AS survivor_id
+            FROM trace_session_id_remap FINAL
+            WHERE new_id IN (SELECT new_id FROM touched_session_groups)
+            GROUP BY new_id
+        )
+                """
+            return f"""
+        WITH
+        {remap_ctes},
+        expanded_candidate_user_ids AS (
+            SELECT any_id AS end_user_id
+            FROM eu_survivor_map
+            WHERE survivor_id IN %(candidate_end_user_ids)s
+            UNION DISTINCT
+            SELECT end_user_id
+            FROM end_users FINAL
+            WHERE end_user_id IN %(candidate_end_user_ids)s
+        ),
+        candidate_span_identities AS (
+            SELECT DISTINCT
+                project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
+                trace_id,
+                id
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN
+                  toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND end_user_id IN (
+                  SELECT end_user_id FROM expanded_candidate_user_ids
+              )
+        ),
+        latest_candidate_spans AS (
+            SELECT
+                project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
+                trace_id,
+                id,
+                argMax(tuple(end_user_id), _version).1 AS latest_end_user_id
+                {state_projection},
+                argMax(is_deleted, _version) AS latest_is_deleted
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN
+                  toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND (
+                  project_id,
+                  observation_type,
+                  service_name,
+                  toStartOfHour(start_time),
+                  trace_id,
+                  id
+              ) IN (
+                  SELECT
+                      project_id,
+                      observation_type,
+                      service_name,
+                      identity_hour,
+                      trace_id,
+                      id
+                  FROM candidate_span_identities
+            )
+            GROUP BY
+                project_id,
+                observation_type,
+                service_name,
+                identity_hour,
+                trace_id,
+                id
+        )
+        {session_remap_ctes}
+            """
+
+        return common_prefix(
+            state_selects, include_sessions=include_sessions
+        ), base_params
+
+    def build_requested_page_metric_queries(
+        self,
+        end_user_ids: list[str],
+        metric_keys: set[str] | frozenset[str] | tuple[str, ...] | list[str],
+    ) -> list[tuple[str, dict[str, Any], tuple[str, ...]]]:
+        """Read only requested metric states; keep filters unrounded."""
+        requested = set(metric_keys) & {
+            *REQUESTED_PAGE_SESSION_METRIC_FIELDS,
+            *REQUESTED_PAGE_SPAN_METRIC_FIELDS,
+        }
+        if not end_user_ids or not requested:
+            return []
+        resolved_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
+
+        queries: list[tuple[str, dict[str, Any], tuple[str, ...]]] = []
+        session_fields = tuple(
+            field
+            for field in REQUESTED_PAGE_SESSION_METRIC_FIELDS
+            if field in requested
+        )
+        if session_fields:
+            needs_duration = "avg_session_duration" in session_fields
+            resolved_session = resolved_id_expr(
+                "latest_trace_session_id", "span_ts_remap"
+            )
+            session_state_selects = [
+                "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id"
+            ]
+            if needs_duration:
+                session_state_selects.append(
+                    "argMax(tuple(end_time), _version).1 AS latest_end_time"
+                )
+            prefix, base_params = self._finite_user_activity_ctes(
+                end_user_ids,
+                session_state_selects,
+                include_sessions=True,
+            )
+            projections = []
+            if "num_sessions" in session_fields:
+                projections.append("count() AS num_sessions")
+            if "avg_session_duration" in session_fields:
+                projections.append("avg(duration_seconds) AS avg_session_duration")
+            resolved_time_columns = (
+                ",\n                    latest_start_time AS start_time,"
+                "\n                    latest_end_time AS end_time"
+                if needs_duration
+                else ""
+            )
+            session_rows = (
+                """
+            session_rows AS (
+                SELECT
+                    end_user_id,
+                    trace_session_id,
+                    dateDiff(
+                        'millisecond', min(start_time), max(end_time)
+                    ) / 1000.0 AS duration_seconds
+                FROM resolved_candidate_spans
+                GROUP BY end_user_id, trace_session_id
+            )
+                """
+                if needs_duration
+                else """
+            session_rows AS (
+                SELECT end_user_id, trace_session_id
+                FROM resolved_candidate_spans
+                GROUP BY end_user_id, trace_session_id
+            )
+                """
+            )
+            query = f"""
+            {prefix},
+            resolved_candidate_spans AS (
+                SELECT
+                    {resolved_eu} AS end_user_id,
+                    {resolved_session} AS trace_session_id
+                    {resolved_time_columns}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS span_eu_remap
+                    ON latest_end_user_id = span_eu_remap.any_id
+                LEFT JOIN ts_survivor_map AS span_ts_remap
+                    ON latest_trace_session_id = span_ts_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+                  AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+                  AND isNotNull(latest_trace_session_id)
+                  AND {resolved_session} != toUUID(
+                      '00000000-0000-0000-0000-000000000000'
+                  )
+            ),
+            {session_rows}
+            SELECT
+                toString(end_user_id) AS end_user_id,
+                {", ".join(projections)}
+            FROM session_rows
+            GROUP BY end_user_id
+            """
+            queries.append((query, dict(base_params), session_fields))
+
+        span_fields = tuple(
+            field for field in REQUESTED_PAGE_SPAN_METRIC_FIELDS if field in requested
+        )
+        if span_fields:
+            state_selects: list[str] = []
+            projections: list[str] = []
+            if "avg_trace_latency" in span_fields:
+                state_selects.append(
+                    "argMax(tuple(latency_ms), _version).1 AS latest_latency_ms"
+                )
+                projections.append(
+                    "avgIf(latest_latency_ms, "
+                    "isNotNull(latest_latency_ms)) AS avg_trace_latency"
+                )
+            if {"num_llm_calls", "num_guardrails_triggered"} & set(span_fields):
+                state_selects.append(
+                    "argMax(observation_type, _version) AS latest_observation_type"
+                )
+            if "num_llm_calls" in span_fields:
+                projections.append(
+                    "countIf(latest_observation_type = 'llm') AS num_llm_calls"
+                )
+            if "num_guardrails_triggered" in span_fields:
+                projections.append(
+                    "uniqExactIf(trace_id, latest_observation_type = 'guardrail') "
+                    "AS num_guardrails_triggered"
+                )
+            if "num_active_days" in span_fields:
+                projections.append(
+                    "uniqExact(toDate(latest_start_time)) AS num_active_days"
+                )
+            if "num_traces_with_errors" in span_fields:
+                state_selects.append(
+                    "argMax(tuple(status), _version).1 AS latest_status"
+                )
+                projections.append(
+                    "uniqExactIf(trace_id, latest_status = 'ERROR') "
+                    "AS num_traces_with_errors"
+                )
+            prefix, base_params = self._finite_user_activity_ctes(
+                end_user_ids,
+                state_selects,
+                include_sessions=False,
+            )
+            query = f"""
+            {prefix}
+            SELECT
+                toString({resolved_eu}) AS end_user_id,
+                {", ".join(projections)}
+            FROM latest_candidate_spans
+            LEFT JOIN eu_survivor_map AS span_eu_remap
+                ON latest_end_user_id = span_eu_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND {resolved_eu} IN %(candidate_end_user_ids)s
+            GROUP BY end_user_id
+            """
+            queries.append((query, dict(base_params), span_fields))
+
+        return queries
+
+    def _build_candidate_first(self) -> tuple[str, dict[str, Any]]:
+        """Select the user page from rollups, then enrich only page users.
+
+        The raw enrichment replays each candidate physical span identity with
+        ``argMax(_version)`` before accepting it, so a newer tombstone cannot
+        leak into the metrics.  End-user and session ids are resolved through
+        the many-to-one survivor maps before grouping.
+        """
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        self.params.update(
+            {
+                "org_id": self.organization_id,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
+        if self.search:
+            self.params["search"] = self.search
+        if self.end_user_id:
+            self.params["end_user_id"] = self.end_user_id
+        if self.limit is not None and self.offset is not None:
+            self.params["limit"] = int(self.limit)
+            self.params["offset"] = int(self.offset)
+        if self.max_rows is not None:
+            self.params["max_rows"] = int(self.max_rows)
+
+        output_where, output_params = self._output_where()
+        self.params.update(output_params)
+
+        empty_scope_filter = "AND 0 = 1" if self.empty_scope else ""
+        search_filter = (
+            "AND positionCaseInsensitive(eu.user_id, %(search)s) > 0"
+            if self.search
+            else ""
+        )
+        end_user_filter = (
+            "AND eu.end_user_id = toUUID(%(end_user_id)s)" if self.end_user_id else ""
+        )
+        final_filter = f"WHERE {output_where}" if output_where else ""
+        order_by = self._order_by()
+        paginated = self.limit is not None and self.offset is not None
+        if paginated:
+            pagination = "LIMIT %(limit)s OFFSET %(offset)s"
+            total_count_select = "count() OVER() AS total_count"
+        elif self.max_rows is not None:
+            pagination = "LIMIT %(max_rows)s"
+            total_count_select = "0 AS total_count"
+        else:
+            pagination = ""
+            total_count_select = "0 AS total_count"
+
+        eu_map = _touched_survivor_map_subquery(
+            remap_table="end_user_id_remap",
+            candidate_cte="filtered_end_users_raw",
+            candidate_column="end_user_id",
+        )
+        ts_map = _touched_survivor_map_subquery(
+            remap_table="trace_session_id_remap",
+            candidate_cte="candidate_trace_session_ids",
+            candidate_column="trace_session_id",
+        )
+        resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
+        resolved_usage_eu = resolved_id_expr(
+            "latest_usage_end_user_id", "usage_eu_remap"
+        )
+        resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
+        resolved_latest_session = resolved_id_expr(
+            "latest_trace_session_id", "span_ts_remap"
+        )
+
+        query = f"""
+        WITH
+        filtered_end_users_raw AS (
+            SELECT
+                eu.project_id,
+                eu.end_user_id,
+                eu.user_id,
+                eu.user_id_type,
+                eu.user_id_hash,
+                eu.first_seen,
+                eu.version
+            FROM end_users AS eu FINAL
+            WHERE eu.organization_id = toUUID(%(org_id)s)
+              AND eu.is_deleted = 0
+              AND notEmpty(eu.user_id)
+              AND {self._project_predicate("eu")}
+              {empty_scope_filter}
+              {search_filter}
+              {end_user_filter}
+        ),
+        eu_survivor_map AS ({eu_map}),
+        filtered_end_users AS (
+            SELECT
+                {resolved_curated_eu} AS end_user_id,
+                argMax(eu.user_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id,
+                argMax(eu.user_id_type, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_type,
+                argMax(eu.user_id_hash, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_hash,
+                min(eu.first_seen) AS first_seen,
+                argMax(eu.project_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS project_id
+            FROM filtered_end_users_raw AS eu
+            LEFT JOIN eu_survivor_map AS eu_remap
+                ON eu.end_user_id = eu_remap.any_id
+            GROUP BY end_user_id
+        ),
+        expanded_filtered_end_user_ids AS (
+            SELECT any_id AS end_user_id
+            FROM eu_survivor_map
+            WHERE survivor_id IN (SELECT end_user_id FROM filtered_end_users)
+            UNION DISTINCT
+            SELECT end_user_id
+            FROM filtered_end_users
+        ),
+        usage_candidate_span_identities AS (
+            SELECT DISTINCT
+                project_id,
+                trace_id,
+                id,
+                start_time
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              AND end_user_id IN (
+                  SELECT end_user_id FROM expanded_filtered_end_user_ids
+              )
+        ),
+        latest_usage_spans AS (
+            SELECT
+                project_id,
+                trace_id,
+                id,
+                start_time,
+                argMax(tuple(end_user_id), _version).1 AS latest_usage_end_user_id,
+                argMax(tuple(end_time), _version).1 AS latest_usage_end_time,
+                argMax(cost, _version) AS latest_usage_cost,
+                argMax(total_tokens, _version) AS latest_usage_total_tokens,
+                argMax(prompt_tokens, _version) AS latest_usage_prompt_tokens,
+                argMax(completion_tokens, _version) AS latest_usage_completion_tokens,
+                argMax(is_deleted, _version) AS latest_usage_is_deleted
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              AND (project_id, trace_id, id, start_time) IN (
+                  SELECT project_id, trace_id, id, start_time
+                  FROM usage_candidate_span_identities
+              )
+            GROUP BY project_id, trace_id, id, start_time
+        ),
+        exact_usage AS (
+            SELECT
+                {resolved_usage_eu} AS end_user_id,
+                sum(latest_usage_cost) AS total_cost,
+                sum(toInt64(latest_usage_total_tokens)) AS total_tokens,
+                sum(toInt64(latest_usage_prompt_tokens)) AS input_tokens,
+                sum(toInt64(latest_usage_completion_tokens)) AS output_tokens,
+                uniqExact(trace_id) AS num_traces,
+                max(latest_usage_end_time) AS last_active
+            FROM latest_usage_spans
+            LEFT JOIN eu_survivor_map AS usage_eu_remap
+                ON latest_usage_end_user_id = usage_eu_remap.any_id
+            WHERE latest_usage_is_deleted = 0
+              AND {resolved_usage_eu} IN (
+                  SELECT end_user_id FROM filtered_end_users
+              )
+            GROUP BY end_user_id
+        ),
+        base_rows AS (
+            SELECT
+                eu.user_id AS user_id,
+                coalesce(xu.total_cost, 0) AS total_cost,
+                coalesce(xu.total_tokens, 0) AS total_tokens,
+                coalesce(xu.input_tokens, 0) AS input_tokens,
+                coalesce(xu.output_tokens, 0) AS output_tokens,
+                coalesce(xu.num_traces, 0) AS num_traces,
+                eu.first_seen AS activated_at,
+                xu.last_active AS last_active,
+                eu.project_id AS project_id,
+                eu.user_id_type AS user_id_type,
+                eu.user_id_hash AS user_id_hash,
+                eu.end_user_id AS end_user_id
+            FROM filtered_end_users AS eu
+            INNER JOIN exact_usage AS xu ON xu.end_user_id = eu.end_user_id
+        ),
+        candidate_users AS (
+            SELECT
+                *,
+                {total_count_select}
+            FROM base_rows
+            {final_filter}
+            {order_by}
+            {pagination}
+        ),
+        expanded_candidate_user_ids AS (
+            SELECT any_id AS end_user_id
+            FROM eu_survivor_map
+            WHERE survivor_id IN (SELECT end_user_id FROM candidate_users)
+            UNION DISTINCT
+            SELECT end_user_id FROM candidate_users
+        ),
+        candidate_span_identities AS (
+            SELECT DISTINCT
+                project_id,
+                trace_id,
+                id,
+                start_time
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              AND end_user_id IN (
+                  SELECT end_user_id FROM expanded_candidate_user_ids
+              )
+        ),
+        latest_candidate_spans AS (
+            SELECT
+                project_id,
+                trace_id,
+                id,
+                start_time,
+                argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
+                argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,
+                argMax(observation_type, _version) AS latest_observation_type,
+                argMax(status, _version) AS latest_status,
+                argMax(tuple(end_time), _version).1 AS latest_end_time,
+                argMax(latency_ms, _version) AS latest_latency_ms,
+                argMax(is_deleted, _version) AS latest_is_deleted
+            FROM spans
+            PREWHERE {self._project_predicate("spans")}
+              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              AND (project_id, trace_id, id, start_time) IN (
+                  SELECT project_id, trace_id, id, start_time
+                  FROM candidate_span_identities
+            )
+            GROUP BY project_id, trace_id, id, start_time
+        ),
+        candidate_trace_session_ids AS (
+            SELECT DISTINCT latest_trace_session_id AS trace_session_id
+            FROM latest_candidate_spans
+            WHERE isNotNull(latest_trace_session_id)
+              AND latest_trace_session_id !=
+                  toUUID('00000000-0000-0000-0000-000000000000')
+        ),
+        ts_survivor_map AS ({ts_map}),
+        resolved_candidate_spans AS (
+            SELECT
+                {resolved_latest_eu} AS end_user_id,
+                {resolved_latest_session} AS trace_session_id,
+                trace_id,
+                start_time,
+                latest_end_time AS end_time,
+                latest_latency_ms AS latency_ms,
+                latest_observation_type AS observation_type,
+                latest_status AS status
+            FROM latest_candidate_spans
+            LEFT JOIN eu_survivor_map AS span_eu_remap
+                ON latest_end_user_id = span_eu_remap.any_id
+            LEFT JOIN ts_survivor_map AS span_ts_remap
+                ON latest_trace_session_id = span_ts_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND {resolved_latest_eu} IN (
+                  SELECT end_user_id FROM candidate_users
+              )
+        ),
+        extra_metrics AS (
+            SELECT
+                end_user_id,
+                countIf(observation_type = 'llm') AS num_llm_calls,
+                uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
+                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
+                uniqExact(toDate(start_time)) AS num_active_days,
+                uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
+            FROM resolved_candidate_spans
+            GROUP BY end_user_id
+        ),
+        session_durations AS (
+            SELECT
+                end_user_id,
+                trace_session_id,
+                dateDiff('millisecond', min(start_time), max(end_time)) / 1000.0 AS duration_seconds
+            FROM resolved_candidate_spans
+            WHERE isNotNull(trace_session_id)
+              AND trace_session_id != toUUID('00000000-0000-0000-0000-000000000000')
+              AND isNotNull(end_time)
+            GROUP BY end_user_id, trace_session_id
+        ),
+        session_aggregates AS (
+            SELECT
+                end_user_id,
+                count() AS num_sessions,
+                round(avg(duration_seconds), 2) AS avg_session_duration
+            FROM session_durations
+            GROUP BY end_user_id
+        )
+        SELECT
+            cu.user_id AS user_id,
+            cu.total_cost AS total_cost,
+            cu.total_tokens AS total_tokens,
+            cu.input_tokens AS input_tokens,
+            cu.output_tokens AS output_tokens,
+            cu.num_traces AS num_traces,
+            coalesce(sa.num_sessions, 0) AS num_sessions,
+            coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
+            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(em.num_llm_calls, 0) AS num_llm_calls,
+            coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
+            cu.activated_at AS activated_at,
+            cu.last_active AS last_active,
+            coalesce(em.num_active_days, 0) AS num_active_days,
+            coalesce(em.num_traces_with_errors, 0) AS num_traces_with_errors,
+            0 AS bool_eval_pass_rate,
+            0 AS avg_output_float,
+            cu.project_id AS project_id,
+            cu.user_id_type AS user_id_type,
+            cu.user_id_hash AS user_id_hash,
+            cu.end_user_id AS end_user_id,
+            cu.total_count AS total_count
+        FROM candidate_users AS cu
+        LEFT JOIN session_aggregates AS sa ON sa.end_user_id = cu.end_user_id
+        LEFT JOIN extra_metrics AS em ON em.end_user_id = cu.end_user_id
+        {order_by}
+        """
+        return query, self.params
+
+    def build(self) -> tuple[str, dict[str, Any]]:
+        if self.supports_candidate_first_page():
+            return self._build_candidate_first()
+
+        # Observe Users list/export requests must never silently fall back to
+        # the historical all-users/raw-spans aggregation.  That query is exact,
+        # but on large tenants it is the known 15--30 second incident path.
+        # Raw-derived filters/sorts need a separately proven bounded selector;
+        # until one exists, fail closed so the API can return a sanitized,
+        # retryable response instead of consuming the full query deadline.
+        raise UnsupportedBoundedUserListQuery(
+            "user list filter/sort is not supported by the exact bounded query path"
+        )
+
+    def build_eval_query(
+        self,
+        end_user_ids: list[str],
+        *,
+        allowed_eval_config_ids: list[str] | tuple[str, ...] | None = None,
+        allowed_eval_config_ids_by_project: dict[str, list[str] | tuple[str, ...]]
+        | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build a lightweight eval-pass-rate query for a page of user IDs.
+
+        Runs AFTER the main ``build()`` query returns the paginated page.
+        Only joins eval_logger against the page's users (not all users),
+        avoiding the expensive full-table FINAL scan in the hot path.
+        """
+        project_config_map = {
+            str(project_id): tuple(
+                dict.fromkeys(str(value) for value in config_ids if value)
+            )
+            for project_id, config_ids in (
+                allowed_eval_config_ids_by_project or {}
+            ).items()
+            if project_id and config_ids
+        }
+        if not end_user_ids or not (allowed_eval_config_ids or project_config_map):
+            return "", {}
+        prefix, params = self._finite_user_activity_ctes(end_user_ids, [])
+        eval_table, eval_nd = self._EVAL_LOGGER_SOURCE(
+            "eval_scan", include_cdc_tombstone_guard=True
+        )
+        params["eval_eu_ids"] = tuple(end_user_ids)
+        if project_config_map:
+            eval_scope_clauses = []
+            for index, (config_project_id, config_ids) in enumerate(
+                sorted(project_config_map.items())
+            ):
+                params[f"eval_project_id_{index}"] = config_project_id
+                params[f"eval_config_ids_{index}"] = config_ids
+                eval_scope_clauses.append(
+                    "(ut.project_id = toUUID(%(eval_project_id_"
+                    f"{index})s) AND eval_scan.custom_eval_config_id IN "
+                    f"%(eval_config_ids_{index})s)"
+                )
+            eval_scope_filter = "(" + " OR ".join(eval_scope_clauses) + ")"
+        else:
+            params["allowed_eval_config_ids"] = tuple(
+                str(value) for value in allowed_eval_config_ids or ()
+            )
+            eval_scope_filter = (
+                "eval_scan.custom_eval_config_id IN %(allowed_eval_config_ids)s"
+            )
+        resolved_eu = resolved_id_expr("latest_end_user_id", "eval_eu_remap")
+        query = f"""
+        {prefix},
+        user_traces AS (
+            SELECT DISTINCT
+                project_id,
+                {resolved_eu} AS end_user_id,
+                trace_id
+            FROM latest_candidate_spans
+            LEFT JOIN eu_survivor_map AS eval_eu_remap
+                ON latest_end_user_id = eval_eu_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+              AND {resolved_eu} IN %(eval_eu_ids)s
+        )
+        SELECT
+            ut.end_user_id AS end_user_id,
+            100.0 * countIf(eval_scan.output_bool = 1)
+                / nullIf(countIf(isNotNull(eval_scan.output_bool)), 0) AS bool_eval_pass_rate,
+            avg(eval_scan.output_float) AS avg_output_float
+        FROM {eval_table} AS eval_scan FINAL
+        INNER JOIN user_traces AS ut
+            ON eval_scan.trace_id = toUUIDOrNull(ut.trace_id)
+        WHERE {eval_nd}
+          AND {eval_scope_filter}
+        GROUP BY ut.end_user_id
+        """
+        return query, params
+
+    def _span_filters(self) -> list[dict[str, Any]]:
+        return [
+            f
+            for f in self.filters
+            if not self._is_date_filter(f) and not self._is_output_filter(f)
+        ]
+
+    def _output_where(self) -> tuple[str, dict[str, Any]]:
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        for index, item in enumerate(self.filters):
+            if self._is_date_filter(item) or not self._is_output_filter(item):
+                continue
+            config = item.get("filter_config") or {}
+            column = self.OUTPUT_FILTER_MAP[item.get("column_id")]
+            clause, clause_params = self._condition(
+                column=column,
+                op=config.get("filter_op"),
+                value=config.get("filter_value"),
+                prefix=f"user_filter_{index}",
+            )
+            if clause:
+                clauses.append(clause)
+                params.update(clause_params)
+        return " AND ".join(clauses), params
+
+    def _order_by(self) -> str:
+        if not self.sort_params:
+            return "ORDER BY last_active DESC NULLS LAST, end_user_id DESC"
+        parts: list[str] = []
+        has_end_user_tiebreaker = False
+        for sort in self.sort_params:
+            column_id = sort.get("column_id")
+            column = self.OUTPUT_FILTER_MAP.get(column_id)
+            if not column:
+                continue
+            direction = str(sort.get("direction") or "desc").upper()
+            if direction not in ("ASC", "DESC"):
+                direction = "DESC"
+            parts.append(f"{column} {direction} NULLS LAST")
+            has_end_user_tiebreaker = has_end_user_tiebreaker or column == "end_user_id"
+        if parts and not has_end_user_tiebreaker:
+            # Stable pagination: equal metric/label values must not reshuffle
+            # between page requests as ClickHouse changes its parallel merge
+            # order. UUID is globally unique, so it is a total-order suffix.
+            parts.append("end_user_id DESC")
+        return (
+            f"ORDER BY {', '.join(parts)}"
+            if parts
+            else "ORDER BY last_active DESC NULLS LAST, end_user_id DESC"
+        )
+
+    @staticmethod
+    def _is_date_filter(item: dict[str, Any]) -> bool:
+        config = item.get("filter_config") or {}
+        return item.get("column_id") in ("created_at", "start_time") and config.get(
+            "filter_type"
+        ) in ("datetime", "date")
+
+    @classmethod
+    def native_span_dimension(cls, item: dict[str, Any]) -> str | None:
+        """Return the span column backing a native Users system filter.
+
+        Identity rules follow ``_is_output_filter``, plus the registry rule
+        ``is_native_user_id_filter`` states: a raw attribute sharing the name
+        keeps its own SPAN_ATTRIBUTE compiler whether it declares that through
+        ``col_type`` or only through ``property_id``, eval/annotation leaves
+        keep the relation path, and a per-user output column wins outright.
+        """
+
+        if cls._filter_col_type(item) == "SPAN_ATTRIBUTE" or cls._is_relation_filter(
+            item
+        ):
+            return None
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        if property_id and not property_id.startswith("system_attribute:"):
+            return None
+        column_id = str(item.get("column_id") or item.get("columnId") or "")
+        if column_id in cls.OUTPUT_FILTER_MAP:
+            return None
+        return USER_NATIVE_SPAN_DIMENSIONS.get(column_id)
+
+    @classmethod
+    def _is_output_filter(cls, item: dict[str, Any]) -> bool:
+        # A raw attribute may share a name with a promoted metric/user field.
+        # Its explicit source wins over the legacy name-only mapping.
+        return cls._filter_col_type(item) != "SPAN_ATTRIBUTE" and (
+            item.get("column_id") in cls.OUTPUT_FILTER_MAP
+        )
+
+    @staticmethod
+    def _condition(
+        *,
+        column: str,
+        op: str | None,
+        value: Any,
+        prefix: str,
+    ) -> tuple[str | None, dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if op == "is_null":
+            return f"isNull({column})", params
+        if op == "is_not_null":
+            return f"isNotNull({column})", params
+        if op in ("between", "not_between"):
+            if not isinstance(value, list) or len(value) != 2:
+                return None, params
+            params[f"{prefix}_start"] = value[0]
+            params[f"{prefix}_end"] = value[1]
+            operator = "NOT BETWEEN" if op == "not_between" else "BETWEEN"
+            return (
+                f"{column} {operator} %({prefix}_start)s AND %({prefix}_end)s",
+                params,
+            )
+        if op in ("in", "not_in"):
+            values = value if isinstance(value, list) else [value]
+            values = [v for v in values if v not in (None, "")]
+            if not values:
+                return ("1 = 1" if op == "not_in" else "0 = 1"), params
+            params[prefix] = tuple(values)
+            operator = "NOT IN" if op == "not_in" else "IN"
+            return f"{column} {operator} %({prefix})s", params
+        if value is None:
+            return None, params
+
+        params[prefix] = value
+        if op == "contains":
+            return (
+                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) > 0",
+                params,
+            )
+        if op == "not_contains":
+            return (
+                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) = 0",
+                params,
+            )
+        if op == "starts_with":
+            return (
+                f"startsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
+                params,
+            )
+        if op == "ends_with":
+            return (
+                f"endsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
+                params,
+            )
+
+        operator_map = {
+            "equals": "=",
+            "not_equals": "!=",
+            "greater_than": ">",
+            "greater_than_or_equal": ">=",
+            "less_than": "<",
+            "less_than_or_equal": "<=",
+        }
+        operator = operator_map.get(op)
+        if not operator:
+            return None, params
+        return f"{column} {operator} %({prefix})s", params
+
+    @staticmethod
+    def format_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        table: list[dict[str, Any]] = []
+        total_count = 0
+        for row in rows:
+            total_count = int(row.get("total_count") or total_count or 0)
+            table.append(
+                {
+                    "user_id": row.get("user_id"),
+                    "total_cost": round(row.get("total_cost") or 0, 6),
+                    "total_tokens": row.get("total_tokens") or 0,
+                    "input_tokens": row.get("input_tokens") or 0,
+                    "output_tokens": row.get("output_tokens") or 0,
+                    "num_traces": row.get("num_traces") or 0,
+                    "num_sessions": row.get("num_sessions") or 0,
+                    "avg_session_duration": row.get("avg_session_duration") or 0,
+                    "avg_trace_latency": row.get("avg_trace_latency") or 0,
+                    "num_llm_calls": row.get("num_llm_calls") or 0,
+                    "num_guardrails_triggered": row.get("num_guardrails_triggered")
+                    or 0,
+                    "activated_at": UserListQueryBuilder._json_value(
+                        row.get("activated_at")
+                    ),
+                    "last_active": UserListQueryBuilder._json_value(
+                        row.get("last_active")
+                    ),
+                    "num_active_days": row.get("num_active_days") or 0,
+                    "num_traces_with_errors": row.get("num_traces_with_errors") or 0,
+                    "bool_eval_pass_rate": row.get("bool_eval_pass_rate") or 0,
+                    "avg_output_float": row.get("avg_output_float") or 0,
+                    "project_id": UserListQueryBuilder._json_value(
+                        row.get("project_id")
+                    ),
+                    "user_id_type": row.get("user_id_type"),
+                    # CH25 EndUser cutover (DESIGN §4.3): the v2 `end_users`
+                    # column coerces PG NULL hash → '' on write, whereas the
+                    # legacy `tracer_enduser.user_id_hash` (Nullable) preserved
+                    # NULL and the old read surfaced it as None. Normalize '' →
+                    # None here to keep that contract — matching the sibling
+                    # `end_user_dict_reader.resolve_end_user_fields` (`row[3] or
+                    # None`). `user_id_type` is Nullable end-to-end (no
+                    # coercion) so it is NOT normalized: a genuine '' must stay
+                    # '' to match the old FK value.
+                    "user_id_hash": row.get("user_id_hash") or None,
+                    "end_user_id": UserListQueryBuilder._json_value(
+                        row.get("end_user_id")
+                    ),
+                }
+            )
+        return {"table": table, "total_count": total_count}
+
+    @staticmethod
+    def _json_value(value: Any) -> Any:
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)

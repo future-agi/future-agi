@@ -41,6 +41,18 @@ from tracer.models.observability_provider import ProviderChoices
 # ============================================================================
 
 
+def _ee_voice_large():
+    return pytest.importorskip("ee.voice.temporal.activities.voice_large")
+
+
+def _ee_processing_gating():
+    return pytest.importorskip("ee.voice.utils.processing_gating")
+
+
+def _ee_call_execution_workflow():
+    return pytest.importorskip("ee.voice.temporal.workflows.call_execution_workflow")
+
+
 @pytest.fixture
 def agent_definition(db, organization, workspace):
     """Create a test agent definition."""
@@ -252,6 +264,19 @@ class TestTemporalClientAPI:
 
         assert result is False
 
+    @patch("simulate.temporal.client._cancel_simulation_runner_workflow_async")
+    def test_cancel_simulation_runner_workflow(
+        self, mock_cancel_async, db, test_execution
+    ):
+        from simulate.temporal.client import cancel_simulation_runner_workflow
+
+        mock_cancel_async.return_value = True
+
+        result = cancel_simulation_runner_workflow(str(test_execution.id))
+
+        assert result is True
+        mock_cancel_async.assert_called_once_with(str(test_execution.id))
+
     @patch("simulate.temporal.client._rerun_call_executions_async")
     def test_rerun_call_executions(
         self,
@@ -384,6 +409,29 @@ class TestTemporalClientAPIIntegration:
         assert result is True
         mock_handle.cancel.assert_called_once()
 
+    @patch("tfc.temporal.common.client.get_client")
+    @pytest.mark.asyncio
+    async def test_cancel_simulation_runner_workflow_uses_hosted_id(
+        self, mock_get_client, db, test_execution
+    ):
+        from simulate.temporal.client import _cancel_simulation_runner_workflow_async
+
+        mock_handle = MagicMock()
+        mock_handle.cancel = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.get_workflow_handle.return_value = mock_handle
+        mock_get_client.return_value = mock_client
+
+        result = await _cancel_simulation_runner_workflow_async(
+            str(test_execution.id)
+        )
+
+        assert result is True
+        mock_client.get_workflow_handle.assert_called_once_with(
+            f"sim-runner-{test_execution.id}"
+        )
+        mock_handle.cancel.assert_called_once()
+
 
 # ============================================================================
 # Activity Integration Tests - setup_test_execution
@@ -470,6 +518,7 @@ class TestSetupTestExecutionActivity:
 
 
 @pytest.mark.integration
+@pytest.mark.requires_ee
 class TestCreateCallExecutionRecordsActivity:
     """Integration tests for create_call_execution_records activity."""
 
@@ -508,7 +557,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -564,7 +613,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -630,7 +679,7 @@ class TestCreateCallExecutionRecordsActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.constants.voice_mapper.select_voice_id",
+                "ee.voice.constants.voice_mapper.select_voice_id",
                 return_value="test-voice",
             ),
         ):
@@ -897,7 +946,7 @@ class TestFetchAndPersistCallResultActivity:
         self, call_execution
     ):
         """Test that fetch_and_persist_call_result updates CallExecution fields."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -934,7 +983,7 @@ class TestFetchAndPersistCallResultActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.services.voice_service_manager.VoiceServiceManager"
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
             ) as mock_vsm_class,
         ):
             mock_vsm = MagicMock()
@@ -950,6 +999,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -992,7 +1042,7 @@ class TestFetchAndPersistCallResultActivity:
         self, call_execution
     ):
         """Test that fetch_and_persist_call_result handles failed calls."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -1028,7 +1078,7 @@ class TestFetchAndPersistCallResultActivity:
             ),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch(
-                "simulate.services.voice_service_manager.VoiceServiceManager"
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
             ) as mock_vsm_class,
         ):
             mock_vsm = MagicMock()
@@ -1044,6 +1094,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -1084,7 +1135,7 @@ class TestFetchAndPersistCallResultActivity:
         self, db
     ):
         """Test that fetch_and_persist_call_result returns error for non-existent call."""
-        from ee.voice.temporal.activities.voice_large import fetch_and_persist_call_result
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
         from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -1364,6 +1415,23 @@ class TestRunSimulateEvaluationsActivity:
         assert call_execution.status == CallExecution.CallStatus.ANALYZING
 
 
+@pytest.mark.unit
+@pytest.mark.requires_ee
+def test_tool_evaluation_gate_invariant_bland_has_no_adapter():
+    """Locks the invariant the tool-eval gate in _run_tool_evaluation_standalone
+    relies on: a provider absent from ToolCallingSupportedProviders (e.g. Bland)
+    has no tool-call adapter, so get_tool_call_adapter raises. The gate skips
+    such providers up front instead of letting that raise into the broad except
+    (which silently no-ops tool evaluation). If a Bland adapter is ever added
+    this fails — a reminder to also add Bland to the supported list."""
+    from ee.agenthub.tool_eval_agent.adapters import get_tool_call_adapter
+    from simulate.semantics import ToolCallingSupportedProviders
+
+    assert ProviderChoices.BLAND not in ToolCallingSupportedProviders
+    with pytest.raises(ValueError):
+        get_tool_call_adapter(ProviderChoices.BLAND)
+
+
 @pytest.mark.integration
 class TestRunToolCallEvaluationActivity:
     """Integration tests for run_tool_call_evaluation activity."""
@@ -1544,17 +1612,19 @@ class TestBuildTranscriptData:
         from simulate.models import CallTranscript
         from simulate.temporal.activities.xl import _build_transcript_data
 
-        # Create transcript records
+        # No provider_call_data ⇒ the resolver falls back to VAPI and defaults
+        # to OUTBOUND (its direction default on missing metadata), which maps
+        # "user" to the simulator (customer) and "assistant" to the tested agent.
         CallTranscript.objects.create(
             call_execution=call_execution,
-            speaker_role="agent",
+            speaker_role=CallTranscript.SpeakerRole.USER,
             content="Hello, how can I help?",
             start_time_ms=0,
             end_time_ms=2000,
         )
         CallTranscript.objects.create(
             call_execution=call_execution,
-            speaker_role="user",
+            speaker_role=CallTranscript.SpeakerRole.ASSISTANT,
             content="I need help with my order.",
             start_time_ms=2000,
             end_time_ms=5000,
@@ -1562,9 +1632,8 @@ class TestBuildTranscriptData:
 
         result = _build_transcript_data(call_execution)
 
-        # SpeakerRoleResolver normalizes "user" -> "customer" for evaluation labels.
-        assert "agent: Hello, how can I help?" in result["transcript"]
-        assert "customer: I need help with my order." in result["transcript"]
+        assert "customer: Hello, how can I help?" in result["transcript"]
+        assert "agent: I need help with my order." in result["transcript"]
 
     @pytest.mark.django_db(transaction=True)
     def test_build_transcript_data_no_transcripts(self, call_execution):
@@ -1628,6 +1697,7 @@ class TestCallExecutionWorkflowIntegration:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    @pytest.mark.requires_ee
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
         from unittest.mock import call
@@ -1798,6 +1868,7 @@ class TestTestExecutionWorkflowIntegration:
 class TestCallExecutionRerunAPI:
     """Integration tests for the CallExecutionRerunView API."""
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_with_temporal(
         self, mock_rerun, auth_client, test_execution, call_execution
@@ -2040,7 +2111,7 @@ class TestCallProcessingGatingRules:
     """Tests for conversation-validity gating helper logic."""
 
     def test_transcript_with_both_roles_allows_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=4,
@@ -2053,7 +2124,7 @@ class TestCallProcessingGatingRules:
         assert decision.processing_skip_reason == ""
 
     def test_transcript_missing_customer_skips_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=2,
@@ -2066,7 +2137,7 @@ class TestCallProcessingGatingRules:
         assert "customer" in decision.processing_skip_reason.lower()
 
     def test_no_transcript_short_duration_skips_processing(self):
-        from ee.voice.utils.processing_gating import decide_processing_skip
+        decide_processing_skip = _ee_processing_gating().decide_processing_skip
 
         decision = decide_processing_skip(
             message_count=0,
@@ -2118,9 +2189,7 @@ class TestHeartbeatConfiguration:
         import ast
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2132,9 +2201,7 @@ class TestHeartbeatConfiguration:
         """Verify CallExecutionWorkflow sets heartbeat_timeout for run_simulate_evaluations."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2146,9 +2213,7 @@ class TestHeartbeatConfiguration:
         """Verify CallExecutionWorkflow sets heartbeat_timeout for run_tool_call_evaluation."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow.run)
 
@@ -2164,9 +2229,7 @@ class TestHeartbeatConfiguration:
         """
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow)
         assert "tool-eval-activity" in source
@@ -2175,9 +2238,7 @@ class TestHeartbeatConfiguration:
         """Verify _run_eval_only_mode uses workflow.patched for tool-eval-activity."""
         import inspect
 
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow
 
         source = inspect.getsource(CallExecutionWorkflow._run_eval_only_mode)
         assert "tool-eval-activity" in source

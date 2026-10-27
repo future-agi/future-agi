@@ -146,8 +146,7 @@ class TestGetFilterConditionsForHasEvalUnit:
         result = FilterEngine.get_filter_conditions_for_has_eval(filters)
         assert result != Q()
 
-    def test_camel_case_filter_params(self):
-        """Accepts camelCase keys (columnId / filterConfig)."""
+    def test_camel_case_filter_params_are_not_part_of_backend_contract(self):
         filters = [
             {
                 "columnId": "has_eval",
@@ -161,7 +160,7 @@ class TestGetFilterConditionsForHasEvalUnit:
         result = FilterEngine.get_filter_conditions_for_has_eval(
             filters, observe_type="trace"
         )
-        assert result != Q()
+        assert result == Q()
 
     def test_mixed_filters_only_picks_has_eval(self):
         """Other filter items in the list are ignored."""

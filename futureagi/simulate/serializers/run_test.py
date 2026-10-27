@@ -1,22 +1,54 @@
-import traceback
+"""
+Run test serializers — internal serializers.
+
+RunTestSerializer and SimulateEvalConfigSimpleSerializer live here for
+internal/Temporal use.
+
+The view layer should use:
+  - simulate.serializers.requests.run_test  — request/input serializers
+  - simulate.serializers.response.run_test  — response/output serializers
+"""
 
 import structlog
-from django.db.models import Count, Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-logger = structlog.get_logger(__name__)
 from simulate.models import (
     AgentDefinition,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
 )
-from simulate.models.test_execution import CallExecution
 from simulate.serializers.response.agent_definition import (
     AgentDefinitionResponseSerializer,
 )
-from simulate.serializers.scenarios import ScenariosSerializer
+from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+from simulate.services.eval_config_edit import has_own_mapping
+from simulate.services.harness_evals import (
+    effective_simulation_mapping,
+    harness_run_test_ids,
+    is_harness_run_test,
+    regrade_mapping,
+)
+from tracer.services.observability_switch import snapshot_as_shown
+
+logger = structlog.get_logger(__name__)
+
+# Serializer context key holding {run test id: is a harness run}.
+HARNESS_RUN_TESTS_CONTEXT_KEY = "_harness_run_tests"
+
+
+def harness_run_tests_context(run_tests) -> dict:
+    """Serializer context that answers every run test's harness lookup in one query.
+
+    A list page passes this to ``RunTestSerializer(..., many=True)`` so its
+    evals' ``regradable`` costs one query for the page rather than one per
+    run test. ``run_tests`` must already be evaluated (a list or a page).
+    """
+    ids = [run_test.id for run_test in run_tests]
+    owned = harness_run_test_ids(ids)
+    return {HARNESS_RUN_TESTS_CONTEXT_KEY: {rt_id: rt_id in owned for rt_id in ids}}
 
 
 class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
@@ -28,6 +60,10 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
     template_id = serializers.PrimaryKeyRelatedField(
         source="eval_template", read_only=True
     )
+    # The run page tags each eval with the type the picker shows for it.
+    eval_type = serializers.CharField(source="eval_template.eval_type", read_only=True)
+    regradable = serializers.SerializerMethodField()
+    editable = serializers.SerializerMethodField()
 
     class Meta:
         model = SimulateEvalConfig
@@ -42,7 +78,18 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "status",
             "eval_group",
             "template_id",
+            "eval_type",
+            "regradable",
+            "editable",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if isinstance(data["mapping"], dict):
+            data["mapping"] = effective_simulation_mapping(
+                instance.eval_template, data["mapping"]
+            )
+        return data
 
     def get_eval_group(self, obj):
         """
@@ -53,6 +100,109 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             return obj.eval_group.name
         return None
 
+    # The rule run-new-evals refuses by, so the page never offers to grade
+    # what the endpoint would turn away. Only a harness run can hold a result
+    # column the platform can't grade, and that lookup is made once per run
+    # test for the whole response, however many configs it lists. A list page
+    # answers it for every run test up front (harness_run_tests_context).
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_regradable(self, obj) -> bool:
+        harness_runs = self.context.setdefault(HARNESS_RUN_TESTS_CONTEXT_KEY, {})
+        if obj.run_test_id not in harness_runs:
+            harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
+        return not harness_runs[obj.run_test_id] or regrade_mapping(obj) is not None
+
+    # The rule the environment's eval edit refuses by. A row the harness fills
+    # is the harness's: later harness runs write into it by its fixed id, so
+    # changing it would change what they write into. Shares the lookup above.
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_editable(self, obj) -> bool:
+        harness_runs = self.context.setdefault(HARNESS_RUN_TESTS_CONTEXT_KEY, {})
+        if obj.run_test_id not in harness_runs:
+            harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
+        return not harness_runs[obj.run_test_id] or has_own_mapping(obj)
+
+
+class RunTestListAgentSerializer(serializers.ModelSerializer):
+    """Agent fields rendered by the paginated run-test list."""
+
+    class Meta:
+        model = AgentDefinition
+        fields = ["id", "agent_name", "agent_type", "provider", "contact_number"]
+        read_only_fields = fields
+
+
+class RunTestListScenarioSerializer(serializers.ModelSerializer):
+    """Scenario fields rendered by the paginated run-test list."""
+
+    scenario_type_display = serializers.CharField(
+        source="get_scenario_type_display", read_only=True
+    )
+    dataset_rows = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Scenarios
+        fields = [
+            "id",
+            "name",
+            "description",
+            "scenario_type",
+            "scenario_type_display",
+            "dataset_rows",
+        ]
+        read_only_fields = fields
+
+    def get_dataset_rows(self, obj):
+        return getattr(obj, "_dataset_row_count", 0) or 0
+
+
+class RunTestListEvalSerializer(serializers.ModelSerializer):
+    """Evaluation fields rendered by the paginated run-test list."""
+
+    eval_group = serializers.CharField(
+        source="eval_group.name", read_only=True, allow_null=True
+    )
+    model_type = serializers.CharField(source="model", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SimulateEvalConfig
+        fields = ["id", "name", "model_type", "status", "eval_group"]
+        read_only_fields = fields
+
+
+class RunTestListSummarySerializer(serializers.ModelSerializer):
+    """Bounded list-card shape; detail views keep using RunTestSerializer."""
+
+    agent_definition_detail = RunTestListAgentSerializer(
+        source="agent_definition", read_only=True, allow_null=True
+    )
+    scenarios_detail = RunTestListScenarioSerializer(
+        source="scenarios", many=True, read_only=True
+    )
+    evals_detail = RunTestListEvalSerializer(
+        source="simulate_eval_configs", many=True, read_only=True
+    )
+    source_type_display = serializers.CharField(
+        source="get_source_type_display", read_only=True
+    )
+    last_run_at = serializers.DateTimeField(
+        read_only=True, default=None, allow_null=True
+    )
+
+    class Meta:
+        model = RunTest
+        fields = [
+            "id",
+            "name",
+            "source_type",
+            "source_type_display",
+            "agent_definition_detail",
+            "scenarios_detail",
+            "evals_detail",
+            "last_run_at",
+        ]
+        read_only_fields = fields
+
 
 class RunTestSerializer(serializers.ModelSerializer):
     """Serializer for the RunTest model"""
@@ -61,7 +211,7 @@ class RunTestSerializer(serializers.ModelSerializer):
         source="agent_definition", read_only=True
     )
 
-    scenarios_detail = ScenariosSerializer(
+    scenarios_detail = ScenarioResponseSerializer(
         source="scenarios", many=True, read_only=True
     )
 
@@ -175,11 +325,19 @@ class RunTestSerializer(serializers.ModelSerializer):
                             **snapshot,
                             "agent_type": instance.agent_definition.agent_type,
                         }
-                    data["agent_version"] = {
+                    agent_version_data = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
-                        "configuration_snapshot": snapshot,
+                        "configuration_snapshot": snapshot_as_shown(
+                            snapshot, instance.agent_definition
+                        ),
                     }
+                    try:
+                        creds = instance.agent_version.credentials
+                        agent_version_data["api_key"] = creds.get_masked_api_key()
+                    except Exception:
+                        pass
+                    data["agent_version"] = agent_version_data
                 else:
                     # Try to use prefetched versions first to avoid N+1.
                     # _prefetched_versions is set by RunTestListView.get() using:
@@ -203,11 +361,19 @@ class RunTestSerializer(serializers.ModelSerializer):
                                 **snapshot,
                                 "agent_type": instance.agent_definition.agent_type,
                             }
-                        data["agent_version"] = {
+                        agent_version_data = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
-                            "configuration_snapshot": snapshot,
+                            "configuration_snapshot": snapshot_as_shown(
+                                snapshot, instance.agent_definition
+                            ),
                         }
+                        try:
+                            creds = latest_version.credentials
+                            agent_version_data["api_key"] = creds.get_masked_api_key()
+                        except Exception:
+                            pass
+                        data["agent_version"] = agent_version_data
         except Exception as e:
             logger.exception(
                 f"Error getting agent version: {e} for run test {instance.id}"
@@ -222,371 +388,3 @@ class RunTestSerializer(serializers.ModelSerializer):
                 "Name cannot be empty or just whitespace."
             )
         return value.strip()
-
-
-class RunTestExecutionsSerializer(serializers.ModelSerializer):
-    """Serializer for RunTest with execution metrics for the executions endpoint"""
-
-    # Call metrics fields
-    calls_attempted = serializers.SerializerMethodField()
-    calls_connected_percentage = serializers.SerializerMethodField()
-
-    # Test executions with their individual call metrics
-    executions = serializers.SerializerMethodField()
-
-    class Meta:
-        model = RunTest
-        fields = [
-            "id",
-            "name",
-            "description",
-            "calls_attempted",
-            "calls_connected_percentage",
-            "executions",
-            "organization",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at", "organization"]
-
-    def get_calls_attempted(self, obj):
-        """Count calls that are not pending or queued."""
-
-        # Single query to get total and excluded calls
-        call_counts = CallExecution.objects.filter(
-            test_execution__run_test=obj
-        ).aggregate(
-            total_calls=Count("id"),
-            pending_calls=Count(
-                "id", filter=Q(status=CallExecution.CallStatus.PENDING)
-            ),
-            queued_calls=Count(
-                "id", filter=Q(status=CallExecution.CallStatus.REGISTERED)
-            ),
-        )
-
-        # Calls attempted = total calls - pending calls - queued calls
-        return (
-            call_counts["total_calls"]
-            - call_counts["pending_calls"]
-            - call_counts["queued_calls"]
-        )
-
-    def get_calls_connected_percentage(self, obj):
-        """Calculate percentage of calls connected (duration > 0 seconds)."""
-
-        # Single query to get all needed counts
-        call_counts = CallExecution.objects.filter(
-            test_execution__run_test=obj
-        ).aggregate(
-            total_calls=Count("id"),
-            pending_calls=Count(
-                "id", filter=Q(status=CallExecution.CallStatus.PENDING)
-            ),
-            queued_calls=Count(
-                "id", filter=Q(status=CallExecution.CallStatus.REGISTERED)
-            ),
-            connected_calls=Count("id", filter=Q(duration_seconds__gt=0)),
-        )
-
-        calls_attempted = (
-            call_counts["total_calls"]
-            - call_counts["pending_calls"]
-            - call_counts["queued_calls"]
-        )
-
-        if calls_attempted == 0:
-            return 0.0
-
-        # Calculate percentage
-        percentage = (call_counts["connected_calls"] / calls_attempted) * 100
-        return round(percentage, 2)
-
-    def get_executions(self, obj):
-        """Get test executions with only their call metrics - optimized version"""
-
-        # Get all test executions for this run test with prefetched calls
-        executions = obj.executions.order_by("-created_at").prefetch_related("calls")
-
-        # Get all call execution data in bulk to avoid N+1 queries
-        execution_ids = [exec.id for exec in executions]
-
-        # Bulk query to get call counts per execution
-        call_counts = (
-            CallExecution.objects.filter(test_execution_id__in=execution_ids)
-            .values("test_execution_id")
-            .annotate(
-                total_calls=Count("id"),
-                pending_calls=Count(
-                    "id", filter=Q(status=CallExecution.CallStatus.PENDING)
-                ),
-                queued_calls=Count(
-                    "id", filter=Q(status=CallExecution.CallStatus.REGISTERED)
-                ),
-                connected_calls=Count("id", filter=Q(duration_seconds__gt=0)),
-            )
-        )
-
-        # Create a lookup dictionary for quick access
-        call_counts_map = {
-            item["test_execution_id"]: {
-                "total_calls": item["total_calls"],
-                "pending_calls": item["pending_calls"],
-                "queued_calls": item["queued_calls"],
-                "connected_calls": item["connected_calls"],
-            }
-            for item in call_counts
-        }
-
-        executions_data = []
-        for execution in executions:
-            counts = call_counts_map.get(
-                execution.id,
-                {
-                    "total_calls": 0,
-                    "pending_calls": 0,
-                    "queued_calls": 0,
-                    "connected_calls": 0,
-                },
-            )
-
-            calls_attempted = (
-                counts["total_calls"] - counts["pending_calls"] - counts["queued_calls"]
-            )
-
-            calls_connected_percentage = 0.0
-            if calls_attempted > 0:
-                calls_connected_percentage = round(
-                    (counts["connected_calls"] / calls_attempted) * 100, 2
-                )
-
-            executions_data.append(
-                {
-                    "id": str(execution.id),
-                    "calls_attempted": calls_attempted,
-                    "calls_connected_percentage": calls_connected_percentage,
-                }
-            )
-
-        return executions_data
-
-
-class CreateRunTestSerializer(serializers.Serializer):
-    """Serializer for creating a new RunTest"""
-
-    name = serializers.CharField(max_length=255)
-    description = serializers.CharField(allow_blank=True, required=False)
-    agent_definition_id = serializers.UUIDField()
-    scenario_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=False
-    )
-    dataset_row_ids = serializers.ListField(
-        child=serializers.CharField(max_length=255), allow_empty=True, required=False
-    )
-    # simulator_agent_id removed - will be derived from scenarios
-    eval_config_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=True, required=False, default=list
-    )
-
-    # Field for evaluation configuration data from frontend
-    evaluations_config = serializers.ListField(
-        child=serializers.DictField(),
-        allow_empty=True,
-        required=False,
-        default=list,
-        help_text="Evaluation configurations to create",
-    )
-
-    # Field for enabling tool evaluation
-    enable_tool_evaluation = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text="Enable automatic tool evaluation for this test run",
-    )
-
-    replay_session_id = serializers.UUIDField(
-        required=False,
-        allow_null=True,
-        help_text="Optional replay session ID to mark as completed after run test creation",
-    )
-
-    def validate_agent_definition_id(self, value):
-        """Validate that the agent definition exists"""
-        organization = self.context["request"].user.organization
-        if not AgentDefinition.objects.filter(
-            id=value, organization=organization
-        ).exists():
-            raise serializers.ValidationError("Agent definition not found.")
-        return value
-
-    def validate_scenario_ids(self, value):
-        """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
-        existing_ids = set(
-            Scenarios.objects.filter(
-                id__in=value, organization=organization
-            ).values_list("id", flat=True)
-        )
-
-        invalid_ids = set(value) - existing_ids
-        if invalid_ids:
-            raise serializers.ValidationError(f"Scenarios not found: {invalid_ids}")
-        return value
-
-    # validate_simulator_agent_id method removed - simulator agent will be derived from scenarios
-
-    def validate_eval_config_ids(self, value):
-        """Validate that all evaluation config IDs exist"""
-        if not value:
-            return []
-
-        # Filter out any non-UUID strings
-        valid_uuids = []
-        for item in value:
-            try:
-                # Try to convert to UUID to validate format
-                import uuid
-
-                uuid.UUID(str(item))
-                valid_uuids.append(item)
-            except (ValueError, AttributeError):
-                # Skip invalid UUIDs
-                continue
-
-        if not valid_uuids:
-            return []
-
-        organization = self.context["request"].user.organization
-        existing_ids = set(
-            SimulateEvalConfig.objects.filter(
-                id__in=valid_uuids, run_test__organization=organization
-            ).values_list("id", flat=True)
-        )
-
-        # Only return the IDs that exist in the database
-        return list(existing_ids)
-
-
-class UpdateRunTestSerializer(serializers.Serializer):
-    """Serializer for updating a RunTest"""
-
-    name = serializers.CharField(max_length=255, required=False)
-    description = serializers.CharField(allow_blank=True, required=False)
-    agent_definition_id = serializers.UUIDField(required=False)
-    scenario_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=False, required=False
-    )
-    dataset_row_ids = serializers.ListField(
-        child=serializers.CharField(max_length=255), allow_empty=True, required=False
-    )
-    # simulator_agent_id removed - will be derived from scenarios
-    eval_config_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=True, required=False
-    )
-
-
-class CreatePromptSimulationSerializer(serializers.Serializer):
-    """Serializer for creating a new prompt-based simulation run"""
-
-    name = serializers.CharField(max_length=255)
-    description = serializers.CharField(allow_blank=True, required=False)
-    prompt_template_id = serializers.UUIDField(
-        help_text="Prompt template to use as the agent source"
-    )
-    prompt_version_id = serializers.CharField(
-        max_length=255, help_text="Prompt version ID (UUID) or template_version string"
-    )
-    scenario_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=False
-    )
-    dataset_row_ids = serializers.ListField(
-        child=serializers.CharField(max_length=255), allow_empty=True, required=False
-    )
-
-    # Field for evaluation configuration data from frontend
-    evaluations_config = serializers.ListField(
-        child=serializers.DictField(),
-        allow_empty=True,
-        required=False,
-        default=list,
-        help_text="Evaluation configurations to create",
-    )
-
-    # Field for enabling tool evaluation
-    enable_tool_evaluation = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text="Enable automatic tool evaluation for this simulation run",
-    )
-
-    def validate_prompt_template_id(self, value):
-        """Validate that the prompt template exists"""
-        from model_hub.models.run_prompt import PromptTemplate
-
-        organization = self.context["request"].user.organization
-        if not PromptTemplate.objects.filter(
-            id=value, organization=organization, deleted=False
-        ).exists():
-            raise serializers.ValidationError("Prompt template not found.")
-        return value
-
-    def validate_prompt_version_id(self, value):
-        """
-        Store the raw value - actual validation happens in validate() with cross-field context.
-        This allows us to use prompt_template_id to find the correct version.
-        """
-        return value
-
-    def validate_scenario_ids(self, value):
-        """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
-        existing_ids = set(
-            Scenarios.objects.filter(
-                id__in=value, organization=organization
-            ).values_list("id", flat=True)
-        )
-
-        invalid_ids = set(value) - existing_ids
-        if invalid_ids:
-            raise serializers.ValidationError(f"Scenarios not found: {invalid_ids}")
-        return value
-
-    def validate(self, data):
-        """Cross-field validation - resolve prompt_version_id to actual UUID"""
-        import uuid
-
-        from model_hub.models.run_prompt import PromptVersion
-
-        prompt_template_id = data.get("prompt_template_id")
-        prompt_version_id = data.get("prompt_version_id")
-        prompt_version = None
-
-        # Try to find the prompt version by UUID or template_version string
-        # Strategy 1: Try as UUID first
-        try:
-            version_uuid = uuid.UUID(str(prompt_version_id))
-            prompt_version = PromptVersion.objects.filter(
-                id=version_uuid, original_template_id=prompt_template_id, deleted=False
-            ).first()
-        except (ValueError, AttributeError):
-            pass
-
-        # Strategy 2: Try as template_version (like 'v1')
-        if not prompt_version:
-            prompt_version = PromptVersion.objects.filter(
-                template_version=prompt_version_id,
-                original_template_id=prompt_template_id,
-                deleted=False,
-            ).first()
-
-        if not prompt_version:
-            raise serializers.ValidationError(
-                {
-                    "prompt_version_id": f"Prompt version '{prompt_version_id}' not found for this template."
-                }
-            )
-
-        # Update data with the resolved UUID
-        data["prompt_version_id"] = str(prompt_version.id)
-
-        return data

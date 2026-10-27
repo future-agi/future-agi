@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 )
 
 // USDToMicros converts a USD float to microdollars (millionths of a dollar).
@@ -211,7 +213,7 @@ func (ks *KeyStore) Authenticate(rawKey string) *APIKey {
 	key, ok := ks.byHash[hash]
 	ks.mu.RUnlock()
 
-	if !ok {
+	if !ok || !key.IsActive() {
 		return nil
 	}
 	// Best-effort last-used timestamp — atomic pointer swap, no write lock needed.
@@ -260,8 +262,10 @@ func (ks *KeyStore) Create(name, owner string, models, providers []string, metad
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	ks.counter++
-	id := fmt.Sprintf("key_%d", ks.counter)
+	id := newKeyID()
+	for ks.byID[id] != nil {
+		id = newKeyID()
+	}
 
 	key := &APIKey{
 		ID:               id,
@@ -356,17 +360,81 @@ func (ks *KeyStore) Count() int {
 	return len(ks.byID)
 }
 
-// SyncedKey represents a key received from the Django control plane during
-// startup sync. It contains the pre-computed SHA-256 hash (the raw key is
-// never sent over the wire).
+// SyncedKey is a key the Django control plane holds, as the store loads it.
+// It carries the pre-computed SHA-256 hash (the raw key is never sent over the
+// wire). SyncedKeyFromContract builds it from the wire shape.
 type SyncedKey struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Owner     string            `json:"owner"`
-	KeyHash   string            `json:"key_hash"`
-	Models    []string          `json:"models"`
-	Providers []string          `json:"providers"`
-	Metadata  map[string]string `json:"metadata"`
+	ID        string
+	Name      string
+	Owner     string
+	KeyHash   string
+	KeyPrefix string
+	Models    []string
+	Providers []string
+	Metadata  map[string]string
+	ExpiresAt *time.Time
+}
+
+// SyncedKeyFromContract checks and converts a key as the control plane sends
+// it, both when the gateway pulls the key set and when Django pushes keys to
+// POST /-/keys/sync.
+func SyncedKeyFromContract(k *gatewayadmin.SyncedKey) (SyncedKey, error) {
+	if k == nil || k.ID == "" || !isSHA256Hex(k.KeyHash) {
+		return SyncedKey{}, errors.New("id and a hex SHA-256 key_hash are required")
+	}
+	key := SyncedKey{
+		ID:        k.ID,
+		KeyHash:   k.KeyHash,
+		Models:    k.Models,
+		Providers: k.Providers,
+		Metadata:  k.Metadata,
+	}
+	if k.Name != nil {
+		key.Name = *k.Name
+	}
+	if k.Owner != nil {
+		key.Owner = *k.Owner
+	}
+	if k.KeyPrefix != nil {
+		key.KeyPrefix = *k.KeyPrefix
+	}
+	if k.ExpiresAt != nil {
+		t, err := time.Parse(time.RFC3339, *k.ExpiresAt)
+		if err != nil {
+			return SyncedKey{}, fmt.Errorf("expires_at: %w", err)
+		}
+		key.ExpiresAt = &t
+	}
+	return key, nil
+}
+
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// syncedKeyToAPIKey is the single construction site for both sync paths, so a
+// field can't be wired into one and missed in the other.
+func syncedKeyToAPIKey(sk SyncedKey, id string) *APIKey {
+	return &APIKey{
+		ID:               id,
+		KeyHash:          sk.KeyHash,
+		KeyPrefix:        sk.KeyPrefix,
+		Name:             sk.Name,
+		Owner:            sk.Owner,
+		Status:           "active",
+		KeyType:          "byok",
+		Source:           "sync",
+		AllowedModels:    sk.Models,
+		AllowedProviders: sk.Providers,
+		Metadata:         sk.Metadata,
+		ExpiresAt:        sk.ExpiresAt,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
 }
 
 // LoadFromHashes merges control-plane keys (identified by pre-computed hashes)
@@ -386,26 +454,15 @@ func (ks *KeyStore) LoadFromHashes(keys []SyncedKey) int {
 			continue
 		}
 
-		ks.counter++
 		id := sk.ID
 		if id == "" {
-			id = fmt.Sprintf("key_%d", ks.counter)
+			id = newKeyID()
+		}
+		if idTaken(ks.byID, id, sk) {
+			continue
 		}
 
-		key := &APIKey{
-			ID:               id,
-			KeyHash:          sk.KeyHash,
-			Name:             sk.Name,
-			Owner:            sk.Owner,
-			Status:           "active",
-			KeyType:          "byok",
-			Source:           "sync",
-			AllowedModels:    sk.Models,
-			AllowedProviders: sk.Providers,
-			Metadata:         sk.Metadata,
-			CreatedAt:        time.Now(),
-			UpdatedAt:        time.Now(),
-		}
+		key := syncedKeyToAPIKey(sk, id)
 
 		ks.byHash[sk.KeyHash] = key
 		ks.byID[id] = key
@@ -462,26 +519,15 @@ func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 			continue
 		}
 
-		ks.counter++
 		id := sk.ID
 		if id == "" {
-			id = fmt.Sprintf("key_%d", ks.counter)
+			id = newKeyID()
+		}
+		if idTaken(ks.byID, id, sk) {
+			continue
 		}
 
-		key := &APIKey{
-			ID:               id,
-			KeyHash:          sk.KeyHash,
-			Name:             sk.Name,
-			Owner:            sk.Owner,
-			Status:           "active",
-			KeyType:          "byok",
-			Source:           "sync",
-			AllowedModels:    sk.Models,
-			AllowedProviders: sk.Providers,
-			Metadata:         sk.Metadata,
-			CreatedAt:        time.Now(),
-			UpdatedAt:        time.Now(),
-		}
+		key := syncedKeyToAPIKey(sk, id)
 
 		ks.byHash[sk.KeyHash] = key
 		ks.byID[id] = key
@@ -491,7 +537,32 @@ func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 	return loaded
 }
 
+// idTaken reports whether id already belongs to a different key, and logs it.
+// Such a synced key is skipped rather than loaded over the other one: the
+// displaced key would stay usable by hash but drop out of byID, and revoking
+// the synced ID would then revoke the wrong key.
+func idTaken(byID map[string]*APIKey, id string, sk SyncedKey) bool {
+	existing, ok := byID[id]
+	if !ok || existing.KeyHash == sk.KeyHash {
+		return false
+	}
+	slog.Warn("key sync: skipping key whose id belongs to another key",
+		"id", id, "name", sk.Name, "existing_name", existing.Name, "existing_source", existing.Source)
+	return true
+}
+
 // --- Helpers ---
+
+// newKeyID returns the ID for a key the gateway mints. It is random, not
+// counted: the control plane stores keys by ID and outlives this process, so a
+// counter that restarts at key_1 would reissue IDs it already holds.
+func newKeyID() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+	return "key_" + hex.EncodeToString(b)
+}
 
 // HashKey returns the SHA-256 hex hash of a key.
 func HashKey(key string) string {

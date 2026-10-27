@@ -21,6 +21,7 @@ import {
 // Type config — icon path + color
 // ---------------------------------------------------------------------------
 import { getTypeConfig } from "./spanTypeConfig";
+import { getOwnEvalScores } from "./evalScores";
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -37,7 +38,7 @@ function countErrors(entry) {
 
 /** Collect all eval scores from a subtree (recursive) */
 function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
+  const evals = getOwnEvalScores(entry);
   let pass = 0;
   let fail = 0;
   let total = evals.length;
@@ -68,7 +69,7 @@ function getRootLatency(spans) {
 function getLatencyColor(latency, rootLatency) {
   if (!rootLatency || !latency) return "text.disabled";
   const ratio = latency / rootLatency;
-  if (ratio >= 0.75) return "#DC2626";
+  if (ratio >= 0.75) return "accent.fail";
   if (ratio >= 0.5) return "#D97706";
   return "text.disabled";
 }
@@ -271,7 +272,7 @@ const TreeNodeRow = ({
   const evalTotal = subtreeEvals.total;
 
   // This span's own evals — check if THIS span has failed evals (for red dot indicator)
-  const ownEvals = entry?.eval_scores || [];
+  const ownEvals = getOwnEvalScores(entry);
   const hasOwnFailedEval = ownEvals.some((e) => {
     const score =
       e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);
@@ -444,7 +445,7 @@ const TreeNodeRow = ({
                   component="span"
                   sx={{
                     fontSize: 9.5,
-                    color: "#DC2626",
+                    color: "accent.fail",
                     fontWeight: 600,
                     display: "inline-flex",
                     alignItems: "center",
@@ -461,15 +462,18 @@ const TreeNodeRow = ({
                   component="span"
                   sx={{
                     fontSize: 9.5,
-                    color: evalFailCount > 0 ? "#DC2626" : "#16A34A",
+                    color: evalFailCount > 0 ? "accent.fail" : "accent.pass",
                     fontWeight: 500,
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "2px",
-                    bgcolor:
-                      evalFailCount > 0
-                        ? alpha("#DC2626", 0.08)
-                        : alpha("#16A34A", 0.08),
+                    bgcolor: (t) =>
+                      alpha(
+                        evalFailCount > 0
+                          ? t.palette.accent.fail
+                          : t.palette.accent.pass,
+                        0.08,
+                      ),
                     px: "3px",
                     py: "1px",
                     borderRadius: "3px",
@@ -571,7 +575,7 @@ const TreeNodeRow = ({
                         sx={{
                           fontSize: 9,
                           fontWeight: 600,
-                          color: ownFail > 0 ? "#dc2626" : "#16a34a",
+                          color: ownFail > 0 ? "accent.fail" : "accent.pass",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: "2px",

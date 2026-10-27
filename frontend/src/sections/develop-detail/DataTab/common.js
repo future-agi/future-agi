@@ -320,14 +320,10 @@ export const getColumnConfig = ({
   const editCell = useEditCellStore.getState().editCell;
   const setEditCell = useEditCellStore.getState().setEditCell;
 
-  // Read both snake_case (canonical API shape) and camelCase (alias) so
-  // this function works whether `eachCol` came straight from the axios
-  // response (has non-enumerable camelCase getters) or from a spread/clone
-  // (only snake_case keys survive).
-  const colDataType = eachCol?.data_type ?? eachCol?.dataType;
-  const colOriginType = eachCol?.origin_type ?? eachCol?.originType;
-  const colIsFrozen = eachCol?.is_frozen ?? eachCol?.isFrozen;
-  const colIsVisible = eachCol?.is_visible ?? eachCol?.isVisible;
+  const colDataType = eachCol?.data_type;
+  const colOriginType = eachCol?.origin_type;
+  const colIsFrozen = eachCol?.is_frozen;
+  const colIsVisible = eachCol?.is_visible;
 
   const isEditable =
     !isViewerRole &&
@@ -339,7 +335,7 @@ export const getColumnConfig = ({
     headerName: eachCol?.name,
     valueGetter: (v) => {
       const cell = v?.data?.[eachCol?.id];
-      const rawValue = cell?.cell_value ?? cell?.cellValue;
+      const rawValue = cell?.cell_value;
       return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
     },
     valueSetter: (params) => {
@@ -421,7 +417,7 @@ export const getColumnConfig = ({
       ...baseConfig,
       valueGetter: (v) => {
         const cell = v.data?.[eachCol.id];
-        const rawValue = cell?.cell_value ?? cell?.cellValue;
+        const rawValue = cell?.cell_value;
         const date = parseDate(rawValue);
         return date;
       },
@@ -526,7 +522,7 @@ const getMainMenuItems =
       // use the underlying eval / eval_reason column ids, so the old
       // `column.id` key no longer matched what was stored and the
       // "Hide Reasoning" state was lost.
-      const key = column?.sourceId || column?.id;
+      const key = column?.source_id || column?.id;
       extraMenuItems.push({
         name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
         action: () => {
@@ -616,7 +612,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 
   const columnId = params?.column?.colId;
-  const rowId = params?.data?.rowId;
+  const rowId = params?.data?.row_id ?? params?.data?.rowId;
   const newValue = params?.newValue;
   const oldValue = params?.oldValue;
   const dataType = params?.column?.colDef?.dataType;
@@ -766,13 +762,208 @@ export const getStatusColor = (value, theme) => {
   };
 };
 
+export const parsePythonReprIfNeeded = (value) => {
+  if (typeof value !== "string") return value;
+  const isDict = value.startsWith("{") && value.endsWith("}");
+  const isList = value.startsWith("[") && value.endsWith("]");
+  if (!isDict && !isList) return value;
+  try {
+    return JSON.parse(value.replace(/'/g, '"'));
+  } catch {
+    return value;
+  }
+};
+
+const extractChoiceArray = (obj) => {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  if (Array.isArray(obj.choices)) return obj.choices;
+  if (Array.isArray(obj.choice)) return obj.choice;
+  return null;
+};
+
+// Display label for a choice-shaped value ({ choice } / { choices });
+// joins arrays, returns null when the value isn't choice-shaped.
+export const extractChoiceLabel = (/** @type {any} */ obj) => {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  if (Array.isArray(obj.choices)) return obj.choices.join(", ");
+  if (Array.isArray(obj.choice)) return obj.choice.join(", ");
+  if (typeof obj.choices === "string") return obj.choices;
+  if (typeof obj.choice === "string") return obj.choice;
+  return null;
+};
+
+// Numeric score from an already-normalized eval value.
+export const extractScore = (/** @type {any} */ normalized) => {
+  if (typeof normalized === "number") return normalized;
+  if (
+    normalized &&
+    typeof normalized === "object" &&
+    typeof normalized.score === "number"
+  ) {
+    return normalized.score;
+  }
+  return parseFloat(normalized);
+};
+
+export const normalizeEvalCellValue = (value) => {
+  const v = parsePythonReprIfNeeded(value);
+  if (Array.isArray(v)) return v;
+  const arr = extractChoiceArray(v);
+  if (arr) return arr;
+  return v;
+};
+
+export const cleanChoiceLabel = (value) => {
+  const parsed = parsePythonReprIfNeeded(value);
+  if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
+  // key, which would otherwise stringify to "[object Object]".
+  const choiceLabel = extractChoiceLabel(parsed);
+  if (choiceLabel !== null) return choiceLabel;
+  return String(parsed ?? value);
+};
+
+// Map an outputType string (with all its casing/spelling variants) to a canonical
+// kind. Returns null when no type was given or it isn't recognized.
+const canonicalKindFromOutputType = (/** @type {any} */ outputType) => {
+  const t = String(outputType || "").toLowerCase();
+  if (!t) return null;
+  if (t === "pass/fail" || t === "pass_fail") return "passfail";
+  if (t === "choices" || t === "choice") return "choices";
+  if (t === "score" || t === "percentage" || t === "numeric") return "score";
+  return null;
+};
+
+// Infer the kind from the value's shape alone, used when no outputType is known.
+const inferKindFromValue = (/** @type {any} */ v) => {
+  if (typeof v === "number") return "score";
+  if (typeof v === "string") {
+    const trimmed = v.trim();
+    const lowered = trimmed.toLowerCase();
+    if (
+      lowered === "passed" ||
+      lowered === "failed" ||
+      lowered === "pass" ||
+      lowered === "fail"
+    ) {
+      return "passfail";
+    }
+    // numeric-looking string → score
+    if (trimmed !== "" && !Number.isNaN(parseFloat(trimmed))) return "score";
+    // any other string is treated as a single choice label
+    return "choices";
+  }
+  if (Array.isArray(v)) return "choices";
+  if (v && typeof v === "object") {
+    if (extractChoiceArray(v) || extractChoiceLabel(v)) return "choices";
+    if (typeof v.score === "number") return "score";
+  }
+  return null;
+};
+
+/**
+ * @param {any} value
+ * @param {string} [outputType] - optional; when omitted, the kind is inferred from the value shape
+ */
+export const normalizeEvalResult = (value, outputType) => {
+  const v = parsePythonReprIfNeeded(value);
+
+  if (
+    v === null ||
+    v === undefined ||
+    v === "" ||
+    (Array.isArray(v) && v.length === 0)
+  ) {
+    return { kind: "empty" };
+  }
+
+  let kind = canonicalKindFromOutputType(outputType) ?? inferKindFromValue(v);
+
+  // If the value clearly carries choice information (e.g. {score, choice: "x"}
+  // or {score, choices: [...]}), prefer rendering as choices even when the
+  // declared output_type was "score". Backend evals with choice_scores
+  // configured produce this hybrid shape while still reporting output: "score".
+  const hasChoiceShape =
+    v &&
+    typeof v === "object" &&
+    !Array.isArray(v) &&
+    (extractChoiceArray(v) || extractChoiceLabel(v));
+  if (hasChoiceShape) kind = "choices";
+
+  if (kind === "passfail") {
+    const items = Array.isArray(v) ? v : [v];
+    const label = items.map((x) => String(x ?? "")).join(", ");
+    const passed = !label.toLowerCase().includes("fail") && !!label;
+    return { kind: "passfail", label, pass: passed };
+  }
+
+  if (kind === "choices") {
+    let items;
+    if (Array.isArray(v)) items = v;
+    else if (v && typeof v === "object") {
+      items = extractChoiceArray(v) ?? [extractChoiceLabel(v) ?? ""];
+    } else {
+      items = [v];
+    }
+    items = items
+      .flatMap((x) => {
+        if (!x || typeof x !== "object") return [x];
+        return (
+          extractChoiceArray(x) ?? [
+            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
+          ]
+        );
+      })
+      .map((/** @type {any} */ x) => String(x ?? ""))
+      .filter(Boolean);
+    if (items.length === 0) return { kind: "empty" };
+    const score =
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.score === "number"
+        ? v.score
+        : null;
+    return { kind: "choices", items, score };
+  }
+
+  if (kind === "score") {
+    const num =
+      typeof v === "number"
+        ? v
+        : v && typeof v === "object" && typeof v.score === "number"
+          ? v.score
+          : parseFloat(v);
+    if (Number.isNaN(num)) return { kind: "empty" };
+    return { kind: "score", score: num };
+  }
+
+  // Couldn't classify — fall back to a displayable label.
+  if (typeof v === "string" || typeof v === "number") {
+    return { kind: "passfail", label: String(v), pass: null };
+  }
+  return { kind: "empty" };
+};
+
 export const getLabel = (value) => {
-  if (Array.isArray(value) && value[0]) return value[0];
-  const numericValue = parseFloat(value);
+  const v = parsePythonReprIfNeeded(value);
+  if (Array.isArray(v) && v[0]) return v[0];
+
+  if (v && typeof v === "object") {
+    const arr = extractChoiceArray(v);
+    if (arr && arr[0]) return arr[0];
+    const choiceStr = extractChoiceLabel(v);
+    if (choiceStr) return choiceStr;
+    if (typeof v.score === "number") {
+      return `${(v.score * 100).toFixed(0)}%`;
+    }
+    return "";
+  }
+  const numericValue = parseFloat(v);
   if (!isNaN(numericValue)) {
     return `${(numericValue * 100).toFixed(0)}%`;
   }
-  return value;
+  return v;
 };
 
 export const DATASET_TYPES = {
@@ -782,23 +973,19 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Spread only copies enumerable own properties; the non-enumerable
-  // camelCase aliases installed by the axios response interceptor are
-  // lost. Explicitly re-add them so downstream code reading camelCase
-  // fields (like `eachCol?.dataType`) still works.
   return {
     ...col,
     metadata: columnConfig?.metadata,
-    data_type: col?.data_type ?? col?.dataType,
-    dataType: col?.data_type ?? col?.dataType,
-    origin_type: col?.origin_type ?? col?.originType,
-    originType: col?.origin_type ?? col?.originType,
-    is_frozen: col?.is_frozen ?? col?.isFrozen,
-    isFrozen: col?.is_frozen ?? col?.isFrozen,
-    is_visible: col?.is_visible ?? col?.isVisible,
-    isVisible: col?.is_visible ?? col?.isVisible,
-    source_id: col?.source_id ?? col?.sourceId,
-    sourceId: col?.source_id ?? col?.sourceId,
+    data_type: col?.data_type,
+    dataType: col?.data_type,
+    origin_type: col?.origin_type,
+    originType: col?.origin_type,
+    is_frozen: col?.is_frozen,
+    isFrozen: col?.is_frozen,
+    is_visible: col?.is_visible,
+    isVisible: col?.is_visible,
+    source_id: col?.source_id,
+    sourceId: col?.source_id,
   };
 };
 
@@ -884,6 +1071,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 

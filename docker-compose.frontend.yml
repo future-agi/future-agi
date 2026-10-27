@@ -9,7 +9,7 @@
 
 services:
   frontend:
-    image: futureagi/frontend:${FUTURE_AGI_VERSION:-v1.22.41}
+    image: futureagi/frontend:${FRONTEND_VERSION:-latest}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     environment:

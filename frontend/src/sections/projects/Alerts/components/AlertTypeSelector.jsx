@@ -40,6 +40,7 @@ export default function AlertTypeSelector({ onChange, selectedAlert }) {
                   value={option.value}
                   control={<Radio />}
                   label={option.label}
+                  data-alert-type-option={option.value}
                   sx={{
                     "& .MuiFormControlLabel-label": {
                       typography: "s1",

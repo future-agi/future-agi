@@ -1,28 +1,24 @@
 import React, { useMemo } from "react";
 import { alpha, Box, Divider, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import _ from "lodash";
 
-const EXCLUDED_KEYS = new Set([
-  "model",
-  "tools",
-  "toolChoice",
-  "modelDetail",
-  "modelType",
-  "outputFormat",
-  "responseFormat",
-  "booleans",
-  "dropdowns",
-  "id",
-]);
+import { buildParameterRows } from "./toolHoverState.utils";
 
 const CellStyle = ({ heading, value }) => {
   return (
-    <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+    <Box
+      sx={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: 2,
+      }}
+    >
       <Typography
         variant="s3"
         fontWeight={"fontWeightMedium"}
         color="text.primary"
+        sx={{ flexShrink: 0 }}
       >
         {heading}
       </Typography>
@@ -30,6 +26,7 @@ const CellStyle = ({ heading, value }) => {
         variant="s3"
         fontWeight={"fontWeightRegular"}
         color="text.primary"
+        sx={{ textAlign: "right", wordBreak: "break-word", minWidth: 0 }}
       >
         {value}
       </Typography>
@@ -43,35 +40,7 @@ CellStyle.propTypes = {
 };
 
 const ToolHoverState = ({ config, disabledHover }) => {
-  const responseValue =
-    typeof config?.responseFormat === "string"
-      ? config?.responseFormat
-      : config?.responseFormat?.name;
-
-  const paramEntries = useMemo(() => {
-    if (!config) return [];
-    return Object.entries(config).filter(
-      ([key, value]) =>
-        !EXCLUDED_KEYS.has(key) &&
-        value !== null &&
-        value !== undefined &&
-        (typeof value === "number" || typeof value === "string"),
-    );
-  }, [config]);
-
-  const booleanEntries = useMemo(() => {
-    if (!config?.booleans || typeof config.booleans !== "object") return [];
-    return Object.entries(config.booleans).filter(
-      ([, value]) => value !== null && value !== undefined,
-    );
-  }, [config?.booleans]);
-
-  const dropdownEntries = useMemo(() => {
-    if (!config?.dropdowns || typeof config.dropdowns !== "object") return [];
-    return Object.entries(config.dropdowns).filter(
-      ([, value]) => value !== null && value !== undefined,
-    );
-  }, [config?.dropdowns]);
+  const rows = useMemo(() => buildParameterRows(config), [config]);
 
   if (disabledHover) {
     return "Parameters";
@@ -90,11 +59,7 @@ const ToolHoverState = ({ config, disabledHover }) => {
           `4px 4px 16px 0px ${alpha(theme.palette.common.black, 0.1)}`,
       }}
     >
-      <Box
-        sx={{
-          width: "100%",
-        }}
-      >
+      <Box sx={{ width: "100%" }}>
         <Typography
           variant="s3"
           fontWeight={"fontWeightSemiBold"}
@@ -104,27 +69,22 @@ const ToolHoverState = ({ config, disabledHover }) => {
         </Typography>
       </Box>
       <Divider />
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {paramEntries.map(([key, value]) => (
-          <CellStyle key={key} heading={`${_.startCase(key)}:`} value={value} />
-        ))}
-        {booleanEntries.map(([key, value]) => (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          maxHeight: 260,
+          overflowY: "auto",
+        }}
+      >
+        {rows.map(({ heading, value }, index) => (
           <CellStyle
-            key={key}
-            heading={`${_.startCase(key)}:`}
-            value={String(value)}
+            key={`${heading}-${index}`}
+            heading={`${heading}:`}
+            value={value}
           />
         ))}
-        {dropdownEntries.map(([key, value]) => (
-          <CellStyle
-            key={key}
-            heading={`${_.startCase(key)}:`}
-            value={_.startCase(String(value))}
-          />
-        ))}
-        {responseValue && (
-          <CellStyle heading="Response Type:" value={responseValue} />
-        )}
       </Box>
     </Box>
   );

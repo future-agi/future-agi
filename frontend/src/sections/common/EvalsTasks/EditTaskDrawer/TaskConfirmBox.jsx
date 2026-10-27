@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -77,6 +77,12 @@ export default function TaskConfirmDialog({
   ...other
 }) {
   const [editType, setEditType] = useState("fresh_run");
+
+  // The dialog stays mounted between opens, so a previous "edit_rerun" pick
+  // would still be selected next time — and the other option deletes data.
+  useEffect(() => {
+    if (open) setEditType("fresh_run");
+  }, [open]);
 
   const handleConfirm = () => {
     onConfirm(editType);

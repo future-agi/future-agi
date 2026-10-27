@@ -1,7 +1,11 @@
-import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
+import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
+import { Box, Paper, useTheme, Alert, Button } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { ErrorBoundary } from "react-error-boundary";
+import { logger } from "src/utils/logger";
+import { isChunkError } from "src/utils/lazyWithRetry";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -12,14 +16,10 @@ import {
   ViewConfigModal,
   TabContextMenu,
 } from "src/components/observe-tabs";
-import ObserveTabs from "./ObserveTabs";
 import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetSavedViews,
-  SAVED_VIEWS_KEY,
-} from "src/api/project/saved-views";
+import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -27,35 +27,68 @@ import {
 } from "./SessionsView/ReplaySessions/store";
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen
+    variant="orbit"
+    sx={{ minHeight: "60vh", backgroundColor: "background.paper" }}
+  />
 );
 
-// Error boundary component
-const TabErrorBoundary = ({ children }) => {
+const TAB_ERROR_MESSAGE = "Could not load this tab";
+
+const TabContentError = ({ error, resetErrorBoundary }) => {
+  // Chunk load errors bubble to the app-level boundary's silent reload.
+  if (isChunkError(error)) throw error;
+
+  // A full reload actually changes state, unlike resetErrorBoundary() alone.
+  const handleRetry = () => {
+    resetErrorBoundary();
+    window.location.reload();
+  };
+
   return (
-    <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+    <Box sx={{ p: 2, backgroundColor: "background.paper" }}>
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={handleRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {TAB_ERROR_MESSAGE}
+      </Alert>
+    </Box>
+  );
+};
+
+TabContentError.propTypes = {
+  error: PropTypes.instanceOf(Error),
+  resetErrorBoundary: PropTypes.func.isRequired,
+};
+
+// Contains a tab's render errors to the tab, so one bad cell cannot blank the page.
+const TabErrorBoundary = ({ children, resetKey }) => {
+  return (
+    <ErrorBoundary
+      FallbackComponent={TabContentError}
+      resetKeys={[resetKey]}
+      onError={(error) => logger.error("Observe tab render failed", error)}
+    >
+      <React.Suspense fallback={<TabContentLoader />}>
+        {children}
+      </React.Suspense>
+    </ErrorBoundary>
   );
 };
 
 TabErrorBoundary.propTypes = {
   children: PropTypes.node.isRequired,
+  resetKey: PropTypes.string,
 };
-
-// Routes that use the new tab system (ObserveTabBar)
-const TAB_SYSTEM_ROUTES = ["llm-tracing", "sessions", "users"];
 
 // Map observe tab keys to route + URL params
 const TAB_TO_ROUTE = {
@@ -94,13 +127,10 @@ const ObservePage = React.memo(() => {
   // Active tab for the new tab system
   const [activeTab, setActiveTab] = useUrlState("tab", "traces");
 
-  // Determine if current route uses the new tab system
   const currentRouteSegment = useMemo(() => {
     const segments = location.pathname.split("/").filter(Boolean);
     return segments[segments.length - 1] || "llm-tracing";
   }, [location.pathname]);
-
-  const isTabSystemRoute = TAB_SYSTEM_ROUTES.includes(currentRouteSegment);
 
   // Derive active tab from URL on initial load / route changes
   useEffect(() => {
@@ -143,8 +173,7 @@ const ObservePage = React.memo(() => {
       return;
     }
     if (lastHydratedTabRef.current === tab) return;
-    const customViews =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const customViews = savedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const view = customViews.find((v) => `view-${v.id}` === tab);
     if (!view?.config) return;
@@ -168,23 +197,13 @@ const ObservePage = React.memo(() => {
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
         const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
-        const cachedResult = cached?.data?.result;
-        const customViews =
-          cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
-        viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
+        viewTabType = view?.tab_type ?? "traces";
       }
 
-      // Apply effects (activeViewConfig → apply effect → many setters) aren't
-      // urgent for tab responsiveness. Defer via startTransition so the
-      // navigation and URL update feel snappy while the filter apply runs as
-      // a non-blocking transition.
-      startTransition(() => {
-        setActiveViewConfig(activeConfig);
-      });
-
-      // Navigate to the appropriate route
+      let navTo = null;
       if (tabKey.startsWith("view-")) {
         const isUsersView =
           viewTabType === "users" || viewTabType === "user_detail";
@@ -209,10 +228,7 @@ const ObservePage = React.memo(() => {
         } else if (isSessionsView) {
           // Sessions uses sessionFilter / sessionDateFilter URL keys.
           if (activeConfig?.filters) {
-            params.set(
-              "sessionFilter",
-              JSON.stringify(activeConfig.filters),
-            );
+            params.set("sessionFilter", JSON.stringify(activeConfig.filters));
           }
           if (activeConfig?.display?.dateFilter) {
             params.set(
@@ -248,23 +264,21 @@ const ObservePage = React.memo(() => {
               JSON.stringify(activeConfig.display.dateFilter),
             );
           }
-          if (activeConfig?.compareFilters) {
+          if (activeConfig?.compare_filters) {
             params.set(
               compareFilterKey,
-              JSON.stringify(activeConfig.compareFilters),
+              JSON.stringify(activeConfig.compare_filters),
             );
           }
-          if (activeConfig?.compareDateFilter) {
+          if (activeConfig?.compare_date_filter) {
             params.set(
               compareDateKey,
-              JSON.stringify(activeConfig.compareDateFilter),
+              JSON.stringify(activeConfig.compare_date_filter),
             );
           }
         }
 
-        navigate(`${basePath}?${params.toString()}`, {
-          replace: true,
-        });
+        navTo = `${basePath}?${params.toString()}`;
       } else {
         const config = TAB_TO_ROUTE[tabKey];
         if (config) {
@@ -272,57 +286,16 @@ const ObservePage = React.memo(() => {
           const params = new URLSearchParams();
           params.set("tab", tabKey);
           Object.entries(config.params).forEach(([k, v]) => params.set(k, v));
-          navigate(`${basePath}?${params.toString()}`, { replace: true });
+          navTo = `${basePath}?${params.toString()}`;
         }
       }
+
+      // Set config + navigate together so React batches them into one render — a
+      // deferred config set left the URL naming a view while config was null.
+      setActiveViewConfig(activeConfig);
+      if (navTo) navigate(navTo, { replace: true });
     },
     [observeId, navigate, queryClient, setActiveViewConfig],
-  );
-
-  // Legacy tabs for non-tab-system routes (sessions, evals, charts, etc.)
-  const legacyTabs = useMemo(
-    () => [
-      {
-        id: "llm-tracing",
-        title: "LLM Tracing",
-        path: `/dashboard/observe/${observeId}/llm-tracing`,
-        show: true,
-      },
-      {
-        id: "evals-tasks",
-        title: "Evals & Tasks",
-        path: `/dashboard/observe/${observeId}/evals-tasks`,
-        show: true,
-      },
-      {
-        id: "charts",
-        title: "Charts",
-        path: `/dashboard/observe/${observeId}/charts`,
-        show: true,
-      },
-      {
-        id: "alerts",
-        title: "Alerts",
-        path: `/dashboard/observe/${observeId}/alerts`,
-        show: true,
-      },
-    ],
-    [observeId],
-  );
-
-  const currentLegacyTab = useMemo(() => {
-    const segments = location.pathname.split("/").filter(Boolean);
-    return legacyTabs.find((tab) => segments.includes(tab.id)) || legacyTabs[0];
-  }, [location.pathname, legacyTabs]);
-
-  const handleLegacyTabChange = useCallback(
-    (event, newTabId) => {
-      const selectedTab = legacyTabs.find((tab) => tab.id === newTabId);
-      if (selectedTab && selectedTab.path !== location.pathname) {
-        navigate(selectedTab.path, { replace: true });
-      }
-    },
-    [legacyTabs, location.pathname, navigate],
   );
 
   // Memoized styles
@@ -375,7 +348,7 @@ const ObservePage = React.memo(() => {
       resetSessionsGridStore();
       resetTraceGridStore();
       resetTabStore();
-      headerConfig?.gridApi?.deselectAll();
+      withLiveGridApi(headerConfig?.gridApi, (api) => api.deselectAll?.());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeId]);
@@ -400,6 +373,9 @@ const ObservePage = React.memo(() => {
           filterSpan={headerConfig.filterSpan}
           selectedTab={headerConfig.selectedTab}
           filterSession={headerConfig.filterSession}
+          filterUsers={headerConfig.filterUsers}
+          searchUsers={headerConfig.searchUsers}
+          sortUsers={headerConfig.sortUsers}
           refreshData={headerConfig.refreshData}
           resetFilters={headerConfig.resetFilters}
         />
@@ -407,21 +383,12 @@ const ObservePage = React.memo(() => {
 
       {/* Tabs Section */}
       <Paper sx={tabsPaperStyles}>
-        {isTabSystemRoute ? (
-          <ObserveTabBar
-            projectId={observeId}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            projectSource={projectDetail?.source}
-          />
-        ) : (
-          <ObserveTabs
-            tabs={legacyTabs}
-            currentTab={currentLegacyTab}
-            onTabChange={handleLegacyTabChange}
-            observeId={observeId}
-          />
-        )}
+        <ObserveTabBar
+          projectId={observeId}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          projectSource={projectDetail?.source}
+        />
       </Paper>
 
       {/* Filter chips slot — FilterChips portals here */}
@@ -432,13 +399,13 @@ const ObservePage = React.memo(() => {
 
       {/* Content Section */}
       <Box sx={contentStyles}>
-        <TabErrorBoundary>
+        <TabErrorBoundary resetKey={currentRouteSegment}>
           <Outlet />
         </TabErrorBoundary>
       </Box>
       <ReplayDrawer
         gridApi={headerConfig?.gridApi}
-        currentTab={currentLegacyTab}
+        activeRoute={currentRouteSegment}
         projectDetail={projectDetail}
       />
 
@@ -461,7 +428,7 @@ const ObservePage = React.memo(() => {
         <TabContextMenu
           anchorPosition={contextMenuAnchor}
           view={
-            (savedViewsData?.customViews ?? savedViewsData?.custom_views)?.find(
+            savedViewsData?.custom_views?.find(
               (v) => v.id === contextMenuAnchor.viewId,
             ) ?? null
           }

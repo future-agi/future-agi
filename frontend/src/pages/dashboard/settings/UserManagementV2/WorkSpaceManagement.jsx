@@ -21,8 +21,9 @@ import React, {
 import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
 import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useQueryClient } from "@tanstack/react-query";
+import { fDateTimeLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import AllActionForm from "./AllActionForm";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -30,7 +31,7 @@ import logger from "src/utils/logger";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
 import { APP_CONSTANTS } from "src/utils/constants";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -107,9 +108,7 @@ const WorkSpaceManagement = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
 
-  const createMutation = useMutation({
-    mutationFn: (payload) =>
-      axiosInstance.post(endpoints.workspaces.create, payload),
+  const createMutation = useCreateWorkspace({
     onSuccess: () => {
       enqueueSnackbar("Workspace created", { variant: "success" });
       setCreateOpen(false);
@@ -129,7 +128,7 @@ const WorkSpaceManagement = () => {
     if (!newWorkspaceName.trim()) return;
     createMutation.mutate({
       name: newWorkspaceName.trim(),
-      displayName: newWorkspaceName.trim(),
+      display_name: newWorkspaceName.trim(),
       emails: [],
       role: "workspace_admin", // Backend expects lowercase with underscore, not "Workspace Admin"
     });
@@ -153,19 +152,27 @@ const WorkSpaceManagement = () => {
         headerName: "Start date",
         field: "start_data",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No start date recorded"
+          />
+        ),
       },
       {
         headerName: "Last updated date",
         field: "last_update_date",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No update date recorded"
+          />
+        ),
       },
     ],
     [],

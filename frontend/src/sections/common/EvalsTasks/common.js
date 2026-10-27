@@ -1,4 +1,6 @@
 import { endOfToday, sub } from "date-fns";
+import { tokenToPreset } from "src/sections/projects/timeWindowPresets";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import EvalsAndTasksCustomTooltip from "./Renderers/EvalsAndTasksCustomToolTip";
 import FilterChipsRenderer from "./Renderers/FilterChipsRenderer";
 import RunningStatusRenderer from "./Renderers/RunningStatusRenderer";
@@ -7,6 +9,17 @@ import { dateValueFormatter } from "src/utils/dateTimeUtils";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
+import { canonicalEntries } from "src/utils/utils";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
+import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import { readEvalTaskDetail } from "./task_detail_read";
+
+// Operator categories shared by the task filter wire builders (validation.js,
+// TaskLivePreview) and TaskFilterBar.
+export const RANGE_OPS = new Set(["between", "not_between"]);
+export const LIST_OPS = new Set(["in", "not_in"]);
+export const NO_VALUE_OPS = new Set(NULL_OPERATORS);
 
 export const getEvalsTaskColumnConfig = (observeId) => {
   const columns = [
@@ -39,12 +52,16 @@ export const getEvalsTaskColumnConfig = (observeId) => {
           );
         }
 
+        // Canonical key is `filters`; `span_attributes_filters` is the
+        // legacy form still present on un-migrated rows.
         const spanAttributes =
-          params?.data?.filters_applied?.span_attributes_filters ?? [];
+          params?.data?.filters_applied?.filters ??
+          params?.data?.filters_applied?.span_attributes_filters ??
+          [];
 
         if (spanAttributes.length > 0) {
           const customAttributeString = `Custom attribute is ${spanAttributes
-            .map((f) => `(${f.columnId})`)
+            .map((f) => `(${f.column_id})`)
             .join(",")}`;
 
           filters.push(customAttributeString);
@@ -176,42 +193,89 @@ export const EvalTaskFilterDefinition = (observeId) => {
   return filters;
 };
 
-// span_attributes_filters
-// [
-//     {
-//         "columnId": "llm.output_messages.0.message.content",
-//         "filterConfig": {
-//             "colType": "SPAN_ATTRIBUTE",
-//             "filterOp": "equals",
-//             "filterType": "text",
-//             "filterValue": "asdasdasd"
-//         }
-//     }
-// ]
+// TraceFilterPanel `fieldCategory` → BE col_type enum. Fallback only —
+// the row's `apiColType` (set by TraceFilterPanel via metricToTraceFilterProperty)
+// is the source of truth when present.
+export const FIELD_CATEGORY_TO_COL_TYPE = {
+  attribute: "SPAN_ATTRIBUTE",
+  system: "SYSTEM_METRIC",
+  eval: "EVAL_METRIC",
+  annotation: "ANNOTATION",
+};
+
+// Legacy annotation controls without an explicit source use these column ids.
+// A customer attribute may share either name; explicit source identity wins.
+export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
+
+// Reserved metadata keys on the saved BE filters dict — every other key
+// becomes a generic system filter row.
+const RESERVED_FILTER_KEYS = new Set([
+  "project_id",
+  "date_range",
+  "date_preset",
+  "start_date",
+  "end_date",
+  "filters",
+  "span_attributes_filters",
+]);
+
+// Legacy → current vocabulary aliases for the system-filter hydration path.
+const FILTER_KEY_ALIAS = {
+  observation_type: "span_kind",
+};
 
 export const formatTaskFilters = (filters_applied) => {
-  const observation_type = filters_applied?.observation_type
-    ? filters_applied?.observation_type.map((i) => ({
-        property: "observation_type",
+  if (!filters_applied) return [];
+
+  // Attribute filters are stored on the wire as {column_id, filter_config}
+  // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
+  // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
+  // as `apiColType` so the panel picks the right chip.
+  const span_attributes_filters = hydrateStoredFilterList(
+    filters_applied.filters || filters_applied.span_attributes_filters || [],
+  ).map((i) => ({
+    property: "attributes",
+    propertyId: i?.column_id,
+    ...(i?.property_id ? { registryId: i.property_id } : {}),
+    // Hydration's generic attributes sentinel must not retype legacy controls.
+    apiColType:
+      i?.filter_config?.col_type ||
+      (ANNOTATION_COLUMN_IDS.has(i?.column_id)
+        ? "ANNOTATION"
+        : ID_ONLY_FIELDS.has(i?.column_id) || i?.column_id === "session_id"
+          ? "SYSTEM_METRIC"
+          : undefined),
+    filterConfig: {
+      filterType: i?.filter_config?.filter_type,
+      filterOp: i?.filter_config?.filter_op,
+      filterValue: i?.filter_config?.filter_value,
+      colType: i?.filter_config?.col_type,
+      attributeValueTypes: i?.filter_config?.attribute_value_types,
+    },
+  }));
+
+  // Every other top-level key → one generic system-filter row per value.
+  // canonicalEntries skips the camelCase aliases the axios interceptor adds
+  // (avoids duplicate chips + correctly filters reserved keys).
+  const systemFilters = [];
+  canonicalEntries(filters_applied).forEach(([key, vals]) => {
+    if (RESERVED_FILTER_KEYS.has(key)) return;
+    const field = FILTER_KEY_ALIAS[key] || key;
+    const arr = Array.isArray(vals) ? vals : [vals];
+    arr.forEach((v) => {
+      if (v === undefined || v === null || v === "") return;
+      systemFilters.push({
+        property: field,
         filterConfig: {
-          filterType: "text",
+          filterType: typeof v === "number" ? "number" : "text",
           filterOp: "equals",
-          filterValue: i,
+          filterValue: v,
         },
-      }))
-    : [];
-  const span_attributes_filters = filters_applied?.span_attributes_filters
-    ? filters_applied?.span_attributes_filters.map((i) => ({
-        property: "attributes",
-        propertyId: i?.columnId,
-        filterConfig: {
-          filterType: i?.filterConfig?.filterType,
-          filterOp: i?.filterConfig?.filterOp,
-          filterValue: i?.filterConfig?.filterValue,
-        },
-      }))
-    : [];
-  return [...observation_type, ...span_attributes_filters];
+      });
+    });
+  });
+
+  return [...systemFilters, ...span_attributes_filters];
 };
 
 export const getDefaultTaskValues = (data, observeId) => {
@@ -224,6 +288,7 @@ export const getDefaultTaskValues = (data, observeId) => {
       samplingRate: Number(data?.sampling_rate),
       evalsDetails: data?.evals_applied,
       runType: data?.run_type,
+      rowType: data?.row_type ?? "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
@@ -248,6 +313,11 @@ export const getDefaultTaskValues = (data, observeId) => {
       }
     }
 
+    // Without a stored key the task predates the field, so infer.
+    const storedPreset = tokenToPreset(data?.filters_applied?.date_preset);
+    values.datePreset =
+      storedPreset || inferPresetForLegacy(values.startDate, values.endDate);
+
     return values;
   } else {
     return {
@@ -257,22 +327,43 @@ export const getDefaultTaskValues = (data, observeId) => {
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(
         sub(new Date(), {
           months: 6,
         }),
       ),
       endDate: formatDate(endOfToday()),
+      datePreset: "6M",
       runType: "",
     };
   }
 };
 
 export const useGetTaskData = (taskId, options) => {
+  const configuredRefetchInterval = options?.refetchInterval;
+
   return useQuery({
     ...options,
     queryKey: ["taskDetails", taskId],
-    queryFn: () => axios.get(endpoints.project.getEvalTaskDetails(taskId)),
+    queryFn: ({ signal }) =>
+      readEvalTaskDetail(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskDetails(taskId), {
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      ),
     select: (d) => d?.data?.result,
+    retry: false,
+    refetchInterval: configuredRefetchInterval
+      ? (query) => {
+          if (query?.state?.status === "error") return false;
+          return typeof configuredRefetchInterval === "function"
+            ? configuredRefetchInterval(query)
+            : configuredRefetchInterval;
+        }
+      : false,
   });
 };

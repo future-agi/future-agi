@@ -329,7 +329,9 @@ const CATEGORIES = [
     // Strip the per-row "(model=..., iterations=N)" detail so all
     // variants group into a single row in the error log.
     normalize: (stripped) =>
-      stripped.replace(/\s*\(model=[^,)]+,\s*iterations=\d+\)/, "").slice(0, 200),
+      stripped
+        .replace(/\s*\(model=[^,)]+,\s*iterations=\d+\)/, "")
+        .slice(0, 200),
   },
   {
     id: "non_numeric_value",
@@ -428,6 +430,7 @@ export function enrichErrorGroup(group) {
     // grouping. Fall back to the classifier's normalize() if the backend
     // returned an empty normalized field.
     normalized: group?.normalized || classified.normalized,
+    raw: sample || classified.raw,
     count: group?.count || 0,
     // ErrorGroupCard expects an array — we only get one sample per
     // group from the backend (cheap enough to render verbatim).

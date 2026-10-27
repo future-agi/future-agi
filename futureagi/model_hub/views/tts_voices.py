@@ -2,23 +2,19 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
-from model_hub.models.tts_voices import TTSVoice
 from model_hub.queries.tts_voices import create_custom_voice
 from model_hub.serializers.tts_voices import TTSVoiceSerializer
+from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
 
-class TTSVoiceViewSet(viewsets.ModelViewSet):
+class TTSVoiceViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = TTSVoiceSerializer
     _gm = GeneralMethods()
 
     def get_queryset(self):
-        return TTSVoice.objects.filter(
-            organization=getattr(self.request, "organization", None)
-            or self.request.user.organization,
-            deleted=False,
-        ).order_by("-created_at")
+        return super().get_queryset().order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
         try:
@@ -35,6 +31,7 @@ class TTSVoiceViewSet(viewsets.ModelViewSet):
                 provider=data.get("provider"),
                 model=data.get("model", ""),
                 description=data.get("description", ""),
+                workspace=getattr(request, "workspace", None),
             )
 
             response_serializer = self.get_serializer(instance)
@@ -45,5 +42,4 @@ class TTSVoiceViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(str(e))
 
     def perform_destroy(self, instance):
-        instance.deleted = True
-        instance.save()
+        instance.delete()

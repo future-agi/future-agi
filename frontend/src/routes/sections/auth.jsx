@@ -5,7 +5,12 @@ import { Suspense } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Outlet } from "react-router-dom";
 
-import { AuthGuard, GuestGuard } from "src/auth/guard";
+import {
+  AuthGuard,
+  GuestGuard,
+  OssRestrictedGuard,
+  OssSetupGuard,
+} from "src/auth/guard";
 import AuthClassicLayout from "src/layouts/auth/classic";
 
 import { SplashScreen } from "src/components/loading-screen";
@@ -60,6 +65,8 @@ const authJwt = {
       element: <InviteAccepted />,
     },
     {
+      // Deliberately not behind OssSetupGuard: completion is per-browser, so
+      // guarding login would throw an existing user into the setup wizard.
       path: "login",
       element: (
         <AuthClassicLayout>
@@ -85,14 +92,20 @@ const authJwt = {
     },
     {
       path: "register",
-      element: <JwtRegisterPage />,
+      element: (
+        <OssSetupGuard>
+          <JwtRegisterPage />
+        </OssSetupGuard>
+      ),
     },
     {
       path: "sso-sml",
       element: (
-        <AuthClassicLayout>
-          <SSOLogin />
-        </AuthClassicLayout>
+        <OssRestrictedGuard>
+          <AuthClassicLayout>
+            <SSOLogin />
+          </AuthClassicLayout>
+        </OssRestrictedGuard>
       ),
     },
     {

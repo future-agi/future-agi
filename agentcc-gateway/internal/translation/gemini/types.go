@@ -6,7 +6,12 @@
 // needed for inbound translation.
 package gemini
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sync"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
+)
 
 // ── Inbound request types ───────────────────────────────────────────────────
 
@@ -112,3 +117,10 @@ type geminiErrorDetail struct {
 	Message string `json:"message"`
 	Status  string `json:"status"`
 }
+
+// KnownRequestFields returns the JSON keys a generateContent body defines, so a
+// caller's own additions can be told apart from the spec's fields. Derived from
+// geminiRequest, so it cannot drift from it.
+var KnownRequestFields = sync.OnceValue(func() map[string]struct{} {
+	return models.JSONFieldNames(geminiRequest{})
+})

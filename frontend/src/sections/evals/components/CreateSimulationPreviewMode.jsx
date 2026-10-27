@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 
 // Preview mode for the run-simulation creation flow. The simulation
@@ -45,6 +46,11 @@ const VOICE_RUNTIME_LEAVES = [
   "assistant_recording",
   "customer_recording",
   "agent_prompt",
+  // Only the voice pipeline populates these; chat resolves them to "".
+  "summary",
+  "phone_number",
+  "recording_url",
+  "stereo_recording_url",
 ];
 const TEXT_RUNTIME_LEAVES = [
   "transcript",
@@ -53,14 +59,10 @@ const TEXT_RUNTIME_LEAVES = [
   "agent_prompt",
 ];
 const COMMON_RUNTIME_LEAVES = [
-  "summary",
   "ended_reason",
   "duration_seconds",
   "status",
   "overall_score",
-  "phone_number",
-  "recording_url",
-  "stereo_recording_url",
 ];
 
 const PRIORITY_PREFIXES = [
@@ -114,10 +116,11 @@ function flattenLeaves(obj, prefix) {
     if (v && typeof v === "object") {
       if (Array.isArray(v)) {
         result.push(...flattenLeaves(v, path));
-      } else if (
-        canonicalKeys(v).length > 0 &&
-        canonicalKeys(v).length < FLATTEN_DICT_LIMIT
-      ) {
+      } else if (canonicalKeys(v).length === 0) {
+        // Empty group — skip entirely so it doesn't show up as a stray
+        // `path: {}` leaf in the vocabulary table.
+        continue;
+      } else if (canonicalKeys(v).length < FLATTEN_DICT_LIMIT) {
         result.push(...flattenLeaves(v, path));
       } else {
         // Empty dict or wider than the limit — emit as a leaf and let
@@ -162,10 +165,22 @@ const CreateSimulationPreviewMode = React.forwardRef(
       onReadyChange,
       onTestResult,
       previewData,
+      initialMapping = null,
     },
     ref,
   ) => {
-    const [mapping, setMapping] = useState({});
+    const [mapping, setMapping] = useState(
+      initialMapping && typeof initialMapping === "object"
+        ? { ...initialMapping }
+        : {},
+    );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
@@ -358,7 +373,14 @@ const CreateSimulationPreviewMode = React.forwardRef(
     const scenarioSummaries = previewData?.scenario_summaries || [];
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         <Alert
           severity="info"
           icon={<Iconify icon="mdi:information-outline" width={18} />}
@@ -528,6 +550,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     <Typography
@@ -580,6 +603,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                             : String(val)}
                       </Typography>
                     </Box>
+                    {renderRowMapAction(key)}
                   </Box>
                 );
               })}
@@ -698,6 +722,9 @@ const CreateSimulationPreviewMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
       </Box>
     );
   },

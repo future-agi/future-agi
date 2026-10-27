@@ -162,7 +162,7 @@ const MonitorsView = () => {
       try {
         const ids = selectedRowsData.map((row) => row.id);
 
-        await axiosInstance.delete(endpoints.project.getMonitorMetricList(), {
+        await axiosInstance.delete(endpoints.project.createMonitor, {
           data: { ids: ids },
         });
         const filesLength = ids.length;
@@ -327,7 +327,7 @@ const MonitorsView = () => {
               }}
             >
               <Typography
-                color="text.disabled"
+                color="text.secondary"
                 typography="m3"
                 fontWeight="fontWeightSemiBold"
                 sx={{ marginBottom: theme.spacing(2) }}

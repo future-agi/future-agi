@@ -1,6 +1,7 @@
 import { getRandomId } from "src/utils/utils";
 import { create } from "zustand";
 import { userDefaultFilter } from "../common";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 const useUsersStore = create((set, get) => ({
   searchQuery: "",
@@ -16,14 +17,9 @@ const useUsersStore = create((set, get) => ({
   globalChartType: "line",
   isGlobalChartType: false,
   filters: [{ ...userDefaultFilter, id: getRandomId() }],
-  selectedProjectDay: 90,
-  selectedProjectId: null,
-
-  setSelectedProjectId: (newProjectID) =>
-    set({ selectedProjectId: newProjectID }),
-
-  setProjectSelectedDay: (selectedDay) =>
-    set({ selectedProjectDay: selectedDay }),
+  // Last sort_params sent by the grid, mirrored here so the export button can
+  // match what's on screen (the sort lives in AG Grid's request, not the store).
+  sortParams: [],
 
   setSearchQuery: (query) => set({ searchQuery: query }),
   setFilters: (newFiltersOrUpdater) => {
@@ -50,9 +46,7 @@ const useUsersStore = create((set, get) => ({
     set((state) => ({ columnPanelOpen: !state.columnPanelOpen })),
   clearSelection: () => {
     const { gridApi } = get();
-    if (gridApi) {
-      gridApi.deselectAll();
-    }
+    withLiveGridApi(gridApi, (api) => api.deselectAll?.());
     set({
       selectedAll: false,
       selectedRowsData: [],
@@ -67,9 +61,7 @@ const useUsersStore = create((set, get) => ({
       selectedRowsData: [],
       openUserListFilter: false,
       filters: [{ ...userDefaultFilter, id: getRandomId() }],
-      projectFilter: [],
-      selectedProjectDay: 90,
-      selectedProjectId: null,
+      sortParams: [],
     }),
   updateColumnVisibility: (updatedData) => {
     set((state) => ({

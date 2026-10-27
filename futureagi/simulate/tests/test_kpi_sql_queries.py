@@ -15,7 +15,9 @@ from rest_framework import status
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -390,6 +392,48 @@ class TestGetKpiEvalMetricsQuery:
         # avg_value: (0.85*100 + 0.70*100) / 2 = 77.5
         assert float(sr[3]) == 77.5
 
+    def test_kpi_query_excludes_deleted_eval_configs(
+        self, test_execution, scenario, run_test, organization
+    ):
+        template = EvalTemplate.objects.create(
+            name="KPI Delete Template", config={}, organization=organization
+        )
+        live = SimulateEvalConfig.objects.create(
+            name="Live", eval_template=template, run_test=run_test
+        )
+        deleted = SimulateEvalConfig.objects.create(
+            name="Deleted", eval_template=template, run_test=run_test
+        )
+        deleted.delete()
+
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+7000000001",
+            status="completed",
+            eval_outputs={
+                str(live.id): {
+                    "name": "Live Metric",
+                    "output": "Passed",
+                    "output_type": "Pass/Fail",
+                },
+                str(deleted.id): {
+                    "name": "Deleted Metric",
+                    "output": "Passed",
+                    "output_type": "Pass/Fail",
+                },
+            },
+        )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        metric_names = {r[1] for r in rows}
+        assert "Live Metric" in metric_names
+        assert "Deleted Metric" not in metric_names
+
     def test_no_eval_outputs(self, test_execution, scenario):
         """Test query returns empty for calls without eval_outputs."""
         # Create a call without eval_outputs
@@ -493,6 +537,309 @@ class TestGetKpiEvalMetricsQuery:
         # avg of 3, 5, 7 = 5.0
         assert float(numeric_rows[0][3]) == 5.0
 
+    def test_choice_dict_single_aggregation(self, test_execution, scenario):
+        metric_id = str(uuid.uuid4())
+
+        for i, label in enumerate(["positive", "positive", "negative"]):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+8100000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Sentiment",
+                        "output": {"score": 0.7, "choice": label},
+                        "output_type": "choices",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        choice_rows = [r for r in rows if r[2] == "choices" and r[4] is not None]
+        choice_map = {r[4]: r[5] for r in choice_rows}
+        assert choice_map.get("positive") == 2
+        assert choice_map.get("negative") == 1
+
+    def test_choice_dict_multi_aggregation(self, test_execution, scenario):
+        metric_id = str(uuid.uuid4())
+
+        for i, labels in enumerate([["joy", "love"], ["joy"]]):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+8200000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Emotions",
+                        "output": {"score": 0.5, "choices": labels},
+                        "output_type": "choices",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        choice_rows = [r for r in rows if r[2] == "choices" and r[4] is not None]
+        choice_map = {r[4]: r[5] for r in choice_rows}
+        assert choice_map.get("joy") == 2
+        assert choice_map.get("love") == 1
+
+    def test_choice_dict_uses_choices_precedence_and_skips_malformed_array(
+        self, test_execution, scenario
+    ):
+        metric_id = str(uuid.uuid4())
+        for i, output in enumerate(
+            [
+                {"score": 0.5, "choice": "positive", "choices": ["negative"]},
+                {"score": 0.5, "choices": "invalid"},
+            ]
+        ):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+8250000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Sentiment",
+                        "output": output,
+                        "output_type": "choices",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        choice_map = {r[4]: r[5] for r in rows if r[2] == "choices" and r[4]}
+        assert choice_map == {"negative": 1}
+
+    def test_score_dict_aggregation(self, test_execution, scenario):
+        metric_id = str(uuid.uuid4())
+
+        for i, score in enumerate([0.8, 0.6, "high"]):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+8300000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Helpfulness",
+                        "output": {"score": score, "choice": "Good"},
+                        "output_type": "score",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        score_rows = [r for r in rows if r[2] == "score"]
+        assert len(score_rows) == 1
+        # The malformed score is ignored; avg of 0.8*100 and 0.6*100 is 70.0.
+        assert float(score_rows[0][3]) == 70.0
+
+    def test_fully_errored_pass_fail_emits_zero_row(self, test_execution, scenario):
+        """Pass/Fail metric where every entry errored still shows up as a
+        scalar row with NULL avg, so the handler renders a 0% bar instead
+        of dropping the metric."""
+        metric_id = str(uuid.uuid4())
+
+        for i in range(2):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+600000000{i}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Quality Check",
+                        "error": "error",
+                        "status": "failed",
+                        "output": None,
+                        "output_type": "Pass/Fail",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        pass_fail_rows = [r for r in rows if r[2] == "Pass/Fail"]
+        assert len(pass_fail_rows) == 1
+        assert pass_fail_rows[0][1] == "Quality Check"
+        # AVG over all-NULL CASE results yields NULL
+        assert pass_fail_rows[0][3] is None
+
+    def test_fully_errored_score_emits_zero_row(self, test_execution, scenario):
+        """Score metric where every entry errored emits a scalar row with
+        NULL avg."""
+        metric_id = str(uuid.uuid4())
+
+        for i in range(3):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+700000000{i}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Accuracy",
+                        "error": "error",
+                        "status": "failed",
+                        "output": None,
+                        "output_type": "score",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        score_rows = [r for r in rows if r[2] == "score"]
+        assert len(score_rows) == 1
+        assert score_rows[0][1] == "Accuracy"
+        assert score_rows[0][3] is None
+
+    def test_fully_errored_choices_emits_metric_row(self, test_execution, scenario):
+        """Choices metric where every entry errored emerges from
+        choice_errored_agg so the chart card still renders."""
+        metric_id = str(uuid.uuid4())
+
+        for i in range(2):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+800000000{i}",
+                status="completed",
+                eval_outputs={
+                    metric_id: {
+                        "name": "Sentiment",
+                        "error": "error",
+                        "status": "failed",
+                        "output": None,
+                        "output_type": "choices",
+                    },
+                },
+            )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        choices_rows = [r for r in rows if r[2] == "choices"]
+        assert len(choices_rows) == 1
+        row = choices_rows[0]
+        assert row[1] == "Sentiment"
+        # avg_value, choice_value both NULL; choice_count = 0
+        assert row[3] is None
+        assert row[4] is None
+        assert row[5] == 0
+
+    def test_partial_errored_choices_aggregates_successes_only(
+        self, test_execution, scenario
+    ):
+        """When some entries succeed and others error, choice_errored_agg
+        must NOT emit (bool_and is false); the successful entries are
+        aggregated by the existing choice_agg path."""
+        metric_id = str(uuid.uuid4())
+
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+9000000001",
+            status="completed",
+            eval_outputs={
+                metric_id: {
+                    "name": "Sentiment",
+                    "output": "positive",
+                    "output_type": "choices",
+                },
+            },
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+9000000002",
+            status="completed",
+            eval_outputs={
+                metric_id: {
+                    "name": "Sentiment",
+                    "error": "error",
+                    "status": "failed",
+                    "output": None,
+                    "output_type": "choices",
+                },
+            },
+        )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        choices_rows = [r for r in rows if r[2] == "choices"]
+        # Only the choice_agg row for "positive" should appear — no extra
+        # zero-row from choice_errored_agg.
+        assert len(choices_rows) == 1
+        assert choices_rows[0][4] == "positive"
+        assert choices_rows[0][5] == 1
+
+
+@pytest.mark.unit
+class TestDeriveKpiOutputType:
+    """Maps EvalTemplate.output_type_normalized to the runtime KPI
+    output_type the SQL aggregation pipeline keys off."""
+
+    def test_known_mappings(self):
+        from types import SimpleNamespace
+
+        from simulate.utils.eval_summary import derive_kpi_output_type
+
+        cases = {
+            "pass_fail": "Pass/Fail",
+            "percentage": "score",
+            "deterministic": "choices",
+        }
+        for normalized, expected in cases.items():
+            tpl = SimpleNamespace(output_type_normalized=normalized)
+            assert derive_kpi_output_type(tpl) == expected
+
+    def test_unknown_or_missing_falls_back_to_score(self):
+        from types import SimpleNamespace
+
+        from simulate.utils.eval_summary import derive_kpi_output_type
+
+        assert derive_kpi_output_type(None) == "score"
+        assert (
+            derive_kpi_output_type(SimpleNamespace(output_type_normalized=None))
+            == "score"
+        )
+        assert (
+            derive_kpi_output_type(SimpleNamespace(output_type_normalized="custom"))
+            == "score"
+        )
+        assert derive_kpi_output_type(SimpleNamespace()) == "score"
+
 
 # ============================================================================
 # RunTestKPIsView API Tests
@@ -571,6 +918,92 @@ class TestRunTestKPIsViewAPI:
         # All 3 calls are completed
         assert data["connected_calls"] == 3
 
+    def test_kpi_exposes_completed_calls_on_a_voice_run(
+        self, auth_client, test_execution, scenario
+    ):
+        """The KPI body names the run's COMPLETED-status call count on a
+        voice run too, where `connected_calls` is a different filter
+        (`connected_voice_calls`) and cannot be used as a stand-in. Built
+        locally, not from the shared fixture, so a connected-but-not-completed
+        row keeps the two counts from accidentally matching."""
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000000",
+            status="completed",
+            duration_seconds=120,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000001",
+            status="completed",
+            duration_seconds=150,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000002",
+            status="failed",
+            duration_seconds=90,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000003",
+            status="pending",
+            duration_seconds=0,
+        )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.json()
+        assert data["agent_type"] == AgentDefinition.AgentTypeChoices.VOICE
+        assert data["completed_calls"] == 2
+        assert (
+            data["connected_calls"] == 3
+        ), "connected_voice_calls counts the failed-but-connected call too"
+        assert data["completed_calls"] != data["connected_calls"], (
+            "the two numbers must differ here, or this test could not catch "
+            '"completed_calls": connected_calls replacing the real column'
+        )
+        assert data["total_calls"] == 4
+
+    def test_kpi_exposes_completed_calls_on_a_chat_run(
+        self,
+        auth_client,
+        chat_call_executions,
+        test_execution,
+        chat_agent_definition,
+        scenario,
+    ):
+        """The same `completed_calls` field, same meaning, on a chat run --
+        where it happens to equal `connected_calls`, but the client should
+        not need to know that."""
+        test_execution.agent_definition = chat_agent_definition
+        test_execution.save()
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+2000000003",
+            status="failed",
+            duration_seconds=0,
+        )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.json()
+        assert data["agent_type"] == AgentDefinition.AgentTypeChoices.TEXT
+        assert data["completed_calls"] == 3
+        assert data["total_calls"] == 4
+        assert data["completed_calls"] == data["connected_calls"]
+
     def test_kpi_with_eval_outputs(
         self, auth_client, eval_call_executions, test_execution
     ):
@@ -584,6 +1017,80 @@ class TestRunTestKPIsViewAPI:
         assert "avg_quality_check" in data  # Pass/Fail → avg_quality_check
         assert "avg_accuracy" in data  # score → avg_accuracy
 
+    def test_kpi_choice_metric_uses_template_labels_when_config_omits_choices(
+        self, auth_client, organization, run_test, scenario, test_execution
+    ):
+        template = EvalTemplate.objects.create(
+            name="Politeness",
+            config={},
+            organization=organization,
+            choices=["Excellent", "Good", "Neutral", "Impolite", "Hostile"],
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Politeness", eval_template=template, run_test=run_test, config={}
+        )
+        for index, output in enumerate(["excellent", "impolite"]):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                phone_number=f"+800000000{index}",
+                status="completed",
+                eval_outputs={
+                    str(eval_config.id): {
+                        "name": "Politeness",
+                        "output": output,
+                        "output_type": "choices",
+                    }
+                },
+            )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        metric = response.json()["politeness"]
+        assert metric["Excellent"] == 1
+        assert metric["Impolite"] == 1
+        assert metric["choices"] == ["Excellent", "Good", "Neutral", "Impolite", "Hostile"]
+
+    def test_kpi_choice_metric_uses_legacy_binding_labels(
+        self, auth_client, organization, run_test, scenario, test_execution
+    ):
+        template = EvalTemplate.objects.create(
+            name="Politeness",
+            config={},
+            organization=organization,
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Politeness",
+            eval_template=template,
+            run_test=run_test,
+            config={"config": {"choices": ["Excellent", "Good", "Neutral"]}},
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+80000000999",
+            status="completed",
+            eval_outputs={
+                str(eval_config.id): {
+                    "name": "Politeness",
+                    "output": "excellent",
+                    "output_type": "choices",
+                }
+            },
+        )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        metric = response.json()["politeness"]
+        assert metric["Excellent"] == 1
+        assert metric["choices"] == ["Excellent", "Good", "Neutral"]
+
     def test_kpi_empty_execution(self, auth_client, test_execution):
         """Test KPIs for execution with no call executions returns zeros."""
         response = auth_client.get(
@@ -594,3 +1101,36 @@ class TestRunTestKPIsViewAPI:
         assert data["total_calls"] == 0
         assert data["avg_score"] == 0
         assert data["total_duration"] == 0
+
+    def test_kpi_other_workspace_returns_404(
+        self, auth_client, organization, user, agent_definition, simulator_agent
+    ):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other KPI Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden KPI Run Test",
+            description="Run test in another workspace",
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=other_workspace,
+        )
+        hidden_test_execution = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=simulator_agent,
+            agent_definition=agent_definition,
+        )
+        response = auth_client.get(
+            f"/simulate/test-executions/{hidden_test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND

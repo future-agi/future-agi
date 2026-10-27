@@ -20,6 +20,10 @@ let mockIsError = false;
 const mockActivateVersion = vi.fn();
 let mockIsActivating = false;
 
+vi.mock("../../hooks/useCanEditAgent", () => ({
+  default: () => ({ canEditAgent: true, isReadOnly: false }),
+}));
+
 vi.mock("src/api/agent-playground/agent-playground", () => ({
   useGetVersionDetail: () => ({
     data: mockVersionData,

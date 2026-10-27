@@ -35,13 +35,13 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
-  extractAttributeFilters,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
 import ConfiguredEvaluationType from "src/sections/develop-detail/Common/ConfiguredEvaluationType/ConfiguredEvaluationType";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { sanitizeEvalMapping } from "src/sections/common/EvalPicker/serializeEvalConfig";
 import { useDebounce } from "src/hooks/use-debounce";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getDefaultTaskValues } from "../common";
@@ -53,8 +53,12 @@ import EvaluationSection from "../NewTaskDrawer/EvaluationSection";
 import { red } from "src/theme/palette";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
+import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
+import {
+  attributeInventoryKey,
+  useCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 
 function CustomTabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -109,6 +113,7 @@ const DetailsEdit = ({
   });
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
   const [configureEvalOpen, setConfigureEvalOpen] = useState(false);
   const [, setSelectedEval] = useState(null);
@@ -157,6 +162,7 @@ const DetailsEdit = ({
   const onAddSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -167,6 +173,7 @@ const DetailsEdit = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -184,7 +191,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -198,16 +205,25 @@ const DetailsEdit = ({
     replace(configuredEvalList);
   }, [configuredEvalList]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify(objectCamelToSnake(filters)),
-        },
-      }),
-    select: (data) => data.data?.result,
-  });
+  const [attributeSearch, setAttributeSearch] = useState("");
+  const preservedAttributeKeys = useMemo(() => {
+    const filterKeys = (formValues?.filters || [])
+      .filter((filter) => filter?.property === "attributes")
+      .map((filter) => filter.propertyId);
+    const mappingKeys = (formValues?.evalsDetails || []).flatMap((evaluation) =>
+      Object.values(evaluation?.mapping || {}),
+    );
+    return [...new Set([...filterKeys, ...mappingKeys].filter(Boolean))];
+  }, [formValues]);
+  const { filteredAttributes: evalAttributes, inventoryControlProps } =
+    useCursorAttributeInventory({
+      projectId: project,
+      rowType,
+      discoveryMode: "eval_mapping",
+      search: attributeSearch,
+      preservedKeys: preservedAttributeKeys,
+      enabled: isProjectSelected,
+    });
 
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -219,11 +235,10 @@ const DetailsEdit = ({
   });
 
   const formattedEvalAttributes = useMemo(() => {
-    if (!evalAttributes) return [];
     return (
       evalAttributes?.map((attr) => ({
-        headerName: attr,
-        field: attr,
+        headerName: attributeInventoryKey(attr),
+        field: attributeInventoryKey(attr),
       })) || []
     );
   }, [evalAttributes]);
@@ -245,11 +260,13 @@ const DetailsEdit = ({
   });
 
   const onUpdateSubmit = (data, editType) => {
-    const attributeFilters = extractAttributeFilters(data?.filters);
-
-    const observationTypes = data.filters
-      .filter((f) => f.property === "observationType")
-      .map((f) => f?.filterConfig?.filterValue);
+    // Flat chip list with col_type for the BE dispatcher; observation_type
+    // (incl. node_type alias) still rides as a sibling key.
+    const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+      data,
+      data.project,
+      true,
+    );
 
     const transformedData = {
       evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -259,18 +276,17 @@ const DetailsEdit = ({
           new Date(startDateField.value).toISOString(),
           new Date(endDateField.value).toISOString(),
         ],
-        ...(observationTypes && observationTypes?.length > 0
-          ? { observation_type: observationTypes }
-          : {}),
+        ...systemFilters,
         ...(attributeFilters && attributeFilters?.length > 0
-          ? { span_attributes_filters: attributeFilters }
+          ? { filters: attributeFilters }
           : {}),
       },
-      observation_type: observationTypes,
       project_id: data.project,
       name: data.name,
       project: data.project,
       run_type: data.runType,
+      // row_type intentionally omitted from update payload — immutable
+      // after task creation; the BE serializer rejects it on PATCH.
       sampling_rate: data.samplingRate,
       spans_limit: String(data.spansLimit),
       edit_type: editType,
@@ -336,6 +352,15 @@ const DetailsEdit = ({
       open={open}
       onClose={onClose}
       allColumns={formattedEvalAttributes}
+      onColumnSearchChange={setAttributeSearch}
+      columnInventoryControls={
+        <AttributeInventoryControls
+          {...inventoryControlProps}
+          search={attributeSearch}
+          onSearchChange={setAttributeSearch}
+          searchLabel="Search source properties"
+        />
+      }
       refreshGrid={refreshGrid}
       module="task"
       onSuccess={(data, variables) => {
@@ -364,7 +389,7 @@ const DetailsEdit = ({
             project: project,
             name: values.name,
             eval_template: values.eval_template,
-            mapping: values.mapping,
+            mapping: sanitizeEvalMapping(values.mapping),
             config: values.config,
             filters: getNewTaskFilters(formValues, observeId, true).filters,
           });
@@ -581,15 +606,17 @@ const DetailsEdit = ({
                             <NewTaskFilterBox
                               getValues={getValues}
                               setValue={setValue}
-                              attributes={
-                                Array.isArray(evalAttributes)
-                                  ? evalAttributes.map((attr) => ({
-                                      label: attr,
-                                      value: attr,
-                                    }))
-                                  : []
-                              }
+                              attributes={evalAttributes.map((attr) => {
+                                const key = attributeInventoryKey(attr);
+                                return { label: key, value: key };
+                              })}
                               control={control}
+                              onAttributeSearchChange={setAttributeSearch}
+                            />
+                            <AttributeInventoryControls
+                              {...inventoryControlProps}
+                              showSearch={false}
+                              search={attributeSearch}
                             />
                           </AccordionDetails>
                         </Accordion>

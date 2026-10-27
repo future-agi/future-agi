@@ -122,16 +122,16 @@ const AgentPromptRenderer = ({
         (v) => v.id === watchedAgentVersion,
       );
       if (
-        !selectedVersion?.globalVariables ||
-        selectedVersion.globalVariables.length === 0
+        !selectedVersion?.global_variables ||
+        selectedVersion.global_variables.length === 0
       ) {
         result = { total: 0, notMapped: 0 };
       } else {
-        const missingCount = selectedVersion.globalVariables.filter(
+        const missingCount = selectedVersion.global_variables.filter(
           (variable) => !columnHeaders.includes(variable),
         ).length;
         result = {
-          total: selectedVersion.globalVariables.length,
+          total: selectedVersion.global_variables.length,
           notMapped: missingCount,
         };
       }
@@ -173,9 +173,7 @@ const AgentPromptRenderer = ({
   // Mirror the selected version's draft flag + version label onto the
   // form item so the schema's superRefine can block "Next" when a draft
   // version is picked, and emit a per-item error naming the exact
-  // version the user needs to save or swap (TH-4334). The backend
-  // exposes `is_draft` / `template_version` on each version; axios'
-  // camelCase transform surfaces them as `isDraft` / `templateVersion`.
+  // version the user needs to save or swap (TH-4334).
   useEffect(() => {
     if (type !== PROMPT_CONFIG_TYPE.PROMPT) return;
     const selected = versionsOptions?.find(
@@ -185,19 +183,13 @@ const AgentPromptRenderer = ({
     // need to revalidate on it. isDraft drives the schema's draft guard,
     // so validate immediately: the card goes red the moment the user
     // picks a draft version, instead of waiting for the next Next-click.
-    setValue(`${fieldPrefix}.versionLabel`, selected?.templateVersion || "", {
+    setValue(`${fieldPrefix}.versionLabel`, selected?.template_version || "", {
       shouldValidate: false,
     });
-    setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.isDraft), {
+    setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.is_draft), {
       shouldValidate: true,
     });
-  }, [
-    type,
-    watchedPromptVersion,
-    versionsOptions,
-    setValue,
-    fieldPrefix,
-  ]);
+  }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
 
   // Set initial agent version
   useEffect(() => {
@@ -231,7 +223,7 @@ const AgentPromptRenderer = ({
     if (!selected) return;
     setValue(
       `${fieldPrefix}.versionLabel`,
-      selected.versionNumber != null ? `v${selected.versionNumber}` : "",
+      selected.version_number != null ? `v${selected.version_number}` : "",
       { shouldValidate: false },
     );
     setValue(
@@ -239,13 +231,7 @@ const AgentPromptRenderer = ({
       selected.status === VERSION_STATUS.DRAFT,
       { shouldValidate: true },
     );
-  }, [
-    type,
-    watchedAgentVersion,
-    agentVersionsOptions,
-    setValue,
-    fieldPrefix,
-  ]);
+  }, [type, watchedAgentVersion, agentVersionsOptions, setValue, fieldPrefix]);
 
   const watchModels = useWatch({
     control,
@@ -313,9 +299,9 @@ const AgentPromptRenderer = ({
               searchQuery={search}
               onSearchChange={setSearch}
               getOptionLabel={(v) =>
-                v?.isDefault === true
-                  ? `${v?.templateVersion} (default)`
-                  : v?.templateVersion ?? ""
+                v?.is_default === true
+                  ? `${v?.template_version} (default)`
+                  : v?.template_version ?? ""
               }
               getOptionValue={(v) => v?.id}
               placeholder="Select version"
@@ -333,7 +319,7 @@ const AgentPromptRenderer = ({
               isFetchingNextPage={isFetchingNextAgentVersionsPage}
               searchQuery={search}
               onSearchChange={setSearch}
-              getOptionLabel={(v) => `v${v?.versionNumber}`}
+              getOptionLabel={(v) => `v${v?.version_number}`}
               getOptionValue={(v) => v?.id}
               placeholder="Select version"
             />

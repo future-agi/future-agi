@@ -30,11 +30,11 @@ import { ShowComponent } from "../../../../components/show";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
+    column_id: "",
     labels: [],
-    languageModelId: "",
+    language_model_id: "",
     concurrency: "",
-    newColumnName: "",
+    new_column_name: "",
   };
 };
 
@@ -47,13 +47,7 @@ export const ClassificationChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      labels: [],
-      languageModelId: "",
-      concurrency: "",
-      newColumnName: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ClassificationValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -66,7 +60,6 @@ export const ClassificationChild = ({
     if (initialData) {
       reset(initialData);
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
     }
   }, [initialData, reset, editId]);
@@ -79,7 +72,6 @@ export const ClassificationChild = ({
         variant: "success",
       });
       reset();
-      // null for gridRef option and true for set column.
       refreshGrid(null, true);
       onClose();
     },
@@ -120,20 +112,10 @@ export const ClassificationChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, languageModelId, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      language_model_id: languageModelId,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "classify",
       });
       return;
@@ -141,13 +123,13 @@ export const ClassificationChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "classification" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -206,7 +188,7 @@ export const ClassificationChild = ({
               placeholder="Enter column name"
               control={control}
               required={!onFormSubmit}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
             />
           )}
           <FormSearchSelectFieldControl
@@ -215,7 +197,7 @@ export const ClassificationChild = ({
             label="Column"
             size="small"
             control={control}
-            fieldName="columnId"
+            fieldName="column_id"
             options={allColumns.map((column) => ({
               label: column.headerName,
               value: column.field,
@@ -237,7 +219,7 @@ export const ClassificationChild = ({
           </Accordion>
           <CustomModelDropdownControl
             control={control}
-            fieldName="languageModelId"
+            fieldName="language_model_id"
             label="Model"
             searchDropdown
             size="small"
@@ -312,7 +294,6 @@ ClassificationChild.propTypes = {
 };
 
 const Classification = ({ initialData, onFormSubmit }) => {
-  // Using individual store
   const { openClassification, setOpenClassification } =
     useClassificationStore();
 

@@ -1,9 +1,7 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import TraceGrid from "../../LLMTracing/TraceGrid";
@@ -12,12 +10,15 @@ import CustomColumnDialog from "../../LLMTracing/CustomColumnDialog";
 import FilterChips from "../../LLMTracing/FilterChips";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import { transformDateFilterToBackendFilters } from "../common";
+import { useCursorAttributeInventory } from "../../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
-// New trace view embedded inside UserDetails. Mounts LLMTracing's TraceGrid
-// pre-filtered to the current user, with the full ObserveToolbar (Filter +
-// Display + Custom Columns) the user gets on the main trace list page.
+// Trace view embedded inside UserDetails — mounts TraceGrid pre-filtered
+// to the current user, with the full ObserveToolbar (filter, display,
+// custom columns).
 const UserTraceTabV2 = ({ dateFilter }) => {
   const { observeId, userId } = useParams();
+  const { currentWorkspaceId } = useWorkspace();
   const [selectedProjectId] = useUrlState("projectId", null);
   const projectId = observeId || selectedProjectId;
 
@@ -32,20 +33,78 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     "userTraceFilterOpen",
     false,
   );
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
   const openColumnConfigure = Boolean(columnConfigureAnchor);
   const pendingCustomColumnsRef = useRef([]);
 
+  // Scoped per {project, user} — same user across projects gets its own
+  // set since available attributes are project-specific.
+  const customColsStorageKey = `user-trace-customcols-${projectId}-${userId}`;
+  // hasDrainedRef gates the save effect until TraceGrid's merge has
+  // landed; without it the first-render empty `columns` would wipe the
+  // saved customs before the pending ref drains. skipNextSaveRef skips
+  // the first save fire after a hydrate so the pre-hydrate closure can't
+  // overwrite what we just loaded.
+  const hasDrainedRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(customColsStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved) && saved.length > 0) {
+        // Shallow-clone so the pending ref doesn't share identity with
+        // the parsed localStorage payload.
+        pendingCustomColumnsRef.current = saved.map((c) => ({ ...c }));
+        skipNextSaveRef.current = true;
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+  }, [customColsStorageKey]);
+
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    const customCols = (columns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    if (!hasDrainedRef.current && customCols.length === 0) {
+      if ((columns || []).length > 0) {
+        hasDrainedRef.current = true;
+      } else {
+        return;
+      }
+    } else {
+      hasDrainedRef.current = true;
+    }
+    try {
+      if (customCols.length > 0) {
+        localStorage.setItem(customColsStorageKey, JSON.stringify(customCols));
+      } else {
+        localStorage.removeItem(customColsStorageKey);
+      }
+    } catch {
+      /* quota exceeded */
+    }
+  }, [columns, customColsStorageKey]);
+
   // Build validated filter list: user_id + date range + any user-added extras.
   const validatedFilters = useMemo(() => {
     const base = [
       {
-        columnId: "user_id",
-        filterConfig: {
-          filterOp: "equals",
-          filterType: "text",
-          filterValue: userId,
+        column_id: "user_id",
+        filter_config: {
+          filter_op: "equals",
+          filter_type: "text",
+          filter_value: userId,
         },
       },
       ...(transformDateFilterToBackendFilters(dateFilter) || []),
@@ -53,18 +112,24 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     return base;
   }, [userId, dateFilter]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", projectId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: projectId }),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(projectId),
+  const [customAttributeSearch, setCustomAttributeSearch] = useState("");
+  const preservedCustomAttributeKeys = useMemo(
+    () =>
+      (columns || [])
+        .filter((column) => column?.groupBy === "Custom Columns")
+        .map((column) => column.id)
+        .filter(Boolean),
+    [columns],
+  );
+  const { attributes, inventoryControlProps } = useCursorAttributeInventory({
+    projectId,
+    workspaceScope: !projectId,
+    workspaceScopeKey: currentWorkspaceId,
+    discoveryMode: "eval_mapping",
+    search: customAttributeSearch,
+    preservedKeys: preservedCustomAttributeKeys,
+    enabled: openCustomColumn && Boolean(projectId || currentWorkspaceId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   const handleAddCustomColumns = (newCols) => {
     setColumns((prev) => {
@@ -100,10 +165,18 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     <Box sx={{ px: 1.5 }}>
       <ObserveToolbar
         mode="traces"
+        projectId={projectId}
+        allowWorkspaceScope={!projectId}
         // Filter
         hasActiveFilter={extraFilters.length > 0}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         onApplyExtraFilters={setExtraFilters}
         // Columns / Display
         columns={columns}
@@ -120,15 +193,30 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       />
 
       <FilterChips
-        extraFilters={/** @type {any[]} */ (extraFilters).map((f) => ({
-          ...f,
-          display_name:
-            columnLabelLookup[f?.column_id] ?? f?.display_name,
-        }))}
-        onRemoveFilter={(idx) =>
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx))
+        extraFilters={
+          /** @type {any[]} */ (extraFilters).map((f) => ({
+            ...f,
+            display_name: columnLabelLookup[f?.column_id] ?? f?.display_name,
+          }))
         }
-        onClearAll={() => setExtraFilters([])}
+        onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
+          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
+        }}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       <TraceGrid
@@ -168,6 +256,8 @@ const UserTraceTabV2 = ({ dateFilter }) => {
         existingColumns={columns}
         onAddColumns={handleAddCustomColumns}
         onRemoveColumns={handleRemoveCustomColumns}
+        onAttributeSearchChange={setCustomAttributeSearch}
+        inventoryControlProps={inventoryControlProps}
       />
     </Box>
   );

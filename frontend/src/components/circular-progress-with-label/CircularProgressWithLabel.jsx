@@ -34,7 +34,7 @@ function CircularProgressWithLabel(props) {
 
 CircularProgressWithLabel.propTypes = {
   value: PropTypes.number.isRequired,
-  color : PropTypes.string
+  color: PropTypes.string,
 };
 
 export default CircularProgressWithLabel;

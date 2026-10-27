@@ -68,7 +68,7 @@ const DevelopDataRightSection = ({ hideScenarioFeatures = false }) => {
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
   const processingData = Boolean(tableData?.data?.result?.isProcessingData);
   const buttonStyles = {
     color: "text.primary",

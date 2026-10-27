@@ -370,4 +370,6 @@ class PayloadBuilder:
                 payload["api_key"] = api_key
         else:
             # Simple string API key
+            if provider != "openai":
+                payload["custom_llm_provider"] = provider
             payload["api_key"] = api_key

@@ -18,16 +18,23 @@ config:
     def evaluate(input, output, expected, context, **kwargs):
         import json, math
         def _p(v):
+            if v is None: return []
             if isinstance(v, list): return [float(x) for x in v]
             if isinstance(v, str):
+                v = v.strip()
+                if not v: return []
                 try:
                     p = json.loads(v)
                     if isinstance(p, list): return [float(x) for x in p]
-                except: pass
+                except (json.JSONDecodeError, ValueError):
+                    pass
                 return [float(x.strip()) for x in v.split(",") if x.strip()]
             return [float(v)]
         yp, yt = _p(kwargs.get("output", output)), _p(kwargs.get("expected", expected))
-        if len(yp) != len(yt) or not yt: return {"score": 0.0, "reason": "Invalid input"}
+        if not yp and not yt:
+            return {"score": 1.0, "reason": "Both empty"}
+        if len(yp) != len(yt):
+            return {"score": 0.0, "reason": f"Length mismatch: {len(yp)} vs {len(yt)}"}
         eps = 1e-15
         loss = -sum(y*math.log(max(min(p,1-eps),eps))+(1-y)*math.log(max(min(1-p,1-eps),eps)) for y,p in zip(yt,yp))/len(yt)
         return {"score": float(1/(1+loss)), "reason": f"Log Loss={loss:.4f}"}

@@ -4,6 +4,7 @@ import {
   blobUrlManager,
   audioContextManager,
 } from "src/utils/memory-management";
+import { canonicalEntries } from "src/utils/utils";
 
 export const formatTime = (seconds) => {
   if (!seconds || isNaN(seconds)) return "0:00";
@@ -24,28 +25,30 @@ export const getColorByWeight = (weight) => {
 
 export const transformAudioData = (valueInfos) => {
   const metadata = valueInfos;
-  if (!metadata?.errorAnalysis) return [];
+  const errorAnalysis = metadata?.errorAnalysis || metadata?.error_analysis;
+  if (!errorAnalysis) return [];
 
-  return Object.values(metadata?.errorAnalysis)
+  return canonicalEntries(errorAnalysis)
+    .map(([, value]) => value)
     .flat()
-    .map(({ orgSegment, rankReason, weight }, index) => {
+    .map((raw, index) => {
+      if (!raw || typeof raw !== "object") return null;
+
+      const orgSegment = raw.orgSegment || raw.org_segment;
       if (!orgSegment) return null;
 
-      const {
-        startTime: _startTime,
-        endTime: _endTime,
-        url: segmentUrl,
-      } = orgSegment;
+      const rankReason = raw.rankReason || raw.rank_reason || raw.reason;
+      const weight = raw.weight ?? raw.rank;
       const { activeColor, inactiveColor } = getColorByWeight(weight);
 
       return {
         id: `audio-segment-${index}`,
-        audioData: { url: segmentUrl || orgSegment.url }, // Use segment-specific URL
-        startTime: 0, // Segment URL is pre-trimmed, so start from 0
-        endTime: orgSegment.duration, // Use full duration of trimmed segment
+        audioData: { url: orgSegment.url || raw.segmentUrl },
+        startTime: 0,
+        endTime: orgSegment.duration,
         activeColor,
         inactiveColor,
-        description: rankReason,
+        description: rankReason || "",
       };
     })
     .filter(Boolean);

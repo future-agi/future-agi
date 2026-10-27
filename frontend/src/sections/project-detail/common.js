@@ -34,6 +34,65 @@ export const getRunListColumnDefs = (col) => {
   };
 };
 
+export const serializeRunListFilters = (filters = []) =>
+  (filters || [])
+    .map((filter) => {
+      const config = filter?.filter_config || {};
+      if (!filter?.column_id || !config.filter_type || !config.filter_op) {
+        return null;
+      }
+
+      const filterConfig = {
+        filter_type: config.filter_type,
+        filter_op: config.filter_op,
+      };
+
+      if (Object.prototype.hasOwnProperty.call(config, "filter_value")) {
+        filterConfig.filter_value = config.filter_value;
+      }
+      if (config.col_type) {
+        filterConfig.col_type = config.col_type;
+      }
+
+      const serialized = {
+        column_id: filter.column_id,
+        filter_config: filterConfig,
+      };
+
+      for (const key of ["display_name", "source", "output_type"]) {
+        if (Object.prototype.hasOwnProperty.call(filter, key)) {
+          serialized[key] = filter[key];
+        }
+      }
+
+      return serialized;
+    })
+    .filter(Boolean);
+
+export const normalizeRunListColumnConfig = (column, winnerConfig = {}) => {
+  const normalized = {
+    ...column,
+    isVisible: column?.isVisible ?? column?.is_visible,
+    groupBy: column?.groupBy ?? column?.group_by,
+    outputType: column?.outputType ?? column?.output_type,
+    reverseOutput: column?.reverseOutput ?? column?.reverse_output,
+    annotationLabelType:
+      column?.annotationLabelType ?? column?.annotation_label_type,
+    choicesMap: column?.choicesMap ?? column?.choices_map,
+    evalTemplateId: column?.evalTemplateId ?? column?.eval_template_id,
+    sourceField: column?.sourceField ?? column?.source_field,
+    parentEvalId: column?.parentEvalId ?? column?.parent_eval_id,
+  };
+
+  if (normalized.id === "avg_latency") {
+    normalized.value = winnerConfig.avg_latency_ms ?? null;
+  } else {
+    normalized.value = winnerConfig[normalized.id] ?? null;
+  }
+
+  return normalized;
+};
+
 // [
 //   {
 //     "propertyName": "Node Type",
@@ -117,11 +176,11 @@ export const applyQuickFilters =
     let filter = null;
     if (!col.groupBy) {
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: "number",
-          filterOp: "equals",
-          filterValue: [value, ""],
+        column_id: col.id,
+        filter_config: {
+          filter_type: "number",
+          filter_op: "equals",
+          filter_value: [value, ""],
         },
         _meta: {
           parentProperty: col.id,
@@ -133,11 +192,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -151,11 +210,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "System Metrics",
@@ -169,11 +228,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Annotation Metrics",
@@ -204,6 +263,6 @@ export const getFilterExtraProperties = (val) => {
     return {};
   }
   return {
-    colType,
+    col_type: colType,
   };
 };

@@ -29,7 +29,7 @@ class GenerateGroundTruthEmbeddingsWorkflow:
     """
     Workflow to generate embeddings for a ground truth dataset.
 
-    Triggered after upload or role-mapping change.
+    Triggered after upload or a setup save that changes variable mapping.
     Runs on tasks_xl queue since embedding generation is long-running.
     """
 

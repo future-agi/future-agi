@@ -5,56 +5,28 @@ import {
   Typography,
   Chip,
   useTheme,
-  // Tabs and Tab hidden for now - only one tab exists currently
-  // Tabs,
-  // Tab,
+  Tabs,
+  Tab,
   Skeleton,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 
 import SessionHistory from "./SessionHistory";
+import SessionEvalsList from "./SessionEvalsList";
 import logger from "src/utils/logger";
 import { format, parseISO } from "date-fns";
-// SvgColor used by Tabs - hidden for now
-// import SvgColor from "src/components/svg-color";
+import SvgColor from "src/components/svg-color";
 import Header from "./Header";
 import Filters from "./Filters";
 import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
-
-/* CustomTabPanel and a11yProps hidden - only one tab exists currently.
-   Uncomment when more tabs are added.
-
-const CustomTabPanel = React.forwardRef((props, ref) => {
-  const { children, value, index, ...other } = props;
-
-  return (
-    <Box
-      ref={ref}
-      role="tabpanel"
-      hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
-    </Box>
-  );
-});
-
-CustomTabPanel.displayName = "CustomTabPanel";
-
-CustomTabPanel.propTypes = {
-  children: PropTypes.node,
-  index: PropTypes.number.isRequired,
-  value: PropTypes.number.isRequired,
-};
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 function a11yProps(index) {
   return {
@@ -62,45 +34,99 @@ function a11yProps(index) {
     "aria-controls": `simple-tabpanel-${index}`,
   };
 }
-*/
 
-const TracesDrawer = ({ open, onClose, rowData }) => {
+const TracesDrawer = ({
+  open,
+  onClose,
+  rowData,
+  userIdForUserMode,
+  navigationContext,
+}) => {
   const theme = useTheme();
   const { projectId, observeId } = useParams();
   const projectIdToUse = projectId || observeId;
   const sessionId = rowData?.session_id;
   const [currentSessionId, setCurrentSessionId] = React.useState(null);
   const [navigationDirection, setNavigationDirection] = React.useState(null);
+  const [activeTab, setActiveTab] = React.useState(0);
   const { viewType, setViewType } = useTraceDrawerStore();
 
   const activeSessionId = currentSessionId || sessionId;
+  const { currentWorkspaceId } = useWorkspace();
+  const hasListContext = navigationContext !== undefined;
+  const contextInScope =
+    !hasListContext ||
+    Boolean(
+      currentWorkspaceId &&
+        navigationContext?.workspace_id === currentWorkspaceId &&
+        (navigationContext.project_id === null ||
+          (typeof navigationContext.project_id === "string" &&
+            navigationContext.project_id)) &&
+        Array.isArray(navigationContext.filters) &&
+        Array.isArray(navigationContext.sort_params),
+    );
 
   const {
-    data: _traceDetail,
+    data: queryData,
+    isPlaceholderData,
     isLoading,
     fetchNextPage,
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ["traceSession", activeSessionId],
+    queryKey: [
+      "traceSession",
+      activeSessionId,
+      userIdForUserMode,
+      currentWorkspaceId,
+      navigationContext,
+    ],
     queryFn: ({ pageParam }) => {
-      return axios.get(`${endpoints.project.traceSession}${activeSessionId}/`, {
-        params: { page_number: pageParam, page_size: 10 },
-      });
+      if (!contextInScope) throw new Error("Session list workspace changed");
+      return readQuery(
+        endpoints.project.traceSessionQuery(activeSessionId),
+        {
+          params: {
+            page_number: pageParam,
+            page_size: 10,
+            ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+            ...(navigationContext !== undefined
+              ? { navigation_context: JSON.stringify(navigationContext) }
+              : {}),
+          },
+        },
+      );
     },
     getNextPageParam: (page, _, pageParams) => {
       return page.data?.result?.next ? pageParams + 1 : null;
     },
     initialPageParam: 0,
-    enabled: Boolean(activeSessionId),
+    enabled: Boolean(activeSessionId) && contextInScope,
   });
+  // Disabled queries can retain cached data; global keepPreviousData can also
+  // supply another context's pages. Gate every consumer, not only the arrows.
+  const _traceDetail =
+    contextInScope && (!hasListContext || !isPlaceholderData)
+      ? queryData
+      : undefined;
 
   const scrollRef = useScrollEnd(() => {
-    if (isFetchingNextPage || isLoading) {
+    if (
+      !contextInScope ||
+      (hasListContext && isPlaceholderData) ||
+      isFetchingNextPage ||
+      isLoading
+    ) {
       return;
     }
     fetchNextPage();
-  }, [isFetchingNextPage, isLoading]);
+  }, [
+    contextInScope,
+    hasListContext,
+    isPlaceholderData,
+    isFetchingNextPage,
+    isLoading,
+  ]);
 
   const sessionMetadata =
     _traceDetail?.pages[0]?.data?.result?.session_metadata;
@@ -128,6 +154,7 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
     onClose();
     setCurrentSessionId(null);
     setNavigationDirection(null);
+    setActiveTab(0);
   };
 
   // Separate loading states
@@ -353,16 +380,47 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
                     },
                   }}
                 />
+                {sessionMetadata?.user_id && (
+                  <Chip
+                    label={
+                      <Typography
+                        variant="s2"
+                        sx={{ color: "text.primary" }}
+                        fontWeight={"fontWeightRegular"}
+                      >
+                        User ID: {sessionMetadata.user_id}
+                      </Typography>
+                    }
+                    icon={<Iconify icon="mdi:account-outline" width={14} />}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      backgroundColor: "background.default",
+                      color: "text.secondary",
+                      height: "25px",
+                      paddingX: 0.5,
+                      borderRadius: "8px",
+                      "& .MuiChip-icon": {
+                        color:
+                          theme.palette.mode === "light"
+                            ? "text.primary"
+                            : "text.secondary",
+                      },
+                      "&:hover": {
+                        backgroundColor: "background.paper",
+                        borderColor: "divider",
+                      },
+                    }}
+                  />
+                )}
               </>
             )}
           </Box>
-          {/* Tabs hidden - only one tab (Session History) exists currently.
-              Uncomment when more tabs are added. */}
-          {/* <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
-              value={value}
-              onChange={handleChange}
-              aria-label="basic tabs example"
+              value={activeTab}
+              onChange={(_, v) => setActiveTab(v)}
+              aria-label="session drawer tabs"
               textColor="primary"
               indicatorColor="primary"
               sx={{
@@ -390,20 +448,37 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
                     src={"/assets/icons/ic_message.svg"}
                   />
                 }
+                iconPosition="start"
                 label="Session History"
                 {...a11yProps(0)}
               />
+              <Tab
+                icon={
+                  <Iconify
+                    icon="solar:chart-square-bold"
+                    width={16}
+                    sx={{ color: "primary.main" }}
+                  />
+                }
+                iconPosition="start"
+                label="Evals"
+                {...a11yProps(1)}
+              />
             </Tabs>
-          </Box> */}
-          <Box sx={{ px: 1, maxHeight: "50vh", overflowY: "auto" }}>
-            <InlineAnnotator
-              sourceType="trace_session"
-              sourceId={activeSessionId}
-              projectId={projectIdToUse}
-              compact
-            />
           </Box>
-          <Filters viewType={viewType} setViewType={setViewType} />
+          {activeTab === 0 && (
+            <Box sx={{ px: 1, maxHeight: "50vh", overflowY: "auto" }}>
+              <InlineAnnotator
+                sourceType="trace_session"
+                sourceId={activeSessionId}
+                projectId={projectIdToUse}
+                compact
+              />
+            </Box>
+          )}
+          {activeTab === 0 && (
+            <Filters viewType={viewType} setViewType={setViewType} />
+          )}
         </Box>
         <Box
           sx={{
@@ -412,12 +487,16 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
           }}
           ref={scrollRef}
         >
-          <SessionHistory
-            traceDetail={traceDetail}
-            loading={isInitialLoading}
-            isFetchingNextPage={isFetchingNextPage}
-            activeSessionId={activeSessionId}
-          />
+          {activeTab === 0 ? (
+            <SessionHistory
+              traceDetail={traceDetail}
+              loading={isInitialLoading}
+              isFetchingNextPage={isFetchingNextPage}
+              activeSessionId={activeSessionId}
+            />
+          ) : (
+            <SessionEvalsList sessionId={activeSessionId} />
+          )}
         </Box>
       </Box>
     </Drawer>
@@ -428,6 +507,8 @@ TracesDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   rowData: PropTypes.object,
+  userIdForUserMode: PropTypes.string,
+  navigationContext: PropTypes.object,
 };
 
 export default TracesDrawer;

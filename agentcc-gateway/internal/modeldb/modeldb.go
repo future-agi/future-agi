@@ -168,6 +168,26 @@ func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, 
 	return m.Pricing.Calculate(inputTokens, outputTokens, opts), true
 }
 
+// AudioCost returns the cost of transcribing the given seconds of audio.
+// Returns 0, false if the model is not found or has no per-second price.
+func (db *ModelDB) AudioCost(modelID string, seconds float64) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.InputPerSecond == 0 {
+		return 0, false
+	}
+	return seconds * m.Pricing.InputPerSecond, true
+}
+
+// CharacterCost returns the cost of synthesising the given number of characters.
+// Returns 0, false if the model is not found or has no per-character price.
+func (db *ModelDB) CharacterCost(modelID string, characters int) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.InputPerCharacter == 0 {
+		return 0, false
+	}
+	return float64(characters) * m.Pricing.InputPerCharacter, true
+}
+
 // ModelOverride defines config-level overrides for a model entry.
 // Pointer fields are optional — nil means "don't override".
 type ModelOverride struct {
@@ -188,6 +208,8 @@ type PricingOverride struct {
 	CachedInputPerToken *float64 `yaml:"cached_input_per_token"`
 	BatchInputPerToken  *float64 `yaml:"batch_input_per_token"`
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token"`
+	InputPerSecond      *float64 `yaml:"input_per_second"`
+	InputPerCharacter   *float64 `yaml:"input_per_character"`
 }
 
 // CapOverride allows overriding individual capability flags.
@@ -240,6 +262,12 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		}
 		if p.BatchOutputPerToken != nil {
 			m.Pricing.BatchOutputPerToken = *p.BatchOutputPerToken
+		}
+		if p.InputPerSecond != nil {
+			m.Pricing.InputPerSecond = *p.InputPerSecond
+		}
+		if p.InputPerCharacter != nil {
+			m.Pricing.InputPerCharacter = *p.InputPerCharacter
 		}
 	}
 

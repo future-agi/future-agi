@@ -45,15 +45,15 @@ describe("ArchiveLabelDialog", () => {
   });
 
   it("renders dialog with label name", () => {
-    const label = { id: "1", name: "Accuracy", usage_count: 0 };
+    const label = { id: "1", name: "Accuracy", annotation_count: 0 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     expect(screen.getByText("Archive Label")).toBeInTheDocument();
     expect(screen.getByText(/Accuracy/)).toBeInTheDocument();
   });
 
-  it("shows not-in-use message when usage_count is 0", () => {
-    const label = { id: "1", name: "Test", usage_count: 0 };
+  it("shows not-in-use message when annotation_count is 0", () => {
+    const label = { id: "1", name: "Test", annotation_count: 0 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     expect(
@@ -61,15 +61,15 @@ describe("ArchiveLabelDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows usage warning when usage_count > 0", () => {
-    const label = { id: "1", name: "Test", usage_count: 5 };
+  it("shows usage warning when annotation_count > 0", () => {
+    const label = { id: "1", name: "Test", annotation_count: 5 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     expect(screen.getByText(/used in 5 annotation tasks/)).toBeInTheDocument();
   });
 
-  it("shows singular 'task' for usage_count 1", () => {
-    const label = { id: "1", name: "Test", usage_count: 1 };
+  it("shows singular 'task' for annotation_count 1", () => {
+    const label = { id: "1", name: "Test", annotation_count: 1 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     expect(screen.getByText(/used in 1 annotation task\b/)).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("ArchiveLabelDialog", () => {
 
   it("calls onClose when Cancel is clicked", async () => {
     const user = userEvent.setup();
-    const label = { id: "1", name: "Test", usage_count: 0 };
+    const label = { id: "1", name: "Test", annotation_count: 0 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     await user.click(screen.getByRole("button", { name: /cancel/i }));
@@ -86,7 +86,7 @@ describe("ArchiveLabelDialog", () => {
 
   it("calls archiveLabel with label id when Archive is clicked", async () => {
     const user = userEvent.setup();
-    const label = { id: "abc-123", name: "Test", usage_count: 0 };
+    const label = { id: "abc-123", name: "Test", annotation_count: 0 };
     render(<ArchiveLabelDialog label={label} onClose={onClose} />);
 
     await user.click(screen.getByRole("button", { name: /archive/i }));

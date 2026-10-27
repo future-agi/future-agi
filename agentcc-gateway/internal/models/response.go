@@ -1,6 +1,9 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"reflect"
+)
 
 // ChatCompletionResponse represents an OpenAI-compatible chat completion response.
 type ChatCompletionResponse struct {
@@ -12,6 +15,35 @@ type ChatCompletionResponse struct {
 	Usage             *Usage   `json:"usage,omitempty"`
 	SystemFingerprint string   `json:"system_fingerprint,omitempty"`
 	ServiceTier       string   `json:"service_tier,omitempty"`
+
+	// Extra carries the response fields this struct does not name, so a
+	// provider's own additions reach the caller: Perplexity's citations and
+	// search_results, and whatever the next provider adds. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (r *ChatCompletionResponse) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionResponse
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = ChatCompletionResponse(a)
+	extra, err := captureExtra(data, reflect.TypeFor[ChatCompletionResponse]())
+	if err != nil {
+		return err
+	}
+	r.Extra = extra
+	return nil
+}
+
+func (r ChatCompletionResponse) MarshalJSON() ([]byte, error) {
+	type Alias ChatCompletionResponse
+	data, err := json.Marshal((*Alias)(&r))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, r.Extra)
 }
 
 type Choice struct {
@@ -21,24 +53,115 @@ type Choice struct {
 	Logprobs     *json.RawMessage `json:"logprobs,omitempty"`
 }
 
+// MarshalJSON guarantees the assistant message always carries a "content" key.
+//
+// Message.Content is omitempty (it has to be: the same struct is marshaled back
+// out on the request path, where a null content is rejected upstream), so a
+// message with no text drops the key entirely. Providers that translate a
+// non-OpenAI response leave Content unset whenever the model returned no text —
+// a tool-call-only reply, or one where reasoning consumed the whole budget — and
+// clients that expect the OpenAI shape then read a message with no content field
+// at all. Normalizing here rather than in each provider keeps the guarantee in
+// one place; Choice is only ever marshaled on the response path.
+//
+// The value mirrors OpenAI: null when the model called tools, empty string
+// otherwise.
+func (c Choice) MarshalJSON() ([]byte, error) {
+	type Alias Choice
+	if c.Message.Content == nil {
+		if len(c.Message.ToolCalls) > 0 {
+			c.Message.Content = json.RawMessage(`null`)
+		} else {
+			c.Message.Content = json.RawMessage(`""`)
+		}
+	}
+	return json.Marshal((*Alias)(&c))
+}
+
 type Usage struct {
 	PromptTokens            int              `json:"prompt_tokens"`
 	CompletionTokens        int              `json:"completion_tokens"`
 	TotalTokens             int              `json:"total_tokens"`
 	PromptTokensDetails     *json.RawMessage `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *json.RawMessage `json:"completion_tokens_details,omitempty"`
+	// ServerToolUse counts provider-executed tool calls, which are billed per
+	// call on top of tokens.  A response that reports tokens alone understates
+	// what the request cost.
+	ServerToolUse *ServerToolUsage `json:"server_tool_use,omitempty"`
+
+	// Extra carries a provider's own counters, such as Perplexity's
+	// citation_tokens and num_search_queries. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type Alias Usage
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*u = Usage(a)
+	extra, err := captureExtra(data, reflect.TypeFor[Usage]())
+	if err != nil {
+		return err
+	}
+	u.Extra = extra
+	return nil
+}
+
+func (u Usage) MarshalJSON() ([]byte, error) {
+	type Alias Usage
+	data, err := json.Marshal((*Alias)(&u))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, u.Extra)
+}
+
+// ServerToolUsage mirrors Anthropic's usage.server_tool_use block.
+type ServerToolUsage struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
 }
 
 // StreamChunk represents a single SSE chunk in a streaming response.
 type StreamChunk struct {
-	ID                string               `json:"id"`
-	Object            string               `json:"object"`
-	Created           int64                `json:"created"`
-	Model             string               `json:"model"`
-	Choices           []StreamChoice       `json:"choices"`
-	Usage             *Usage               `json:"usage,omitempty"`
-	AgentccMetadata     *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
-	SystemFingerprint string               `json:"system_fingerprint,omitempty"`
+	ID                string                 `json:"id"`
+	Object            string                 `json:"object"`
+	Created           int64                  `json:"created"`
+	Model             string                 `json:"model"`
+	Choices           []StreamChoice         `json:"choices"`
+	Usage             *Usage                 `json:"usage,omitempty"`
+	AgentccMetadata   *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
+	SystemFingerprint string                 `json:"system_fingerprint,omitempty"`
+
+	// Extra carries the chunk fields this struct does not name. A provider
+	// that sends its citations on the last chunk rather than in a whole
+	// response needs this to reach a streaming caller. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (c *StreamChunk) UnmarshalJSON(data []byte) error {
+	type Alias StreamChunk
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*c = StreamChunk(a)
+	extra, err := captureExtra(data, reflect.TypeFor[StreamChunk]())
+	if err != nil {
+		return err
+	}
+	c.Extra = extra
+	return nil
+}
+
+func (c StreamChunk) MarshalJSON() ([]byte, error) {
+	type Alias StreamChunk
+	data, err := json.Marshal((*Alias)(&c))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, c.Extra)
 }
 
 type AgentccStreamMetadata struct {
@@ -53,9 +176,10 @@ type StreamChoice struct {
 }
 
 type Delta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          *string         `json:"content,omitempty"`
+	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 type ToolCallDelta struct {

@@ -3,18 +3,23 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 """
 
 import re
+import uuid
 from datetime import datetime
 
-from django.db import models
+from django.db import connection, models
 
-from agentic_eval.core.llm.llm import LLM
+from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
+from simulate.utils.persona_filtering import (
+    UnsupportedPersonaFilter,
+    apply_persona_filter,
+    is_persona_filter_column,
+)
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 
 
 class TestExecutionUtils:
-
     def _apply_filters(
         self,
         call_executions,
@@ -24,38 +29,240 @@ class TestExecutionUtils:
         column_order=None,
     ):
         """Apply filters to call executions with support for new response structure"""
-        # Build tool evaluation columns map from column_order
+        # Build dynamic column maps from column_order. The simulation grid sends
+        # raw scenario dataset column IDs, while older automation rules may still
+        # send scenario_<id>_dataset_<column_id>. Post-reconcile the `id` field on
+        # each entry is the canonical column name (e.g. "priority"), so we index
+        # by both the canonical name AND each raw dataset column UUID so that
+        # grid-style filters (raw UUIDs) and rule-style filters (canonical name
+        # or scenario_<id>_dataset_<uuid>) all land on the same handler.
+        scenario_dataset_columns = {}
         tool_eval_columns = {}
         if column_order:
             for col in column_order:
-                if col.get("type") == "tool_evaluation":
-                    tool_eval_columns[col["id"]] = col
+                column_id = col.get("id")
+                if not column_id:
+                    continue
+                if col.get("type") == "scenario_dataset_column":
+                    scenario_dataset_columns[str(column_id)] = col
+                    for raw_id in col.get("dataset_column_ids") or []:
+                        scenario_dataset_columns[str(raw_id)] = col
+                elif col.get("type") == "tool_evaluation":
+                    tool_eval_columns[str(column_id)] = col
+
+        def as_list(value):
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            if isinstance(value, str) and "," in value:
+                return [item.strip() for item in value.split(",") if item.strip()]
+            return [value]
+
+        def apply_text_filter(queryset, field, op, value, *, exact_lookup="iexact"):
+            values = as_list(value)
+            if op == "equals":
+                if len(values) == 1:
+                    return queryset.filter(**{f"{field}__{exact_lookup}": values[0]})
+                return queryset.filter(**{f"{field}__in": values})
+            if op == "not_equals":
+                if len(values) == 1:
+                    return queryset.exclude(**{f"{field}__{exact_lookup}": values[0]})
+                return queryset.exclude(**{f"{field}__in": values})
+            if op == "in":
+                return queryset.filter(**{f"{field}__in": values})
+            if op == "not_in":
+                return queryset.exclude(**{f"{field}__in": values})
+            if op == "contains":
+                return queryset.filter(**{f"{field}__icontains": value})
+            if op == "not_contains":
+                return queryset.exclude(**{f"{field}__icontains": value})
+            return queryset
+
+        def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            values = as_list(value)
+            if op == "equals":
+                return queryset.filter(**{field: transform(values[0])})
+            if op == "not_equals":
+                return queryset.exclude(**{field: transform(values[0])})
+            if op == "in":
+                return queryset.filter(
+                    **{f"{field}__in": [transform(v) for v in values]}
+                )
+            if op == "not_in":
+                return queryset.exclude(
+                    **{f"{field}__in": [transform(v) for v in values]}
+                )
+            if op == "greater_than":
+                return queryset.filter(**{f"{field}__gt": transform(value)})
+            if op == "less_than":
+                return queryset.filter(**{f"{field}__lt": transform(value)})
+            if op == "greater_than_or_equal":
+                return queryset.filter(**{f"{field}__gte": transform(value)})
+            if op == "less_than_or_equal":
+                return queryset.filter(**{f"{field}__lte": transform(value)})
+            if op in ("between", "not_between") and len(values) >= 2:
+                start, end = transform(values[0]), transform(values[1])
+                if op == "between":
+                    return queryset.filter(**{f"{field}__range": (start, end)})
+                return queryset.exclude(**{f"{field}__range": (start, end)})
+            return queryset
+
+        def apply_number_any_field_filter(
+            queryset, fields, op, value, transform=lambda v: v
+        ):
+            values = as_list(value)
+
+            def q_for(field, lookup, val):
+                key = field if lookup is None else f"{field}__{lookup}"
+                return models.Q(**{key: val})
+
+            def any_field_q(lookup, val):
+                condition = models.Q()
+                for field in fields:
+                    condition |= q_for(field, lookup, val)
+                return condition
+
+            if op == "equals":
+                return queryset.filter(any_field_q(None, transform(values[0])))
+            if op == "not_equals":
+                return queryset.exclude(any_field_q(None, transform(values[0])))
+            if op == "in":
+                return queryset.filter(
+                    any_field_q("in", [transform(v) for v in values])
+                )
+            if op == "not_in":
+                return queryset.exclude(
+                    any_field_q("in", [transform(v) for v in values])
+                )
+            if op == "greater_than":
+                return queryset.filter(any_field_q("gt", transform(value)))
+            if op == "less_than":
+                return queryset.filter(any_field_q("lt", transform(value)))
+            if op == "greater_than_or_equal":
+                return queryset.filter(any_field_q("gte", transform(value)))
+            if op == "less_than_or_equal":
+                return queryset.filter(any_field_q("lte", transform(value)))
+            if op in ("between", "not_between") and len(values) >= 2:
+                range_value = (transform(values[0]), transform(values[1]))
+                if op == "between":
+                    return queryset.filter(any_field_q("range", range_value))
+                return queryset.exclude(any_field_q("range", range_value))
+            return queryset
+
+        def apply_scenario_dataset_column_filter(
+            queryset, dataset_column_ids, op, value, filter_type, scenario_id=None
+        ):
+
+            if not isinstance(dataset_column_ids, (list, tuple)):
+                dataset_column_ids = [dataset_column_ids]
+            dataset_column_ids = [str(cid) for cid in dataset_column_ids if cid]
+            base = queryset.filter(row_id__isnull=False)
+            if scenario_id:
+                base = base.filter(scenario__id=scenario_id)
+
+            def exists(value_sql, params):
+                return base.extra(
+                    where=[
+                        "EXISTS ("
+                        "SELECT 1 FROM model_hub_cell "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
+                        "AND model_hub_cell.row_id = simulate_call_execution.row_id "
+                        "AND model_hub_cell.deleted = false "
+                        f"AND {value_sql}"
+                        ")"
+                    ],
+                    params=[dataset_column_ids, *params],
+                )
+
+            def not_exists(value_sql, params):
+                return base.extra(
+                    where=[
+                        "NOT EXISTS ("
+                        "SELECT 1 FROM model_hub_cell "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
+                        "AND model_hub_cell.row_id = simulate_call_execution.row_id "
+                        "AND model_hub_cell.deleted = false "
+                        f"AND {value_sql}"
+                        ")"
+                    ],
+                    params=[dataset_column_ids, *params],
+                )
+
+            if filter_type in ("text", "string", "categorical"):
+                values = [str(item) for item in as_list(value)]
+                if op == "equals":
+                    if len(values) == 1:
+                        return exists("model_hub_cell.value = %s", [values[0]])
+                    return exists("model_hub_cell.value = ANY(%s)", [values])
+                if op == "not_equals":
+                    if len(values) == 1:
+                        return not_exists("model_hub_cell.value = %s", [values[0]])
+                    return not_exists("model_hub_cell.value = ANY(%s)", [values])
+                if op == "in":
+                    return exists("model_hub_cell.value = ANY(%s)", [values])
+                if op == "not_in":
+                    return not_exists("model_hub_cell.value = ANY(%s)", [values])
+                if op == "contains":
+                    return exists("model_hub_cell.value ILIKE %s", [f"%{value}%"])
+                if op == "not_contains":
+                    return not_exists("model_hub_cell.value ILIKE %s", [f"%{value}%"])
+
+            if filter_type == "number":
+                values = as_list(value)
+                numeric_expr = "CAST(NULLIF(model_hub_cell.value, '') AS NUMERIC)"
+                if op == "equals":
+                    return exists(f"{numeric_expr} = %s", [float(values[0])])
+                if op == "not_equals":
+                    return not_exists(f"{numeric_expr} = %s", [float(values[0])])
+                if op == "greater_than":
+                    return exists(f"{numeric_expr} > %s", [float(value)])
+                if op == "less_than":
+                    return exists(f"{numeric_expr} < %s", [float(value)])
+                if op == "greater_than_or_equal":
+                    return exists(f"{numeric_expr} >= %s", [float(value)])
+                if op == "less_than_or_equal":
+                    return exists(f"{numeric_expr} <= %s", [float(value)])
+                if op in ("between", "not_between") and len(values) >= 2:
+                    params = [float(values[0]), float(values[1])]
+                    if op == "between":
+                        return exists(f"{numeric_expr} BETWEEN %s AND %s", params)
+                    return not_exists(f"{numeric_expr} BETWEEN %s AND %s", params)
+
+            if filter_type == "boolean":
+                bool_value = (
+                    "true" if str(value).lower() in ["true", "1", "yes"] else "false"
+                )
+                if op == "equals":
+                    return exists("LOWER(model_hub_cell.value) = %s", [bool_value])
+                if op == "not_equals":
+                    return not_exists("LOWER(model_hub_cell.value) = %s", [bool_value])
+
+            return queryset
+
+        def scenario_column_parts(column_id):
+            if not column_id.startswith("scenario_") or "_dataset_" not in column_id:
+                return None, None
+            raw_scenario_id, dataset_column_id = column_id[len("scenario_") :].split(
+                "_dataset_", 1
+            )
+            return raw_scenario_id, dataset_column_id
 
         for filter_item in filters:
             try:
-                column_id = filter_item.get("column_id") or filter_item.get("columnId")
-                filter_config = filter_item.get("filter_config", {}) or filter_item.get(
-                    "filterConfig", {}
-                )
+                column_id = filter_item.get("column_id")
+                filter_config = filter_item.get("filter_config") or {}
 
                 if not column_id or not filter_config:
                     continue
 
-                filter_type = filter_config.get("filter_type") or filter_config.get(
-                    "filterType"
-                )
-                filter_op = filter_config.get("filter_op") or filter_config.get(
-                    "filterOp"
-                )
-                filter_value = filter_config.get("filter_value") or filter_config.get(
-                    "filterValue"
-                )
+                filter_type = filter_config.get("filter_type")
+                filter_op = filter_config.get("filter_op")
+                filter_value = filter_config.get("filter_value")
 
                 # Handle different column types based on new response structure
-                if column_id == "timestamp":
+                if column_id in ["timestamp", "created_at"]:
                     # Filter by timestamp
                     if filter_type == "datetime":
-                        if filter_op in ["between", "not_in_between"]:
+                        if filter_op in ["between", "not_between"]:
                             if (
                                 isinstance(filter_value, list)
                                 and len(filter_value) == 2
@@ -153,7 +360,7 @@ class TestExecutionUtils:
 
                 elif column_id == "call_execution_id":
                     # Filter by call execution IDs
-                    if filter_type == "list" and isinstance(filter_value, list):
+                    if filter_type == "categorical" and isinstance(filter_value, list):
                         # Handle list of IDs
                         if filter_op == "in":
                             call_executions = call_executions.filter(
@@ -163,27 +370,43 @@ class TestExecutionUtils:
                 elif column_id in ["overallScore", "overall_score"]:
                     # Filter by overall score
                     if filter_type == "number":
-                        filter_value = float(filter_value)
-                        if filter_op == "greater_than":
-                            call_executions = call_executions.filter(
-                                overall_score__gt=filter_value
-                            )
-                        elif filter_op == "less_than":
-                            call_executions = call_executions.filter(
-                                overall_score__lt=filter_value
-                            )
-                        elif filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                overall_score=filter_value
-                            )
-                        elif filter_op == "greater_than_or_equal":
-                            call_executions = call_executions.filter(
-                                overall_score__gte=filter_value
-                            )
-                        elif filter_op == "less_than_or_equal":
-                            call_executions = call_executions.filter(
-                                overall_score__lte=filter_value
-                            )
+                        call_executions = apply_number_filter(
+                            call_executions,
+                            "overall_score",
+                            filter_op,
+                            filter_value,
+                            float,
+                        )
+
+                elif column_id in ["duration_seconds", "duration"]:
+                    if filter_type == "number":
+                        call_executions = apply_number_filter(
+                            call_executions,
+                            "duration_seconds",
+                            filter_op,
+                            filter_value,
+                            float,
+                        )
+
+                elif column_id in ["avg_agent_latency_ms", "latency", "latency_ms"]:
+                    if filter_type == "number":
+                        call_executions = apply_number_filter(
+                            call_executions,
+                            "avg_agent_latency_ms",
+                            filter_op,
+                            filter_value,
+                            float,
+                        )
+
+                elif column_id in ["cost_cents", "customer_cost_cents", "cost"]:
+                    if filter_type == "number":
+                        call_executions = apply_number_any_field_filter(
+                            call_executions,
+                            ["customer_cost_cents", "cost_cents"],
+                            filter_op,
+                            filter_value,
+                            float,
+                        )
 
                 elif column_id in ["responseTime", "response_time"]:
                     # Filter by response time (convert to milliseconds for database comparison)
@@ -214,55 +437,68 @@ class TestExecutionUtils:
 
                 elif column_id == "status":
                     # Filter by status
-                    if filter_type == "text":
-                        if filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                status=filter_value
-                            )
-                        elif filter_op == "not_equals":
-                            call_executions = call_executions.filter(
-                                ~models.Q(status=filter_value)
-                            )
-                        elif filter_op == "contains":
-                            call_executions = call_executions.filter(
-                                status__icontains=filter_value
-                            )
-                        elif filter_op == "not_contains":
-                            call_executions = call_executions.filter(
-                                ~models.Q(status__icontains=filter_value)
-                            )
+                    if filter_type in ["text", "string", "categorical"]:
+                        call_executions = apply_text_filter(
+                            call_executions, "status", filter_op, filter_value
+                        )
 
                 elif column_id in ["callType", "call_type"]:
                     # Filter by call type (Inbound/Outbound)
-                    if filter_type == "text":
+                    if filter_type in ["text", "string", "categorical"]:
                         # Map frontend values to database values
-                        if filter_value.lower() == "inbound":
-                            db_value = "inboundPhoneCall"
-                        elif filter_value.lower() == "outbound":
-                            db_value = "outboundPhoneCall"
-                        else:
-                            db_value = filter_value.lower()
+                        def map_call_type(value):
+                            normalized = str(value).lower()
+                            if normalized == "inbound":
+                                return "inboundPhoneCall"
+                            if normalized == "outbound":
+                                return "outboundPhoneCall"
+                            return normalized
 
-                        if filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                call_type__iexact=db_value
-                            )
-                        elif filter_op == "not_equals":
-                            call_executions = call_executions.filter(
-                                ~models.Q(call_type__iexact=db_value)
-                            )
-                        elif filter_op == "contains":
-                            call_executions = call_executions.filter(
-                                call_type__icontains=filter_value
-                            )
-                        elif filter_op == "not_contains":
-                            call_executions = call_executions.filter(
-                                ~models.Q(call_type__icontains=filter_value)
-                            )
+                        mapped_value = (
+                            [map_call_type(value) for value in filter_value]
+                            if isinstance(filter_value, list)
+                            else map_call_type(filter_value)
+                        )
+                        call_executions = apply_text_filter(
+                            call_executions,
+                            "call_type",
+                            filter_op,
+                            mapped_value,
+                        )
+
+                elif column_id == "simulation_call_type":
+                    if filter_type in ["text", "string", "categorical"]:
+                        call_executions = apply_text_filter(
+                            call_executions,
+                            "simulation_call_type",
+                            filter_op,
+                            filter_value,
+                        )
+
+                elif column_id == "agent_definition":
+                    if filter_type in ["text", "string", "categorical"]:
+                        call_executions = apply_text_filter(
+                            call_executions,
+                            "test_execution__agent_definition__agent_name",
+                            filter_op,
+                            filter_value,
+                        )
+
+                elif is_persona_filter_column(column_id):
+                    try:
+                        call_executions = apply_persona_filter(
+                            call_executions,
+                            column_id,
+                            filter_op,
+                            filter_value,
+                            filter_type,
+                        )
+                    except UnsupportedPersonaFilter as exc:
+                        error_messages.append(str(exc))
 
                 elif column_id == "scenario":
                     # Filter by scenario name
-                    if filter_type == "text":
+                    if filter_type in ["text", "string", "categorical"]:
                         if filter_op == "equals":
                             call_executions = call_executions.filter(
                                 scenario__name=filter_value
@@ -280,87 +516,37 @@ class TestExecutionUtils:
                                 ~models.Q(scenario__name__icontains=filter_value)
                             )
 
-                elif column_id.startswith("scenario_") and "dataset" in column_id:
-                    # Handle scenario dataset column filtering (format: scenario_{scenario_id}_dataset_{dataset_column_id})
-                    parts = column_id.split("_")
-                    if len(parts) >= 4 and parts[-2] == "dataset":
-                        scenario_id = "_".join(
-                            parts[1:-2]
-                        )  # Handle UUIDs with underscores
-                        dataset_column_id = parts[-1]
+                elif column_id in scenario_dataset_columns or (
+                    column_id.startswith("scenario_") and "_dataset_" in column_id
+                ):
+                    column_meta = scenario_dataset_columns.get(str(column_id), {})
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids; matching ANY of them filters
+                    # across all scenarios, so we do not scope by scenario_id.
+                    dataset_column_ids = list(
+                        column_meta.get("dataset_column_ids") or []
+                    )
+                    scenario_id = None
+                    if not dataset_column_ids:
+                        # Legacy: column_id is a raw Column UUID, or the
+                        # scenario_<id>_dataset_<uuid> form.
+                        legacy_id = column_id
+                        if column_id not in scenario_dataset_columns:
+                            scenario_id, legacy_id = scenario_column_parts(column_id)
+                        else:
+                            scenario_id = column_meta.get("scenario_id")
+                        if legacy_id:
+                            dataset_column_ids = [legacy_id]
 
-                        if filter_type == "text":
-                            if filter_op == "equals":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND model_hub_cell.value = %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, filter_value],
-                                )
-                            elif filter_op == "contains":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND model_hub_cell.value ILIKE %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, f"%{filter_value}%"],
-                                )
-                            elif filter_op == "not_equals":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "NOT EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND model_hub_cell.value = %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, filter_value],
-                                )
-                        elif filter_type == "number":
-                            filter_value = float(filter_value)
-                            if filter_op == "greater_than":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND CAST(model_hub_cell.value AS NUMERIC) > %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, filter_value],
-                                )
-                            elif filter_op == "less_than":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND CAST(model_hub_cell.value AS NUMERIC) < %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, filter_value],
-                                )
-                            elif filter_op == "equals":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND CAST(model_hub_cell.value AS NUMERIC) = %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, filter_value],
-                                )
-                        elif filter_type == "boolean":
-                            if filter_value.lower() in ["true", "1", "yes"]:
-                                bool_value = "true"
-                            else:
-                                bool_value = "false"
-
-                            if filter_op == "equals":
-                                call_executions = call_executions.filter(
-                                    scenario__id=scenario_id, row_id__isnull=False
-                                ).extra(
-                                    where=[
-                                        "EXISTS (SELECT 1 FROM model_hub_cell WHERE  model_hub_cell.column_id = %s AND model_hub_cell.row_id = simulate_call_execution.row_id AND LOWER(model_hub_cell.value) = %s AND model_hub_cell.deleted = false)"
-                                    ],
-                                    params=[dataset_column_id, bool_value],
-                                )
+                    if dataset_column_ids:
+                        call_executions = apply_scenario_dataset_column_filter(
+                            call_executions,
+                            dataset_column_ids,
+                            filter_op,
+                            filter_value,
+                            filter_type,
+                            scenario_id,
+                        )
 
                 elif column_id in eval_configs_map or column_id in tool_eval_columns:
                     # Filter by evaluation metric (includes both SimulateEvalConfig and tool evaluations)
@@ -378,8 +564,8 @@ class TestExecutionUtils:
                         output_field = "eval_outputs"
 
                     if filter_type == "number":
-                        # Handle between/not_in_between operations
-                        if filter_op in ["between", "not_in_between"]:
+                        # Handle between/not_between operations
+                        if filter_op in ["between", "not_between"]:
                             if (
                                 isinstance(filter_value, list)
                                 and len(filter_value) == 2
@@ -404,7 +590,7 @@ class TestExecutionUtils:
                                             f"{output_field}__{eval_id}__output__lte": db_end_value
                                         },
                                     )
-                                else:  # not_in_between
+                                else:  # not_between
                                     call_executions = call_executions.filter(
                                         **{f"{output_field}__has_key": eval_id}
                                     ).filter(
@@ -753,64 +939,55 @@ class TestExecutionUtils:
                 column_type = column.get("type", "")
 
                 if column_type == "scenario_dataset_column":
-                    # Extract the actual column ID from the prefixed ID
-                    actual_column_id = column.get("id")
-                    if actual_column_id and "_dataset_" in actual_column_id:
-                        # If it's a prefixed ID, extract the actual column ID
-                        parts = actual_column_id.split("_dataset_")
-                        if len(parts) == 2:
-                            actual_column_id = parts[1]
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids. A row belongs to exactly one
+                    # dataset, so matching cells against ANY of the UUIDs makes
+                    # grouping work regardless of which scenario the row is from.
+                    actual_column_ids = list(column.get("dataset_column_ids") or [])
+                    if not actual_column_ids:
+                        # Legacy: single UUID id, or scenario_<id>_dataset_<uuid>.
+                        legacy_id = column.get("id")
+                        if (
+                            legacy_id
+                            and legacy_id.startswith("scenario_")
+                            and "_dataset_" in legacy_id
+                        ):
+                            parts = legacy_id.split("_dataset_")
+                            if len(parts) == 2:
+                                legacy_id = parts[1]
+                        if legacy_id:
+                            actual_column_ids = [legacy_id]
+                    if not actual_column_ids:
+                        continue
 
-                    # Create a safe column alias (replace hyphens with underscores)
-                    safe_alias = column_id.replace("-", "_").replace(".", "_")
-                    dataset_id = column.get("dataset_id")
+                    safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(column_id))
 
-                    # Properly escape SQL string values to prevent SQL injection
-                    # Use connection.cursor().mogrify to safely escape parameters
+                    # Properly escape column UUIDs to prevent SQL injection.
                     cursor = connection.cursor()
                     try:
-                        # Use mogrify to get properly escaped SQL string
-                        escaped_dataset_id = cursor.mogrify("%s", [dataset_id]).decode(
-                            "utf-8"
+                        escaped_column_ids = ", ".join(
+                            cursor.mogrify("%s", [cid]).decode("utf-8")
+                            for cid in actual_column_ids
                         )
-                        escaped_column_id = cursor.mogrify(
-                            "%s", [actual_column_id]
-                        ).decode("utf-8")
                     except AttributeError:
-                        # Fallback for backends that don't support mogrify (like SQLite)
-                        # Escape single quotes by doubling them (SQL standard)
-                        escaped_dataset_id = "'{}'".format(
-                            str(dataset_id).replace("'", "''")
-                        )
-                        escaped_column_id = "'{}'".format(
-                            str(actual_column_id).replace("'", "''")
+                        # Fallback for backends without mogrify (like SQLite).
+                        escaped_column_ids = ", ".join(
+                            "'{}'".format(str(cid).replace("'", "''"))
+                            for cid in actual_column_ids
                         )
                     finally:
                         cursor.close()
 
-                    # Add dataset column value to grouping with properly escaped values
-                    select_fields.append(
-                        f"""
+                    cell_value_subquery = f"""
                         (SELECT model_hub_cell.value
                             FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
-                            AND model_hub_cell.row_id = simulate_call_execution.row_id
-                            AND model_hub_cell.deleted = false
-                            LIMIT 1) as {safe_alias}
-                    """
-                    )
-                    group_by_fields.append(
-                        f"""
-                        (SELECT model_hub_cell.value
-                            FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
+                            WHERE model_hub_cell.column_id IN ({escaped_column_ids})
                             AND model_hub_cell.row_id = simulate_call_execution.row_id
                             AND model_hub_cell.deleted = false
                             LIMIT 1)
                     """
-                    )
+                    select_fields.append(f'{cell_value_subquery} as "{safe_alias}"')
+                    group_by_fields.append(cell_value_subquery)
 
         for group_field in row_groups:
             # Skip fields that are already included in basic context
@@ -837,16 +1014,38 @@ class TestExecutionUtils:
                         scenario_id = parts[0].replace("scenario_", "")
                         dataset_column_id = parts[1]
 
-                        # Create a safe column alias (replace hyphens with underscores)
-                        safe_alias = group_field.replace("-", "_")
+                        try:
+                            uuid.UUID(str(scenario_id))
+                            uuid.UUID(str(dataset_column_id))
+                        except (ValueError, AttributeError, TypeError):
+                            continue
 
-                        # Add dataset column value to grouping
+                        safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", group_field)
+
+                        cursor = connection.cursor()
+                        try:
+                            escaped_scenario_id = cursor.mogrify(
+                                "%s", [scenario_id]
+                            ).decode("utf-8")
+                            escaped_dataset_column_id = cursor.mogrify(
+                                "%s", [dataset_column_id]
+                            ).decode("utf-8")
+                        except AttributeError:
+                            escaped_scenario_id = "'{}'".format(
+                                str(scenario_id).replace("'", "''")
+                            )
+                            escaped_dataset_column_id = "'{}'".format(
+                                str(dataset_column_id).replace("'", "''")
+                            )
+                        finally:
+                            cursor.close()
+
                         select_fields.append(
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1) as {safe_alias}
@@ -856,8 +1055,8 @@ class TestExecutionUtils:
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1)
@@ -874,42 +1073,54 @@ class TestExecutionUtils:
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:
-            for i, group_key in enumerate(group_keys):
-                if i < len(row_groups):
-                    group_field = row_groups[i]
+            cursor = connection.cursor()
+            try:
 
-                    if group_field == "timestamp":
-                        where_conditions.append(
-                            f"DATE(simulate_call_execution.created_at) = '{group_key}'"
-                        )
-                    elif group_field == "status":
-                        where_conditions.append(
-                            f"simulate_call_execution.status = '{group_key}'"
-                        )
-                    elif group_field in ("call_type", "callType"):
-                        where_conditions.append(
-                            f"LOWER(simulate_call_execution.call_type) LIKE '%{group_key.lower()}%'"
-                        )
-                    elif group_field == "scenario":
-                        where_conditions.append(
-                            f"simulate_scenarios.name = '{group_key}'"
-                        )
-                    elif group_field in ("overall_score", "overallScore"):
-                        try:
-                            numeric_key = float(group_key)
+                def _lit(value):
+                    try:
+                        return cursor.mogrify("%s", [value]).decode("utf-8")
+                    except AttributeError:
+                        return "'{}'".format(str(value).replace("'", "''"))
+
+                for i, group_key in enumerate(group_keys):
+                    if i < len(row_groups):
+                        group_field = row_groups[i]
+
+                        if group_field == "timestamp":
                             where_conditions.append(
-                                f"simulate_call_execution.overall_score = {numeric_key}"
+                                f"DATE(simulate_call_execution.created_at) = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
-                    elif group_field in ("response_time", "responseTime"):
-                        try:
-                            numeric_key = float(group_key)
+                        elif group_field == "status":
                             where_conditions.append(
-                                f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                f"simulate_call_execution.status = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
+                        elif group_field in ("call_type", "callType"):
+                            where_conditions.append(
+                                "LOWER(simulate_call_execution.call_type) LIKE "
+                                f"{_lit('%' + str(group_key).lower() + '%')}"
+                            )
+                        elif group_field == "scenario":
+                            where_conditions.append(
+                                f"simulate_scenarios.name = {_lit(group_key)}"
+                            )
+                        elif group_field in ("overall_score", "overallScore"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.overall_score = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+                        elif group_field in ("response_time", "responseTime"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+            finally:
+                cursor.close()
 
         where_clause = " AND ".join(where_conditions)
 
@@ -920,8 +1131,6 @@ class TestExecutionUtils:
         )
 
         # Execute raw SQL and return results
-        from django.db import connection
-
         with connection.cursor() as cursor:
             cursor.execute(raw_sql)
             columns = [col[0] for col in cursor.description]
@@ -956,7 +1165,6 @@ class TestExecutionUtils:
 
         # Search in scenario dataset columns (if call has row_id)
         try:
-
             # Search in dataset cell values for calls that have row_id
             # We need to apply this search separately since it uses extra()
             call_executions_with_dataset_search = call_executions.filter(
@@ -1082,3 +1290,233 @@ def generate_simulator_agent_prompt(
         "Please respond naturally and stay consistent with your persona throughout the conversation."
         f"{end_call_instruction}"
     )
+
+
+def canonical_scenario_column_name(raw_name):
+    """Canonical display name for a scenario dataset column."""
+    return "Ideal Outcome" if raw_name == "outcome" else raw_name
+
+
+def reconcile_scenario_column_order(*, scenarios, call_executions, column_order):
+    """Collapse per-dataset scenario columns into one entry per canonical name.
+
+    Each scenario has its own dataset, and each dataset has its own ``Column``
+    rows with distinct UUIDs, so a field like ``outcome`` exists once per
+    dataset. This collapses those per-dataset columns into a single entry keyed
+    by the canonical column name, carrying every dataset's matching ``Column``
+    UUID in ``dataset_column_ids`` so the filter/grouping paths can match a cell
+    against any of them.
+
+    Kept here - alongside the filter/grouping logic that consumes
+    ``dataset_column_ids`` - so requests, celery jobs and Temporal activities
+    can share the same computation. The caller persists ``column_order`` when
+    ``changed`` is True.
+
+    Args:
+        scenarios: iterable of ``Scenarios`` (dataset select_related recommended).
+        call_executions: ``CallExecution`` queryset, used only for the fallback
+            that recovers columns from the first call's dataset row.
+        column_order: the current persisted column order (list of dicts).
+
+    Returns:
+        ``(column_order, changed)`` - the reconciled order and whether it
+        differs from the input.
+    """
+    existing_scenario_visibility = {}
+    first_scenario_idx = None
+    for idx, col in enumerate(column_order):
+        if not isinstance(col, dict):
+            continue
+        if col.get("type") == "scenario_dataset_column":
+            if first_scenario_idx is None:
+                first_scenario_idx = idx
+            vis_key = canonical_scenario_column_name(
+                col.get("column_name") or str(col.get("id"))
+            )
+            existing_scenario_visibility[vis_key] = col.get("visible", True)
+
+    norm_all_col_ids = set()
+    for scenario in scenarios:
+        if scenario.dataset and scenario.dataset.column_order:
+            norm_all_col_ids.update(scenario.dataset.column_order)
+
+    ordered_names = []
+    scenario_cols_by_name = {}
+
+    def _register_scenario_column(col_obj, scenario_id, dataset_id):
+        name = canonical_scenario_column_name(col_obj.name)
+        entry = scenario_cols_by_name.get(name)
+        if entry is None:
+            ordered_names.append(name)
+            scenario_cols_by_name[name] = {
+                "id": name,
+                "column_name": name,
+                "visible": existing_scenario_visibility.get(name, True),
+                "data_type": col_obj.data_type,
+                "type": "scenario_dataset_column",
+                "scenario_id": scenario_id,
+                "dataset_id": dataset_id,
+                "dataset_column_ids": [str(col_obj.id)],
+            }
+        else:
+            cid = str(col_obj.id)
+            if cid not in entry["dataset_column_ids"]:
+                entry["dataset_column_ids"].append(cid)
+
+    if norm_all_col_ids:
+        norm_columns_by_id = {
+            str(col.id): col
+            for col in Column.objects.filter(id__in=norm_all_col_ids, deleted=False)
+        }
+        for scenario in scenarios:
+            if not (scenario.dataset and scenario.dataset.column_order):
+                continue
+            for col_id in scenario.dataset.column_order:
+                col_obj = norm_columns_by_id.get(str(col_id))
+                if col_obj:
+                    _register_scenario_column(
+                        col_obj,
+                        str(scenario.id),
+                        str(scenario.dataset.id),
+                    )
+
+    if not ordered_names:
+        fb_first_call = call_executions.first()
+        fb_row_id = (
+            fb_first_call.call_metadata.get("row_id")
+            if fb_first_call and fb_first_call.call_metadata
+            else None
+        )
+        if fb_row_id:
+            fb_row = (
+                Row.all_objects.filter(id=fb_row_id)
+                .select_related("dataset")
+                .first()
+            )
+            if fb_row and fb_row.dataset and fb_row.dataset.column_order:
+                for col_obj in Column.all_objects.filter(
+                    id__in=fb_row.dataset.column_order, deleted=False
+                ):
+                    _register_scenario_column(col_obj, None, str(fb_row.dataset.id))
+
+    new_scenario_columns = [scenario_cols_by_name[name] for name in ordered_names]
+
+    non_scenario_columns = [
+        col
+        for col in column_order
+        if not (
+            isinstance(col, dict)
+            and col.get("type") == "scenario_dataset_column"
+        )
+    ]
+    if first_scenario_idx is None:
+        # No scenario columns yet: place them before the first evaluation
+        # column, else at the end.
+        insert_idx = next(
+            (
+                i
+                for i, col in enumerate(non_scenario_columns)
+                if isinstance(col, dict) and col.get("type") == "evaluation"
+            ),
+            len(non_scenario_columns),
+        )
+    else:
+        # Preserve the original position of the scenario column block.
+        insert_idx = sum(
+            1
+            for col in column_order[:first_scenario_idx]
+            if not (
+                isinstance(col, dict)
+                and col.get("type") == "scenario_dataset_column"
+            )
+        )
+
+    rebuilt_column_order = (
+        non_scenario_columns[:insert_idx]
+        + new_scenario_columns
+        + non_scenario_columns[insert_idx:]
+    )
+
+    changed = rebuilt_column_order != column_order
+    return rebuilt_column_order, changed
+
+
+def build_eval_column(eval_config):
+    return {
+        "column_name": eval_config.name,
+        "id": str(eval_config.id),
+        "eval_config": eval_config.eval_template.config,
+        "visible": True,
+        "type": "evaluation",
+    }
+
+
+def reconcile_eval_column_order(
+    *, column_order, eval_configs, evaluated_eval_ids, harness_eval_outputs=None
+):
+    """Keep the evaluation columns backed by ``eval_configs``, refresh their
+    names + configs, and append a config's own column only when its id is in
+    ``evaluated_eval_ids`` (i.e. attempted on at least one call of this
+    execution). Which configs count is the caller's choice: pass a live-only
+    collection to prune a removed eval's column, or one that also holds
+    soft-deleted rows to keep it."""
+    current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
+    harness_eval_outputs = {
+        str(eval_id): value
+        for eval_id, value in (harness_eval_outputs or {}).items()
+        if isinstance(value, dict) and value.get("source") == "harness"
+    }
+    changed = False
+    reconciled = []
+    for col in column_order:
+        if not (isinstance(col, dict) and col.get("type") == "evaluation"):
+            reconciled.append(col)
+            continue
+        ec = current_eval_by_id.get(str(col.get("id")))
+        if ec is None:
+            harness_output = harness_eval_outputs.get(str(col.get("id")))
+            if harness_output is not None:
+                expected_name = harness_output.get("name") or col.get("column_name")
+                if expected_name and col.get("column_name") != expected_name:
+                    col["column_name"] = expected_name
+                    changed = True
+                reconciled.append(col)
+                continue
+            changed = True
+            continue
+        if col.get("column_name") != ec.name:
+            col["column_name"] = ec.name
+            changed = True
+        if col.get("eval_config") != ec.eval_template.config:
+            col["eval_config"] = ec.eval_template.config
+            changed = True
+        reconciled.append(col)
+    preserved = {
+        str(c.get("id"))
+        for c in reconciled
+        if isinstance(c, dict) and c.get("type") == "evaluation"
+    }
+    for eval_config in eval_configs:
+        ec_id = str(eval_config.id)
+        if ec_id in preserved or ec_id not in evaluated_eval_ids:
+            continue
+        reconciled.append(build_eval_column(eval_config))
+        changed = True
+    for eval_id, eval_output in harness_eval_outputs.items():
+        if eval_id in preserved:
+            continue
+        reconciled.append(
+            {
+                "column_name": eval_output.get("name") or eval_id,
+                "id": eval_id,
+                "eval_config": {
+                    "output_type": eval_output.get("output_type", "Pass/Fail")
+                },
+                "visible": True,
+                "type": "evaluation",
+                "source": "harness",
+            }
+        )
+        preserved.add(eval_id)
+        changed = True
+    return reconciled, changed

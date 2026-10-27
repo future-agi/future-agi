@@ -22,6 +22,11 @@ const ConfirmRunEvaluations = ({
   onConfirm,
   selectedUserEvalList,
   loading,
+  getNote,
+  title,
+  description = "This will overwrite previous evaluation results.",
+  cancelLabel = "Cancel",
+  confirmLabel = "Run Evaluations",
 }) => {
   const theme = useTheme();
   const [evalsToRun, setEvalsToRun] = useState([]);
@@ -43,6 +48,8 @@ const ConfirmRunEvaluations = ({
   const handleConfirm = () => {
     onConfirm(evalsToRun);
   };
+  // Read from the current list, so removing an eval also drops its note.
+  const note = getNote ? getNote(evalsToRun) : null;
   return (
     <Dialog
       open={open}
@@ -67,16 +74,25 @@ const ConfirmRunEvaluations = ({
       >
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography fontSize={16} fontWeight={700} color="text.primary">
-            Are you sure you want to run the following evaluation
-            {evalsToRun.length !== 1 && "s"}?
+            {title ?? (
+              <>
+                Are you sure you want to run the following evaluation
+                {evalsToRun.length !== 1 && "s"}?
+              </>
+            )}
           </Typography>
           <IconButton onClick={onClose} sx={{ p: 0 }}>
             <Iconify icon="line-md:close" color="text.primary" />
           </IconButton>
         </Box>
-        <Typography variant="body2" color="text.disabled">
-          This will overwrite previous evaluation results.
+        <Typography variant="body2" color="text.secondary">
+          {description}
         </Typography>
+        {note && (
+          <Typography variant="body2" color="text.secondary">
+            {note}
+          </Typography>
+        )}
       </DialogTitle>
 
       <DialogContent
@@ -157,7 +173,7 @@ const ConfirmRunEvaluations = ({
             paddingY: "6px",
           }}
         >
-          Cancel
+          {cancelLabel}
         </Button>
         <LoadingButton
           loading={loading}
@@ -174,7 +190,7 @@ const ConfirmRunEvaluations = ({
             paddingY: "6px",
           }}
         >
-          Run Evaluations
+          {confirmLabel}
         </LoadingButton>
       </DialogActions>
     </Dialog>
@@ -187,6 +203,11 @@ ConfirmRunEvaluations.propTypes = {
   onConfirm: PropTypes.func,
   selectedUserEvalList: PropTypes.array,
   loading: PropTypes.bool,
+  getNote: PropTypes.func,
+  title: PropTypes.node,
+  description: PropTypes.node,
+  cancelLabel: PropTypes.node,
+  confirmLabel: PropTypes.node,
 };
 
 export default ConfirmRunEvaluations;

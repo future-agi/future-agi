@@ -382,7 +382,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   >
                     No images added
                   </Typography>
-                  <Typography variant="body2" color="text.disabled">
+                  <Typography variant="body2" color="text.secondary">
                     Click or drag images here to upload
                   </Typography>
                 </Box>
@@ -432,7 +432,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 {imageUrls.length} image{imageUrls.length !== 1 ? "s" : ""}
               </Typography>
               {imageUrls.length > 1 && (
-                <Typography variant="caption" color="text.disabled">
+                <Typography variant="caption" color="text.secondary">
                   Drag to reorder
                 </Typography>
               )}

@@ -260,7 +260,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
                     padding: "4px 8px",
                     borderRadius: "4px",
                     "&:hover": {
-                      backgroundColor: "rgba(0, 0, 0, 0.04)",
+                      backgroundColor: "action.hover",
                     },
                   }}
                   onClick={() => toggleItem(item.value)}

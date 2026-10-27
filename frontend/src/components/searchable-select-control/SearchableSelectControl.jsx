@@ -12,7 +12,8 @@ import PropTypes from "prop-types";
 import React, { useRef, useState } from "react";
 import { Controller } from "react-hook-form";
 import Iconify from "src/components/iconify";
-import { useScrollEnd } from "src/hooks/use-scroll-end";
+
+const SCROLL_END_THRESHOLD_PX = 5;
 
 const SearchableSelectContent = ({
   value,
@@ -40,10 +41,13 @@ const SearchableSelectContent = ({
     selectedLabelRef.current = getOptionLabel(selectedOption);
   }
 
-  const scrollContainer = useScrollEnd(() => {
+  const handleListScroll = (e) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollTop + clientHeight < scrollHeight - SCROLL_END_THRESHOLD_PX)
+      return;
     if (isPending || isFetchingNextPage || !hasNextPage) return;
     fetchNextPage?.();
-  }, [fetchNextPage, isFetchingNextPage, isPending, hasNextPage]);
+  };
 
   const handleOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
@@ -155,7 +159,7 @@ const SearchableSelectContent = ({
         {/* Options list */}
         <Box
           sx={{ maxHeight: 220, overflowY: "auto", py: 0.5 }}
-          ref={scrollContainer}
+          onScroll={handleListScroll}
         >
           {isPending && (!options || options.length === 0) ? (
             Array.from({ length: 5 }).map((_, i) => (

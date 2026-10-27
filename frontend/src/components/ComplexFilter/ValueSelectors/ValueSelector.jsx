@@ -12,8 +12,8 @@ import { NULL_OPERATORS } from "../common";
 import DevelopTextFilter from "src/sections/evals/DevelopFilters/DevelopTextFilter";
 import AutocompleteTextValueSelector from "./AutocompleteTextValueSelector";
 
-const ValueSelector = ({ definition, filter, updateFilter }) => {
-  // Return null if filterType is not defined yet
+const ValueSelector = ({ definition, filter, updateFilter, projectId }) => {
+  // Return null if filter_type is not defined yet
   if (!definition?.filterType?.type) {
     return null;
   }
@@ -42,6 +42,7 @@ const ValueSelector = ({ definition, filter, updateFilter }) => {
           definition={definition}
           filter={filter}
           updateFilter={updateFilter}
+          projectId={projectId}
         />
       );
     }
@@ -51,7 +52,7 @@ const ValueSelector = ({ definition, filter, updateFilter }) => {
     return (
       <>
         <ShowComponent
-          condition={!NULL_OPERATORS.includes(filter?.filterConfig?.filterOp)}
+          condition={!NULL_OPERATORS.includes(filter?.filter_config?.filter_op)}
         >
           <TextValueSelector
             definition={definition}
@@ -102,6 +103,7 @@ ValueSelector.propTypes = {
   definition: PropTypes.object,
   filter: PropTypes.object,
   updateFilter: PropTypes.func,
+  projectId: PropTypes.string,
 };
 
 export default ValueSelector;

@@ -28,8 +28,9 @@ import { BOOLEAN_VALUE_OPTIONS } from "../../../utils/constants";
 import { FormSearchSelectFieldState } from "../../../components/FromSearchSelectField";
 import CustomTooltip from "../../../components/tooltip";
 import SvgColor from "src/components/svg-color/svg-color";
+import { buildResponseFormatMenu } from "src/utils/responseFormat";
 
-const defaultMenus = [
+const DEFAULT_MENUS = [
   { value: "text", label: "Text" },
   { value: "json_object", label: "JSON" },
   { value: "none", label: "None" },
@@ -67,25 +68,15 @@ export default function ModelOptionsState({
     control,
   });
 
-  const menuItems = useMemo(() => {
-    const menus = [...defaultMenus];
-
-    responseSchema?.forEach((item) => {
-      menus.push({ label: item.name, value: item.id });
-    });
-
-    modelResponseFormat?.forEach((item) => {
-      const exists = menus.some((m) => m.value === item.value);
-      if (!exists) {
-        menus.push({
-          label: _.startCase(item.value),
-          value: item.value,
-        });
-      }
-    });
-
-    return menus;
-  }, [responseSchema, modelResponseFormat]);
+  const menuItems = useMemo(
+    () =>
+      buildResponseFormatMenu({
+        defaults: DEFAULT_MENUS,
+        responseSchema,
+        modelResponseFormat,
+      }),
+    [responseSchema, modelResponseFormat],
+  );
 
   const updateSliderParameter = (index, value) => {
     setModelParameters((prev) => ({
@@ -416,7 +407,7 @@ export default function ModelOptionsState({
                     },
                   }}
                   options={[
-                    ...(runPromptOptions?.toolChoices || []),
+                    ...(runPromptOptions?.tool_choices || []),
                     { value: "none", label: "None" },
                   ]}
                 />

@@ -1,0 +1,16 @@
+<clickhouse>
+  <logger><level>warning</level></logger>
+  <zookeeper><node><host>keeper</host><port>9181</port></node></zookeeper>
+  <macros><shard>01</shard><replica from_env="OBS_REPLICA" /></macros>
+  <remote_servers>
+    <observed_test_cluster>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica><host>replica1</host><port>9000</port><user>test</user><password>test</password></replica>
+        <replica><host>replica2</host><port>9000</port><user>test</user><password>test</password></replica>
+        <replica><host>replica3</host><port>9000</port><user>test</user><password>test</password></replica>
+      </shard>
+    </observed_test_cluster>
+  </remote_servers>
+  <distributed_ddl><path>/clickhouse/observed-test/task_queue/ddl</path></distributed_ddl>
+</clickhouse>

@@ -14,6 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 
 const GROUP_OPTIONS = [
   { key: "trace", label: "Trace" },
@@ -120,50 +121,82 @@ const VIEW_MODES = [
   },
 ];
 
-const ViewTabButton = ({ icon, label, isActive, onClick }) => (
-  <ButtonBase
-    onClick={onClick}
-    sx={{
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      gap: 0.25,
-      flex: 1,
-      py: 0.75,
-      px: 0.5,
-      borderRadius: 0.5,
-      bgcolor: isActive ? "background.paper" : "transparent",
-      boxShadow: isActive ? "2px 2px 6px 0px rgba(0,0,0,0.08)" : "none",
-      "&:hover": {
-        bgcolor: isActive ? "background.paper" : "action.hover",
-      },
-    }}
-  >
-    <Iconify
-      icon={icon}
-      width={14}
-      sx={{ color: isActive ? "text.primary" : "text.secondary" }}
-    />
-    <Typography
-      variant="caption"
+const ViewTabButton = ({
+  icon,
+  label,
+  isActive,
+  onClick,
+  disabled = false,
+  disabledReason = "Unavailable",
+}) => {
+  const button = (
+    <ButtonBase
+      onClick={onClick}
+      disabled={disabled}
       sx={{
-        fontSize: 12,
-        fontWeight: 400,
-        color: isActive ? "text.primary" : "text.secondary",
-        lineHeight: "18px",
-        textAlign: "center",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 0.25,
+        flex: 1,
+        py: 0.75,
+        px: 0.5,
+        borderRadius: 0.5,
+        bgcolor: isActive ? "background.paper" : "transparent",
+        boxShadow: isActive ? "2px 2px 6px 0px rgba(0,0,0,0.08)" : "none",
+        opacity: disabled ? 0.5 : 1,
+        "&:hover": {
+          bgcolor: isActive ? "background.paper" : "action.hover",
+        },
       }}
     >
-      {label}
-    </Typography>
-  </ButtonBase>
-);
+      <Iconify
+        icon={icon}
+        width={14}
+        sx={{
+          color: disabled
+            ? "text.disabled"
+            : isActive
+              ? "text.primary"
+              : "text.secondary",
+        }}
+      />
+      <Typography
+        variant="caption"
+        sx={{
+          fontSize: 12,
+          fontWeight: 400,
+          color: disabled
+            ? "text.disabled"
+            : isActive
+              ? "text.primary"
+              : "text.secondary",
+          lineHeight: "18px",
+          textAlign: "center",
+        }}
+      >
+        {label}
+      </Typography>
+    </ButtonBase>
+  );
+
+  if (!disabled) return button;
+  return (
+    <CustomTooltip show arrow size="small" type="black" title={disabledReason}>
+      <Box sx={{ flex: 1, display: "flex", cursor: "not-allowed" }}>
+        {button}
+      </Box>
+    </CustomTooltip>
+  );
+};
 
 ViewTabButton.propTypes = {
   icon: PropTypes.string.isRequired,
   label: PropTypes.string.isRequired,
   isActive: PropTypes.bool,
   onClick: PropTypes.func,
+  disabled: PropTypes.bool,
+  disabledReason: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -178,6 +211,7 @@ const DisplayPanel = ({
   // View mode
   viewMode,
   onViewModeChange,
+  agentGraphEnabled = true,
   // Rows
   cellHeight,
   setCellHeight,
@@ -259,15 +293,25 @@ const DisplayPanel = ({
                   theme.palette.mode === "dark" ? "action.hover" : "grey.200",
               }}
             >
-              {VIEW_MODES.map((vm) => (
-                <ViewTabButton
-                  key={vm.key}
-                  icon={vm.icon}
-                  label={vm.label}
-                  isActive={viewMode === vm.key}
-                  onClick={() => onViewModeChange?.(vm.key)}
-                />
-              ))}
+              {VIEW_MODES.map((vm) => {
+                const isDisabled =
+                  vm.key !== "graph" && (isSimulator || !agentGraphEnabled);
+                return (
+                  <ViewTabButton
+                    key={vm.key}
+                    icon={vm.icon}
+                    label={vm.label}
+                    isActive={viewMode === vm.key}
+                    onClick={() => onViewModeChange?.(vm.key)}
+                    disabled={isDisabled}
+                    disabledReason={
+                      isSimulator
+                        ? "Not available for voice projects"
+                        : "Select a project filter to use agent visualizations"
+                    }
+                  />
+                );
+              })}
             </Box>
           </Box>
           <Divider sx={{ my: 0.5 }} />
@@ -474,7 +518,7 @@ const DisplayPanel = ({
           sx={{
             fontSize: 14,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            color: "#1a1a1a",
+            color: "text.primary",
             py: 0.5,
           }}
         >
@@ -488,7 +532,8 @@ const DisplayPanel = ({
           sx={{
             fontSize: 14,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            color: "#573FCC",
+            color: (t) =>
+              t.palette.mode === "dark" ? "text.primary" : "#573FCC",
             py: 0.5,
           }}
         >
@@ -506,6 +551,7 @@ DisplayPanel.propTypes = {
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
   viewMode: PropTypes.string,
   onViewModeChange: PropTypes.func,
+  agentGraphEnabled: PropTypes.bool,
   cellHeight: PropTypes.string,
   setCellHeight: PropTypes.func,
   columns: PropTypes.array,

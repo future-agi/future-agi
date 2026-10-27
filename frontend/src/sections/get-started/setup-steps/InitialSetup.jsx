@@ -50,7 +50,7 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
         <Typography
           variant="s2"
           fontWeight={"fontWeightRegular"}
-          color="text.disabled"
+          color="text.secondary"
         >
           Help you guide through the key features and functionalities
         </Typography>

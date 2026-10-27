@@ -72,7 +72,7 @@ const LLMFiltersDrawer = ({
     if (
       type === "primary" &&
       tempCompareFilters?.length === 1 &&
-      !tempCompareFilters[0]?.columnId
+      !tempCompareFilters[0]?.column_id
     ) {
       setPrimaryFilters([{ ...defaultFilter, id: getRandomId() }]);
       setPrimaryFilterDefinition(tempPrimaryFilterDefinition);
@@ -83,7 +83,7 @@ const LLMFiltersDrawer = ({
     else if (
       type === "compare" &&
       tempPrimaryFilters?.length === 1 &&
-      !tempPrimaryFilters[0]?.columnId
+      !tempPrimaryFilters[0]?.column_id
     ) {
       setCompareFilters([{ ...defaultFilter, id: getRandomId() }]);
       setCompareFilterDefinition(tempCompareFilterDefinition);
@@ -118,8 +118,8 @@ const LLMFiltersDrawer = ({
     collectIds(tempCompareFilterDefinition);
 
     return tempPrimaryFilters.every((filter) => {
-      if (!filter?.columnId) return true;
-      return validPropertyIds.has(filter.columnId);
+      if (!filter?.column_id) return true;
+      return validPropertyIds.has(filter.column_id);
     });
   };
 

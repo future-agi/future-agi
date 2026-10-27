@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   useForm,
   useWatch,
@@ -32,14 +32,15 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getNewTaskFilters, NewTaskValidationSchema } from "./validation";
+import { NewTaskValidationSchema } from "./validation";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
-import { EvalPickerDrawer } from "../../EvalPicker";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
+import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
 
 // ── Configured Eval Card ──
 
@@ -77,7 +78,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -138,6 +139,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -151,6 +153,7 @@ const NewTaskDrawerV2 = ({
   }, [onClose, reset]);
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const isProjectSelected = !!project;
 
   const {
@@ -165,12 +168,6 @@ const NewTaskDrawerV2 = ({
   const { errors } = useFormState({ control });
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(() => {
-    return getNewTaskFilters(formValues, project, true).filters || [];
-  }, [formValues, project]);
-
   // Fetch pre-configured evals for the project
   const { data: configuredEvalList } = useQuery({
     queryKey: ["configured-evals", project],
@@ -194,6 +191,7 @@ const NewTaskDrawerV2 = ({
       spansLimit: "",
       samplingRate: 100,
       evalsDetails: [],
+      rowType: "spans",
       startDate: formatDate(sub(new Date(), { months: 6 })),
       endDate: formatDate(endOfToday()),
       runType: "historical",
@@ -220,6 +218,7 @@ const NewTaskDrawerV2 = ({
   const onSubmit = (data) => {
     const {
       runType,
+      rowType,
       spansLimit,
       samplingRate,
       evalsDetails,
@@ -230,6 +229,7 @@ const NewTaskDrawerV2 = ({
     const payload = {
       ...restData,
       run_type: runType,
+      row_type: rowType,
       ...(runType !== "continuous" && spansLimit
         ? { spans_limit: spansLimit }
         : {}),
@@ -241,17 +241,14 @@ const NewTaskDrawerV2 = ({
     createEvalTask(payload);
   };
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
     enabled: isProjectSelected,
   });
 
@@ -264,21 +261,13 @@ const NewTaskDrawerV2 = ({
     select: (data) => data.data?.result?.projects,
   });
 
-  // Format eval attributes as source columns for EvalPickerDrawer
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
-
   // Handle adding eval from the new picker
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       const tplId = evalConfig.templateId || evalConfig.template_id;
       const existingId = evalConfig.id;
+      // Use serializeEvalConfig so function-params land at config.params.
+      const serialized = serializeEvalConfig(evalConfig);
       try {
         let id;
         if (existingId) {
@@ -289,7 +278,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -303,7 +292,7 @@ const NewTaskDrawerV2 = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -315,9 +304,13 @@ const NewTaskDrawerV2 = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch {
-        // If backend save fails, still add locally
-        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
       }
     },
     [project, addEval],
@@ -520,7 +513,7 @@ const NewTaskDrawerV2 = ({
                       {!isProjectSelected && (
                         <Typography
                           variant="caption"
-                          color="text.disabled"
+                          color="text.secondary"
                           sx={{ fontSize: "12px" }}
                         >
                           Select a project first to add evaluations.
@@ -598,7 +591,11 @@ const NewTaskDrawerV2 = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />

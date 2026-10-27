@@ -115,16 +115,11 @@ export default function ImagineTab({
   const suggestedName = useMemo(() => {
     const titles = widgets.map((w) => w.title).filter(Boolean);
     if (titles.length) {
-      const combined = titles.slice(0, 3).join(", ");
-      return combined.length > 40 ? combined.slice(0, 37) + "..." : combined;
+      return titles.slice(0, 3).join(", ");
     }
     const messages = useFalconStore.getState().messages;
     const firstUserMsg = messages.find((m) => m.role === "user")?.content;
-    if (firstUserMsg) {
-      return firstUserMsg.length > 40
-        ? firstUserMsg.slice(0, 37) + "..."
-        : firstUserMsg;
-    }
+    if (firstUserMsg) return firstUserMsg;
     return `Imagine View — ${new Date().toLocaleDateString()}`;
   }, [widgets]);
 
@@ -263,11 +258,14 @@ export default function ImagineTab({
             py: 0.25,
             borderRadius: "4px",
             border: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.hover",
             fontSize: 11,
             fontWeight: 500,
             color: widgets.length ? "text.primary" : "text.disabled",
-            "&:hover": { bgcolor: "action.hover" },
+            "&:hover": {
+              bgcolor: "action.hover",
+              borderColor: "border.active",
+            },
           }}
         >
           <Iconify icon="mdi:content-save-outline" width={14} />
@@ -478,17 +476,20 @@ export default function ImagineTab({
               textTransform: "none",
               fontSize: 12,
               fontWeight: 500,
+              fontFamily: "'IBM Plex Sans', sans-serif",
               borderRadius: "2px",
               px: 2,
               py: 0.25,
-              bgcolor: saveName.trim() ? "primary.main" : "action.disabled",
-              color: "white",
-              "&:hover": {
-                bgcolor: saveName.trim() ? "primary.dark" : "action.disabled",
-              },
+              ...(saveName.trim()
+                ? {}
+                : {
+                    bgcolor: "text.disabled",
+                    color: "background.paper",
+                    "&:hover": { bgcolor: "text.disabled" },
+                  }),
               "&.Mui-disabled": {
-                bgcolor: "action.disabled",
-                color: "text.disabled",
+                bgcolor: "text.disabled",
+                color: "background.paper",
               },
             }}
           >

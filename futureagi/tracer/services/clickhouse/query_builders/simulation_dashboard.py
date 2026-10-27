@@ -15,9 +15,12 @@ Breakdowns:
 """
 
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from tracer.services.clickhouse.query_builders.dashboard import (
+    InvalidMetricCombinationError,
+)
 from tracer.services.clickhouse.query_builders.dashboard_base import (
     FILTER_OPERATORS,
     GRANULARITY_TO_CH,
@@ -35,6 +38,7 @@ _SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 _RATE_INDICATOR_METRICS = frozenset({"success_rate", "failure_rate"})
 _STRING_DIMENSION_METRICS = frozenset(
     {
+        "simulation",
         "scenario",
         "agent_definition",
         "agent_version",
@@ -82,19 +86,33 @@ _PERSONA_NAME_EXPR = (
     "JSONExtractString(c.call_metadata, 'row_data', 'persona'))"
 )
 
-_PERSONA_FIELD = lambda field: (f"JSONExtractString({_PERSONA_JSON_EXPR}, '{field}')")
-_CUSTOMER_LATENCY_FIELD = lambda field: (
-    f"JSONExtractFloat(c.customer_latency_metrics, 'systemMetrics', '{field}')"
-)
-# Nullable variant — returns NULL when the JSON key is absent so avg()
-# skips the row instead of folding a 0 into the average.
-_CUSTOMER_LATENCY_FIELD_NULLABLE = lambda field: (
-    "if(JSONHas(c.customer_latency_metrics, 'systemMetrics', "
-    f"'{field}'), JSONExtractFloat(c.customer_latency_metrics, "
-    f"'systemMetrics', '{field}'), CAST(NULL, 'Nullable(Float64)'))"
+
+def _PERSONA_FIELD(field: str) -> str:
+    return f"JSONExtractString({_PERSONA_JSON_EXPR}, '{field}')"
+
+
+_SIMULATION_NAME_EXPR = (
+    "dictGetOrDefault('simulate_run_test_dict', 'name', "
+    "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+    "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
 )
 
-SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
+
+def _CUSTOMER_LATENCY_FIELD(field: str) -> str:
+    return f"JSONExtractFloat(c.customer_latency_metrics, 'systemMetrics', '{field}')"
+
+
+# Nullable variant — returns NULL when the JSON key is absent so avg()
+# skips the row instead of folding a 0 into the average.
+def _CUSTOMER_LATENCY_FIELD_NULLABLE(field: str) -> str:
+    return (
+        "if(JSONHas(c.customer_latency_metrics, 'systemMetrics', "
+        f"'{field}'), JSONExtractFloat(c.customer_latency_metrics, "
+        f"'systemMetrics', '{field}'), CAST(NULL, 'Nullable(Float64)'))"
+    )
+
+
+SIMULATION_SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     # Call counts & entity counts
     "call_count": ("simulate_call_execution", "1"),
     # Rate metrics emit a 0/1 indicator per row. ``avg`` is rescaled to a
@@ -161,6 +179,9 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "avg_stop_time_after_interruption_ms",
     ),
     # --- String dimensions (used as metrics with count_distinct) ---
+    # "simulation" is a user-facing alias for "run_test" (same expression) —
+    # dashboards created against either name resolve to the run-test's name.
+    "simulation": ("simulate_call_execution", _SIMULATION_NAME_EXPR),
     "scenario": (
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
@@ -188,12 +209,7 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'scenario_type', c.scenario_id, '')",
     ),
-    "run_test": (
-        "simulate_call_execution",
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
-    ),
+    "run_test": ("simulate_call_execution", _SIMULATION_NAME_EXPR),
     "test_execution": ("simulate_call_execution", "toString(c.test_execution_id)"),
     # Persona attributes
     "persona_gender": ("simulate_call_execution", _PERSONA_FIELD("gender")),
@@ -213,7 +229,7 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     ),
 }
 
-SIMULATION_METRIC_UNITS: Dict[str, str] = {
+SIMULATION_METRIC_UNITS: dict[str, str] = {
     "call_count": "",
     "success_rate": "%",
     "failure_rate": "%",
@@ -239,6 +255,7 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "talk_ratio": "%",
     "stop_time_after_interruption": "ms",
     # String dimension metrics (used with count/count_distinct)
+    "simulation": "",
     "scenario": "",
     "agent_definition": "",
     "agent_version": "",
@@ -260,24 +277,25 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "persona_conversation_speed": "",
 }
 
-SIMULATION_AGGREGATIONS: Dict[str, str] = {
+SIMULATION_AGGREGATIONS: dict[str, str] = {
     "avg": "avg({col})",
-    "median": "quantile(0.5)({col})",
+    "median": "quantileExact(0.5)({col})",
     "max": "max({col})",
     "min": "min({col})",
-    "p25": "quantile(0.25)({col})",
-    "p50": "quantile(0.5)({col})",
-    "p75": "quantile(0.75)({col})",
-    "p90": "quantile(0.9)({col})",
-    "p95": "quantile(0.95)({col})",
-    "p99": "quantile(0.99)({col})",
+    "p25": "quantileExact(0.25)({col})",
+    "p50": "quantileExact(0.5)({col})",
+    "p75": "quantileExact(0.75)({col})",
+    "p90": "quantileExact(0.9)({col})",
+    "p95": "quantileExact(0.95)({col})",
+    "p99": "quantileExact(0.99)({col})",
     "count": "count()",
-    "count_distinct": "uniq({col})",
+    "count_distinct": "uniqExact({col})",
     "sum": "sum({col})",
 }
 
 # Breakdown dimensions for simulation
-SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
+SIMULATION_BREAKDOWN_COLUMNS: dict[str, str] = {
+    "simulation": _SIMULATION_NAME_EXPR,
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "
@@ -307,16 +325,13 @@ SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
     "persona_language": _PERSONA_FIELD("language"),
     "persona_conversation_speed": _PERSONA_FIELD("conversation_speed"),
     # Test & Run dimensions (chain: call -> test_execution -> run_test)
-    "run_test": (
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
-    ),
+    "run_test": _SIMULATION_NAME_EXPR,
     "test_execution": "toString(c.test_execution_id)",
 }
 
 # Filter dimensions for simulation
-SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
+SIMULATION_FILTER_COLUMNS: dict[str, str] = {
+    "simulation": _SIMULATION_NAME_EXPR,
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "
@@ -346,11 +361,7 @@ SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
     "persona_language": _PERSONA_FIELD("language"),
     "persona_conversation_speed": _PERSONA_FIELD("conversation_speed"),
     # Test & Run dimensions
-    "run_test": (
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
-    ),
+    "run_test": _SIMULATION_NAME_EXPR,
     "test_execution": "toString(c.test_execution_id)",
     # Numeric columns — needed so range operators (>, <, between, …) on
     # call.duration / latencies / costs actually filter instead of being
@@ -391,19 +402,88 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
 
     def __init__(self, query_config: dict) -> None:
         super().__init__(query_config)
+        self.organization_id = query_config.get("organization_id", "")
         self.workspace_id = query_config.get("workspace_id", "")
         self.agent_definition_ids = query_config.get("agent_definition_ids", [])
+
+    def _resolve_eval_output_key(self, metric: dict, fallback_identifier: str) -> str:
+        """Resolve a registry eval definition to its stored simulation JSON key."""
+
+        property_id = str(metric.get("property_id") or "")
+        if not property_id:
+            # Non-UUID legacy values were already stored JSON keys. Preserve
+            # that compatibility path without touching tenant metadata.
+            from uuid import UUID
+
+            try:
+                UUID(str(fallback_identifier))
+            except (TypeError, ValueError):
+                return str(fallback_identifier)
+
+        from simulate.models.eval_config import SimulateEvalConfig
+        from tracer.utils.property_registry import parse_property_registry_id
+
+        configs = SimulateEvalConfig.objects.filter(
+            deleted=False,
+            run_test__deleted=False,
+        )
+        if self.organization_id:
+            configs = configs.filter(run_test__organization_id=self.organization_id)
+        if self.workspace_id:
+            configs = configs.filter(run_test__workspace_id=self.workspace_id)
+        if self.agent_definition_ids:
+            configs = configs.filter(
+                run_test__agent_definition_id__in=self.agent_definition_ids
+            )
+
+        if property_id:
+            try:
+                decoded = parse_property_registry_id(property_id)
+            except ValueError as exc:
+                raise InvalidMetricCombinationError(
+                    "Invalid simulation eval property identity."
+                ) from exc
+            definition_id = decoded["metric_name"]
+            if decoded["property_kind"] == "eval_config":
+                configs = configs.filter(id=definition_id)
+                rows = list(configs.values("id", "mapping")[:2])
+            elif decoded["property_kind"] in {"eval_template", "eval"}:
+                configs = configs.filter(eval_template_id=definition_id)
+                rows = list(configs.values("id", "mapping")[:3])
+            else:
+                rows = []
+        else:
+            # Explicit compatibility path for pre-registry saved widgets: the
+            # identifier historically meant a template UUID.
+            configs = configs.filter(eval_template_id=fallback_identifier)
+            rows = list(configs.values("id", "mapping")[:3])
+
+        if not rows:
+            raise InvalidMetricCombinationError(
+                "The selected simulation evaluation is not available in this workspace."
+            )
+        keys = {
+            str(row["mapping"].get("key") or row["id"])
+            if isinstance(row.get("mapping"), dict)
+            else str(row["id"])
+            for row in rows
+        }
+        if len(keys) != 1:
+            raise InvalidMetricCombinationError(
+                "The selected evaluation maps to multiple simulation outputs."
+            )
+        return keys.pop()
 
     # ------------------------------------------------------------------
     # Time range
     # ------------------------------------------------------------------
 
-    def parse_time_range(self) -> Tuple[datetime, datetime]:
+    def parse_time_range(self) -> tuple[datetime, datetime]:
         tr = self.config.get("time_range", {})
         preset = tr.get("preset")
         custom_start = tr.get("custom_start")
         custom_end = tr.get("custom_end")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if custom_start and custom_end:
             return _parse_dt(custom_start), _parse_dt(custom_end)
@@ -426,7 +506,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
     # Single-metric query
     # ------------------------------------------------------------------
 
-    def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
+    def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         metric_type = metric.get("type", "system_metric")
         metric_name = metric.get("id") or metric.get("name", "")
         aggregation = self._effective_aggregation(metric)
@@ -435,7 +515,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "start_date": start_date,
             "end_date": end_date,
         }
@@ -446,17 +526,91 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
             params["agent_definition_ids"] = self.agent_definition_ids
 
         if metric_type == "system_metric":
-            return self._build_system_metric_query(
+            query, params = self._build_system_metric_query(
                 metric_name, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "eval_metric":
-            return self._build_eval_metric_query(
+            query, params = self._build_eval_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         else:
             raise ValueError(f"Unknown simulation metric type: {metric_type}")
+        if self.config.get("exact_snapshot_dimensions"):
+            query = self._replace_dictionary_dimensions(query)
+        return query, params
 
-    def build_all_queries(self) -> List[Tuple[str, dict, dict]]:
+    @staticmethod
+    def _replace_dictionary_dimensions(query: str) -> str:
+        """Replace independently refreshed dictionaries with frozen CDC joins."""
+
+        if "dictGet" not in query:
+            return query
+        query = query.replace(
+            SIMULATION_BREAKDOWN_COLUMNS["agent_version"],
+            "concat(ifNull(exact_agent.agent_name, ''), ' v', "
+            "toString(ifNull(exact_version.version_number, toUInt32(0))))",
+        )
+        query = query.replace(
+            SIMULATION_BREAKDOWN_COLUMNS["agent_definition"],
+            "ifNull(exact_agent.agent_name, '')",
+        )
+        query = query.replace(
+            _SIMULATION_NAME_EXPR,
+            "ifNull(exact_run_test.name, '')",
+        )
+        scenario_lookup = re.compile(
+            r"dictGetOrDefault\(\s*'simulate_scenario_dict'\s*,\s*"
+            r"'(?P<column>name|scenario_type|workspace_id)'\s*,\s*"
+            r"c\.scenario_id\s*,\s*(?:''|NULL)\s*\)"
+        )
+
+        def replace_scenario(match: re.Match) -> str:
+            expression = f"exact_scenario.{match.group('column')}"
+            return (
+                expression
+                if match.group("column") == "workspace_id"
+                else f"ifNull({expression}, '')"
+            )
+
+        query = scenario_lookup.sub(replace_scenario, query)
+        query = re.sub(
+            r"dictGetOrDefault\(\s*'simulate_version_dict'\s*,\s*"
+            r"'agent_definition_id'\s*,\s*c\.agent_version_id\s*,\s*"
+            r"toUUID\('00000000-0000-0000-0000-000000000000'\)\s*\)",
+            "ifNull(exact_version.agent_definition_id, "
+            "toUUID('00000000-0000-0000-0000-000000000000'))",
+            query,
+        )
+        if "dictGet" in query:
+            raise ValueError("unsupported mutable simulation dictionary lookup")
+
+        source = "FROM simulate_call_execution AS c FINAL"
+        if source not in query:
+            raise ValueError("simulation exact query has no mutable source")
+        joins = """
+LEFT JOIN simulate_scenarios AS exact_scenario FINAL
+  ON exact_scenario.id = c.scenario_id
+ AND exact_scenario._peerdb_is_deleted = 0
+ AND exact_scenario.deleted = 0
+LEFT JOIN simulate_agent_version AS exact_version FINAL
+  ON exact_version.id = c.agent_version_id
+ AND exact_version._peerdb_is_deleted = 0
+ AND exact_version.deleted = 0
+LEFT JOIN simulate_agent_definition AS exact_agent FINAL
+  ON exact_agent.id = exact_version.agent_definition_id
+ AND exact_agent._peerdb_is_deleted = 0
+ AND exact_agent.deleted = 0
+LEFT JOIN simulate_test_execution AS exact_test_execution FINAL
+  ON exact_test_execution.id = c.test_execution_id
+ AND exact_test_execution._peerdb_is_deleted = 0
+ AND exact_test_execution.deleted = 0
+LEFT JOIN simulate_run_test AS exact_run_test FINAL
+  ON exact_run_test.id = exact_test_execution.run_test_id
+ AND exact_run_test._peerdb_is_deleted = 0
+ AND exact_run_test.deleted = 0""".strip()
+        return query.replace(source, f"{source}\n{joins}", 1)
+
+    def build_all_queries(self) -> list[tuple[str, dict, dict]]:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
@@ -480,9 +634,9 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         metric_name: str,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         if metric_name not in SIMULATION_SYSTEM_METRICS:
             raise ValueError(f"Unknown simulation system metric: {metric_name}")
         _, col_expr = SIMULATION_SYSTEM_METRICS[metric_name]
@@ -490,7 +644,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         if metric_name in _STRING_DIMENSION_METRICS:
             is_present = f"{col_expr} IS NOT NULL AND {col_expr} != ''"
             if aggregation != "count":
-                agg_expr = f"uniqIf({col_expr}, {is_present})"
+                agg_expr = f"uniqExactIf({col_expr}, {is_present})"
             else:
                 agg_expr = f"countIf({is_present})"
         else:
@@ -536,9 +690,9 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         """Query eval results stored in eval_outputs JSONB on call_execution.
 
         eval_outputs format: {"eval-key": {"score": ..., "result": ...}, ...}
@@ -547,33 +701,12 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
         """
         eval_key = metric.get("eval_key", "") or ""
         if not eval_key:
-            # Fall back to config_id — may be a UUID template ID, resolve to key
             config_id = (
                 metric.get("config_id", "")
                 or metric.get("id")
                 or metric.get("name", "")
             )
-            try:
-                import uuid as _uuid
-
-                _uuid.UUID(config_id)
-                # It's a UUID — try to resolve from SimulateEvalConfig.mapping
-                try:
-                    from simulate.models.eval_config import SimulateEvalConfig
-
-                    sec = (
-                        SimulateEvalConfig.objects.filter(eval_template_id=config_id)
-                        .values("mapping")
-                        .first()
-                    )
-                    if sec and isinstance(sec.get("mapping"), dict):
-                        eval_key = sec["mapping"].get("key", config_id)
-                    else:
-                        eval_key = config_id
-                except Exception:
-                    eval_key = config_id
-            except (ValueError, AttributeError):
-                eval_key = config_id
+            eval_key = self._resolve_eval_output_key(metric, config_id)
         eval_key = _sanitize_key(eval_key)
         output_type = metric.get("output_type", "SCORE")
         params["eval_config_id"] = eval_key
@@ -594,9 +727,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
                 aggregation = "count"
         else:
             # SCORE — numeric
-            col_expr = (
-                f"JSONExtract(c.eval_outputs, '{eval_key}', 'score', 'Nullable(Float64)')"
-            )
+            col_expr = f"JSONExtract(c.eval_outputs, '{eval_key}', 'score', 'Nullable(Float64)')"
 
         # Build aggregation with pass/fail support. Rate aggregations
         # are scaled to 0–100 so widgets that render them with a ``%``
@@ -651,7 +782,7 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
 
     def format_results(
         self,
-        metric_results: List[Tuple[dict, List[dict]]],
+        metric_results: list[tuple[dict, list[dict]]],
     ) -> dict:
         start_date, end_date = self.parse_time_range()
         all_buckets = _generate_time_buckets(start_date, end_date, self.granularity)
@@ -677,15 +808,24 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _breakdown_select(self) -> Optional[str]:
+    def _breakdown_select(self) -> str | None:
         if not self.breakdowns:
             return None
         bd = self.breakdowns[0]
+        source = bd.get("source")
+        if source and source != "simulation":
+            return None
+        if bd.get("type", "system_metric") != "system_metric":
+            raise InvalidMetricCombinationError(
+                "Simulation breakdowns do not support this property type."
+            )
         bd_name = bd.get("name", "")
         col = SIMULATION_BREAKDOWN_COLUMNS.get(bd_name)
         if col:
             return col
-        return None
+        raise InvalidMetricCombinationError(
+            f"Unsupported simulation breakdown dimension: {bd_name}"
+        )
 
     def _effective_aggregation(self, metric: dict) -> str:
         metric_type = metric.get("type", "system_metric")
@@ -703,13 +843,21 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
             output_type = metric.get("output_type", "SCORE")
             if output_type == "PASS_FAIL":
                 pass_fail_aggs = {"pass_rate", "fail_rate", "pass_count", "fail_count"}
-                return aggregation if aggregation in (*pass_fail_aggs, "count") else "pass_rate"
+                return (
+                    aggregation
+                    if aggregation in (*pass_fail_aggs, "count")
+                    else "pass_rate"
+                )
             if output_type == "CHOICE":
-                return aggregation if aggregation in ("count", "count_distinct") else "count"
+                return (
+                    aggregation
+                    if aggregation in ("count", "count_distinct")
+                    else "count"
+                )
 
         return aggregation
 
-    def _build_base_where(self, params: dict) -> List[str]:
+    def _build_base_where(self, params: dict) -> list[str]:
         clauses = [
             "c._peerdb_is_deleted = 0",
             "c.deleted = 0",
@@ -732,10 +880,10 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
 
     def _apply_filters(
         self,
-        clauses: List[str],
-        filters: List[dict],
+        clauses: list[str],
+        filters: list[dict],
         params: dict,
-    ) -> List[str]:
+    ) -> list[str]:
         idx = 0
         for f in filters:
             # Skip filters scoped to other sources (trace / dataset). The
@@ -754,11 +902,15 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
             val = f.get("value")
 
             if f_type != "system_metric":
-                continue
+                raise InvalidMetricCombinationError(
+                    "Simulation filters do not support this property type."
+                )
 
             col = SIMULATION_FILTER_COLUMNS.get(f_name)
             if not col:
-                continue
+                raise InvalidMetricCombinationError(
+                    f"Unsupported simulation filter dimension: {f_name}"
+                )
 
             if op in ("is_set", "is_not_set"):
                 op_tpl = FILTER_OPERATORS.get(op)

@@ -45,6 +45,8 @@ class MonthlyClosingWorkflow:
             "monthly_closing_activity",
             MonthlyClosingInput(period=period),
             start_to_close_timeout=timedelta(hours=2),
+            # Activity heartbeats per org; 5 min covers a slow Stripe RTT.
+            heartbeat_timeout=timedelta(minutes=5),
             retry_policy=CLOSING_RETRY_POLICY,
         )
 

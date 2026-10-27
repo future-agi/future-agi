@@ -1,0 +1,405 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  buildAutoCtx,
+  buildCompositeCtx,
+  executeEvalForRow,
+  normalizeRowType,
+  resolveMappingFromRow,
+} from "../evalExecution";
+
+// We mock the axios *module* used by the helper. The helper imports the
+// default export and pushes `endpoints` through the same module, so both
+// `axios.post` and `endpoints.develop.eval.*` resolve to the mock.
+vi.mock("src/utils/axios", () => {
+  const post = vi.fn();
+  return {
+    default: { post },
+    endpoints: {
+      develop: {
+        eval: {
+          evalPlayground: "/model-hub/eval-playground/",
+          executeCompositeEval: (id) =>
+            `/model-hub/eval-templates/${id}/composite/execute/`,
+          executeCompositeEvalAdhoc:
+            "/model-hub/eval-templates/composite/execute-adhoc/",
+        },
+      },
+    },
+  };
+});
+
+import axios from "src/utils/axios";
+
+const POST = axios.post;
+const VERIFIED_SPAN = {
+  span_id: "s1",
+  trace_id: "t1",
+  project_id: "project-a",
+  observation_type: "SPAN",
+  service_name: "service-a",
+  start_time: "2026-09-01T12:00:01.123456Z",
+  _version: "18446744073709551614",
+};
+
+beforeEach(() => {
+  POST.mockReset();
+});
+
+describe("normalizeRowType", () => {
+  it.each([
+    ["Span", "Span"],
+    ["spans", "Span"],
+    ["TRACE", "Trace"],
+    ["traces", "Trace"],
+    ["session", "Session"],
+    ["sessions", "Session"],
+    ["voicecall", "VoiceCall"],
+    ["voice_calls", "VoiceCall"],
+    ["voiceCalls", "VoiceCall"],
+    [undefined, "Span"],
+    [null, "Span"],
+    ["nonsense", "Span"],
+  ])("normalizes %p -> %p", (input, expected) => {
+    expect(normalizeRowType(input)).toBe(expected);
+  });
+});
+
+describe("buildAutoCtx", () => {
+  const spanRow = { ...VERIFIED_SPAN, session_id: null };
+  it("sends the verified Span context with no bare-ID refetch", () => {
+    expect(
+      buildAutoCtx({
+        rowType: "Span",
+        currentRow: spanRow,
+        spanDetail: VERIFIED_SPAN,
+      }),
+    ).toEqual({
+      span_context: VERIFIED_SPAN,
+    });
+  });
+  it("sends only trace_id for Trace", () => {
+    expect(buildAutoCtx({ rowType: "Trace", currentRow: spanRow })).toEqual({
+      trace_id: "t1",
+    });
+  });
+  it("sends only session_id for Session", () => {
+    expect(
+      buildAutoCtx({
+        rowType: "Session",
+        currentRow: { session_id: "sess1" },
+      }),
+    ).toEqual({ session_id: "sess1" });
+  });
+  it("sends trace_id for VoiceCall", () => {
+    expect(
+      buildAutoCtx({ rowType: "VoiceCall", currentRow: { trace_id: "t1" } }),
+    ).toEqual({ trace_id: "t1" });
+  });
+  it("returns empty when currentRow is null", () => {
+    expect(buildAutoCtx({ rowType: "Span", currentRow: null })).toEqual({});
+  });
+});
+
+describe("buildCompositeCtx", () => {
+  it("sends span_context = spanDetail for Span", () => {
+    const spanDetail = { ...VERIFIED_SPAN, foo: "bar" };
+    const currentRow = { ...VERIFIED_SPAN, span_id: "s1" };
+    expect(
+      buildCompositeCtx({ rowType: "Span", currentRow, spanDetail }),
+    ).toEqual({ span_context: spanDetail });
+  });
+  it("sends trace_context = currentRow for Trace", () => {
+    const row = { trace_id: "t1" };
+    expect(
+      buildCompositeCtx({ rowType: "Trace", currentRow: row, spanDetail: {} }),
+    ).toEqual({ trace_context: row });
+  });
+  it("sends session_context = currentRow for Session", () => {
+    const row = { session_id: "sess1" };
+    expect(
+      buildCompositeCtx({
+        rowType: "Session",
+        currentRow: row,
+        spanDetail: null,
+      }),
+    ).toEqual({ session_context: row });
+  });
+  it("sends trace_context = currentRow for VoiceCall", () => {
+    const row = { trace_id: "t1" };
+    expect(
+      buildCompositeCtx({
+        rowType: "VoiceCall",
+        currentRow: row,
+        spanDetail: null,
+      }),
+    ).toEqual({ trace_context: row });
+  });
+});
+
+describe("resolveMappingFromRow", () => {
+  const spanDetail = {
+    span_attributes: { input: { value: "hello" }, cost: 2 },
+    name: "root-span",
+  };
+
+  it("resolves mapped variables via per-path walk (soft-flattened)", () => {
+    const out = resolveMappingFromRow(
+      { query: "input.value", label: "name" },
+      spanDetail,
+    );
+    expect(out).toEqual({ query: "hello", label: "root-span" });
+  });
+
+  it("stringifies object values and skips unresolved/missing fields", () => {
+    const out = resolveMappingFromRow(
+      { blob: "input", gone: "does.not.exist", empty: "" },
+      spanDetail,
+    );
+    expect(out).toEqual({ blob: JSON.stringify({ value: "hello" }) });
+  });
+
+  it("falls back to rowFields for non-detail columns", () => {
+    const out = resolveMappingFromRow({ note: "annot_col" }, spanDetail, [
+      { key: "annot_col", raw: "from-row" },
+    ]);
+    expect(out).toEqual({ note: "from-row" });
+  });
+
+  it("omits a non-string mapping value instead of throwing on it", () => {
+    // Called out as a behaviour change: this used to throw out of the walker
+    // and unmount the page. The variable is now simply absent, and the panel
+    // labels it invalid so the owner can see which one to re-map.
+    const out = resolveMappingFromRow(
+      { bad: { value: "input.value" }, good: "input.value" },
+      spanDetail,
+    );
+    expect(out).toEqual({ good: "hello" });
+    expect("bad" in out).toBe(false);
+  });
+});
+
+describe("executeEvalForRow — single eval", () => {
+  it.each(["eval", "composite"])(
+    "does not send a %s request for a mismatched physical winner",
+    async (templateType) => {
+      const result = await executeEvalForRow({
+        evalItem: { template_id: "tpl-1", template_type: templateType },
+        rowType: "Span",
+        currentRow: VERIFIED_SPAN,
+        spanDetail: { ...VERIFIED_SPAN, _version: "18446744073709551615" },
+        mapping: {},
+      });
+      expect(result.ok).toBe(false);
+      expect(POST).not.toHaveBeenCalled();
+    },
+  );
+
+  it("posts to /eval-playground/ with autoCtx + resolved mapping for Span", async () => {
+    POST.mockResolvedValueOnce({
+      data: { status: true, result: { score: 1, log_id: "log-1" } },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1", model: "turing_large" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1", trace_id: "t1" },
+      spanDetail: { ...VERIFIED_SPAN, input: { value: "hi" } },
+      mapping: { question: "input.value" },
+    });
+    expect(POST).toHaveBeenCalledWith("/model-hub/eval-playground/", {
+      template_id: "tpl-1",
+      model: "turing_large",
+      error_localizer: false,
+      config: { mapping: { question: "hi" } },
+      span_context: { ...VERIFIED_SPAN, input: { value: "hi" } },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      isComposite: false,
+      logId: "log-1",
+    });
+  });
+
+  it("uses mapping_paths and omits config.mapping for Session", async () => {
+    POST.mockResolvedValueOnce({
+      data: { status: true, result: { score: 0.5 } },
+    });
+    await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Session",
+      currentRow: { session_id: "sess1" },
+      spanDetail: null,
+      mapping: { input: "user_message_text" },
+      singleEvalConfigExtras: {
+        run_config: { data_injection: { messages: true } },
+      },
+    });
+    expect(POST).toHaveBeenCalledWith("/model-hub/eval-playground/", {
+      template_id: "tpl-1",
+      model: "turing_large",
+      error_localizer: false,
+      config: { run_config: { data_injection: { messages: true } } },
+      mapping_paths: { input: "user_message_text" },
+      session_id: "sess1",
+    });
+  });
+
+  it("does not trust an error payload carried by a successful response", async () => {
+    POST.mockResolvedValueOnce({
+      data: {
+        status: false,
+        result:
+          "Code: 159. DB::Exception: Timeout exceeded; SELECT secret FROM spans",
+      },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Evaluation failed. Please retry.",
+    });
+    expect(result.errorMessage).not.toContain("DB::Exception");
+  });
+
+  it("does not expose an untrusted thrown error message", async () => {
+    POST.mockRejectedValueOnce({ message: "network down" });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Failed to run evaluation. Please retry.",
+    });
+  });
+
+  it("preserves a concise validation error from a safe response status", async () => {
+    POST.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { detail: "Map every required input before testing." },
+      },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Map every required input before testing.",
+    });
+  });
+});
+
+describe("executeEvalForRow — composite", () => {
+  it("posts to /composite/execute/{id}/ with span_context for saved composite", async () => {
+    POST.mockResolvedValueOnce({
+      data: {
+        status: true,
+        result: {
+          aggregation_enabled: true,
+          aggregate_score: 0.8,
+          summary: "looks good",
+        },
+      },
+    });
+    const spanDetail = { ...VERIFIED_SPAN, foo: "bar" };
+    const result = await executeEvalForRow({
+      evalItem: {
+        template_id: "tpl-c",
+        template_type: "composite",
+        model: "turing_large",
+      },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail,
+      mapping: {},
+    });
+    expect(POST).toHaveBeenCalledWith(
+      "/model-hub/eval-templates/tpl-c/composite/execute/",
+      {
+        mapping: {},
+        model: "turing_large",
+        error_localizer: false,
+        config: {},
+        span_context: spanDetail,
+      },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      isComposite: true,
+      output: 0.8,
+      reason: "looks good",
+    });
+    expect(result.compositeResult).toEqual({
+      aggregation_enabled: true,
+      aggregate_score: 0.8,
+      summary: "looks good",
+    });
+  });
+
+  it("posts to /composite/execute-adhoc/ when compositeAdhocConfig is provided", async () => {
+    POST.mockResolvedValueOnce({
+      data: {
+        status: true,
+        result: { aggregation_enabled: false, summary: "n/a" },
+      },
+    });
+    const compositeAdhocConfig = {
+      child_template_ids: ["a", "b"],
+      child_configs: {},
+      aggregation_enabled: false,
+      pass_threshold: 0.5,
+    };
+    await executeEvalForRow({
+      evalItem: { model: "turing_large" }, // no template_type — adhoc forces composite
+      rowType: "Trace",
+      currentRow: { trace_id: "t1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+      compositeAdhocConfig,
+    });
+    expect(POST).toHaveBeenCalledWith(
+      "/model-hub/eval-templates/composite/execute-adhoc/",
+      expect.objectContaining({
+        ...compositeAdhocConfig,
+        model: "turing_large",
+        error_localizer: false,
+        config: {},
+        trace_context: { trace_id: "t1" },
+      }),
+    );
+  });
+
+  it("aggregate_score is null when aggregation is disabled", async () => {
+    POST.mockResolvedValueOnce({
+      data: {
+        status: true,
+        result: {
+          aggregation_enabled: false,
+          aggregate_score: 0.4,
+          summary: "",
+        },
+      },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-c", template_type: "composite" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+    });
+    expect(result.output).toBeNull();
+  });
+});

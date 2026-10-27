@@ -48,7 +48,7 @@ export default function ConfigureKeysModal({ open, onClose, selectedModel }) {
             Configure API keys
           </Typography>
           <Typography
-            color={"text.disabled"}
+            color={"text.secondary"}
             variant="s1"
             fontWeight={"fontWeightBold"}
           >

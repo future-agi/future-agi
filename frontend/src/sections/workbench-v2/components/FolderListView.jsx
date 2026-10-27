@@ -45,18 +45,17 @@ export default function FolderListView({ sortConfig }) {
     ],
     queryFn: () => {
       const params = {
-        ...(folder !== "all" &&
-          !debouncedSearchQuery && { prompt_folder: folder }),
-        ...((folder === "all" || debouncedSearchQuery) && { send_all: true }),
         page,
         page_size: pageLimit,
         name: debouncedSearchQuery,
       };
 
-      if (folder === "all" || debouncedSearchQuery) {
+      if (folder === "all") {
+        params.send_all = true;
         params.sort_order = sortConfig?.direction;
         params.sort_by = sortConfig?.field;
       } else {
+        params.prompt_folder = folder;
         if (sortConfig?.field) {
           params.ordering = `${sortConfig?.direction === "desc" ? "-" : ""}${
             sortConfig.field

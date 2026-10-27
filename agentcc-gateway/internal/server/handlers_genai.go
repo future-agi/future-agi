@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +14,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
-	_ "github.com/futureagi/agentcc-gateway/internal/translation/gemini" // register translator
+	geminitrans "github.com/futureagi/agentcc-gateway/internal/translation/gemini"
 )
 
 // GenAIHandler handles POST /v1beta/models/{model_action} — native Google GenAI API pass-through.
@@ -38,6 +37,11 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.Model = model
+	// Retain provider-qualified routing identity, but send only the model name
+	// upstream on the native Google API (e.g. vertex_ai/gemini-3.8-flash).
+	if prefix := r.URL.Query().Get("provider"); prefix != "" {
+		rc.Model = prefix + "/" + model
+	}
 	rc.RequestHeaders = cloneRequestHeaders(r)
 
 	switch action {
@@ -87,6 +91,10 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Caller dimensions from the body's own non-spec fields. Read from the raw
+	// bytes: the native pass-through below never unmarshals this body.
+	applyCallerExtrasFromBody(rc, body, geminitrans.KnownRequestFields())
+
 	// Resolve timeout and context.
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -111,10 +119,13 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, rc.Model)
 	if err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
+	}
+	if upstreamModel != rc.Model {
+		model = providers.ResolveModelName(upstreamModel)
 	}
 
 	// Collect Google-specific headers to forward (only used on native path).
@@ -143,11 +154,15 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if action == "embedContent" {
-			h.handleGenAIEmbed(ctx, w, rc, gp, model, body, googleHeaders)
-		} else {
-			h.handleGenAICountTokens(ctx, w, rc, gp, model, body, googleHeaders)
+		call := func(ctx context.Context) ([]byte, int, error) {
+			return gp.GenAICountTokens(ctx, model, body, googleHeaders)
 		}
+		if action == "embedContent" {
+			call = func(ctx context.Context) ([]byte, int, error) {
+				return gp.EmbedContent(ctx, model, body, googleHeaders)
+			}
+		}
+		h.handleGenAINativeOnly(ctx, w, rc, call)
 		return
 	}
 
@@ -186,7 +201,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = rc.Model
+	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
 
 	switch action {
@@ -200,9 +215,28 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 // ─── Native pass-through helpers ─────────────────────────────────────────────
 
 func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	respBody, statusCode, err := gp.GenerateContent(ctx, model, reqBody, headers)
+	var respBody []byte
+	var statusCode int
+
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		respBody, statusCode, callErr = gp.GenerateContent(ctx, model, reqBody, headers)
+		if callErr != nil {
+			return callErr
+		}
+		if statusCode < 400 {
+			applyGenAIUsage(rc, respBody)
+		}
+		return nil
+	})
 	if err != nil {
 		writeGenAIErrorFromError(w, err)
+		return
+	}
+
+	// A plugin answered instead of the provider — a cache hit.
+	if respBody == nil {
+		h.writeGenAIShortCircuit(w, rc)
 		return
 	}
 
@@ -215,15 +249,6 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	// Extract usage for cost tracking.
-	promptTokens, candidateTokens, _ := genaifmt.ExtractUsageMetadata(respBody)
-	if promptTokens > 0 {
-		rc.Metadata["input_tokens"] = strconv.Itoa(promptTokens)
-	}
-	if candidateTokens > 0 {
-		rc.Metadata["output_tokens"] = strconv.Itoa(candidateTokens)
-	}
-
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -231,20 +256,49 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 }
 
 func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	stream, statusCode, err := gp.StreamGenerateContent(ctx, model, reqBody, headers)
-	if err != nil {
+	var stream io.ReadCloser
+	var statusCode int
+
+	// Post-plugins wait for the closing chunk, where the counts arrive.
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, reqBody, headers)
+		return callErr
+	}); err != nil {
 		writeGenAIErrorFromError(w, err)
+		return
+	}
+
+	if rc.Flags.ShortCircuited && rc.Response != nil {
+		h.writeGenAIShortCircuit(w, rc)
+		return
+	}
+	if stream == nil {
+		writeGenAIErrorFromError(w, models.ErrInternal("no stream from provider"))
 		return
 	}
 	defer stream.Close()
 
-	// If upstream returned an error status, read and forward.
+	var usage genaifmt.StreamUsageScanner
+	finalize := func(detach bool) {
+		applyGenAIStreamUsage(rc, &usage)
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
+
+	// If upstream returned an error status, read and forward. Still finalised:
+	// the non-streaming path records a 4xx through Process, and a streamed one
+	// that skipped it would be missing from the log and the trace.
 	if statusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(stream, 1024*1024))
 		h.setAgentccHeaders(w, rc)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		w.Write(errBody)
+		finalize(false)
 		return
 	}
 
@@ -257,6 +311,8 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Warn("streaming not supported", "request_id", rc.RequestID)
+		// Stream is open, so the request still has to be accounted for.
+		finalize(true)
 		return
 	}
 	flusher.Flush()
@@ -266,8 +322,11 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	for {
 		n, readErr := stream.Read(buf)
 		if n > 0 {
+			usage.Write(buf[:n])
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				slog.Warn("error writing genai stream", "request_id", rc.RequestID, "error", writeErr)
+				// Client gone, tokens still spent — detach from its context.
+				finalize(true)
 				return
 			}
 			flusher.Flush()
@@ -276,56 +335,104 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 			if readErr != io.EOF {
 				slog.Warn("error reading genai stream", "request_id", rc.RequestID, "error", readErr)
 			}
+			finalize(false)
 			return
 		}
 
 		select {
 		case <-ctx.Done():
+			finalize(true)
 			return
 		default:
 		}
 	}
 }
 
-func (h *Handlers) handleGenAICountTokens(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	respBody, statusCode, err := gp.GenAICountTokens(ctx, model, reqBody, headers)
-	if err != nil {
-		writeGenAIErrorFromError(w, err)
+// applyGenAIUsage lifts usageMetadata onto rc. rc.Response is populated because
+// that is what the cost plugin prices from; it carries usage only.
+func applyGenAIUsage(rc *models.RequestContext, respBody []byte) {
+	promptTokens, completionTokens, _ := genaifmt.ExtractUsageMetadata(respBody)
+	if model := genaifmt.ExtractModelVersion(respBody); model != "" {
+		rc.ResolvedModel = model
+	}
+	if promptTokens > 0 {
+		rc.Metadata["input_tokens"] = strconv.Itoa(promptTokens)
+	}
+	if completionTokens > 0 {
+		rc.Metadata["output_tokens"] = strconv.Itoa(completionTokens)
+	}
+	if promptTokens == 0 && completionTokens == 0 {
 		return
 	}
-
-	if statusCode >= 400 {
-		h.setAgentccHeaders(w, rc)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		w.Write(respBody)
-		return
-	}
-
-	h.setAgentccHeaders(w, rc)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBody)
+	setUsageResponse(rc, promptTokens, completionTokens)
 }
 
-func (h *Handlers) handleGenAIEmbed(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	respBody, statusCode, err := gp.EmbedContent(ctx, model, reqBody, headers)
+// applyGenAIStreamUsage moves collected counts onto rc. Left nil when the
+// stream reported none, so the cost plugin skips rather than bills zero.
+func applyGenAIStreamUsage(rc *models.RequestContext, usage *genaifmt.StreamUsageScanner) {
+	if model := usage.Model(); model != "" {
+		rc.ResolvedModel = model
+	}
+	promptTokens, completionTokens, ok := usage.Usage()
+	if !ok {
+		return
+	}
+	if promptTokens > 0 {
+		rc.Metadata["input_tokens"] = strconv.Itoa(promptTokens)
+	}
+	if completionTokens > 0 {
+		rc.Metadata["output_tokens"] = strconv.Itoa(completionTokens)
+	}
+	setUsageResponse(rc, promptTokens, completionTokens)
+}
+
+// writeGenAIShortCircuit renders a plugin-produced response in GenAI format.
+func (h *Handlers) writeGenAIShortCircuit(w http.ResponseWriter, rc *models.RequestContext) {
+	translator, ok := translation.InboundFor("google")
+	if !ok || rc.Response == nil {
+		h.setAgentccHeaders(w, rc)
+		genaifmt.WriteError(w, http.StatusInternalServerError, "INTERNAL",
+			"request was answered internally but the response could not be formatted")
+		return
+	}
+	out, err := translator.ResponseFromCanonical(rc.Response)
 	if err != nil {
+		h.setAgentccHeaders(w, rc)
+		genaifmt.WriteError(w, http.StatusInternalServerError, "INTERNAL",
+			"failed to format response: "+err.Error())
+		return
+	}
+	h.setAgentccHeaders(w, rc)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(out)
+}
+
+// handleGenAINativeOnly serves countTokens and embedContent. They have no
+// canonical form, but still go through the pipeline: without it the key is
+// never authenticated, and the call is neither rate-limited nor logged.
+func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, call func(context.Context) ([]byte, int, error)) {
+	var respBody []byte
+	var statusCode int
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		respBody, statusCode, callErr = call(ctx)
+		return callErr
+	}); err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
-
-	if statusCode >= 400 {
-		h.setAgentccHeaders(w, rc)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		w.Write(respBody)
+	if respBody == nil {
+		writeGenAIErrorFromError(w, models.ErrInternal("no response from provider"))
 		return
 	}
 
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	if statusCode < 400 {
+		statusCode = http.StatusOK
+	}
+	w.WriteHeader(statusCode)
 	w.Write(respBody)
 }
 
@@ -341,7 +448,19 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	translator translation.InboundTranslator,
 	canonicalReq *models.ChatCompletionRequest,
 ) {
-	canonicalResp, err := provider.ChatCompletion(ctx, canonicalReq)
+	// Without this the pipeline sees a nil rc.Request.
+	rc.Request = canonicalReq
+
+	var canonicalResp *models.ChatCompletionResponse
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		if callErr != nil {
+			return callErr
+		}
+		rc.Response = canonicalResp
+		return nil
+	})
 	if err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
@@ -361,6 +480,23 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(status)
 		w.Write(body)
+		return
+	}
+
+	// A plugin answered instead of the provider — a cache hit.
+	if canonicalResp == nil {
+		canonicalResp = rc.Response
+	}
+	if canonicalResp == nil {
+		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+			Status:  http.StatusInternalServerError,
+			Type:    models.ErrTypeServer,
+			Message: "no response from provider",
+		})
+		h.setAgentccHeaders(w, rc)
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(status)
+		w.Write(errBody)
 		return
 	}
 
@@ -408,7 +544,39 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	translator translation.InboundTranslator,
 	canonicalReq *models.ChatCompletionRequest,
 ) {
-	chunkCh, errCh := provider.StreamChatCompletion(ctx, canonicalReq)
+	rc.Request = canonicalReq
+
+	var rawChunkCh <-chan models.StreamChunk
+	var errCh <-chan error
+
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		return nil
+	}); err != nil {
+		writeGenAIErrorFromError(w, err)
+		return
+	}
+
+	if rc.Flags.ShortCircuited && rc.Response != nil {
+		h.writeGenAIShortCircuit(w, rc)
+		return
+	}
+	if rawChunkCh == nil {
+		writeGenAIErrorFromError(w, models.ErrInternal("no stream from provider"))
+		return
+	}
+
+	// Tee for usage from the final chunk.
+	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh)
+
+	finalize := func(detach bool) {
+		applyCanonicalStreamUsage(rc, usageCh)
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
 
 	// Translate OpenAI chunks into Gemini SSE events.
 	// Gemini's translator uses blocking sends (cap 32); the consumer here drives
@@ -424,6 +592,8 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Warn("streaming not supported", "request_id", rc.RequestID)
+		// Stream is open, so the request still has to be accounted for.
+		finalize(true)
 		return
 	}
 	flusher.Flush()
@@ -431,6 +601,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	for {
 		select {
 		case <-ctx.Done():
+			finalize(true)
 			return
 
 		case event, ok := <-eventCh:
@@ -440,6 +611,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated genai stream", "request_id", rc.RequestID, "error", writeErr)
+				finalize(true)
 				return
 			}
 			flusher.Flush()
@@ -453,6 +625,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
+				finalize(false)
 				return
 			}
 
@@ -463,26 +636,14 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
+				finalize(false)
 				return
 			}
 		}
 
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
+			finalize(false)
 			return
-		}
-	}
-}
-
-// parseMetadataHeader parses the x-agentcc-metadata JSON header into the request context.
-// Security-sensitive keys are blocked to prevent client-side injection.
-func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	var m map[string]string
-	if err := json.Unmarshal([]byte(meta), &m); err == nil {
-		for k, v := range m {
-			if isBlockedMetadataKey(k) {
-				continue
-			}
-			rc.Metadata[k] = v
 		}
 	}
 }

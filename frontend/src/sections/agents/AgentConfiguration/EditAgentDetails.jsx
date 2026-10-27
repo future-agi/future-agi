@@ -1,5 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Box, Typography, Grid, Stack, Button } from "@mui/material";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  Box,
+  Typography,
+  Grid,
+  Stack,
+  Button,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
@@ -10,24 +24,26 @@ import {
   pinCodeOptions,
 } from "src/components/agent-definitions/helper";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import SwitchField from "src/components/Switch/SwitchField";
 import LanguageMultiSelect from "../CreateNewAgent/AgentBasicInfoStep/LanguageMultiSelect";
 import { useWatch } from "react-hook-form";
 import {
   AGENT_TYPES,
   AUTH_METHODS_BY_PROVIDER,
+  defaultAuthMethodForProvider,
   VOICE_CHAT_PROVIDERS,
   INBOUND_OUTBOUND_COPY,
+  TARGET_SPEAKS_FIRST_COPY,
+  VOICE_TRANSPORT,
+  VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  supportsConcurrency,
   validateLiveKitCredentials,
 } from "../constants";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
-import { PROVIDER_CHOICES } from "../constants";
-import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -43,10 +59,15 @@ const EditAgentDetails = ({
   trigger,
   setValue,
   getValues,
+  clearErrors,
+  agentKind,
 }) => {
+  const isSourceAgent = agentKind === "source";
   const { orgLimit } = useAuthContext();
   const { agentDefinitionId } = useParams();
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
+  const [showSyncSuccess, setShowSyncSuccess] = useState(false);
+  const syncSuccessTimeoutRef = useRef(null);
   const apiKey = useWatch({
     control,
     name: "apiKey",
@@ -56,6 +77,11 @@ const EditAgentDetails = ({
     control,
     name: "agentName",
     defaultValue: getValues("agentName"),
+  });
+  const voiceTransport = useWatch({
+    control,
+    name: "voiceTransport",
+    defaultValue: getValues("voiceTransport") || VOICE_TRANSPORT.WEBRTC,
   });
   const assistantId = useWatch({
     control,
@@ -139,10 +165,49 @@ const EditAgentDetails = ({
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setLastFetchedAt(new Date());
+      setShowSyncSuccess(true);
     },
   });
+
+  useEffect(() => {
+    if (showSyncSuccess) {
+      if (syncSuccessTimeoutRef.current) {
+        clearTimeout(syncSuccessTimeoutRef.current);
+      }
+      syncSuccessTimeoutRef.current = setTimeout(() => {
+        setShowSyncSuccess(false);
+      }, 2500);
+    }
+
+    return () => {
+      if (syncSuccessTimeoutRef.current) {
+        clearTimeout(syncSuccessTimeoutRef.current);
+      }
+    };
+  }, [showSyncSuccess]);
+
+  const debounceTimeoutRef = useRef(null);
+
+  const debouncedMutate = useCallback(
+    (data) => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      debounceTimeoutRef.current = setTimeout(() => {
+        mutate(data);
+      }, 500);
+    },
+    [mutate],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSyncWithProvider = async () => {
     if (!apiKey || !assistantId) {
@@ -158,19 +223,19 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_id: agentDefinitionId,
       });
     }
   };
 
-  const canEnableObservability = Boolean(apiKey && assistantId);
+  const canEnableObservability =
+    isSourceAgent || Boolean(apiKey && assistantId);
   const keysRequired = inbound === false;
   // "others" provider brings its own endpoint, so outbound has no
   // meaning (nothing to call). Lock the toggle to inbound.
   const outboundLocked = selectedProvider === "others";
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const provider = useWatch({
     control,
@@ -187,10 +252,12 @@ const EditAgentDetails = ({
   );
 
   useEffect(() => {
+    // A code agent has no key or assistant id to wait for.
+    if (isSourceAgent) return;
     if (observabilityEnabled && (!apiKey || !assistantId)) {
       setValue("observabilityEnabled", false);
     }
-  }, [apiKey, assistantId, observabilityEnabled, setValue]);
+  }, [apiKey, assistantId, isSourceAgent, observabilityEnabled, setValue]);
 
   return (
     <Box>
@@ -316,16 +383,27 @@ const EditAgentDetails = ({
                   "livekit",
                   "livekit_bridge",
                 ];
+                // "bland" is intentionally excluded: its raw-authorization key
+                // is distinct from these Bearer providers, so switching into or
+                // out of Bland must clear the key rather than carry a stale one.
 
                 // Clear authenticationMethod only if switching to or from "others"
                 const isPrevMain = mainProviders.includes(selectedProvider);
                 const isNextMain = mainProviders.includes(value);
 
                 if (value !== selectedProvider) {
+                  // Providers with only one selectable method get it
+                  // preselected, so the required field is never left empty
+                  // after a switch.
+                  const nextAuthMethod = defaultAuthMethodForProvider(value);
                   if (isPrevMain && isNextMain) {
-                    // between vapi/retell/elevenlabs → keep authenticationMethod
+                    // between vapi/retell/elevenlabs → keep the key, but
+                    // realign the method to the provider now selected
+                    if (nextAuthMethod) {
+                      setValue("authenticationMethod", nextAuthMethod);
+                    }
                   } else {
-                    setValue("authenticationMethod", "");
+                    setValue("authenticationMethod", nextAuthMethod);
                     setValue("apiKey", "");
                   }
                   // Clear LiveKit fields when switching away from livekit
@@ -335,7 +413,7 @@ const EditAgentDetails = ({
                     setValue("livekitApiSecret", "");
                     setValue("livekitAgentName", "");
                     setValue("livekitConfigJson", {});
-                    setValue("livekitMaxConcurrency", 2);
+                    setValue("livekitMaxConcurrency", 5);
                   }
                   // "others" provider has no outbound path (user's own
                   // endpoint, nothing for us to call), so snap back to
@@ -346,97 +424,115 @@ const EditAgentDetails = ({
                 }
               }}
             />
-            <ShowComponent condition={provider === PROVIDER_CHOICES.RETELL}>
-              <Stack
-                sx={{
-                  borderRadius: 0.5,
-                  bgcolor: "blue.o10",
-                  border: "1px solid",
-                  borderColor: "blue.200",
-                  p: 1,
-                  alignItems: "center",
-                }}
-                direction={"row"}
-                gap={1}
-              >
-                <Iconify icon="ci:info" sx={{ color: "blue.400" }} width={16} />
-                <Stack direction={"row"} gap={0.5}>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    Please add
-                  </Typography>
-                  <Typography
-                    typography={"s2_1"}
-                    onClick={() => {
-                      copyToClipboard(
-                        "https://api.futureagi.com/tracer/webhook",
-                      );
-                      enqueueSnackbar({
-                        message: "Copied to clipboard",
-                        variant: "success",
-                      });
-                    }}
-                    color={"blue.500"}
-                    sx={{
-                      textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
-                    }}
-                  >
-                    https://api.futureagi.com/tracer/webhook
-                  </Typography>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    to the Agent Level Webhook URL on Retell
-                  </Typography>
-                </Stack>
-              </Stack>
-            </ShowComponent>
             <ShowComponent
               condition={
                 selectedProvider !== "others" &&
                 !isLiveKitProvider(selectedProvider)
               }
             >
-              <Stack direction={"row"} alignItems={"center"} gap={2}>
-                <FormTextFieldV2
-                  control={control}
-                  fieldName="assistantId"
-                  placeholder="asst_xxx"
-                  required={observabilityEnabled || keysRequired}
-                  label="Assistant ID"
-                  fullWidth
-                  size="small"
-                  error={errors && !!errors.assistantId?.message}
-                  helperText={errors && errors.assistantId?.message}
-                  sx={{
-                    "& .MuiInputLabel-root": {
-                      fontWeight: 500,
-                    },
-                  }}
-                  onChange={() => {
-                    trigger("assistantId");
-                  }}
-                />
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  sx={{
-                    flexShrink: 0,
-                  }}
-                  startIcon={
+              <Stack direction={"column"} gap={0.75}>
+                <Stack direction={"row"} alignItems={"center"} gap={2}>
+                  <FormTextFieldV2
+                    control={control}
+                    fieldName="assistantId"
+                    placeholder="asst_xxx"
+                    required={
+                      (!isSourceAgent && observabilityEnabled) || keysRequired
+                    }
+                    label="Assistant ID"
+                    fullWidth
+                    size="small"
+                    disabled={isPending}
+                    error={errors && !!errors.assistantId?.message}
+                    helperText={errors && errors.assistantId?.message}
+                    sx={{
+                      "& .MuiInputLabel-root": {
+                        fontWeight: 500,
+                      },
+                    }}
+                    onChange={(e) => {
+                      trigger("assistantId");
+                      const value = e.target.value;
+                      if (apiKey && value && selectedProvider) {
+                        debouncedMutate({
+                          api_key: apiKey,
+                          assistant_id: value,
+                          provider: selectedProvider,
+                          agent_id: agentDefinitionId,
+                        });
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    disabled={isPending}
+                    sx={{
+                      flexShrink: 0,
+                    }}
+                    startIcon={
+                      <SvgColor
+                        src="/assets/icons/ic_refresh.svg"
+                        sx={{
+                          animation: isPending
+                            ? `${spin} 1s linear infinite`
+                            : "none",
+                        }}
+                      />
+                    }
+                    onClick={handleSyncWithProvider}
+                  >
+                    Sync with provider
+                  </Button>
+                </Stack>
+                <ShowComponent condition={isPending}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 1,
+                      color: "blue.600",
+                    }}
+                  >
                     <SvgColor
                       src="/assets/icons/ic_refresh.svg"
                       sx={{
-                        animation: isPending
-                          ? `${spin} 1s linear infinite`
-                          : "none",
+                        animation: `${spin} 1s linear infinite`,
+                        width: "16px",
+                        height: "16px",
                       }}
                     />
-                  }
-                  onClick={handleSyncWithProvider}
-                >
-                  Sync with provider
-                </Button>
+                    <Typography
+                      typography={"s3"}
+                      fontWeight={"fontWeightMedium"}
+                    >
+                      {`Syncing with ${selectedProvider}...`}
+                    </Typography>
+                  </Box>
+                </ShowComponent>
+                <ShowComponent condition={showSyncSuccess && !isPending}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 0.5,
+                      color: "green.600",
+                    }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_success_fill.svg"
+                      sx={{ width: 16, height: 16, color: "green.600" }}
+                    />
+                    <Typography
+                      typography={"s3"}
+                      fontWeight={"fontWeightMedium"}
+                    >
+                      {`Synced with ${selectedProvider}`}
+                    </Typography>
+                  </Box>
+                </ShowComponent>
               </Stack>
             </ShowComponent>
             <ShowComponent
@@ -458,7 +554,7 @@ const EditAgentDetails = ({
                   },
                 }}
                 options={AUTH_METHODS_BY_PROVIDER[selectedProvider] || []}
-                required={observabilityEnabled}
+                required={!isSourceAgent && observabilityEnabled}
               />
             </ShowComponent>
             <ShowComponent
@@ -472,13 +568,24 @@ const EditAgentDetails = ({
                 fieldName="apiKey"
                 placeholder="Enter API key"
                 label="Provider API Key"
-                required={observabilityEnabled || keysRequired}
+                required={
+                  (!isSourceAgent && observabilityEnabled) || keysRequired
+                }
                 error={errors && !!errors.apiKey?.message}
                 helperText={errors && errors.apiKey?.message}
                 fullWidth
                 size="small"
-                onChange={() => {
+                onChange={(e) => {
                   trigger("apiKey");
+                  const value = e.target.value;
+                  if (assistantId && value && selectedProvider) {
+                    debouncedMutate({
+                      api_key: value,
+                      assistant_id: assistantId,
+                      provider: selectedProvider,
+                      agent_id: agentDefinitionId,
+                    });
+                  }
                 }}
               />
             </ShowComponent>
@@ -490,7 +597,7 @@ const EditAgentDetails = ({
               fieldName="livekitUrl"
               placeholder="https://your-project.livekit.cloud"
               label="LiveKit Server URL"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               error={errors && !!errors.livekitUrl?.message}
@@ -501,9 +608,10 @@ const EditAgentDetails = ({
               fieldName="livekitApiKey"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
+              autoComplete="new-password"
               error={errors && !!errors.livekitApiKey?.message}
               helperText={errors && errors.livekitApiKey?.message}
             />
@@ -513,9 +621,10 @@ const EditAgentDetails = ({
               placeholder="Paste the secret you copied when creating the key"
               label="LiveKit API Secret"
               type="password"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
+              autoComplete="new-password"
               error={errors && !!errors.livekitApiSecret?.message}
               helperText={errors && errors.livekitApiSecret?.message}
             />
@@ -526,7 +635,7 @@ const EditAgentDetails = ({
                   fieldName="livekitAgentName"
                   placeholder="e.g. test-agent"
                   label="Agent Name"
-                  required
+                  required={!isSourceAgent}
                   fullWidth
                   size="small"
                   error={errors && !!errors.livekitAgentName?.message}
@@ -587,6 +696,8 @@ const EditAgentDetails = ({
               multiline
               rows={6}
             />
+          </ShowComponent>
+          <ShowComponent condition={supportsConcurrency(selectedProvider)}>
             <FormTextFieldV2
               control={control}
               fieldName="livekitMaxConcurrency"
@@ -666,7 +777,7 @@ const EditAgentDetails = ({
           <Box>
             <FormTextFieldV2
               label="Prompt/Chains"
-              required
+              required={!isSourceAgent}
               control={control}
               fieldName="description"
               placeholder="Describe the agent's purpose and functions"
@@ -686,11 +797,67 @@ const EditAgentDetails = ({
             />
           </Box>
         </Box>
+        {/* Call transport: decides whether a phone number is collected */}
+        <ShowComponent condition={agentType === AGENT_TYPES.VOICE}>
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+            gap={2}
+            border={"1px solid"}
+            borderColor={"background.neutral"}
+            borderRadius={"8px !important"}
+            bgcolor={"background.neutral"}
+            p={1.5}
+          >
+            <Box display={"flex"} flexDirection={"column"}>
+              <Typography
+                typography="s1"
+                fontWeight={"fontWeightMedium"}
+                color={"text.primary"}
+              >
+                {VOICE_TRANSPORT_COPY[voiceTransport]?.title}
+              </Typography>
+              <Typography
+                typography="s2_1"
+                fontWeight={"fontWeightRegular"}
+                color={"text.secondary"}
+              >
+                {VOICE_TRANSPORT_COPY[voiceTransport]?.description}
+              </Typography>
+            </Box>
+            <ToggleButtonGroup
+              value={voiceTransport}
+              exclusive
+              size="small"
+              onChange={(_, value) => {
+                if (!value) return;
+                setValue("voiceTransport", value);
+                if (value === VOICE_TRANSPORT.WEBRTC) {
+                  clearErrors(["countryCode", "contactNumber"]);
+                }
+              }}
+            >
+              <ToggleButton
+                value={VOICE_TRANSPORT.WEBRTC}
+                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
+              >
+                {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
+              </ToggleButton>
+              <ToggleButton
+                value={VOICE_TRANSPORT.TELEPHONY}
+                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
+              >
+                {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        </ShowComponent>
         {/* Contact Number and Pin Code */}
         <ShowComponent
           condition={
             agentType === AGENT_TYPES.VOICE &&
-            !isLiveKitProvider(selectedProvider)
+            voiceTransport === VOICE_TRANSPORT.TELEPHONY
           }
         >
           <Box>
@@ -860,13 +1027,61 @@ const EditAgentDetails = ({
                 uses your own endpoint, which we can only receive calls into.
               </Typography>
             )}
+
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              border={"1px solid"}
+              borderColor={"background.neutral"}
+              borderRadius={"8px !important"}
+              p={1.5}
+            >
+              <Box display={"flex"} flexDirection={"column"}>
+                <Typography
+                  typography="s1"
+                  fontWeight={"fontWeightMedium"}
+                  color={"text.primary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.title}
+                </Typography>
+                <Typography
+                  typography="s2_1"
+                  fontWeight={"fontWeightRegular"}
+                  color={"text.secondary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.description}
+                </Typography>
+              </Box>
+              <CustomTooltip
+                show={true}
+                title={TARGET_SPEAKS_FIRST_COPY.tooltip}
+                placement="bottom"
+                arrow
+                size="small"
+                type="black"
+                slotProps={{
+                  tooltip: { sx: { maxWidth: "200px !important" } },
+                }}
+              >
+                <Box>
+                  <SwitchField
+                    control={control}
+                    fieldName="targetSpeaksFirst"
+                    label=""
+                    labelPlacement="end"
+                  />
+                </Box>
+              </CustomTooltip>
+            </Box>
           </Stack>
         </ShowComponent>
         <ShowComponent
           condition={
-            agentType === AGENT_TYPES.VOICE &&
-            selectedProvider !== "others" &&
-            !isLiveKitProvider(selectedProvider)
+            isSourceAgent ||
+            (agentType === AGENT_TYPES.VOICE &&
+              selectedProvider !== "others" &&
+              !isLiveKitProvider(selectedProvider))
           }
         >
           <Stack>
@@ -889,14 +1104,16 @@ const EditAgentDetails = ({
                   labelPlacement="end"
                   helperText={""}
                   defaultValue={true}
-                  onChange={() => trigger(["apiKey", "assistantId"])}
+                  onChange={() => {
+                    if (!isSourceAgent) trigger(["apiKey", "assistantId"]);
+                  }}
                   disabled={!canEnableObservability}
                 />
               </span>
             </CustomTooltip>
             <Typography
               typography="s2"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >
@@ -926,6 +1143,8 @@ EditAgentDetails.propTypes = {
   setValue: PropTypes.func,
   getValues: PropTypes.func,
   trigger: PropTypes.func,
+  clearErrors: PropTypes.func,
+  agentKind: PropTypes.string,
 };
 
 export default EditAgentDetails;

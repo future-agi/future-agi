@@ -14,7 +14,8 @@ Usage:
 """
 
 import functools
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from django.db import close_old_connections
 
@@ -48,10 +49,13 @@ class AsyncResult:
 def temporal_activity(
     time_limit: int = 3600,
     queue: str = "default",
-    max_retries: int = 0,
-    retry_delay: int = 300,
-    rate_limit: Optional[str] = None,
-    name: Optional[str] = None,
+    max_retries: int | None = None,
+    retry_delay: int | None = None,
+    rate_limit: str | None = None,
+    name: str | None = None,
+    schedule_to_start_timeout: int | None = None,
+    workflow_run_timeout: int | None = None,
+    workflow_execution_timeout: int | None = None,
 ):
     """
     Drop-in replacement decorator for @celery_app.task.
@@ -59,10 +63,19 @@ def temporal_activity(
     Args:
         time_limit: Maximum execution time in seconds (maps to start_to_close_timeout)
         queue: Task queue name (maps to Temporal task queue)
-        max_retries: Maximum retry attempts
-        retry_delay: Delay between retries in seconds
+        max_retries: Maximum retry attempts. None (default) means use the
+            workflow-level DEFAULT_RETRY_POLICY. Set explicitly (e.g. 0) to
+            override per-activity.
+        retry_delay: Delay between retries in seconds. None (default) means
+            use the workflow-level default. Only consulted when
+            max_retries is set explicitly.
         rate_limit: Rate limit string (e.g., "100/s") - stored for reference
         name: Activity name (defaults to function name)
+        schedule_to_start_timeout: Optional activity queue wait ceiling in seconds.
+        workflow_run_timeout: Optional workflow-run ceiling in seconds. When set,
+            it must exceed the activity queue wait plus activity execution ceiling.
+        workflow_execution_timeout: Optional total workflow execution ceiling in
+            seconds. When set, it must exceed ``workflow_run_timeout``.
 
     Example:
         @temporal_activity(time_limit=3600, queue="tasks_l")
@@ -74,6 +87,29 @@ def temporal_activity(
     def decorator(func: Callable) -> Callable:
         activity_name = name or func.__name__
 
+        # These overrides are intentionally opt-in so existing activities retain
+        # the drop-in runner's historical 12h/13h/24h timeout contract.  A caller
+        # that opts in cannot create a workflow run that expires before Temporal
+        # has exhausted both the queue-wait and activity-execution budgets.
+        effective_workflow_run_timeout = workflow_run_timeout or 13 * 60 * 60
+        if schedule_to_start_timeout is not None or workflow_run_timeout is not None:
+            effective_schedule_to_start = schedule_to_start_timeout or 12 * 60 * 60
+            if (
+                effective_workflow_run_timeout
+                <= effective_schedule_to_start + time_limit
+            ):
+                raise ValueError(
+                    "workflow_run_timeout must exceed "
+                    "schedule_to_start_timeout + time_limit"
+                )
+        if (
+            workflow_execution_timeout is not None
+            and workflow_execution_timeout <= effective_workflow_run_timeout
+        ):
+            raise ValueError(
+                "workflow_execution_timeout must exceed workflow_run_timeout"
+            )
+
         # Store metadata for later use
         _ACTIVITY_REGISTRY[activity_name] = {
             "func": func,
@@ -82,6 +118,9 @@ def temporal_activity(
             "max_retries": max_retries,
             "retry_delay": retry_delay,
             "rate_limit": rate_limit,
+            "schedule_to_start_timeout": schedule_to_start_timeout,
+            "workflow_run_timeout": workflow_run_timeout,
+            "workflow_execution_timeout": workflow_execution_timeout,
         }
 
         # Log registration for debugging (using structlog - safe for async)
@@ -140,6 +179,10 @@ def temporal_activity(
                     args=args or (),
                     kwargs=kwargs or {},
                     queue=target_queue,
+                    task_id=options.get("task_id"),
+                    id_conflict_policy=options.get("id_conflict_policy"),
+                    start_delay=options.get("start_delay"),
+                    dispatch_timeout_seconds=options.get("dispatch_timeout_seconds"),
                 )
                 log.info(
                     "apply_async_completed",
@@ -230,13 +273,14 @@ def _make_db_safe_wrapper(func: Callable) -> Callable:
     return wrapper
 
 
-def get_temporal_activities() -> list[Callable]:
+def get_temporal_activities(*, queue: str | None = None) -> list[Callable]:
     """
     Get all registered activities as real temporalio activity functions.
     Call this from the worker to get activities for registration.
 
     This lazily creates the real @activity.defn wrappers to avoid
-    protobuf conflicts at import time.
+    protobuf conflicts at import time. When ``queue`` is supplied, return only
+    activities whose decorator metadata targets that queue.
     """
     from tfc.logging.temporal import get_logger
 
@@ -244,6 +288,8 @@ def get_temporal_activities() -> list[Callable]:
 
     activities = []
     for activity_name, info in _ACTIVITY_REGISTRY.items():
+        if queue is not None and info["queue"] != queue:
+            continue
         if activity_name not in _ACTIVITY_WRAPPERS:
             original_func = info["func"]
             # Create wrapper that handles DB connections
@@ -257,7 +303,12 @@ def get_temporal_activities() -> list[Callable]:
     log.info(
         "get_temporal_activities_complete",
         activity_count=len(activities),
-        activities=list(_ACTIVITY_WRAPPERS.keys()),
+        activities=[
+            activity_name
+            for activity_name, info in _ACTIVITY_REGISTRY.items()
+            if queue is None or info["queue"] == queue
+        ],
+        queue=queue,
     )
     return activities
 
@@ -271,7 +322,7 @@ def get_registered_activities() -> list[Callable]:
     ]
 
 
-def get_activity_by_name(name: str) -> Optional[dict]:
+def get_activity_by_name(name: str) -> dict | None:
     """Get activity metadata by name."""
     return _ACTIVITY_REGISTRY.get(name)
 
@@ -290,7 +341,9 @@ def get_all_activity_functions() -> list[Callable]:
         import sys
 
         for module in sys.modules.values():
-            if module and hasattr(module, func.__name__):
+            try:
+                if not module or not hasattr(module, func.__name__):
+                    continue
                 attr = getattr(module, func.__name__)
                 if (
                     hasattr(attr, "_activity_name")
@@ -298,6 +351,11 @@ def get_all_activity_functions() -> list[Callable]:
                 ):
                     activities.append(attr)
                     break
+            except Exception:
+                # Some imported modules implement dynamic __getattr__ hooks
+                # that raise for unknown names (for example torch custom
+                # classes). They are unrelated to Temporal activity discovery.
+                continue
     return activities
 
 

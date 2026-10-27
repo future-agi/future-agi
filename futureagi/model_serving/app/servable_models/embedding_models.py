@@ -7,6 +7,7 @@ import librosa
 import numpy as np
 import requests
 import structlog
+import torch
 from app.servable_models import ModelServing
 from app.utils.utils import download_audio_from_url
 from PIL import Image
@@ -14,6 +15,18 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoProcessor, CLIPModel, Wav2Vec2Model, Wav2Vec2Processor
 
 logger = structlog.get_logger(__name__)
+
+# Browser-like UA so public hosts that block default `python-requests/X.X`
+# (Wikipedia, many CDNs) don't return 403 when CLIP / image preprocessing
+# tries to fetch a user-supplied URL. S3 public-read buckets don't need
+# this — they accept any UA — but it costs nothing and unblocks the rest.
+_IMAGE_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    )
+}
 
 
 class TextEmbeddingModel(ModelServing):
@@ -79,7 +92,7 @@ class ImageEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10)
+                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
                     response.raise_for_status()
                     return Image.open(io.BytesIO(response.content))
                 except Exception as e:
@@ -140,12 +153,13 @@ class AudioEmbeddingModel(ModelServing):
     def forward(self, data):
         """Generate embeddings for preprocessed audio data."""
         try:
-            inp = self.processor(
-                data, sampling_rate=16000, return_tensors="pt", padding=True
-            )
-            outputs = self.model(**inp)
-            # Use the last hidden state mean as embedding
-            embeddings = outputs.last_hidden_state.mean(dim=1)
+            with torch.inference_mode():
+                inp = self.processor(
+                    data, sampling_rate=16000, return_tensors="pt", padding=True
+                )
+                outputs = self.model(**inp)
+                # Use the last hidden state mean as embedding
+                embeddings = outputs.last_hidden_state.mean(dim=1)
             embeddings = embeddings.detach().numpy()
             return embeddings[0].tolist()
         except Exception as e:
@@ -221,7 +235,7 @@ class ImageTextEmbeddingModel(ModelServing):
             # Handle image URL
             elif data.startswith(("http://", "https://")):
                 try:
-                    response = requests.get(data, timeout=10)
+                    response = requests.get(data, timeout=10, headers=_IMAGE_FETCH_HEADERS)
                     response.raise_for_status()
                     return {
                         "data": Image.open(io.BytesIO(response.content)),

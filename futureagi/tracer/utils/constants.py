@@ -1,3 +1,10 @@
+from tracer.utils.filter_operators import (
+    LIST_FILTER_OPS,
+    NO_VALUE_FILTER_OPS,
+    RANGE_FILTER_OPS,
+    SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
+)
+
 INSTALLATION_GUIDE = {
     "Python": """
 pip install fi-instrumentation-otel
@@ -23,9 +30,9 @@ trace_provider = register(
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.EXPERIMENT,
-    project_name: "FUTURE_AGI",
-    project_version_name: "openai-exp",
+    projectType: ProjectType.EXPERIMENT,
+    projectName: "FUTURE_AGI",
+    projectVersionName: "openai-exp",
 });
 """,
 }
@@ -39,15 +46,14 @@ from fi_instrumentation.fi_types import ProjectType
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="FUTURE_AGI",            # Your project name
-    session_name="chat-bot"               # Session name
 )
 """,
     "TypeScript": """
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.OBSERVE,
-    project_name: "openai_project",
+    projectType: ProjectType.OBSERVE,
+    projectName: "openai_project",
 });
 """,
 }
@@ -63,6 +69,14 @@ os.environ["FI_SECRET_KEY"] = "{}"
 process.env.FI_API_KEY = "{}";
 process.env.FI_SECRET_KEY = "{}";
 """,
+}
+
+# Appended to ORG_KEYS off Future AGI Cloud (tracer.views.project): both SDKs
+# default FI_BASE_URL to Cloud, so a self-hosted snippet points them at the
+# install's own collector.
+ORG_BASE_URL = {
+    "Python": 'os.environ["FI_BASE_URL"] = "{}"\n',
+    "TypeScript": 'process.env.FI_BASE_URL = "{}";\n',
 }
 
 INSTRUMENTORS = {
@@ -147,7 +161,7 @@ MCPInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/bedrock",
             "code": """from traceai_bedrock import BedrockInstrumentor
 
-BedrockInstrumentor().instrument(tracer_provider=trace_provider))
+BedrockInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },
@@ -367,8 +381,25 @@ OpenAIInstrumentor().instrument(tracer_provider=trace_provider)
             "github": "https://github.com/future-agi/traceAI/tree/main/python/frameworks/portkey",
             "code": """from traceai_portkey import PortkeyInstrumentor
 
-PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
+PortkeyInstrumentor().instrument(tracer_provider=trace_provider)
 """,
         },
     },
 }
+
+
+from enum import Enum
+
+
+class FilterType(Enum):
+    TEXT = "text"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+
+
+# SPAN_ATTRIBUTE filter vocabulary shared by the CH builder and the Django ORM
+# validator. Single source of truth for allowed filter ops per type.
+SPAN_ATTR_ALLOWED_OPS: dict[str, set[str]] = CONTRACT_SPAN_ATTR_ALLOWED_OPS
+LIST_OPS: set[str] = LIST_FILTER_OPS
+RANGE_OPS: set[str] = RANGE_FILTER_OPS
+NO_VALUE_OPS: set[str] = NO_VALUE_FILTER_OPS

@@ -12,6 +12,7 @@ import { Box, useTheme } from "@mui/material";
 import {
   getBlocks,
   handleRemoveEditVariable,
+  normalizeContentBlocks,
   placeEditBolt,
   handleRemoveAllImages,
 } from "./common";
@@ -24,6 +25,22 @@ import "quill-mention/dist/quill.mention.css";
 import "quill-mention"; // Ensure it's available globally
 import "quill-mention/autoregister";
 import PdfBlot from "./Blots/PdfBlot";
+import { useSnackbar } from "src/components/snackbar";
+import { setEmbedCallbacks } from "./Blots/embedCallbacks";
+import { MEDIA_EMBED_CLASS } from "./Blots/MediaBlockEmbed";
+import { createPromptClipboardHandlers } from "./clipboard/promptClipboardHandlers";
+import { useClipboardProvenance } from "./clipboard/useClipboardProvenance";
+import {
+  attachCardSelection,
+  createKeyboardBindings,
+  removeMediaEmbedById,
+  syncSelectedEmbeds,
+} from "./editorBindings";
+import {
+  ALL_MEDIA_KINDS,
+  NO_MEDIA_KINDS,
+  OMISSION_MESSAGES,
+} from "./clipboard/constants";
 
 Quill.register("formats/EditVariable", EditVariableBolt);
 Quill.register("formats/ImageBlot", ImageBlot);
@@ -60,6 +77,10 @@ const PromptEditor = React.forwardRef(
       allVariablesValid = false,
       variableValidator,
       jinjaMode = false,
+      // Fail closed: a mount that never opts in cannot receive attachment
+      // references by paste. PromptCard/ExpandedPrompt pass the kinds their
+      // attach menu allows.
+      allowedMediaTypes = NO_MEDIA_KINDS,
     },
     quillRef,
   ) => {
@@ -68,87 +89,20 @@ const PromptEditor = React.forwardRef(
     const containerRef = useRef(null);
 
     const handleRemoveImage = useCallback(
-      (imageId) => {
-        const quill = quillRef.current;
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.ImageBlot && op.insert.ImageBlot.id === imageId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          quill.deleteText(index, 1, "api");
-        }
-      },
+      (id) => removeMediaEmbedById(quillRef.current, "ImageBlot", id),
       [quillRef],
     );
-
     const handleRemoveAudio = useCallback(
-      (audioId) => {
-        const quill = quillRef.current;
-
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.AudioBlot && op.insert.AudioBlot.id === audioId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          quill.deleteText(index, 1, "api");
-        }
-      },
+      (id) => removeMediaEmbedById(quillRef.current, "AudioBlot", id),
       [quillRef],
     );
-
     const handleRemovePdf = useCallback(
-      (pdfId) => {
-        const quill = quillRef.current;
-
-        const delta = quill.getContents();
-        let index = 0;
-        let found = false;
-
-        for (let i = 0; i < delta.ops.length; i++) {
-          const op = delta.ops[i];
-          if (op.insert?.PdfBlot && op.insert.PdfBlot.id === pdfId) {
-            found = true;
-            break;
-          } else if (typeof op.insert === "string") {
-            index += op.insert.length;
-          } else {
-            index += 1;
-          }
-        }
-
-        if (found) {
-          quill.deleteText(index, 1, "api");
-        }
-      },
+      (id) => removeMediaEmbedById(quillRef.current, "PdfBlot", id),
       [quillRef],
     );
 
     const defaultValue = useMemo(() => {
-      const blocks = prompt || [];
+      const blocks = normalizeContentBlocks(prompt) || [];
       const delta = { ops: [] };
 
       blocks.forEach((block) => {
@@ -157,9 +111,9 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               ImageBlot: {
-                url: block?.imageUrl?.url,
-                name: block?.imageUrl?.imgName || block?.imageUrl?.img_name,
-                size: block?.imageUrl?.imgSize || block?.imageUrl?.img_size,
+                url: block?.image_url?.url,
+                name: block?.image_url?.img_name,
+                size: block?.image_url?.img_size,
                 setSelectedImage,
                 id: getRandomId(),
                 handleRemoveImage,
@@ -174,11 +128,10 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               AudioBlot: {
-                url: block?.audioUrl?.url,
-                name: block?.audioUrl?.audioName || block?.audioUrl?.audio_name,
-                size: block?.audioUrl?.audioSize || block?.audioUrl?.audio_size,
-                mimeType:
-                  block?.audioUrl?.audioType || block?.audioUrl?.audio_type,
+                url: block?.audio_url?.url,
+                name: block?.audio_url?.audio_name,
+                size: block?.audio_url?.audio_size,
+                mimeType: block?.audio_url?.audio_type,
                 id: getRandomId(),
                 handleRemoveAudio,
               },
@@ -188,9 +141,9 @@ const PromptEditor = React.forwardRef(
           delta.ops.push({
             insert: {
               PdfBlot: {
-                url: block?.pdfUrl?.url,
-                name: block?.pdfUrl?.fileName || block?.pdfUrl?.file_name,
-                size: block?.pdfUrl?.pdfSize || block?.pdfUrl?.pdf_size,
+                url: block?.pdf_url?.url,
+                name: block?.pdf_url?.file_name,
+                size: block?.pdf_url?.pdf_size,
                 id: getRandomId(),
                 handleRemovePdf,
               },
@@ -383,6 +336,46 @@ const PromptEditor = React.forwardRef(
       onTextChangeRef.current = onTextChange;
     });
 
+    // The Quill handlers live outside React render, so they read the latest
+    // values through refs.
+    const getProvenance = useClipboardProvenance();
+    const { enqueueSnackbar } = useSnackbar();
+    const notifyRef = useRef(null);
+    notifyRef.current = (reason) => {
+      const message = OMISSION_MESSAGES[reason] || OMISSION_MESSAGES.invalid;
+      enqueueSnackbar?.(message, { variant: "warning" });
+    };
+    const allowedMediaTypesRef = useRef(allowedMediaTypes);
+    allowedMediaTypesRef.current = allowedMediaTypes;
+    const embedCallbacksRef = useRef({});
+    useLayoutEffect(() => {
+      embedCallbacksRef.current = {
+        handleRemoveImage,
+        handleRemoveAudio,
+        handleRemovePdf,
+        setSelectedImage,
+        openVariableEditor,
+        readOnly: Boolean(disabled),
+      };
+      if (quillRef.current) {
+        setEmbedCallbacks(quillRef.current, embedCallbacksRef.current);
+      }
+    });
+
+    // `readOnly` is only read by the Quill constructor; keep the instance in
+    // sync when the prop changes and re-render cards so mutating controls
+    // appear/disappear with it.
+    useEffect(() => {
+      const quill = quillRef.current;
+      if (!quill) return;
+      quill.enable(!disabled);
+      setEmbedCallbacks(quill, embedCallbacksRef.current);
+      quill.root.querySelectorAll(`.${MEDIA_EMBED_CLASS}`).forEach((node) => {
+        const blot = Quill.find(node, true);
+        if (blot && typeof blot.renderCard === "function") blot.renderCard();
+      });
+    }, [disabled, quillRef]);
+
     useEffect(() => {
       const formats = [
         "color",
@@ -407,6 +400,7 @@ const PromptEditor = React.forwardRef(
         readOnly: disabled,
         modules: {
           toolbar: false,
+          keyboard: { bindings: createKeyboardBindings() },
           clipboard: {
             matchers: [
               [
@@ -529,6 +523,18 @@ const PromptEditor = React.forwardRef(
       quill.root.setAttribute("spellcheck", false);
 
       quillRef.current = quill;
+      setEmbedCallbacks(quill, embedCallbacksRef.current);
+
+      const clipboardHandlers = createPromptClipboardHandlers({
+        quill,
+        getProvenance,
+        getAllowedMediaTypes: () => allowedMediaTypesRef.current,
+        notify: (reason) => notifyRef.current?.(reason),
+        makeId: getRandomId,
+      });
+      clipboardHandlers.attach();
+
+      const detachCardSelection = attachCardSelection(quill);
 
       if (typeof inputRef === "function") {
         setTimeout(() => {
@@ -570,9 +576,12 @@ const PromptEditor = React.forwardRef(
 
       quill.on(Quill.events.TEXT_CHANGE, (...args) => {
         onTextChangeRef.current?.(...args);
+        // silent caret moves after delete/paste emit no selection-change
+        syncSelectedEmbeds(quill, quill.getSelection());
       });
 
       quill.on(Quill.events.SELECTION_CHANGE, (...args) => {
+        syncSelectedEmbeds(quill, args[0]);
         onSelectionChangeRef.current?.(...args);
       });
 
@@ -595,6 +604,15 @@ const PromptEditor = React.forwardRef(
         if (mentionModule) {
           mentionModule.hideMentionList();
         }
+
+        clipboardHandlers.detach();
+        detachCardSelection();
+
+        // Unmount the React roots of cards and variable chips still in the
+        // document; clearing innerHTML alone never detaches their blots.
+        quill.scroll
+          .descendants((blot) => typeof blot.unmountCard === "function")
+          .forEach((blot) => blot.unmountCard());
 
         quillRef.current = null;
         container.innerHTML = "";
@@ -690,6 +708,7 @@ PromptEditor.propTypes = {
   allVariablesValid: PropTypes.bool,
   variableValidator: PropTypes.func,
   jinjaMode: PropTypes.bool,
+  allowedMediaTypes: PropTypes.arrayOf(PropTypes.oneOf(ALL_MEDIA_KINDS)),
 };
 
 export default PromptEditor;

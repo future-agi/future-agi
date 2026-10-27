@@ -95,7 +95,7 @@ const CustomJsonViewer = ({ object, ...rest }) => {
 };
 
 CustomJsonViewer.propTypes = {
-  object: PropTypes.object,
+  object: PropTypes.any,
 };
 
 export default CustomJsonViewer;

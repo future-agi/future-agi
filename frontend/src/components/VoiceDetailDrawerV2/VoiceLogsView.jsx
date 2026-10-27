@@ -1,10 +1,4 @@
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -12,7 +6,6 @@ import {
   CircularProgress,
   Collapse,
   Stack,
-  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -33,12 +26,17 @@ const LEVEL_STYLES = {
   ERROR: { label: "Error", color: "#EF4444", bg: "rgba(239, 68, 68, 0.08)" },
   WARN: { label: "Warn", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.08)" },
   INFO: { label: "Info", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.08)" },
-  LOG: { label: "Log", color: "#64748B", bg: "rgba(100, 116, 139, 0.08)" },
+  LOG: { label: "Log", accent: "neutral", bg: "rgba(100, 116, 139, 0.08)" },
   DEBUG: { label: "Debug", color: "#94A3B8", bg: "rgba(148, 163, 184, 0.08)" },
 };
 
-const levelStyle = (level) =>
-  LEVEL_STYLES[String(level || "").toUpperCase()] || LEVEL_STYLES.LOG;
+// Tints are built by concatenating alpha onto the hex, so entries that key off
+// `accent` need the resolved palette value rather than a palette path.
+const levelStyle = (level, palette) => {
+  const cfg =
+    LEVEL_STYLES[String(level || "").toUpperCase()] || LEVEL_STYLES.LOG;
+  return { ...cfg, color: cfg.color || palette.accent[cfg.accent] };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row normalization — API and span-attributes shapes both feed in here
@@ -143,27 +141,24 @@ LevelPill.propTypes = {
 
 const LogAttributes = ({ attributes, body }) => {
   const [query, setQuery] = useState("");
-  // `appliedQuery` is debounced + transitioned so the expensive deep
-  // filter runs once per typing burst, not once per keystroke — same
-  // pattern used in `AttributesTable`.
+  // Debounced but NOT transitioned — see the note in `AttributesTable`: an
+  // interruptible update can be restarted indefinitely by this drawer's
+  // re-renders and then never commits, leaving the filter on the empty query.
   const [appliedQuery, setAppliedQuery] = useState("");
-  const [, startFilterTransition] = useTransition();
   const debounceRef = useRef(null);
 
   const handleQueryChange = (e) => {
     const value = e.target.value;
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      startFilterTransition(() => setAppliedQuery(value));
-    }, 120);
+    debounceRef.current = setTimeout(() => setAppliedQuery(value), 120);
   };
 
   const handleClearQuery = (e) => {
     e.stopPropagation();
     setQuery("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    startFilterTransition(() => setAppliedQuery(""));
+    setAppliedQuery("");
   };
 
   useEffect(
@@ -300,7 +295,8 @@ LogAttributes.propTypes = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LogLine = ({ row, expanded, onToggle, onCategoryClick }) => {
-  const s = levelStyle(row.severity);
+  const theme = useTheme();
+  const s = levelStyle(row.severity, theme.palette);
   return (
     <Box
       sx={{
@@ -493,6 +489,10 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
     enabled: !useClientSide && !!(module === "simulate" ? callLogId : vapiId),
     initialPageParam: 1,
     staleTime: 30_000,
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages || [];
+      return pages.some((p) => p?.results?.ingestion_pending) ? 2000 : false;
+    },
     meta: { errorHandled: true },
   });
 
@@ -572,6 +572,9 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
   const totalCount = useClientSide
     ? callLogs?.length || 0
     : serverQuery.data?.pages?.[0]?.count || 0;
+  const ingestionPending =
+    !useClientSide &&
+    (serverQuery.data?.pages || []).some((p) => p?.results?.ingestion_pending);
 
   const handleToggle = (id) => {
     setExpanded((prev) => {
@@ -707,7 +710,7 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             onClick={() => setLevel("")}
           />
           {LevelOptions.map((lo) => {
-            const s = levelStyle(lo.value);
+            const s = levelStyle(lo.value, theme.palette);
             const count = levelCounts[lo.value] || 0;
             return (
               <LevelPill
@@ -752,6 +755,26 @@ const VoiceLogsView = ({ callLogId, vapiId, module, callLogs }) => {
             }}
           >
             <CircularProgress size={18} thickness={5} />
+          </Box>
+        ) : ingestionPending && allRows.length === 0 ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: 160,
+              p: 2,
+              gap: 0.75,
+            }}
+          >
+            <CircularProgress size={18} thickness={5} />
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+              Collecting logs from provider
+            </Typography>
+            <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
+              This usually takes a few seconds
+            </Typography>
           </Box>
         ) : allRows.length === 0 ? (
           <Box

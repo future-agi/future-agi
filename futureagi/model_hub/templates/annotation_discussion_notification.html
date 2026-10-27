@@ -1,0 +1,60 @@
+{% extends "billing/base_billing.html" %}
+{% block title %}Annotation discussion - Future AGI{% endblock %}
+{% block preheader %}{{ actor_name }} {{ event_label }} in {{ queue_name }}.{% endblock %}
+{% block txid %}◦ ANNOTATION / DISCUSSION{% endblock %}
+{% block content %}
+  <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
+    <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#fafafa; margin-right:8px; vertical-align:middle; box-shadow:0 0 8px rgba(255,255,255,0.7);"></span>Annotation Discussion
+  </span>
+
+  <h1 class="hx" style="font-family:'Inter',sans-serif; font-size:28px; line-height:1.22; font-weight:600; color:#fafafa; letter-spacing:-0.015em; margin:16px 0 14px 0;">
+    {{ actor_name }} {{ event_label }}
+  </h1>
+
+  <p class="px" style="font-family:'Inter',sans-serif; font-size:16px; line-height:1.65; color:#d4d4d8; margin:0 0 24px 0;">
+    A discussion update was added to <strong style="color:#fafafa;">{{ queue_name }}</strong>.
+  </p>
+
+  <div class="log" style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:10px; padding:20px 22px; margin:24px 0; font-family:'Inter',sans-serif; color:#c7c7cc;">
+    <p class="log-hdr" style="margin:0 0 14px 0; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:10px; vertical-align:middle; background:#a1a1aa;"></span>Context<span style="color:#71717a; font-weight:500; margin-left:6px;">· Annotation queue</span>
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="padding:7px 0; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:#71717a;">Queue</td>
+        <td style="padding:7px 0; text-align:right; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa; font-weight:500;">{{ queue_name }}</td>
+      </tr>
+      <tr>
+        <td style="padding:7px 0; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:#71717a; border-top:1px solid #1a1a1d;">Item</td>
+        <td style="padding:7px 0; text-align:right; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa; font-weight:500; border-top:1px solid #1a1a1d;">{{ item_label }}</td>
+      </tr>
+      {% if label_name %}
+      <tr>
+        <td style="padding:7px 0; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:#71717a; border-top:1px solid #1a1a1d;">Label</td>
+        <td style="padding:7px 0; text-align:right; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa; font-weight:500; border-top:1px solid #1a1a1d;">{{ label_name }}</td>
+      </tr>
+      {% endif %}
+      {% if target_annotator_name %}
+      <tr>
+        <td style="padding:7px 0; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:#71717a; border-top:1px solid #1a1a1d;">For</td>
+        <td style="padding:7px 0; text-align:right; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa; font-weight:500; border-top:1px solid #1a1a1d;">{{ target_annotator_name }}</td>
+      </tr>
+      {% endif %}
+    </table>
+  </div>
+
+  <div class="log" style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:10px; padding:20px 22px; margin:24px 0; font-family:'Inter',sans-serif; color:#c7c7cc;">
+    <p class="log-hdr" style="margin:0 0 14px 0; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:10px; vertical-align:middle; background:#fafafa; box-shadow:0 0 8px rgba(255,255,255,0.55);"></span>Comment
+    </p>
+    <p style="margin:0; font-family:'Inter',sans-serif; font-size:14px; line-height:1.65; color:#d4d4d8; white-space:pre-wrap;">{{ comment }}</p>
+  </div>
+
+  <div style="margin: 28px 0 12px 0;">
+    {% include "billing/_button.html" with url=item_url text="Open annotation item &rarr;" variant="primary" %}
+  </div>
+
+  <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:28px 0 0 0;">
+    You are receiving this because you were mentioned, assigned, or involved in this annotation queue discussion.
+  </p>
+{% endblock %}

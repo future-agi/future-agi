@@ -8,6 +8,7 @@ import {
   Skeleton,
   Stack,
   Switch,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
@@ -24,6 +25,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
 import CreateRuleDialog from "./create-rule-dialog";
+import { TRIGGER_FREQUENCY_OPTIONS } from "../constants";
 import EditRuleDialog from "./edit-rule-dialog";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,19 @@ function EnabledCellRenderer({ data, context }) {
   );
 }
 
+function TriggerFrequencyCellRenderer({ data }) {
+  if (!data) return null;
+  const label =
+    TRIGGER_FREQUENCY_OPTIONS.find(
+      (option) => option.value === (data.trigger_frequency || "manual"),
+    )?.label || "Manually";
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
+      <Chip label={label} size="small" variant="outlined" />
+    </Box>
+  );
+}
+
 function TriggersCellRenderer({ data }) {
   if (!data) return null;
   return (
@@ -98,21 +113,50 @@ function LastTriggeredCellRenderer({ data }) {
 }
 
 function ActionsCellRenderer({ data, context }) {
+  const { mutate: evaluateRule, isPending: isRunning } = useEvaluateRule();
   if (!data) return null;
+  const runDisabled = isRunning || !data.enabled;
+  const tooltip = data.enabled
+    ? "Run this rule now"
+    : "Enable this rule before running it";
+
   return (
     <Box
       sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
     >
-      <Button
-        size="small"
-        onClick={(e) => {
-          e.stopPropagation();
-          context?.onRunNow(data);
-        }}
-        disabled={context?.evaluatingRuleId != null || !data.enabled}
-      >
-        Run Now
-      </Button>
+      <Tooltip title={tooltip} placement="top">
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify
+                icon={
+                  isRunning ? "svg-spinners:180-ring" : "mingcute:play-line"
+                }
+                width={15}
+              />
+            }
+            onClick={(e) => {
+              if (isRunning) return;
+              e.stopPropagation();
+              evaluateRule({ queueId: context?.queueId, ruleId: data?.id });
+            }}
+            disabled={runDisabled}
+            sx={{
+              minWidth: 108,
+              justifyContent: "center",
+              fontWeight: 700,
+              borderColor: "primary.main",
+              "&.Mui-disabled": {
+                borderColor: "action.disabledBackground",
+              },
+            }}
+          >
+            {isRunning ? "Running..." : "Run Now"}
+          </Button>
+        </span>
+      </Tooltip>
       <IconButton
         size="small"
         color="error"
@@ -130,19 +174,26 @@ function ActionsCellRenderer({ data, context }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export default function AutomationRulesTab({ queueId }) {
+export default function AutomationRulesTab({ queueId, queue }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const gridRef = useRef(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const { data: rules = [], isLoading } = useAutomationRules(queueId);
+  const {
+    data: rulesPage,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isError,
+    isFetchNextPageError,
+    refetch,
+  } = useAutomationRules(queueId);
   const { mutate: updateRule } = useUpdateAutomationRule();
   const { mutate: deleteRule } = useDeleteAutomationRule();
-  const [evaluatingRuleId, setEvaluatingRuleId] = useState(null);
-  const { mutate: evaluateRule } = useEvaluateRule();
 
-  const rulesList = Array.isArray(rules) ? rules : [];
+  const rulesList = Array.isArray(rulesPage?.results) ? rulesPage.results : [];
 
   const columnDefs = useMemo(
     () => [
@@ -166,6 +217,13 @@ export default function AutomationRulesTab({ queueId }) {
         flex: 0.8,
         minWidth: 100,
         cellRenderer: isLoading ? SkeletonCell : EnabledCellRenderer,
+      },
+      {
+        field: "trigger_frequency",
+        headerName: "Trigger",
+        flex: 1,
+        minWidth: 130,
+        cellRenderer: isLoading ? SkeletonCell : TriggerFrequencyCellRenderer,
       },
       {
         field: "trigger_count",
@@ -208,19 +266,12 @@ export default function AutomationRulesTab({ queueId }) {
 
   const gridContext = useMemo(
     () => ({
+      queueId,
       onToggleEnabled: (rule) =>
         updateRule({ queueId, ruleId: rule.id, enabled: !rule.enabled }),
-      onRunNow: (rule) => {
-        setEvaluatingRuleId(rule.id);
-        evaluateRule(
-          { queueId, ruleId: rule.id },
-          { onSettled: () => setEvaluatingRuleId(null) },
-        );
-      },
       onDeleteConfirm: (rule) => setDeleteTarget(rule),
-      evaluatingRuleId,
     }),
-    [queueId, updateRule, evaluateRule, evaluatingRuleId],
+    [queueId, updateRule],
   );
 
   const onCellClicked = useCallback((event) => {
@@ -281,31 +332,74 @@ export default function AutomationRulesTab({ queueId }) {
         </Button>
       </Stack>
 
-      <Box>
-        <AgGridReact
-          ref={gridRef}
-          theme={agTheme}
-          domLayout="autoHeight"
-          rowData={isLoading ? SKELETON_ROWS : rulesList}
-          columnDefs={columnDefs}
-          defaultColDef={defaultColDef}
-          context={gridContext}
-          rowHeight={52}
-          headerHeight={42}
-          pagination={false}
-          animateRows={false}
-          suppressRowClickSelection
-          rowStyle={{ cursor: isLoading ? "default" : "pointer" }}
-          onCellClicked={isLoading ? undefined : onCellClicked}
-          getRowId={getRowId}
-          noRowsOverlayComponent={CustomNoRowsOverlay}
-        />
-      </Box>
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 1,
+            mb: 1,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          We couldn&apos;t load automation rules. Existing rows were kept.
+          <Button
+            size="small"
+            onClick={() =>
+              isFetchNextPageError && rulesList.length > 0
+                ? fetchNextPage()
+                : refetch()
+            }
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
+
+      {(!isError || rulesList.length > 0) && (
+        <Box>
+          <AgGridReact
+            ref={gridRef}
+            theme={agTheme}
+            domLayout="autoHeight"
+            rowData={isLoading ? SKELETON_ROWS : rulesList}
+            columnDefs={columnDefs}
+            defaultColDef={defaultColDef}
+            context={gridContext}
+            rowHeight={52}
+            headerHeight={42}
+            pagination={false}
+            animateRows={false}
+            suppressRowClickSelection
+            rowStyle={{ cursor: isLoading ? "default" : "pointer" }}
+            onCellClicked={isLoading ? undefined : onCellClicked}
+            getRowId={getRowId}
+            noRowsOverlayComponent={CustomNoRowsOverlay}
+          />
+        </Box>
+      )}
+
+      {hasNextPage && !isError && (
+        <Box sx={{ display: "flex", justifyContent: "center", py: 1.5 }}>
+          <Button
+            variant="outlined"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load more"}
+          </Button>
+        </Box>
+      )}
 
       <CreateRuleDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         queueId={queueId}
+        queue={queue}
       />
 
       <EditRuleDialog
@@ -313,6 +407,7 @@ export default function AutomationRulesTab({ queueId }) {
         onClose={() => setEditTarget(null)}
         queueId={queueId}
         rule={editTarget}
+        queue={queue}
       />
 
       <ConfirmDialog

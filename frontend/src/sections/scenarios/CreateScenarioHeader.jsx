@@ -25,7 +25,7 @@ const CreateScenarioHeader = ({
           <Collapse in={!!rightSection}>{rightSection}</Collapse>
         </Stack>
         <Box display="flex" alignItems="center" gap="4px">
-          <Typography typography="s2_1" color="text.disabled">
+          <Typography typography="s2_1" color="text.secondary">
             {description}
           </Typography>
           {docLink && (

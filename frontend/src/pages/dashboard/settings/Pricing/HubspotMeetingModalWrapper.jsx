@@ -146,7 +146,7 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
               top: 0,
               right: 1,
               zIndex: 11,
-              "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
+              "&:hover": { backgroundColor: "action.hover" },
             }}
           >
             <Iconify

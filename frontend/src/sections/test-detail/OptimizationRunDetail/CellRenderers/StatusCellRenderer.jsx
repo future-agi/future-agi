@@ -66,9 +66,9 @@ const StatusCellRenderer = ({ value, data }) => {
             className="optimization-run-detail-refresh-button"
             onClick={() =>
               setOpenOptimizationRerun({
-                name: `${data?.optimisationName} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
+                name: `${data?.optimisation_name} - Rerun - ${format(new Date(), "dd MMM yyyy")}`,
                 model: data?.model,
-                optimiserType: data?.optimiserType,
+                optimiserType: data?.optimiser_type,
                 configuration: data?.configuration,
               })
             }

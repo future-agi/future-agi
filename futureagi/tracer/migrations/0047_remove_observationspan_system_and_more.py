@@ -12,9 +12,22 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='observationspan',
-            name='system',
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql="ALTER TABLE public.tracer_observation_span DROP COLUMN IF EXISTS system",
+                    reverse_sql=(
+                        "ALTER TABLE public.tracer_observation_span "
+                        "ADD COLUMN IF NOT EXISTS system varchar(255) NULL"
+                    ),
+                ),
+            ],
+            state_operations=[
+                migrations.RemoveField(
+                    model_name='observationspan',
+                    name='system',
+                ),
+            ],
         ),
         migrations.AddField(
             model_name='observationspan',

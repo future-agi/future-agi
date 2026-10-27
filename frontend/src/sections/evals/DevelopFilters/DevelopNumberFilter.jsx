@@ -9,7 +9,7 @@ import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField
 // 'greater_than_or_equal'
 // 'less_than_or_equal'
 // 'between'
-// 'not_in_between'
+// 'not_between'
 const NumberFilterOperators = [
   { label: "Greater Than", value: "greater_than" },
   { label: "Less Than", value: "less_than" },
@@ -18,11 +18,11 @@ const NumberFilterOperators = [
   { label: "Greater Than Or Equal", value: "greater_than_or_equal" },
   { label: "Less Than Or Equal", value: "less_than_or_equal" },
   { label: "Between", value: "between" },
-  { label: "Not In Between", value: "not_in_between" },
+  { label: "Not Between", value: "not_between" },
 ];
 
 const DevelopNumberFilter = ({ filter, updateFilter }) => {
-  const multipleInput = ["between", "not_in_between"].includes(
+  const multipleInput = ["between", "not_between"].includes(
     filter.filterConfig.filterOp,
   );
 
@@ -101,7 +101,7 @@ const DevelopNumberFilter = ({ filter, updateFilter }) => {
         value={getValue(0)}
         onChange={(e) => updater(0, e.target.value)}
       />
-      {["between", "not_in_between"].includes(filter.filterConfig.filterOp) &&
+      {["between", "not_between"].includes(filter.filterConfig.filterOp) &&
         renderExtraInput()}
     </>
   );

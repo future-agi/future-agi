@@ -25,9 +25,23 @@ export function useUrlState(key, defaultValue) {
   const [value, setStateValue] = useState(() =>
     parseUrlValue(searchParams.get(key), defaultValue),
   );
+  const valueRef = useRef(value);
 
   // Flag to track if the URL change was triggered internally
   const isInternalUpdate = useRef(false);
+
+  // Keep the latest setSearchParams / defaultValue in refs so setValue and
+  // removeValue below can stay referentially stable across renders.
+  // react-router recreates setSearchParams whenever the URL (searchParams)
+  // changes; if setValue/removeValue depended on it directly, their identity
+  // would churn on every URL write. Consumers that list these setters in an
+  // effect dependency array (e.g. TraceDetailDrawerChild's setAnalysisExists
+  // effect) would then re-run on every write, calling the setter again and
+  // looping until React throws "Maximum update depth exceeded".
+  const setSearchParamsRef = useRef(setSearchParams);
+  setSearchParamsRef.current = setSearchParams;
+  const defaultValueRef = useRef(defaultValue);
+  defaultValueRef.current = defaultValue;
 
   // Update both state and URL.
   // Reads from `window.location.search` rather than the functional
@@ -40,33 +54,40 @@ export function useUrlState(key, defaultValue) {
   // each setter merges with the latest URL state correctly.
   const setValue = useCallback(
     (newValue, options = { replace: true }) => {
-      setStateValue((currentValue) => {
-        const nextValue =
-          typeof newValue === "function" ? newValue(currentValue) : newValue;
+      const nextValue =
+        typeof newValue === "function" ? newValue(valueRef.current) : newValue;
 
-        isInternalUpdate.current = true;
+      valueRef.current = nextValue;
+      setStateValue(nextValue);
 
-        const newSearchParams = new URLSearchParams(window.location.search);
-        newSearchParams.set(key, stringifyUrlValue(nextValue));
-        setSearchParams(newSearchParams, { replace: options.replace });
-
-        return nextValue;
-      });
+      const newSearchParams = new URLSearchParams(window.location.search);
+      const nextUrlValue = stringifyUrlValue(nextValue);
+      // An unchanged URL never re-runs the sync effect below, so flagging it
+      // would leave the flag set and swallow the next external change (e.g.
+      // a tab switch that drops this key after a reload).
+      if (newSearchParams.get(key) === nextUrlValue) return;
+      isInternalUpdate.current = true;
+      newSearchParams.set(key, nextUrlValue);
+      setSearchParamsRef.current(newSearchParams, { replace: options.replace });
     },
-    [key, setSearchParams],
+    [key],
   );
 
   const removeValue = useCallback(
     (options = { replace: true }) => {
-      isInternalUpdate.current = true;
-
       const newSearchParams = new URLSearchParams(window.location.search);
-      newSearchParams.delete(key);
-      setSearchParams(newSearchParams, { replace: options.replace });
+      if (newSearchParams.has(key)) {
+        isInternalUpdate.current = true;
+        newSearchParams.delete(key);
+        setSearchParamsRef.current(newSearchParams, {
+          replace: options.replace,
+        });
+      }
 
-      setStateValue(defaultValue);
+      valueRef.current = defaultValueRef.current;
+      setStateValue(defaultValueRef.current);
     },
-    [key, setSearchParams, defaultValue],
+    [key],
   );
 
   // Handle external URL changes (like browser back/forward)
@@ -84,8 +105,13 @@ export function useUrlState(key, defaultValue) {
     }
 
     const newValue = parseUrlValue(searchParams.get(key), defaultValue);
+    valueRef.current = newValue;
     setStateValue(newValue);
   }, [searchParams, key, defaultValue, value]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   return [value, setValue, removeValue];
 }

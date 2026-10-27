@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -52,7 +52,25 @@ const GraphView = ({
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
+
+  const orphanFocusSignal = useGraphStore((state) => state.orphanFocusSignal);
+
+  useEffect(() => {
+    if (!editMode || orphanFocusSignal === 0) return;
+    const highlightedNodes = useGraphStore
+      .getState()
+      .nodes.filter((node) => node?.data?.highlightColor === "error")
+      .map((node) => ({ id: node.id }));
+    if (highlightedNodes.length === 0) return;
+    fitView({
+      nodes: highlightedNodes,
+      padding: 0.4,
+      duration: 500,
+      maxZoom: 1,
+    });
+  }, [orphanFocusSignal, editMode, fitView]);
+
   const onDrop = useCallback(
     (event) => {
       event.preventDefault();

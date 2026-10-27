@@ -4,6 +4,7 @@ import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 import React, {
@@ -17,11 +18,9 @@ import React, {
   useState,
 } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { Helmet } from "react-helmet-async";
-import { formatDate } from "src/utils/report-utils";
-import { endOfToday, sub } from "date-fns";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
@@ -31,6 +30,8 @@ import FilterChips from "../LLMTracing/FilterChips";
 import { useLLMTracingFilters } from "../LLMTracing/useLLMTracingFilters";
 import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
+import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
+import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
 
 // Lazy-load graph
 const PrimaryGraph = lazy(
@@ -43,7 +44,7 @@ const AddToQueueDialog = lazy(
 
 const SESSION_BULK_ACTIONS = [
   {
-    id: "replay",
+    id: REPLAY_ACTION_ID,
     label: "Replay Sessions",
     icon: "mdi:play-outline",
   },
@@ -56,21 +57,40 @@ const SESSION_BULK_ACTIONS = [
 
 // Session-specific
 import SessionGrid from "./Session-grid";
-import { initialVisibility } from "./common";
+import { initialVisibility, resolveColumnVisibility } from "./common";
 import { REPLAY_MODULES } from "./ReplaySessions/configurations";
 import {
   useReplaySessionsStoreShallow,
   useSessionsGridStore,
   useSessionsGridStoreShallow,
 } from "./ReplaySessions/store";
-import { REPLAY_TYPES } from "./ReplaySessions/constants";
+import { REPLAY_ACTION_ID, REPLAY_TYPES } from "./ReplaySessions/constants";
+import { withoutReplayForRestrictedOrgs } from "./ReplaySessions/replayAccess";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
+import {
+  reorderColumns,
+  columnStateToOrder,
+  isColumnOrderDirty,
+} from "../LLMTracing/savedViewColumns";
 import { filtersContentEqual } from "../saved-view-utils";
+import {
+  DEFAULT_OBSERVE_LIST_DATE_OPTION,
+  getDefaultObserveListDateRangeForMode,
+} from "../dateRangeDefaults";
+import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+
+const getLiveSessionGridApi = (gridRef) => {
+  const api = gridRef?.current?.api;
+  return isGridApiLive(api) ? api : null;
+};
 
 // ---------------------------------------------------------------------------
 // Base session filter fields (always available)
@@ -92,6 +112,12 @@ const BASE_SESSION_FILTER_FIELDS = [
   { id: "user_id", name: "User ID", category: "system", type: "string" },
   { id: "duration", name: "Duration", category: "system", type: "number" },
   { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
+  {
+    id: "total_tokens",
+    name: "Total Tokens",
+    category: "system",
+    type: "number",
+  },
   {
     id: "total_traces_count",
     name: "Total Traces",
@@ -125,18 +151,10 @@ const buildSessionFilterFields = (sessionColumns) => {
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
-
-const getDefaultDateRange = () => ({
-  dateFilter: [
-    formatDate(sub(new Date(), { months: 6 })),
-    formatDate(endOfToday()),
-  ],
-  dateOption: "6M",
-});
 
 // Date label helper — mirrors LLMTracingView so the toolbar button reflects
 // the restored URL state (shows picked dates for Custom, "Past N" for presets).
@@ -158,10 +176,12 @@ export const getDateLabel = (dateFilter) => {
     return PRESET_DATE_LABELS[option] || `Past ${option}`;
   }
   const dates = dateFilter?.dateFilter;
-  if (!dates || dates.length < 2) return "Past 6M";
+  if (!dates || dates.length < 2)
+    return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   const start = new Date(dates[0]);
   const end = new Date(dates[1]);
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return "Past 6M";
+  if (isNaN(start.getTime()) || isNaN(end.getTime()))
+    return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
 };
 
@@ -169,7 +189,17 @@ export const getDateLabel = (dateFilter) => {
 const noopExtraProperties = () => ({});
 
 const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const sessionBulkActions = useMemo(
+    () =>
+      withoutReplayForRestrictedOrgs(
+        SESSION_BULK_ACTIONS,
+        restrictSimulateToEnvironments,
+      ),
+    [restrictSimulateToEnvironments],
+  );
   const isUserMode = mode === "user";
+  const { currentWorkspaceId } = useWorkspace();
   const { observeId: routeObserveId } = useParams();
   const observeId = isUserMode ? null : routeObserveId;
   const navigate = useNavigate();
@@ -180,11 +210,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     activeViewConfig,
     setActiveViewConfig,
     registerGetViewConfig,
-    registerGetTabType,
   } = useObserveHeader();
 
   // --- Filter & date state (reuse trace filter hook) ---
-  const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
+  const defaultDateFilter = useMemo(
+    () => getDefaultObserveListDateRangeForMode(isUserMode),
+    [isUserMode],
+  );
   const [sessionColumns, setSessionColumns] = useState([]);
 
   const { validatedFilters, setDateFilter, dateFilter } = useLLMTracingFilters(
@@ -202,8 +234,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     "sessionFilterOpen",
     false,
   );
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
+  const toolbarProjectId = useMemo(
+    () =>
+      observeId ||
+      (isUserMode ? singleProjectIdFromFilters(extraFilters) : null),
+    [extraFilters, isUserMode, observeId],
+  );
 
   const handleAddEvals = useCallback(() => {
     const url = buildAddEvalsDraft({
@@ -249,11 +291,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       isUserMode && userIdForUserMode
         ? [
             {
-              columnId: "user_id",
-              filterConfig: {
-                filterType: "text",
-                filterOp: "equals",
-                filterValue: userIdForUserMode,
+              column_id: "user_id",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: userIdForUserMode,
               },
             },
           ]
@@ -261,26 +303,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     [isUserMode, userIdForUserMode],
   );
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so objectCamelToSnake in Session-grid handles them uniformly
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     const base = [...userScopeFilter, ...validatedFilters];
     if (!extraFilters.length) return base;
-    const normalized = extraFilters.map((f) => ({
-      columnId: f.column_id || f.columnId || "",
-      filterConfig: {
-        filterType:
-          f.filter_config?.filter_type || f.filterConfig?.filterType || "text",
-        filterOp:
-          f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals",
-        filterValue:
-          f.filter_config?.filter_value || f.filterConfig?.filterValue || "",
-        ...(f.filter_config?.col_type && { colType: f.filter_config.col_type }),
-      },
-    }));
-    return [...base, ...normalized];
+    return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
 
   // --- Column visibility ---
@@ -333,10 +360,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineExtraFilters = activeViewConfig.extraFilters || [];
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption =
-      baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -368,6 +396,26 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
     }
+    // Custom cols: order is captured by columnState, so we only diff the set.
+    const currentCustomIds = (sessionColumns || [])
+      .filter((c) => c.groupBy === "Custom Columns")
+      .map((c) => c.id)
+      .sort();
+    const baselineCustomIds = (
+      Array.isArray(baselineDisplay.customColumns)
+        ? baselineDisplay.customColumns
+        : []
+    )
+      .map((c) => c.id)
+      .sort();
+    if (currentCustomIds.length !== baselineCustomIds.length) return true;
+    for (let i = 0; i < currentCustomIds.length; i += 1) {
+      if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
+    }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(sessionColumns, baselineDisplay.columnState)) {
+      return true;
+    }
     return false;
   }, [
     activeViewConfig,
@@ -376,29 +424,24 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     cellHeight,
     showCompare,
     updateObj,
+    sessionColumns,
   ]);
 
-  // Defer so the button doesn't flicker during the one-render gap between
-  // filter state updating urgently and activeViewConfig catching up from
-  // startTransition in the apply path.
+  // Deferred so the button doesn't flicker while filter state and the baseline
+  // config settle on a view-switch.
   const canSaveViewDeferred = useDeferredValue(canSaveView);
 
-  // --- Saved view capture + apply (TH-4578) ---
-  // Build a view-config snapshot that mirrors LLMTracingView's shape. dateFilter
-  // stays inside `display` because the backend's saved-view serializer only
-  // whitelists `display` for arbitrary sub-keys (no top-level `dateFilter`).
-  // Note: in earlier versions this view skipped writing URL-synced state in
-  // the apply effect on the assumption that a click-time seedUrlForView
-  // would populate the URL. That's only true on UserDetailTabBar — the
-  // ObservePage tab-bar path doesn't seed sessionCellHeight / sessionShowCompare /
-  // sessionDateFilter, so display options never made it onto the page when
-  // selecting a sessions saved view from the project's tab bar. Now apply
-  // pushes them into URL state directly (matching UsersView / LLMTracingView).
+  // dateFilter lives inside `display` because the backend serializer only
+  // whitelists `display` for arbitrary sub-keys (no top-level dateFilter).
   const buildViewConfig = useCallback(() => {
     const columnState =
-      sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
-    // updateObj is the authoritative {col.id: isVisible} source.
+      getLiveSessionGridApi(sessionGridApiRef)?.getColumnState?.() ?? undefined;
     const hasVisibility = updateObj && Object.keys(updateObj).length > 0;
+    // customColumns separately: AG Grid drops columnState for unknown colIds,
+    // so without this list the custom cols can't be reconstructed on restore.
+    const customColumns = (sessionColumns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
     return {
       display: {
         cellHeight,
@@ -406,34 +449,104 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         dateFilter,
         ...(hasVisibility ? { visibleColumns: updateObj } : {}),
         ...(columnState ? { columnState } : {}),
+        ...(customColumns.length > 0 ? { customColumns } : {}),
       },
-      extraFilters: extraFilters || [],
+      extra_filters: extraFilters || [],
     };
-  }, [cellHeight, showCompare, dateFilter, extraFilters, updateObj]);
+  }, [
+    cellHeight,
+    showCompare,
+    dateFilter,
+    extraFilters,
+    updateObj,
+    sessionColumns,
+  ]);
 
   useEffect(() => {
     registerGetViewConfig(buildViewConfig);
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, buildViewConfig]);
 
-  useEffect(() => {
-    registerGetTabType(() => "sessions");
-    return () => registerGetTabType(null);
-  }, [registerGetTabType]);
-
-  // Update mutations for the explicit Save view button. Project-scoped on
-  // ObservePage, workspace-scoped (user_detail) on CrossProjectUserDetailPage.
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
 
-  // Active saved-view id from URL — "tab" key on ObservePage, "userTab" on
-  // CrossProjectUserDetailPage. Re-derived when activeViewConfig flips.
   const activeViewTabId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const key = isUserMode ? params.get("userTab") : params.get("tab");
     return key?.startsWith("view-") ? key.slice(5) : null;
   }, [activeViewConfig, isUserMode]);
+
+  const displayStorageKey = isUserMode
+    ? `user-sessions-display-${userIdForUserMode}`
+    : `observe-sessions-display-${observeId}`;
+
+  const hydratedKeyRef = useRef(null);
+  // Skips the save effect's first fire after a hydrate. Without this the
+  // first fire closes over pre-hydrate state and overwrites what we just
+  // loaded.
+  const skipNextSaveRef = useRef(false);
+
+  const writeDisplayToStorage = useCallback(() => {
+    const customColumns = (sessionColumns || []).filter(
+      (c) => c.groupBy === "Custom Columns",
+    );
+    const payload = {
+      cellHeight,
+      showCompare,
+      ...(updateObj && Object.keys(updateObj).length > 0
+        ? { visibleColumns: updateObj }
+        : {}),
+      ...(customColumns.length > 0 ? { customColumns } : {}),
+    };
+    try {
+      localStorage.setItem(displayStorageKey, JSON.stringify(payload));
+    } catch {
+      /* quota exceeded */
+    }
+  }, [displayStorageKey, cellHeight, showCompare, updateObj, sessionColumns]);
+
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current === displayStorageKey) return;
+    hydratedKeyRef.current = displayStorageKey;
+    try {
+      const raw = localStorage.getItem(displayStorageKey);
+      if (!raw) return;
+      skipNextSaveRef.current = true;
+      const saved = JSON.parse(raw);
+      if (saved.cellHeight) setCellHeight(saved.cellHeight);
+      if (typeof saved.showCompare === "boolean") {
+        setShowCompare(saved.showCompare);
+      }
+      if (saved.visibleColumns && typeof saved.visibleColumns === "object") {
+        setUpdateObj(saved.visibleColumns);
+      }
+      if (
+        Array.isArray(saved.customColumns) &&
+        saved.customColumns.length > 0
+      ) {
+        // Shallow-clone so the pending ref doesn't share identity with the
+        // parsed localStorage payload.
+        pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
+          ...c,
+        }));
+      }
+    } catch {
+      /* ignore corrupted localStorage */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayStorageKey]);
+
+  useEffect(() => {
+    if (activeViewTabId) return;
+    if (hydratedKeyRef.current !== displayStorageKey) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    writeDisplayToStorage();
+  }, [activeViewTabId, displayStorageKey, writeDisplayToStorage]);
 
   const handleSaveView = useCallback(() => {
     if (!activeViewTabId) return;
@@ -459,26 +572,31 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
-  // Pending column state queued before the grid was ready. Drain effect
-  // below applies it once `sessionGridApiRef.current.api` shows up.
+  // Drained in the api-ready effect below once sessionGridApiRef populates.
   const pendingColumnStateRef = useRef(null);
+  // Canonical order, to restore default when leaving a saved view.
+  const canonicalOrderRef = useRef(null);
+  // Saved order; the [sessionColumns] effect re-applies it on each id-set change
+  // (cols land/leave), so it survives the grid-fetch race a one-shot apply lost.
+  const pendingSessionOrderRef = useRef(null);
+  const appliedSessionIdSetRef = useRef(null);
+  // Set once the user manually drags a column; the saved-order re-apply then
+  // stops reordering, so an add/remove (id-set change) doesn't revert the drag.
+  const sessionUserReorderedRef = useRef(false);
+  // Set when the apply effect fires before the grid mounts (hard refresh
+  // into a saved view). Drained in onGridReady, otherwise the pending
+  // custom-col ref is stranded.
+  const pendingRefreshRef = useRef(false);
 
-  // Apply a saved view's config — push display options into URL-synced
-  // state (matches UsersView / LLMTracingView). UserDetailTabBar still
-  // pre-seeds the same URL keys at click time for snappiness; the writes
-  // here are idempotent for that path and are the only source of truth
-  // for the ObservePage tab-bar path, which doesn't pre-seed display.
   useEffect(() => {
     if (!activeViewConfig) {
-      // Transitioning back to a default tab — wipe everything that was
-      // applied by the saved view. URL-synced display state (cellHeight,
-      // showCompare, dateFilter) reverts via useUrlState as the parent's
-      // navigate() drops those URL keys; everything else has to be reset
-      // here because it lives in plain useState or inside AG Grid.
+      // Default tab — reset everything the saved view applied. URL-synced
+      // state reverts via useUrlState; the rest lives in useState / AG Grid
+      // and needs explicit reset.
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       viewLoadedUpdateObjRef.current = null;
       setUpdateObj(initialVisibility);
-      const api = sessionGridApiRef.current?.api;
+      const api = getLiveSessionGridApi(sessionGridApiRef);
       if (api?.setColumnsVisible) {
         const showIds = Object.keys(initialVisibility).filter(
           (id) => initialVisibility[id],
@@ -491,6 +609,49 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
       if (api?.resetColumnState) api.resetColumnState();
       pendingColumnStateRef.current = null;
+      pendingSessionOrderRef.current = null;
+      appliedSessionIdSetRef.current = null;
+      sessionUserReorderedRef.current = false;
+      pendingCustomColumnsRef.current = [];
+      setSessionColumns((prev) =>
+        reorderColumns(
+          (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+          canonicalOrderRef.current,
+        ),
+      );
+      // Re-hydrate from localStorage — the mount hydrate is keyed on
+      // displayStorageKey and won't re-fire on a same-project saved-view →
+      // default transition.
+      try {
+        const raw = localStorage.getItem(displayStorageKey);
+        if (raw) {
+          skipNextSaveRef.current = true;
+          const saved = JSON.parse(raw);
+          if (saved.cellHeight) setCellHeight(saved.cellHeight);
+          if (typeof saved.showCompare === "boolean") {
+            setShowCompare(saved.showCompare);
+          }
+          if (
+            saved.visibleColumns &&
+            typeof saved.visibleColumns === "object"
+          ) {
+            setUpdateObj(saved.visibleColumns);
+          }
+          if (
+            Array.isArray(saved.customColumns) &&
+            saved.customColumns.length > 0
+          ) {
+            pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
+              ...c,
+            }));
+            getLiveSessionGridApi(sessionGridApiRef)?.refreshServerSide?.({
+              purge: true,
+            });
+          }
+        }
+      } catch {
+        /* ignore corrupted localStorage */
+      }
       return;
     }
     const display = activeViewConfig.display || {};
@@ -501,19 +662,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.dateFilter) {
       setDateFilter(display.dateFilter);
     }
-    // Apply visibleColumns dict — `updateObj` is the single source of truth
-    // for column visibility (drives the ColumnConfigure popover via
-    // displayColumns and is the authoritative {col.id: bool} dict). Push
-    // visibility into AG Grid directly when the api is available so the
-    // grid display matches without waiting for a re-render. Done before the
+    // Push visibility into AG Grid directly when the api is available so
+    // the display matches without waiting for re-render. Done before the
     // snapshot below so canSaveView's baseline matches the just-applied state.
-    if (
-      display.visibleColumns &&
-      typeof display.visibleColumns === "object"
-    ) {
+    if (display.visibleColumns && typeof display.visibleColumns === "object") {
       const next = { ...display.visibleColumns };
       setUpdateObj(next);
-      const api = sessionGridApiRef.current?.api;
+      const api = getLiveSessionGridApi(sessionGridApiRef);
       if (api?.setColumnsVisible) {
         const toShow = [];
         const toHide = [];
@@ -524,38 +679,63 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         if (toHide.length) api.setColumnsVisible(toHide, false);
       }
     }
-    // Capture the visibility state at the moment this saved view is loaded,
-    // so canSaveView can compare any subsequent toggles against this
-    // snapshot — covers older views that didn't persist `visibleColumns`.
-    // Use the just-applied dict if it exists, otherwise current updateObj.
+    // Snapshot visibility so canSaveView can diff later toggles; covers
+    // older views that didn't persist visibleColumns.
     viewLoadedUpdateObjRef.current = display.visibleColumns
       ? { ...display.visibleColumns }
       : updateObj
         ? { ...updateObj }
         : null;
-    if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      const api = sessionGridApiRef.current?.api;
-      if (api?.applyColumnState) {
-        api.applyColumnState({
-          state: display.columnState,
-          applyOrder: true,
-        });
+    setSessionColumns((prev) =>
+      (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+    );
+    // Shallow-clone each col so a later mutation (visibility toggle,
+    // save-as-new) doesn't write through into the saved-views cache.
+    const savedCustomCols = Array.isArray(display.customColumns)
+      ? display.customColumns.map((c) => ({ ...c }))
+      : [];
+    pendingCustomColumnsRef.current = savedCustomCols;
+    // Force a re-fetch so Session-grid's merge drains the queued customs.
+    // When extraFilters happen to equal current state, setExtraFilters
+    // returns the same ref and the dataSource memo never recreates.
+    if (savedCustomCols.length > 0) {
+      const api = getLiveSessionGridApi(sessionGridApiRef);
+      if (api?.refreshServerSide) {
+        api.refreshServerSide({ purge: true });
       } else {
-        pendingColumnStateRef.current = display.columnState;
+        pendingRefreshRef.current = true;
       }
     }
-    const nextExtraFilters = activeViewConfig.extraFilters || [];
-    setExtraFilters((prev) => {
-      if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
-      if (prev.length === nextExtraFilters.length) {
-        const allSame = prev.every(
-          (f, i) =>
-            f?.column_id === nextExtraFilters[i]?.column_id &&
-            JSON.stringify(f?.filter_config) ===
-              JSON.stringify(nextExtraFilters[i]?.filter_config),
-        );
-        if (allSame) return prev;
+    if (Array.isArray(display.columnState) && display.columnState.length > 0) {
+      // Arm the saved order; the [sessionColumns] effect bakes it in once cols
+      // land (applyColumnState alone is clobbered by the next columnDefs rebuild).
+      pendingSessionOrderRef.current = columnStateToOrder(display.columnState);
+      appliedSessionIdSetRef.current = null;
+      sessionUserReorderedRef.current = false;
+      // Queue widths/sort when customs pending — AG Grid drops unknown colIds.
+      if (savedCustomCols.length > 0) {
+        pendingColumnStateRef.current = display.columnState;
+      } else {
+        const api = getLiveSessionGridApi(sessionGridApiRef);
+        if (api?.applyColumnState) {
+          api.applyColumnState({
+            state: display.columnState,
+            applyOrder: true,
+          });
+        } else {
+          pendingColumnStateRef.current = display.columnState;
+        }
       }
+    }
+    const nextExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
+    setExtraFilters((prev) => {
+      // Reuse the canonical saved-view comparator so property_id participates
+      // in hydration equality. Otherwise switching between same-name system
+      // and custom properties keeps the stale row because column_id/config
+      // happen to match.
+      if (filtersContentEqual(prev, nextExtraFilters)) return prev;
       return nextExtraFilters;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -574,12 +754,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     setCreatedReplay: s.setCreatedReplay,
   }));
 
-  const { totalRowCount, toggledNodes, selectAll } =
-    useSessionsGridStoreShallow((s) => ({
-      totalRowCount: s.totalRowCount,
-      toggledNodes: s.toggledNodes,
-      selectAll: s.selectAll,
-    }));
+  const {
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+    toggledNodes,
+    selectAll,
+  } = useSessionsGridStoreShallow((s) => ({
+    totalRowCount: s.totalRowCount,
+    totalRowCountLowerBound: s.totalRowCountLowerBound,
+    totalRowCountIsLowerBound: s.totalRowCountIsLowerBound,
+    toggledNodes: s.toggledNodes,
+    selectAll: s.selectAll,
+  }));
 
   const { mutate: createReplaySessions } = useCreateReplaySessions();
 
@@ -600,18 +787,23 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       toggledNodes: toggled,
       selectAll: !!ssState.selectAll,
       totalRowCount: params.api.totalRowCount,
+      totalRowCountLowerBound: params.api.totalRowCountLowerBound,
+      totalRowCountIsLowerBound: params.api.totalRowCountIsLowerBound,
     });
   }, []);
 
-  const selectedCount = selectAll
-    ? totalRowCount - toggledNodes.length
-    : toggledNodes.length;
+  const selectedCountState = getSelectionCountState({
+    selectAll,
+    toggledNodes,
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+  });
+  const selectedCount = selectedCountState.count;
 
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  // Opt-in for filter-mode session bulk add. Set to true when
-  // the user clicks the banner's "Select all N matching your filter" link.
-  // Resets when the grid clears select-all, when the project changes, or
-  // when the filter payload changes (the opt-in no longer matches the view).
+  // Opt-in for filter-mode bulk add — set when the SelectAllBanner is
+  // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
     useState(false);
   useEffect(() => {
@@ -626,7 +818,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleBulkAction = useCallback(
     (action, event) => {
-      if (action === "replay") {
+      if (action === REPLAY_ACTION_ID) {
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
@@ -644,17 +836,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
         });
       } else if (action === "annotation-queue") {
-        // With filter-mode opt-in (the SelectAllBanner), the popover's
-        // submit posts `{selection: {mode: "filter", ...}}` to the Phase 6
-        // backend endpoint. Without opt-in under select-all we still bail
-        // out — toggledNodes holds the *deselected* rows in that mode and
-        // an enumerated add would be wrong.
+        // Choosing the queue action is an explicit request to operate on the
+        // header's inverted select-all set. Switch to the server-side filter
+        // contract immediately; `toggledNodes` remains the exclusion list.
         if (selectAll && !sessionFilterSelectionMode) {
-          enqueueSnackbar(
-            "Use the 'Select all matching your filter' banner to add the full set, or deselect 'all' and pick specific rows.",
-            { variant: "info" },
-          );
-          return;
+          setSessionFilterSelectionMode(true);
         }
         setQueueAnchorEl(event?.currentTarget || null);
       }
@@ -674,16 +860,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // --- Refresh ---
   const refreshSessions = useCallback(() => {
     trackEvent(Events.pObserveRefreshClicked);
-    if (sessionGridApiRef.current) {
-      sessionGridApiRef.current.api.refreshServerSide();
-    }
+    // ObserveHeader dispatches observe-refresh; SessionGrid owns cursor invalidation.
     queryClient.invalidateQueries({ queryKey: ["session-list"] });
   }, [queryClient]);
 
   // --- Auto-size columns ---
   const handleAutoSize = useCallback(() => {
-    if (!sessionGridApiRef?.current?.api) return;
-    const gridApi = sessionGridApiRef.current.api;
+    const gridApi = getLiveSessionGridApi(sessionGridApiRef);
+    if (!gridApi) return;
     const allColumnIds = [];
     gridApi.getColumnDefs()?.forEach((column) => {
       if (column?.field) allColumnIds.push(column.field);
@@ -717,6 +901,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const onGridReady = useCallback(
     (params) => {
+      if (!isGridApiLive(params.api)) return;
       sessionGridApiRef.current = params;
       setHeaderConfig((prev) => ({ ...prev, gridApi: params.api }));
       // Drain any saved-view columnState that arrived before the grid mounted.
@@ -727,15 +912,59 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         pendingColumnStateRef.current = null;
       }
+      // Drain a queued refresh request — fires when the saved-view apply
+      // effect ran before the grid mounted (hard refresh into a saved
+      // view URL). Without this drain the queued custom-col ref would
+      // sit forever waiting for a fetch that never comes.
+      if (pendingRefreshRef.current && params.api?.refreshServerSide) {
+        params.api.refreshServerSide({ purge: true });
+        pendingRefreshRef.current = false;
+      }
     },
     [setHeaderConfig],
   );
+
+  // Drain pendingColumnState once sessionColumns updates (custom cols
+  // landed via the Session-grid merge) and the grid api is ready. Catches
+  // the case where the saved view includes both custom cols AND
+  // columnState — applying state before custom cols are merged would
+  // silently drop widths/order/sort for the unknown colIds.
+  useEffect(() => {
+    if (!pendingColumnStateRef.current) return;
+    const api = getLiveSessionGridApi(sessionGridApiRef);
+    if (!api?.applyColumnState) return;
+    api.applyColumnState({
+      state: pendingColumnStateRef.current,
+      applyOrder: true,
+    });
+    pendingColumnStateRef.current = null;
+  }, [sessionColumns]);
+
+  // Bake the saved order into sessionColumns, re-applying only on id-set change
+  // (so a manual drag isn't reverted); applyColumnState alone is clobbered on rebuild.
+  useEffect(() => {
+    if (!pendingSessionOrderRef.current) return;
+    const idSetKey = (sessionColumns || [])
+      .map((c) => c?.id)
+      .sort()
+      .join("|");
+    if (idSetKey !== appliedSessionIdSetRef.current) {
+      appliedSessionIdSetRef.current = idSetKey;
+      // Skip the saved-order re-apply once the user has manually reordered, so
+      // an add/remove (id-set change) doesn't revert the drag.
+      if (!sessionUserReorderedRef.current) {
+        setSessionColumns((prev) =>
+          reorderColumns(prev, pendingSessionOrderRef.current),
+        );
+      }
+    }
+  }, [sessionColumns]);
 
   // --- Column config for display panel ---
   const displayColumns = useMemo(() => {
     return sessionColumns.map((col) => ({
       ...col,
-      isVisible: updateObj[col.id] ?? true,
+      isVisible: resolveColumnVisibility(col, updateObj),
     }));
   }, [sessionColumns, updateObj]);
 
@@ -743,16 +972,26 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const pendingCustomColumnsRef = useRef([]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify({ project_id: observeId }) },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
+  const [customAttributeSearch, setCustomAttributeSearch] = useState("");
+  const preservedCustomAttributeKeys = useMemo(
+    () =>
+      (sessionColumns || [])
+        .filter((column) => column?.groupBy === "Custom Columns")
+        .map((column) => column.id)
+        .filter(Boolean),
+    [sessionColumns],
+  );
+  const { attributes, inventoryControlProps } = useCursorAttributeInventory({
+    projectId: observeId,
+    workspaceScope: isUserMode,
+    workspaceScopeKey: currentWorkspaceId,
+    discoveryMode: "eval_mapping",
+    search: customAttributeSearch,
+    preservedKeys: preservedCustomAttributeKeys,
+    enabled:
+      openCustomColumn &&
+      Boolean(observeId || (isUserMode && currentWorkspaceId)),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   const handleAddCustomColumns = useCallback((newCols) => {
     setSessionColumns((prev) => {
@@ -784,6 +1023,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="sessions"
+        projectId={toolbarProjectId}
+        allowWorkspaceScope={isUserMode}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
@@ -794,7 +1035,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onSaveView={handleSaveView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         filterFields={sessionFilterFields}
         onApplyExtraFilters={setExtraFilters}
         // Columns
@@ -851,16 +1098,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }}
         // Bulk actions
         selectedCount={selectedCount}
+        selectedCountIsLowerBound={selectedCountState.isLowerBound}
         allMatching={sessionFilterSelectionMode}
         onClearSelection={() => {
-          sessionGridApiRef.current?.api?.deselectAll();
+          withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+            api.deselectAll?.(),
+          );
           useSessionsGridStore.setState({
             toggledNodes: [],
             selectAll: false,
           });
         }}
         onBulkAction={handleBulkAction}
-        bulkActions={SESSION_BULK_ACTIONS}
+        bulkActions={sessionBulkActions}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
       />
@@ -881,7 +1131,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           projectId={sessionFilterSelectionMode ? observeId : null}
           onSuccess={() => {
             setSessionFilterSelectionMode(false);
-            sessionGridApiRef.current?.api?.deselectAll();
+            withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+              api.deselectAll?.(),
+            );
             useSessionsGridStore.setState({
               toggledNodes: [],
               selectAll: false,
@@ -901,9 +1153,23 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }))}
         fieldLabelMap={filterChipLabelMap}
         onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
         }}
-        onClearAll={() => setExtraFilters([])}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       {/* Graph — hidden in user mode (no project context) */}
@@ -925,9 +1191,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       <SelectAllBanner
         visible={selectAll && !sessionFilterSelectionMode}
         visibleCount={
-          sessionGridApiRef.current?.api?.getDisplayedRowCount?.() || 0
+          getLiveSessionGridApi(sessionGridApiRef)?.getDisplayedRowCount?.() ||
+          0
         }
-        totalMatching={totalRowCount || 0}
+        totalMatching={
+          totalRowCountIsLowerBound
+            ? totalRowCountLowerBound || 0
+            : totalRowCount || 0
+        }
+        totalMatchingIsLowerBound={totalRowCountIsLowerBound}
         noun="session"
         onSelectAll={() => setSessionFilterSelectionMode(true)}
       />
@@ -941,6 +1213,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         <SessionGrid
           columns={sessionColumns}
           setColumns={setSessionColumns}
+          onUserReorder={() => {
+            sessionUserReorderedRef.current = true;
+          }}
           ref={sessionGridApiRef}
           updateObj={updateObj}
           filters={finalFilters}
@@ -950,7 +1225,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           className={shouldDisable ? "ag-grid-disabled" : ""}
           onGridReady={onGridReady}
           pendingCustomColumnsRef={pendingCustomColumnsRef}
+          canonicalOrderRef={canonicalOrderRef}
           isOnSavedView={Boolean(activeViewConfig)}
+          userIdForUserMode={userIdForUserMode}
         />
       </Box>
 
@@ -972,6 +1249,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         existingColumns={sessionColumns}
         onAddColumns={handleAddCustomColumns}
         onRemoveColumns={handleRemoveCustomColumns}
+        onAttributeSearchChange={setCustomAttributeSearch}
+        inventoryControlProps={inventoryControlProps}
       />
     </>
   );

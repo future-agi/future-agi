@@ -33,7 +33,7 @@ class TestFiNativeNormalize:
 
     def test_sets_trace_source(self, adapter, fi_native_llm_attrs):
         result = adapter.normalize(fi_native_llm_attrs)
-        assert result["fi.trace.source"] == "traceai"
+        assert result["gen_ai.trace.source"] == "traceai"
 
     def test_preserves_llm_attributes(self, adapter, fi_native_llm_attrs):
         result = adapter.normalize(fi_native_llm_attrs)

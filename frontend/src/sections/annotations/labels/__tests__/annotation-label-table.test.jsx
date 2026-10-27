@@ -91,7 +91,7 @@ const MOCK_LABELS = [
     name: "Accuracy",
     type: "categorical",
     description: "Measures response accuracy",
-    usage_count: 3,
+    annotation_count: 3,
     created_at: "2025-01-01T00:00:00Z",
   },
   {
@@ -99,7 +99,7 @@ const MOCK_LABELS = [
     name: "Quality Score",
     type: "numeric",
     description: "Numeric quality score",
-    usage_count: 0,
+    annotation_count: 0,
     created_at: "2025-01-02T00:00:00Z",
   },
   {
@@ -107,7 +107,7 @@ const MOCK_LABELS = [
     name: "Feedback",
     type: "text",
     description: "",
-    usage_count: 1,
+    annotation_count: 1,
     created_at: "2025-01-03T00:00:00Z",
   },
 ];
@@ -165,6 +165,26 @@ describe("AnnotationLabelTable", () => {
 
     expect(screen.getByText("Measures response accuracy")).toBeInTheDocument();
     expect(screen.getAllByText("-").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders backend annotation_count in the Used In column", () => {
+    render(
+      <AnnotationLabelTable
+        {...defaultProps}
+        data={[
+          {
+            id: "contract-label",
+            name: "Contract label",
+            type: "text",
+            annotation_count: 7,
+            created_at: "2025-01-04T00:00:00Z",
+          },
+        ]}
+        totalCount={1}
+      />,
+    );
+
+    expect(screen.getByText("7")).toBeInTheDocument();
   });
 
   describe("action menu", () => {

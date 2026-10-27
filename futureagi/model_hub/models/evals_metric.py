@@ -1,11 +1,13 @@
 import re
 import uuid
+from functools import partial
 from typing import Any, Literal
 
+import structlog
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models, transaction
-from django.db.models import Max, Q
+from django.db.models import Q
 from pydantic import BaseModel, validator
 
 from accounts.models.organization import Organization
@@ -21,6 +23,8 @@ from model_hub.models.eval_groups import (  # Commented out to avoid circular im
     EvalGroup,
 )
 from tfc.utils.base_model import BaseModel as ModelBaseModel
+
+logger = structlog.get_logger(__name__)
 
 
 def validate_eval_name(value):
@@ -161,8 +165,14 @@ class EvalTemplate(ModelBaseModel):
     )
 
     # --- Scoring Revamp Fields (Phase 2) ---
+    class OutputTypeNormalized(models.TextChoices):
+        PASS_FAIL = "pass_fail", "Pass/Fail"
+        PERCENTAGE = "percentage", "Percentage"
+        DETERMINISTIC = "deterministic", "Deterministic"
+
     output_type_normalized = models.CharField(
         max_length=20,
+        choices=OutputTypeNormalized.choices,
         null=True,
         blank=True,
         help_text="Normalized output type: pass_fail, percentage, deterministic",
@@ -302,8 +312,16 @@ class UserEvalMetric(ModelBaseModel):
                 organization_id=organization_id, deleted=False, show_in_sidebar=True
             )
 
+        return [
+            metric
+            for metric in metrics
+            if cls.config_uses_column(metric.config or {}, str(column_id))
+        ]
+
+    @staticmethod
+    def config_uses_column(config: dict, column_id: str) -> bool:
         def check_value_in_dict(d: dict, search_value: str) -> bool:
-            """Helper function to check if value exists in dictionary values, including template strings."""
+            """Check whether nested config values reference a column id."""
             for value in d.values():
                 if isinstance(value, str):
                     if search_value in value or f"{{{{{search_value}}}}}" in value:
@@ -313,18 +331,11 @@ class UserEvalMetric(ModelBaseModel):
                         return True
             return False
 
-        return [
-            metric
-            for metric in metrics
-            if (
-                metric.config.get("mapping")
-                and check_value_in_dict(metric.config["mapping"], str(column_id))
-            )
-            or (
-                metric.config.get("config")
-                and check_value_in_dict(metric.config["config"], str(column_id))
-            )
-        ]
+        return bool(
+            config.get("mapping") and check_value_in_dict(config["mapping"], column_id)
+        ) or bool(
+            config.get("config") and check_value_in_dict(config["config"], column_id)
+        )
 
     """
     Stores individual user-specific variable values required to run the metric.
@@ -392,6 +403,15 @@ class UserEvalMetric(ModelBaseModel):
         ),
     )
 
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_user_metrics",
+        help_text="Pin to a specific template version for runtime.",
+    )
+
     def clean(self):
         super().clean()
         # try:
@@ -452,6 +472,36 @@ class Feedback(ModelBaseModel):
         self.full_clean()
         super().save(*args, **kwargs)
 
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        transaction.on_commit(
+            partial(tombstone_feedback_vectors, self.id),
+            using=self._state.db,
+        )
+
+
+def tombstone_feedback_vectors(feedback_id):
+    """Revoke few-shot retrieval eligibility for a Feedback record's vectors.
+
+    Tombstones ClickHouse ``feedbacks`` rows carrying this record's identity.
+    Best-effort — a CH outage must not block the Postgres delete.
+    """
+    try:
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        db_client = ClickHouseVectorDB()
+        try:
+            db_client.mark_deleted_by_metadata(
+                "feedbacks",
+                {"feedback_id": str(feedback_id)},
+            )
+        finally:
+            db_client.close()
+    except Exception:
+        logger.exception(
+            "feedback_vector_tombstone_failed", feedback_id=str(feedback_id)
+        )
+
 
 class EvalSettings(ModelBaseModel):
     eval_id = models.UUIDField(null=True, blank=True)
@@ -506,6 +556,13 @@ class Evaluator(ModelBaseModel):
 class EvalTemplateVersionManager(models.Manager):
     """Custom manager for EvalTemplateVersion with helper methods."""
 
+    # Sentinel used to distinguish "caller did not pass this column" from
+    # "caller passed None on purpose". When a caller doesn't pass a column,
+    # we snapshot the template's current value. When a caller explicitly
+    # passes None, we store None (e.g. composite versions don't have a
+    # threshold).
+    _UNSET = object()
+
     def create_version(
         self,
         eval_template,
@@ -516,25 +573,68 @@ class EvalTemplateVersionManager(models.Manager):
         user=None,
         organization=None,
         workspace=None,
+        # Column-level snapshot fields. If a caller passes _UNSET (the default),
+        # we copy the value from the template at version-creation time so the
+        # snapshot is faithful regardless of caller behavior. Explicit None or
+        # other values are honored verbatim.
+        output_type_normalized=_UNSET,
+        pass_threshold=_UNSET,
+        choice_scores=_UNSET,
+        error_localizer_enabled=_UNSET,
+        eval_tags=_UNSET,
     ):
         """
         Create a new version for an eval template.
         Auto-increments version_number based on existing versions.
         Uses select_for_update to prevent race conditions.
+
+        Snapshot columns (output_type_normalized, pass_threshold, choice_scores,
+        error_localizer_enabled, eval_tags) default to capturing the current
+        template value at version-creation time. Pass an explicit value to
+        override (e.g. composite versions that don't carry these fields).
         """
         from django.db import transaction
 
+        # Resolve snapshot columns from template defaults when caller didn't
+        # pass them. Done outside the atomic block — these are just attribute
+        # reads on the in-memory eval_template instance.
+        if output_type_normalized is self._UNSET:
+            output_type_normalized = eval_template.output_type_normalized
+        if pass_threshold is self._UNSET:
+            pass_threshold = eval_template.pass_threshold
+        if choice_scores is self._UNSET:
+            choice_scores = eval_template.choice_scores
+        if error_localizer_enabled is self._UNSET:
+            error_localizer_enabled = eval_template.error_localizer_enabled
+        if eval_tags is self._UNSET:
+            # ArrayField → list copy so later mutations to template.eval_tags
+            # don't propagate into the immutable version snapshot.
+            eval_tags = list(eval_template.eval_tags or [])
+
         with transaction.atomic():
-            # Lock the template row to prevent concurrent version creation
+            # Lock the parent template row to serialize concurrent create_version
+            # calls. select_for_update on the versions queryset alone locks the
+            # existing rows, but locks NOTHING when the template has zero
+            # versions yet — two racing first-creates would both proceed and
+            # both flag v1 as default. Locking the template row closes that.
+            # Use no_workspace_objects to avoid the LEFT JOIN that
+            # BaseModelManager adds (Postgres rejects SELECT FOR UPDATE on the
+            # nullable side of an outer join).
+            EvalTemplate.no_workspace_objects.select_for_update().filter(
+                pk=eval_template.pk
+            ).first()
+
             last_version = (
                 self.filter(eval_template=eval_template)
-                .select_for_update()
                 .order_by("-version_number")
                 .values_list("version_number", flat=True)
                 .first()
             )
             next_version = (last_version or 0) + 1
-            is_first = next_version == 1
+
+            self.filter(
+                eval_template=eval_template, is_default=True
+            ).update(is_default=False)
 
             version = self.create(
                 eval_template=eval_template,
@@ -543,17 +643,53 @@ class EvalTemplateVersionManager(models.Manager):
                 config_snapshot=config_snapshot or {},
                 criteria=criteria or "",
                 model=model or "",
-                is_default=is_first,
+                is_default=True,
                 created_by=user,
                 organization=organization,
                 workspace=workspace,
+                output_type_normalized=output_type_normalized,
+                pass_threshold=pass_threshold,
+                choice_scores=choice_scores,
+                error_localizer_enabled=error_localizer_enabled,
+                eval_tags=eval_tags,
             )
 
             return version
 
     def get_default(self, eval_template):
-        """Get the default (active) version for a template."""
-        return self.filter(eval_template=eval_template, is_default=True).first()
+        """Get the default (active) version for a template.
+
+        Falls back to the highest version_number when no version is flagged
+        default (or the flagged one is deleted). version_number
+        auto-increments on save, so the highest number is always the
+        most-recently created version; ordering by it hits the existing
+        (eval_template, version_number) integer index.
+        """
+        version = self.filter(
+            eval_template=eval_template, is_default=True, deleted=False
+        ).first()
+        if version is None:
+            version = (
+                self.filter(eval_template=eval_template, deleted=False)
+                .order_by("-version_number")
+                .first()
+            )
+        return version
+
+    def resolve_for_metric(self, user_eval_metric):
+        """Version that will actually run for a UserEvalMetric.
+
+        Single authoritative home for the pin rule used by every stamping
+        site (playground, dataset single/batch, EvaluationRunner): a live
+        pinned version wins; a soft-deleted pin falls back to the template
+        default; no pin means the template default. Returns None only when
+        the template has no versions at all.
+        """
+        if getattr(user_eval_metric, "pinned_version_id", None):
+            pinned = user_eval_metric.pinned_version
+            if pinned and not getattr(pinned, "deleted", False):
+                return pinned
+        return self.get_default(user_eval_metric.template)
 
 
 class EvalTemplateVersion(ModelBaseModel):
@@ -621,6 +757,51 @@ class EvalTemplateVersion(ModelBaseModel):
         related_name="eval_versions",
     )
 
+    # --- Column-level snapshot fields (TH-4787) ---
+    # These mirror the EvalTemplate columns that aren't part of `config`.
+    # Captured at version-creation time so a restore is lossless. All are
+    # nullable: NULL means "this version pre-dates the snapshot fix" — the
+    # restore views skip restoring NULL fields and leave the template's
+    # current value intact in that case.
+    output_type_normalized = models.CharField(
+        max_length=20,
+        choices=EvalTemplate.OutputTypeNormalized.choices,
+        null=True,
+        blank=True,
+        help_text=(
+            "Normalized output type at this version: pass_fail, percentage, "
+            "deterministic. NULL on pre-snapshot versions."
+        ),
+    )
+    pass_threshold = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Pass threshold at this version (0.0-1.0). NULL on pre-snapshot versions."
+        ),
+    )
+    choice_scores = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Choice→score mapping at this version. NULL on pre-snapshot versions."
+        ),
+    )
+    error_localizer_enabled = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Whether error localization was enabled at this version. NULL "
+            "on pre-snapshot versions."
+        ),
+    )
+    eval_tags = ArrayField(
+        models.CharField(max_length=100),
+        null=True,
+        blank=True,
+        help_text="Eval tags at this version. NULL on pre-snapshot versions.",
+    )
+
     objects = EvalTemplateVersionManager()
 
     # Keep all_objects for accessing all versions including deleted
@@ -634,6 +815,11 @@ class EvalTemplateVersion(ModelBaseModel):
                 fields=["eval_template", "version_number"],
                 condition=Q(deleted=False),
                 name="unique_version_per_template",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_template"],
+                condition=Q(is_default=True, deleted=False),
+                name="unique_default_version_per_template",
             ),
         ]
         indexes = [
@@ -684,6 +870,11 @@ class CompositeEvalChild(ModelBaseModel):
         default=1.0,
         help_text="Weight for weighted aggregation (0.0-10.0)",
     )
+    config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Per-binding child eval runtime config overrides.",
+    )
 
     class Meta:
         db_table = "model_hub_composite_eval_child"
@@ -715,12 +906,13 @@ class EvalGroundTruth(ModelBaseModel):
     Embeddings are generated asynchronously for similarity-based retrieval.
     """
 
-    EMBEDDING_STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
+    class EmbeddingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    EMBEDDING_STATUS_CHOICES = EmbeddingStatus.choices
 
     STORAGE_TYPE_CHOICES = [
         ("db", "Database"),
@@ -774,8 +966,8 @@ class EvalGroundTruth(ModelBaseModel):
     # Embedding fields
     embedding_status = models.CharField(
         max_length=20,
-        choices=EMBEDDING_STATUS_CHOICES,
-        default="pending",
+        choices=EmbeddingStatus.choices,
+        default=EmbeddingStatus.PENDING,
         help_text="Status of embedding generation for this dataset",
     )
     embedding_model = models.CharField(
@@ -817,11 +1009,25 @@ class EvalGroundTruth(ModelBaseModel):
         related_name="eval_ground_truths",
     )
 
+    is_active = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=False)
+    max_examples = models.PositiveSmallIntegerField(default=3)
+    similarity_threshold = models.FloatField(default=0.7)
+
     class Meta:
         db_table = "model_hub_eval_ground_truth"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["eval_template", "created_at"]),
+        ]
+        constraints = [
+            # nulls_distinct=False so NULL workspace rows still collide on (template, org).
+            models.UniqueConstraint(
+                fields=["eval_template", "organization", "workspace"],
+                condition=Q(deleted=False, is_active=True),
+                name="uniq_active_gt_per_tenant_template",
+                nulls_distinct=False,
+            ),
         ]
 
     def __str__(self):

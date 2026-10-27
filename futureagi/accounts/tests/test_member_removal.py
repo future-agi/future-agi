@@ -275,6 +275,10 @@ class TestRemovedUserLogin:
 class TestOrganizationCreate:
     """Tests for POST /accounts/organizations/create/"""
 
+    def _assert_unknown_field(self, response, field_name):
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert field_name in response.json()["details"]
+
     def _get_orgless_client(self, api_client, member_user, auth_client):
         """Helper: remove member and return an authenticated client for them."""
         _remove_member(auth_client, member_user)
@@ -368,6 +372,22 @@ class TestOrganizationCreate:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_create_org_rejects_unknown_request_fields(
+        self, api_client, member_user, auth_client
+    ):
+        """Org-less create accepts only the documented snake_case request body."""
+        client = self._get_orgless_client(api_client, member_user, auth_client)
+
+        response = client.post(
+            "/accounts/organizations/create/",
+            {
+                "organization_name": "My New Org",
+                "organizationName": "legacy camel alias",
+            },
+            format="json",
+        )
+        self._assert_unknown_field(response, "organizationName")
 
 
 # ---------------------------------------------------------------------------

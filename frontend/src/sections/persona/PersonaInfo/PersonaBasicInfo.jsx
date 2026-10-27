@@ -59,7 +59,6 @@ const PersonaBasicInfo = ({ persona }) => {
             sx={{
               display: "-webkit-box",
               WebkitBoxOrient: "vertical",
-              WebkitLineClamp: 2,
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}

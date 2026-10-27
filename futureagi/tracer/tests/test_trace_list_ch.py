@@ -8,6 +8,7 @@ not e2e API tests — the CH infrastructure is already tested elsewhere.
 import uuid
 
 import pytest
+from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 
@@ -18,14 +19,16 @@ def project_id():
 
 
 class TestSearch:
-    def test_search_adds_ilike_filter(self, project_id):
+    def test_search_uses_bounded_latest_state_filter(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="hello world",
         )
-        query, params = builder.build()
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%hello world%"
+        query, params = builder.build_filter_match_query(["trace-a"])
+        assert builder.supports_bounded_filter_scan() is True
+        assert "latest_column_value_0" in query
+        assert "positionUTF8(lowerUTF8" in query
+        assert params["latest_filter_param_0"] == "hello world"
 
     def test_search_none_omits_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -38,15 +41,13 @@ class TestSearch:
         query, params = builder.build()
         assert "ILIKE" not in query
 
-    def test_search_included_in_count_query(self, project_id):
+    def test_search_count_does_not_use_legacy_scan(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="test",
         )
-        # Must call build() first to set start_date/end_date
-        builder.build()
-        count_query, count_params = builder.build_count_query()
-        assert "ILIKE %(search)s" in count_query
+        with pytest.raises(ValueError, match="bounded_search_required"):
+            builder.build_count_query()
 
 
 class TestConfigurableColumns:
@@ -126,20 +127,20 @@ class TestSpanCount:
 
 
 class TestSearchAndColumns:
-    def test_search_with_columns_both_applied(self, project_id):
+    def test_search_with_columns_still_uses_bounded_filter(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="error",
             columns=["status", "latency_ms"],
         )
-        query, params = builder.build()
-        # Search applied
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%error%"
-        # Columns limited
+        query, params = builder.build_filter_match_query(["trace-a"])
+        assert "positionUTF8(lowerUTF8" in query
+        assert params["latest_filter_param_0"] == "error"
+        # Column selection remains presentation metadata; the finite candidate
+        # classifier may safely return a superset of light fields.
+        assert builder.columns == ["status", "latency_ms"]
         assert "status" in query
         assert "latency_ms" in query
-        assert "provider" not in query
 
 
 class TestExistingBehaviorPreserved:
@@ -155,8 +156,10 @@ class TestExistingBehaviorPreserved:
             project_id=project_id, page_number=2, page_size=25
         )
         query, params = builder.build()
-        assert params["limit"] == 26  # page_size + 1
-        assert params["offset"] == 50  # page_number * page_size
+        # Prefix-fetch pagination: LIMIT covers [0, offset + 2*page_size);
+        # the view dedups by trace_id and slices in Python (page_dedup.py).
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 50 + 2 * page_size 25
 
     def test_root_span_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -185,3 +188,194 @@ class TestExistingBehaviorPreserved:
         assert "tracer_eval_logger" in query
         assert params["trace_ids"] == ("t1",)
         assert params["eval_config_ids"] == ("ec1",)
+
+
+class TestEvalAveragingAcrossSpans:
+    """Eval scores are aggregated per (trace, config) across ALL of the trace's
+    spans — not the root span. The averaging happens in ``build_eval_query``
+    (SQL ``avgIf``) and, for CHOICES, in ``pivot_eval_results``."""
+
+    def test_eval_query_averages_across_spans(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
+        query, _ = builder.build_eval_query(["t1"])
+        # SCORE = avg(output_float); PASS_FAIL = avg(output_bool as 0/100).
+        assert "avgIf(\n                output_float" in query
+        assert "output_bool = 1 THEN 100.0 ELSE 0.0" in query
+        # One aggregated row per (trace, config) → averages every span's eval.
+        assert "GROUP BY trace_id, custom_eval_config_id" in query
+
+    _COLS = [
+        "trace_id",
+        "eval_config_id",
+        "avg_score",
+        "pass_rate",
+        "success_count",
+        "error_count",
+        "eval_count",
+        "str_lists",
+        "skipped_count",
+        "running_count",
+        "pending_count",
+        "skipped_reason",
+    ]
+
+    def _row(self, **kw):
+        base = dict.fromkeys(self._COLS)
+        base.update(
+            trace_id="t1",
+            eval_config_id="c1",
+            success_count=0,
+            error_count=0,
+            eval_count=0,
+            str_lists=[],
+            skipped_count=0,
+            running_count=0,
+            pending_count=0,
+        )
+        base.update(kw)
+        return base
+
+    def _pivot(self, rows):
+        return TraceListQueryBuilder.pivot_eval_results(rows, self._COLS)
+
+    def test_choices_percentage_averaged_over_spans(self):
+        # 3 spans: neutral, neutral, joy → neutral 66.67%, joy 33.33%.
+        row = self._row(
+            success_count=3,
+            eval_count=3,
+            str_lists=['["neutral"]', '["neutral"]', '["joy"]'],
+        )
+        pc = self._pivot([row])["t1"]["c1"]["per_choice"]
+        assert pc["neutral"] == 66.67
+        assert pc["joy"] == 33.33
+
+    def test_score_avg_scaled_to_percentage(self):
+        # avg(output_float)=0.6 (0-1 in CH) → 60.0 after ×100.
+        row = self._row(avg_score=0.6, success_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"]["avg_score"] == 60.0
+
+    def test_pass_rate_passthrough(self):
+        # 1 pass + 1 fail across two spans → 50% pass rate.
+        row = self._row(pass_rate=50.0, success_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"]["pass_rate"] == 50.0
+
+    def test_all_errored_yields_error_marker(self):
+        row = self._row(success_count=0, error_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"] == {"error": True}
+
+
+class TestPerfQueryShapes:
+    """Pin the OOM fixes: bounded top-N pagination, page-scoped eval dedup,
+    and time-bounded trace-membership filter subqueries.
+
+    Each shape below was measured against a 10M-span / 2M-trace / 10M-eval
+    stress dataset; the pinned form is the one that stays within tens-to-
+    hundreds of MiB instead of OOM-crashing the ClickHouse server.
+    """
+
+    def test_build_has_no_limit_by_trace_id(self, project_id):
+        """Phase-1 pagination must be a bounded top-N: `LIMIT 1 BY trace_id`
+        forced a full sort of every root span in the window (O(window) memory).
+        The page is deduped by trace_id in Python instead."""
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build()
+        assert "LIMIT 1 BY trace_id" not in query
+        assert "LIMIT %(limit)s" in query
+
+    @pytest.mark.parametrize(
+        ("eval_table", "version_column", "live_projection", "live_predicate"),
+        [
+            (
+                "tracer_eval_logger",
+                "_peerdb_version",
+                "_peerdb_is_deleted AS latest_state_0",
+                "latest_state_0 = 0 AND (latest_state_1 = 0 OR latest_state_1 IS NULL)",
+            ),
+            (
+                "tracer_eval_logger_v2",
+                "_version",
+                "is_deleted AS latest_state_0",
+                "latest_state_0 = 0",
+            ),
+        ],
+    )
+    def test_eval_query_dedups_page_slice_without_table_final(
+        self,
+        project_id,
+        eval_table,
+        version_column,
+        live_projection,
+        live_predicate,
+    ):
+        """Phase-2 must not run table-level FINAL (it merged the WHOLE eval
+        table for a ~50-trace page). Dedup happens on the page-scoped slice via
+        each table's physical version column, then applies its tombstone guard
+        outside `LIMIT 1 BY id` so a deleted latest row cannot resurrect an
+        older live version."""
+        with override_settings(CH25_EVAL_LOGGER_TABLE=eval_table):
+            builder = TraceListQueryBuilder(
+                project_id=project_id,
+                eval_config_ids=["ec1"],
+            )
+            builder.build()
+            query, params = builder.build_eval_query(["t1"])
+
+        assert f"{eval_table} FINAL" not in query
+        assert f"FROM {eval_table}" in query
+        assert f"ORDER BY {version_column} DESC" in query
+        assert live_projection in query
+        assert "LIMIT 1 BY id" in query
+        assert f"WHERE {live_predicate}" in query
+        assert query.index("LIMIT 1 BY id") < query.index(f"WHERE {live_predicate}")
+        # Eval rows may arrive days or months after their trace. Page trace ids
+        # plus config ids are the exact identity scope; applying the trace
+        # window to eval.created_at silently drops legitimate late results.
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" not in query
+        assert "start_date" not in params
+
+    def test_membership_filter_subqueries_are_time_bounded(self, project_id):
+        """Trace-membership wraps (`trace_id IN (SELECT … FROM spans …)`) for
+        system-metric/attr filters must carry the window's created_at lower
+        bound — without it every filtered request scanned the project's entire
+        span history."""
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            filters=[
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4o",
+                    },
+                }
+            ],
+        )
+        query, _ = builder.build()
+        sub = query.split("trace_id IN (")[1]
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sub
+
+    def test_span_date_scope_defaults_off_for_other_builders(self, project_id):
+        """The membership time bound is opt-in: a compiler constructed without
+        `span_date_scope` (every non-trace-list builder) emits byte-identical
+        SQL to before, so callers that never bind %(start_date)s don't break."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        fb = ClickHouseFilterBuilder(table="spans", project_id=project_id)
+        where, _ = fb.translate(
+            [
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4o",
+                    },
+                }
+            ]
+        )
+        assert "created_at >= %(start_date)s" not in where

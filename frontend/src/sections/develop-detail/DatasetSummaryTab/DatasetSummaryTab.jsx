@@ -10,14 +10,12 @@ import { useGetDatasetDetail } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import StyledChip from "./styledChip";
 import PropmtCard from "./PromptCard";
-import AnnotationCard from "./AnnotationCard";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
 const tabOptions = [
   { label: "Evals", value: "evals", disabled: false },
   { label: "Prompt", value: "prompt", disabled: false },
-  { label: "Annotation", value: "annotation", disabled: false },
 ];
 
 const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
@@ -32,21 +30,20 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
     { column_config_only: true },
   );
 
-  const allListItem = data?.columnConfig?.filter((item) => {
+  const allListItem = data?.column_config?.filter((item) => {
     if (currentTab === "evals") {
       return (
-        item.originType !== "evaluation" &&
-        item.originType !== "optimisation" &&
-        item.originType !== "optimisation_evaluation" &&
-        item.originType !== "evaluation_reason"
+        item.origin_type !== "evaluation" &&
+        item.origin_type !== "optimisation" &&
+        item.origin_type !== "optimisation_evaluation" &&
+        item.origin_type !== "evaluation_reason"
       );
     } else if (currentTab === "prompt") {
-      return item.originType === "run_prompt";
+      return item.origin_type === "run_prompt";
     } else {
       return false;
     }
   });
-
   const onFilterChange = (item) => {
     setAppliedFilter((pre) => {
       const newData = pre.some((temp) => temp.id === item.id)
@@ -79,8 +76,8 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
 
   const updatedEvalsSummary = evalsSummary?.map((e) => {
     return {
-      originType: "evaluation",
       ...e,
+      origin_type: "evaluation",
     };
   });
   const columnLists = useMemo(() => {
@@ -128,15 +125,13 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
           </CustomTabs>
         </TabWrapper>
 
-        {currentTab != "annotation" && (
-          <FilterSummary
-            columnLists={columnLists}
-            handleApplyFilter={handleApplyFilter}
-            selectedColumn={selectedColumn}
-            setSelectedColumn={setSelectedColumn}
-            appliedFilter={appliedFilter}
-          />
-        )}
+        <FilterSummary
+          columnLists={columnLists}
+          handleApplyFilter={handleApplyFilter}
+          selectedColumn={selectedColumn}
+          setSelectedColumn={setSelectedColumn}
+          appliedFilter={appliedFilter}
+        />
       </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <Box display="flex" gap={2} marginBottom={2}>
@@ -159,25 +154,17 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
           <EvalCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter
-              ?.filter((e) => e.originType !== "evaluation")
+              ?.filter((e) => e.origin_type !== "evaluation")
               ?.map((item) => item.id)}
             datasetId={datasetId}
             selectedEvals={appliedFilter
-              ?.filter((e) => e.originType === "evaluation")
+              ?.filter((e) => e.origin_type === "evaluation")
               ?.map((e) => e?.id)}
             datasetIndex={datasetIndex}
           />
         </ShowComponent>
         <ShowComponent condition={currentTab === "prompt"}>
           <PropmtCard
-            setCurrentTab={setCurrentTabs}
-            selectedColumns={appliedFilter?.map((item) => item.sourceId)}
-            datasetId={datasetId}
-            datasetIndex={datasetIndex}
-          />
-        </ShowComponent>
-        <ShowComponent condition={currentTab === "annotation"}>
-          <AnnotationCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter?.map((item) => item.sourceId)}
             datasetId={datasetId}

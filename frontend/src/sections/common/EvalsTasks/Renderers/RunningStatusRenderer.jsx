@@ -7,8 +7,10 @@ import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
 import { OutlinedButton } from "src/sections/project-detail/ProjectDetailComponents";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { black, green, orange, red } from "src/theme/palette";
 import { alpha } from "@mui/material";
+import { isResumableTaskStatus } from "../task_status";
 
 const statusColorMap = {
   pending: {
@@ -44,7 +46,8 @@ const CustomIconButton = styled(OutlinedButton)(() => ({
 
 const RunningStatusRenderer = ({ value, data, api }) => {
   const { mutate: pauseEvalTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(data.id)),
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(data.id), {}),
     onSuccess: (_) => {
       api.applyServerSideTransaction({
         update: [{ ...data, status: "paused" }],
@@ -53,10 +56,17 @@ const RunningStatusRenderer = ({ value, data, api }) => {
   });
 
   const { mutate: resumeEvalTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id)),
+    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id), {}),
+    meta: { errorHandled: true },
     onSuccess: (_) => {
       api.applyServerSideTransaction({
         update: [{ ...data, status: "running" }],
+      });
+    },
+    onError: () => {
+      api.refreshServerSide?.();
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
       });
     },
   });
@@ -96,7 +106,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
           }
         />
       </ShowComponent>
-      <ShowComponent condition={value === "paused"}>
+      <ShowComponent condition={isResumableTaskStatus(value)}>
         <CustomIconButton
           variant="outlined"
           onClick={onResume}

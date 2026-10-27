@@ -3,6 +3,19 @@ import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 
+// Escape HTML so that user-/LLM-supplied content cannot inject raw markup
+// (script tags, event handlers, javascript: hrefs) when rendered via
+// dangerouslySetInnerHTML below. Markdown substitutions re-introduce a small
+// allow-list of tags AFTER escaping.
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export default function WidgetMarkdown({ config }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -11,7 +24,7 @@ export default function WidgetMarkdown({ config }) {
   const codeBg = isDark ? "#2d2d2d" : "#f5f5f5";
   const inlineBg = isDark ? "#3a3a3a" : "#f0f0f0";
 
-  const html = content
+  const html = escapeHtml(content)
     .replace(
       /```(\w*)\n([\s\S]*?)```/g,
       `<pre style="background:${codeBg};padding:8px;border-radius:4px;overflow-x:auto;font-size:12px;"><code>$2</code></pre>`,

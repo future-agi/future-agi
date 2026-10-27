@@ -46,6 +46,7 @@ class TestProviderSwitching:
         assert manager.provider == ChatProviderChoices.FUTUREAGI
         assert manager.engine.__class__.__name__ == "FutureAGIChatService"
 
+    @pytest.mark.requires_ee
     def test_explicit_provider_override(self):
         """Verify explicit provider parameter works correctly."""
         manager = ChatServiceManager(
@@ -62,8 +63,8 @@ class TestProviderSwitching:
         )
         assert manager2.provider == ChatProviderChoices.FUTUREAGI
 
-    @pytest.mark.django_db
-    @patch("simulate.services.futureagi_chat.llm_client.generate_simulator_response")
+    @pytest.mark.django_db(transaction=True)
+    @patch("simulate.services.futureagi_chat.service.generate_simulator_response")
     def test_futureagi_end_to_end_flow(
         self, mock_generate, db, organization, workspace
     ):

@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -38,10 +40,9 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { red } from "src/theme/palette";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
-  extractAttributeFilters,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -50,7 +51,9 @@ import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
 import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
-import { EvalPickerDrawer } from "../../EvalPicker";
+import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // ── Configured Eval Card ──
 
@@ -88,7 +91,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -162,6 +165,7 @@ const EditTaskDrawerV2Content = ({
   });
 
   const project = useWatch({ control, name: "project" });
+  const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const formValues = useWatch({ control });
 
   const { field: startDateField } = useController({
@@ -184,7 +188,8 @@ const EditTaskDrawerV2Content = ({
     enabled: !!observeId,
   });
 
-  // Debounced filters for API calls
+  // Debounced filters for configured-eval lookup only. Attribute mapping uses
+  // the exact retained-key cursor below and is independent of task filters.
   const _filters = useMemo(() => {
     return getNewTaskFilters(formValues, project, true).filters || {};
   }, [formValues, project]);
@@ -197,7 +202,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -209,24 +214,16 @@ const EditTaskDrawerV2Content = ({
     if (configuredEvalList) replace(configuredEvalList);
   }, [configuredEvalList, replace]);
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify(objectCamelToSnake(filters)) },
-      }),
-    select: (d) => d.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
+    enabled: Boolean(project),
   });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Fetch project list
   const { data: projectsList } = useQuery({
@@ -260,10 +257,11 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-      const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observationType")
-        .map((f) => f?.filterConfig?.filterValue);
+      const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+        data,
+        data.project,
+        true,
+      );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -273,18 +271,18 @@ const EditTaskDrawerV2Content = ({
             new Date(startDateField.value).toISOString(),
             new Date(endDateField.value).toISOString(),
           ],
-          ...(observationTypes?.length > 0
-            ? { observation_type: observationTypes }
-            : {}),
+          ...systemFilters,
           ...(attributeFilters?.length > 0
             ? { span_attributes_filters: attributeFilters }
             : {}),
         },
-        observation_type: observationTypes,
         project_id: data.project,
         name: data.name,
         project: data.project,
         run_type: data.runType,
+        // row_type intentionally omitted — immutable after task creation.
+        // The BE serializer rejects it on PATCH; the picker is also
+        // locked on edit (see TaskConfigPanel rowTypeLocked).
         sampling_rate: data.samplingRate,
         spans_limit: String(data.spansLimit),
         edit_type: editType,
@@ -303,6 +301,8 @@ const EditTaskDrawerV2Content = ({
     async (evalConfig) => {
       const tplId = evalConfig.templateId || evalConfig.template_id;
       const existingId = evalConfig.id;
+      // Use serializeEvalConfig so function-params land at config.params.
+      const serialized = serializeEvalConfig(evalConfig);
       try {
         let id;
         if (existingId) {
@@ -313,7 +313,7 @@ const EditTaskDrawerV2Content = ({
               name: evalConfig.name,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
           );
@@ -327,7 +327,7 @@ const EditTaskDrawerV2Content = ({
               eval_template: tplId,
               model: evalConfig.model || null,
               mapping: evalConfig.mapping,
-              config: evalConfig.config || {},
+              config: serialized.config,
               filters: getNewTaskFilters(formValues, observeId, true).filters,
               error_localizer: evalConfig.errorLocalizerEnabled || false,
             },
@@ -340,8 +340,13 @@ const EditTaskDrawerV2Content = ({
           template_id: tplId,
           templateId: tplId,
         });
-      } catch {
-        addEval({ ...evalConfig, template_id: tplId, templateId: tplId });
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result ||
+            err?.message ||
+            "Failed to save evaluation",
+          { variant: "error" },
+        );
       }
     },
     [project, formValues, observeId, addEval],
@@ -654,7 +659,11 @@ const EditTaskDrawerV2Content = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />
@@ -684,7 +693,14 @@ const EditTaskDrawerV2 = ({
   const theme = useTheme();
   const taskId = selectedRow?.id;
 
-  const { data: taskDetails } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId && open,
   });
 
@@ -711,6 +727,40 @@ const EditTaskDrawerV2 = ({
         BackdropProps: { style: { backgroundColor: "rgba(0, 0, 0, 0.3)" } },
       }}
     >
+      {isLoading && !taskDetails && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )}
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 2, flexShrink: 0 }}
+        >
+          {getSafeActionErrorMessage(
+            error,
+            "Task details could not be loaded.",
+          )}
+          {taskDetails ? " Existing task details are still shown." : ""}
+        </Alert>
+      )}
       {taskDetails && (
         <EditTaskDrawerV2Content
           selectedRow={selectedRow}

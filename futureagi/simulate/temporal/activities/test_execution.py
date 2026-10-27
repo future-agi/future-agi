@@ -14,10 +14,11 @@ import json
 import os
 from typing import Any
 
+from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.temporal.signals import SIGNAL_CANCEL_CALL
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     CancelPendingCallsInput,
     CancelPendingCallsOutput,
@@ -203,8 +204,11 @@ def _build_voice_settings(
     """Build voice settings from persona data and simulator agent defaults."""
     import os
 
-    from ee.voice.constants.voice_catalog import resolve_voice_id
-    from ee.voice.constants.voice_mapper import select_voice_id
+    try:
+        from ee.voice.constants.voice_catalog import resolve_voice_id
+        from ee.voice.constants.voice_mapper import select_voice_id
+    except ImportError:
+        return {}
     from tracer.models.observability_provider import ProviderChoices
 
     # Voice_id format is determined by the system voice provider (the
@@ -320,9 +324,13 @@ async def create_call_execution_records(
         from simulate.models import Scenarios
         from simulate.models.run_test import CreateCallExecution
         from simulate.models.test_execution import CallExecution, TestExecution
-        from ee.voice.utils.prompt_builder import generate_dynamic_prompt
         from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
         from tfc.temporal.common.heartbeat import Heartbeater
+
+        try:
+            from ee.voice.utils.prompt_builder import generate_dynamic_prompt
+        except ImportError:
+            generate_dynamic_prompt = None
 
         test_execution = await TestExecution.objects.select_related(
             "run_test__workspace",
@@ -335,7 +343,6 @@ async def create_call_execution_records(
         snapshot = agent_version.configuration_snapshot if agent_version else {}
 
         call_ids = []
-        batch_size = 50  # Smaller batches due to extra processing per record
         total_to_create = sum(len(s.get("row_ids", [])) or 1 for s in input.scenarios)
 
         # Use heartbeat for long-running record creation
@@ -364,17 +371,17 @@ async def create_call_execution_records(
                         row_data = {}
                         if row_id:
                             try:
-                                row = await Row.objects.aget(id=row_id)
+                                await Row.objects.aget(id=row_id)
                                 # Fetch cells for this row to build row_data dict
-                                cells = Cell.objects.filter(
-                                    row_id=row_id
-                                ).select_related("column")
-                                async for cell in cells:
+                                async for cell in (
+                                    Cell.objects.filter(row_id=row_id)
+                                    .select_related("column")
+                                    .aiterator()
+                                ):
                                     if cell.column and cell.column.name:
                                         value = cell.value
-                                        if (
-                                            cell.column.name == "persona"
-                                            and isinstance(value, str)
+                                        if cell.column.name == "persona" and isinstance(
+                                            value, str
                                         ):
                                             try:
                                                 value = json.loads(value)
@@ -432,7 +439,11 @@ async def create_call_execution_records(
                             "call_direction": call_direction,
                             "user_assistant_id": snapshot.get("assistant_id"),
                             "user_phone_number": call_execution_phone_number,
-                            "user_api_key": snapshot.get("api_key"),
+                            "user_api_key": await sync_to_async(
+                                resolve_api_key_for_version
+                            )(agent_version)
+                            if agent_version
+                            else None,
                         }
 
                         # Build call_metadata for CallExecution
@@ -460,7 +471,12 @@ async def create_call_execution_records(
 
                         # Generate system prompt using dynamic prompt builder
                         system_prompt = base_prompt
-                        if row_data and simulator_agent and agent_version:
+                        if (
+                            generate_dynamic_prompt
+                            and row_data
+                            and simulator_agent
+                            and agent_version
+                        ):
                             try:
                                 system_prompt = generate_dynamic_prompt(
                                     prompt_template=base_prompt,
@@ -629,29 +645,40 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
             "COMPLETED",
             "completed",
         ]:
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
-            )
-            await test_execution.asave(
-                update_fields=[
-                    "status",
-                    "completed_calls",
-                    "failed_calls",
-                    "completed_at",
-                    "picked_up_by_executor",
-                    "eval_explanation_summary_status",
-                ]
-            )
+            from simulate.services.scoring_status import SETTLE_FROM_STATUSES
 
-            try:
-                from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-                run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                activity.logger.info(
-                    f"Triggered eval summary for test_execution={input.test_execution_id}"
+            # The scoring sweeper's settle may have completed this run in the
+            # seconds before this activity, and a stop or a failure may have
+            # ended it. Only a run still open is completed here, so its
+            # summary is built once and a finished run is not stamped again.
+            moved = await TestExecution.objects.filter(
+                id=test_execution.id, status__in=SETTLE_FROM_STATUSES
+            ).aupdate(
+                status=test_execution.status,
+                completed_calls=test_execution.completed_calls,
+                failed_calls=test_execution.failed_calls,
+                completed_at=test_execution.completed_at,
+                picked_up_by_executor=False,
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+            )
+            if not moved:
+                # Whoever ended the run owns its status, counts and summary;
+                # the workflow still gives up its claim on the run.
+                await TestExecution.objects.filter(id=test_execution.id).aupdate(
+                    picked_up_by_executor=False
                 )
-            except Exception as e:
-                activity.logger.warning(f"Failed to trigger eval summary: {str(e)}")
+            else:
+                try:
+                    from simulate.tasks.eval_summary_tasks import (
+                        run_eval_summary_task,
+                    )
+
+                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                    activity.logger.info(
+                        f"Triggered eval summary for test_execution={input.test_execution_id}"
+                    )
+                except Exception as e:
+                    activity.logger.warning(f"Failed to trigger eval summary: {str(e)}")
         else:
             await test_execution.asave(
                 update_fields=[

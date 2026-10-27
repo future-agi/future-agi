@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 )
 
 // Provider is the interface for calling LLM providers.
@@ -26,6 +28,14 @@ type Provider interface {
 
 	// Close releases resources held by this provider.
 	Close() error
+}
+
+// ClientTimeoutReporter is implemented by providers that state the client
+// timeout they enforce. That timeout bounds the whole exchange, the streamed
+// body included, so it caps the request's own deadline: the gateway reports
+// whichever of the two is shorter as x-agentcc-timeout-ms.
+type ClientTimeoutReporter interface {
+	ClientTimeout() time.Duration
 }
 
 // EmbeddingProvider is implemented by providers that support embedding generation.
@@ -73,21 +83,6 @@ type TranslationProvider interface {
 // RerankProvider is implemented by providers that support document reranking.
 type RerankProvider interface {
 	Rerank(ctx context.Context, req *models.RerankRequest) (*models.RerankResponse, error)
-}
-
-// BatchProvider is implemented by providers that support native batch processing
-// (e.g., OpenAI Batch API). If not implemented, the gateway falls back to
-// concurrent request-level processing.
-type BatchProvider interface {
-	// SubmitBatch submits a batch of requests to the provider's native batch API.
-	// Returns the provider-assigned batch ID.
-	SubmitBatch(ctx context.Context, requests []models.BatchRequest) (string, error)
-
-	// GetBatch retrieves the current status of a provider batch.
-	GetBatch(ctx context.Context, batchID string) (*models.ProviderBatchStatus, error)
-
-	// CancelBatch cancels a provider batch.
-	CancelBatch(ctx context.Context, batchID string) error
 }
 
 // AssistantsProvider is implemented by providers that support the OpenAI Assistants API.
@@ -152,6 +147,15 @@ type RealtimeProvider interface {
 	RealtimeURL(model string) (string, error)
 	RealtimeHeaders(model string) (http.Header, error)
 	RealtimeSubprotocols() []string
+}
+
+// SpeechRelayProvider is implemented by speech vendors reached over their own streaming
+// WebSocket APIs, which the gateway relays with the platform's credential.
+type SpeechRelayProvider interface {
+	// Vendor names the vendor whose API is served, at /{vendor}/...
+	Vendor() string
+	// Open prepares the upstream connection and meter for one vendor path, query and headers.
+	Open(path string, query url.Values, header http.Header) (*speech.Session, error)
 }
 
 // VectorStoresProvider is implemented by providers that support the OpenAI Vector Stores API.

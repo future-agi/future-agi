@@ -176,7 +176,7 @@ describe("validateNodeForSave", () => {
           content: [
             {
               type: "image_url",
-              imageUrl: { url: "https://example.com/img.png" },
+              image_url: { url: "https://example.com/img.png" },
             },
           ],
         },
@@ -191,7 +191,10 @@ describe("validateNodeForSave", () => {
         {
           role: "user",
           content: [
-            { type: "pdf_url", pdfUrl: { url: "https://example.com/doc.pdf" } },
+            {
+              type: "pdf_url",
+              pdf_url: { url: "https://example.com/doc.pdf" },
+            },
           ],
         },
       ];
@@ -207,7 +210,7 @@ describe("validateNodeForSave", () => {
           content: [
             {
               type: "audio_url",
-              audioUrl: { url: "https://example.com/audio.mp3" },
+              audio_url: { url: "https://example.com/audio.mp3" },
             },
           ],
         },

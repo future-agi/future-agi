@@ -21,6 +21,7 @@ from typing import Optional
 
 from temporalio import workflow
 from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import ApplicationError
 from temporalio.workflow import ParentClosePolicy
 
 from simulate.temporal.constants import (
@@ -387,9 +388,17 @@ class TestExecutionWorkflow:
         between each sub-batch to prevent thundering-herd 503s from LiveKit
         agent workers when many calls are initiated simultaneously.
         """
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        try:
+            from ee.voice.temporal.workflows.call_execution_workflow import (
+                CallExecutionWorkflow,
+            )
+        except ImportError as exc:
+            raise ApplicationError(
+                "Voice call execution workflow is unavailable in this build "
+                "(requires the `voice` extra / Enterprise Edition).",
+                type="VOICE_EXTRA_UNAVAILABLE",
+                non_retryable=True,
+            ) from exc
 
         for i, call_id in enumerate(call_ids):
             # Stagger: pause between sub-batches to let agent workers accept dispatches

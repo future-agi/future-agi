@@ -23,6 +23,7 @@ import {
 import { EDGE_STATE, NODE_X_OFFSET } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
 import NodeSelectionPopper from "../../components/NodeSelectionPopper";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
 import { useWorkflowRunStoreShallow } from "../../store";
 import useAddNodeOptimistic from "../hooks/useAddNodeOptimistic";
 import "../agent-graph.css";
@@ -69,6 +70,7 @@ export default function AnimatedEdge({
   const { ensureDraft } = useSaveDraftContext();
   const { setCenter, getZoom, getNode } = useReactFlow();
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
 
   const { addNode } = useAddNodeOptimistic();
 
@@ -132,7 +134,7 @@ export default function AnimatedEdge({
   const handleDelete = useCallback(
     async (e) => {
       e.stopPropagation();
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       // Always apply optimistic deletion first
       const { edges: prevEdges, nodes } = useAgentPlaygroundStore.getState();
@@ -175,14 +177,19 @@ export default function AnimatedEdge({
       onEdgesChange,
       setGraphData,
       isWorkflowRunning,
+      isReadOnly,
       queryClient,
     ],
   );
 
-  const handleAddClick = useCallback((e) => {
-    e.stopPropagation();
-    setPopperOpen(true);
-  }, []);
+  const handleAddClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      if (isReadOnly) return;
+      setPopperOpen(true);
+    },
+    [isReadOnly],
+  );
 
   const handlePopperClose = useCallback(() => {
     setPopperOpen(false);
@@ -191,17 +198,25 @@ export default function AnimatedEdge({
 
   const handleNodeSelect = useCallback(
     (nodeType, nodeTemplateId, initialConfig) => {
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       const sourceNode = getNode(source);
+      if (!sourceNode) {
+        // Only reachable from a *deferred* Agent insert (TH-4549 setup dialog):
+        // the source node was deleted while the dialog was open. Never attach
+        // a new node to a source that no longer exists (PRD R-13).
+        enqueueSnackbar(
+          "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+          { variant: "warning" },
+        );
+        return;
+      }
 
       // Position the new node branching from the source
-      const position = sourceNode
-        ? {
-            x: sourceNode.position.x + NODE_X_OFFSET,
-            y: sourceNode.position.y,
-          }
-        : undefined;
+      const position = {
+        x: sourceNode.position.x + NODE_X_OFFSET,
+        y: sourceNode.position.y,
+      };
 
       // One-to-many: add new node with edge from source, keep existing edge intact
       addNode({
@@ -223,10 +238,19 @@ export default function AnimatedEdge({
       setPopperOpen(false);
       setHovered(false);
     },
-    [source, isWorkflowRunning, getNode, getZoom, setCenter, addNode],
+    [
+      source,
+      isWorkflowRunning,
+      isReadOnly,
+      getNode,
+      getZoom,
+      setCenter,
+      addNode,
+    ],
   );
 
-  const showActions = hovered && !preview && !isActive && !isWorkflowRunning;
+  const showActions =
+    hovered && !preview && !isActive && !isWorkflowRunning && !isReadOnly;
 
   // When nodes are close, shift action buttons slightly above the edge to avoid
   // overlapping the source node's output label.

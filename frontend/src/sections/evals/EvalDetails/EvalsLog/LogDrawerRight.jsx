@@ -19,6 +19,7 @@ import CellMarkdown from "src/sections/common/CellMarkdown";
 import JsonCodeView from "src/components/code/json-code-view";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
+import { canonicalEntries } from "src/utils/utils";
 
 const LogDrawerRight = ({
   output,
@@ -28,6 +29,17 @@ const LogDrawerRight = ({
 }) => {
   const theme = useTheme();
   const { role } = useAuthContext();
+  const errorAnalysis = error?.error_analysis || error?.errorAnalysis;
+  const selectedInputKey = error?.selected_input_key || error?.selectedInputKey;
+  const canonicalErrorAnalysis = Object.fromEntries(
+    canonicalEntries(errorAnalysis || {}),
+  );
+  const errorDatapoint = {
+    ...error,
+    selected_input_key: selectedInputKey,
+    input_data: error?.input_data || error?.inputData,
+    input_types: error?.input_types || error?.inputTypes,
+  };
 
   return (
     <Box
@@ -41,6 +53,7 @@ const LogDrawerRight = ({
       <Box
         sx={{
           flex: 1,
+          display: "flex",
           flexDirection: "column",
           gap: "15px",
           overflowY: "auto",
@@ -119,6 +132,8 @@ const LogDrawerRight = ({
               border: `1px solid ${alpha(theme.palette.text.disabled, 0.2)}`,
               padding: "16px",
               borderRadius: "4px",
+              maxHeight: "300px",
+              overflowY: "auto",
             }}
           >
             <Typography fontWeight={400} fontSize={14} color="text.primary">
@@ -161,23 +176,23 @@ const LogDrawerRight = ({
           >
             {error &&
               typeof error === "object" &&
-              error?.errorAnalysis &&
+              errorAnalysis &&
               (() => {
-                return Object.entries(error?.errorAnalysis)
+                return canonicalEntries(errorAnalysis)
                   .filter(([_key, value]) => value.length)
                   .map(([key, value]) => (
                     <ErrorLocalizeCard
                       key={key}
                       value={value}
-                      column={error?.selectedInputKey}
+                      column={selectedInputKey || key}
                       tabValue="raw"
-                      datapoint={error}
+                      datapoint={errorDatapoint}
                     />
                   ));
               })()}
           </Box>
         </Box>
-        {error && typeof error === "object" && error?.errorAnalysis && (
+        {error && typeof error === "object" && errorAnalysis && (
           <Box
             sx={{
               display: "flex",
@@ -243,7 +258,7 @@ const LogDrawerRight = ({
                   },
                 }}
               >
-                <JsonCodeView data={error?.errorAnalysis || {}} />
+                <JsonCodeView data={canonicalErrorAnalysis} />
               </Box>
             </Box>
           </Box>

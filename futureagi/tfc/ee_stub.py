@@ -3,6 +3,8 @@ import logging
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_errors import build_error_envelope
+
 _logger = logging.getLogger(__name__)
 
 
@@ -46,15 +48,16 @@ class EEFeatureNotAvailableView(APIView):
     def _upgrade_response(self, request, *args, **kwargs):
         feature = kwargs.get("feature", "this feature")
         return Response(
-            {
-                "status": False,
-                "error": {
-                    "code": "ENTITLEMENT_DENIED",
-                    "message": "This feature is not available. Upgrade your plan.",
-                    "detail": {"feature": feature},
+            build_error_envelope(
+                "This feature is not available. Upgrade your plan.",
+                status_code=402,
+                error_type="entitlement_error",
+                code="ENTITLEMENT_DENIED",
+                details={"feature": [feature]},
+                extra={
+                    "upgrade_required": True,
                 },
-                "upgrade_required": True,
-            },
+            ),
             status=402,
         )
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 func isInferenceProfile(modelID string) bool {
@@ -242,6 +243,10 @@ func buildConverseOutputFormat(rf *models.ResponseFormat) *converseTextFormat {
 		name = wrapper.Name
 		description = wrapper.Description
 	}
+	// Bedrock's Converse outputConfig requires `additionalProperties: false` on
+	// every `object` schema. Inject it transparently so callers can ship
+	// OpenAI-shape json_schema without provider-specific tweaks.
+	schema = ensureObjectAdditionalPropertiesFalse(schema)
 	return &converseTextFormat{
 		Type: "json_schema",
 		Structure: converseTextStructure{
@@ -453,7 +458,7 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock converse: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -699,4 +704,46 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 	}
 
 	return nil, false, nil
+}
+
+// ensureObjectAdditionalPropertiesFalse walks a JSON schema tree and adds
+// `additionalProperties: false` to every `object` node that lacks it. Bedrock's
+// Converse API rejects object schemas missing this field. Callers ship
+// OpenAI-shape json_schema (where the field is optional) and we normalize here.
+func ensureObjectAdditionalPropertiesFalse(schema json.RawMessage) json.RawMessage {
+	if len(schema) == 0 {
+		return schema
+	}
+	var node interface{}
+	if err := json.Unmarshal(schema, &node); err != nil {
+		return schema
+	}
+	walked := walkSchemaAddObjectAP(node)
+	out, err := json.Marshal(walked)
+	if err != nil {
+		return schema
+	}
+	return out
+}
+
+func walkSchemaAddObjectAP(n interface{}) interface{} {
+	switch v := n.(type) {
+	case map[string]interface{}:
+		if t, ok := v["type"].(string); ok && t == "object" {
+			if _, has := v["additionalProperties"]; !has {
+				v["additionalProperties"] = false
+			}
+		}
+		for k, vv := range v {
+			v[k] = walkSchemaAddObjectAP(vv)
+		}
+		return v
+	case []interface{}:
+		for i, x := range v {
+			v[i] = walkSchemaAddObjectAP(x)
+		}
+		return v
+	default:
+		return n
+	}
 }

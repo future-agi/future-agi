@@ -49,13 +49,13 @@ const ConfigureStepTTSItem = ({
   const { data: runPromptOptions } = useRunPromptOptions();
   const toolsOptions = useMemo(() => {
     return (
-      runPromptOptions?.availableTools?.map((t) => ({
+      runPromptOptions?.available_tools?.map((t) => ({
         label: t.name,
         value: t.id,
         tool: t,
       })) ?? []
     );
-  }, [runPromptOptions?.availableTools]);
+  }, [runPromptOptions?.available_tools]);
   const watchedMessages =
     useWatch({
       name: `promptConfig.${index}.messages`,

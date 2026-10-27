@@ -41,7 +41,7 @@ const AgentConfigurationStep = ({ control, getValues }) => {
         <Typography
           typography="s1"
           fontWeight="fontWeightRegular"
-          color="text.disabled"
+          color="text.secondary"
         >
           Configure specific settings and provider details
         </Typography>

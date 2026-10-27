@@ -43,8 +43,8 @@ export function useEvaluationKeys(
 
   // Compute evaluation mapping schema
   const projectEvals = useMemo(
-    () => formatProjectEvals(projectEvalsData?.evalConfigs) || [],
-    [projectEvalsData?.evalConfigs],
+    () => formatProjectEvals(projectEvalsData?.eval_configs) || [],
+    [projectEvalsData?.eval_configs],
   );
 
   const shouldCompute = alwaysCompute || currentStep === 2;

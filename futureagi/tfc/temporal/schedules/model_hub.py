@@ -4,13 +4,11 @@ Model Hub Temporal schedules.
 These replace the Celery Beat schedules for model_hub tasks.
 """
 
-from typing import List
-
 from tfc.temporal.schedules.config import ScheduleConfig
 
 # Model Hub schedules (migrated from Celery Beat)
 # Note: execute_run_prompt removed - workflows are now triggered directly from API
-MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
+MODEL_HUB_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
         schedule_id="eval-evaluation",
         activity_name="execute_evaluation",
@@ -52,5 +50,31 @@ MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
         interval_seconds=300,  # 5 minutes
         queue="default",
         description="Recover run prompts stuck in RUNNING status",
+    ),
+    ScheduleConfig(
+        schedule_id="annotation-automation-rules",
+        activity_name="evaluate_due_automation_rules",
+        interval_seconds=3600,  # Due checker for hourly/daily/weekly/monthly rules
+        queue="default",
+        description="Evaluate due annotation automation rules",
+    ),
+    ScheduleConfig(
+        schedule_id="annotation-realtime-digest",
+        activity_name="send_annotation_realtime_digest_task",
+        # 15-min cron. Per-user throttle of 1/hour is enforced in the
+        # activity body so users see at most 4 ticks/hour but at most one
+        # email/hour even if they accrue items continuously.
+        interval_seconds=900,
+        queue="default",
+        description="Realtime annotation digest (new items since last email)",
+    ),
+    ScheduleConfig(
+        schedule_id="annotation-daily-digest",
+        activity_name="send_annotation_daily_digest_task",
+        # Hourly cron; the activity decides per-user whether the user's
+        # local hour matches their preferred digest hour (default 9).
+        interval_seconds=3600,
+        queue="default",
+        description="Daily annotation digest at user-local morning",
     ),
 ]

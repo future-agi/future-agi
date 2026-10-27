@@ -11,8 +11,7 @@ without overriding ``LANGFUSE_OTEL_TRACES_EXPORT_PATH``.
 
 from django.urls import path
 
-from tracer.views.http_otlp import OTLPTraceHTTPView
-
 urlpatterns = [
-    path("v1/traces", OTLPTraceHTTPView.as_view(), name="otel-compat-traces"),
+    # Migrated to fi-collector service (June 2026)
+    # path("v1/traces", OTLPTraceHTTPView.as_view(), name="otel-compat-traces"),
 ]

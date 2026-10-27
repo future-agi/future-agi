@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 from typing import Any
@@ -11,6 +12,14 @@ from agentic_eval.core_evals.fi_utils.fi_code_base import Step
 logger = structlog.get_logger(__name__)
 
 
+# Entry-point signatures: every code eval must define `evaluate(...)` or `main(...)`.
+_PY_ENTRY = re.compile(r"\bdef\s+(evaluate|main)\s*\(")
+_JS_ENTRY = re.compile(r"\bfunction\s+(evaluate|main)\s*\(")
+# Line-anchored fallback — avoids matching arbitrary substrings inside Python
+# string literals / sets of keyword tokens (see code_bleu, tool_call_accuracy).
+_JS_FALLBACK = re.compile(r"^\s*(function\s|const\s|let\s|var\s)", re.MULTILINE)
+
+
 class CodeExecution(Step):
     """
     Step that executes user-provided code in a sandboxed environment.
@@ -20,32 +29,26 @@ class CodeExecution(Step):
 
     Attributes:
         code: The code to execute.
-        language: The programming language ('python' or 'javascript').
+        language: 'python' or 'javascript'. None triggers auto-detect.
     """
 
     code: str
-    language: str = "python"
+    language: str | None = None
     name: str | None = None
 
     def detect_language(self, code: str) -> str:
-        """Detect the programming language based on code content."""
-        if any(
-            keyword in code.lower()
-            for keyword in [
-                "function",
-                "var ",
-                "let ",
-                "const ",
-                "console.log",
-                "=>",
-            ]
-        ):
+        """Detect language by entry-point shape (`def evaluate` vs `function evaluate`).
+
+        Substring matching on ``"function"`` / ``"const"`` / ``"let"`` would
+        mis-route Python evals that mention those words as data (e.g. inside
+        a keyword set) to the JS executor.
+        """
+        if _JS_ENTRY.search(code):
             return "javascript"
-        elif any(
-            keyword in code.lower()
-            for keyword in ["def ", "import ", "from ", "class ", "if __name__"]
-        ):
+        if _PY_ENTRY.search(code):
             return "python"
+        if _JS_FALLBACK.search(code):
+            return "javascript"
         return "python"
 
     def execute_python(self, input_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -109,8 +112,9 @@ class CodeExecution(Step):
         if not isinstance(input_data, dict):
             raise TypeError("Input data must be a dictionary.")
 
-        # Auto-detect language if not explicitly set
-        if not hasattr(self, "language") or self.language == "python":
+        # Only sniff when the caller didn't tell us — explicit "python"
+        # / "javascript" must be honoured even if the body looks ambiguous.
+        if not self.language:
             self.language = self.detect_language(self.code)
 
         if self.language == "javascript":

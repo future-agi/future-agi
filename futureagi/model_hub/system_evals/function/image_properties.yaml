@@ -43,7 +43,7 @@ config:
       default: null
       nullable: true
   config_params_desc:
-    text: Image file path or base64 string
+    text: Image as URL, file path, or base64 string
     expected_width: Exact expected width in pixels
     expected_height: Exact expected height in pixels
     min_width: Minimum width in pixels

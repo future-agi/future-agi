@@ -22,6 +22,7 @@ import AnnotationSidebarContent from "src/components/traceDetailDrawer/Annotatio
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
 // import ErrorAnalysis from "src/sections/traceDetailDrawer/ErrorAnalysis";
 
 const CallLogSideDrawerChild = ({ data }) => {
@@ -32,7 +33,7 @@ const CallLogSideDrawerChild = ({ data }) => {
   const { agentDefinitionId: urlAgentDefinitionId, observeId } = useParams();
   const resolvedProjectId = observeId || data?.projectId;
   const filteredTranscript = useMemo(() => {
-    return data?.transcript?.filter((item) => item.speakerRole !== "system");
+    return data?.transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   const theme = useTheme();
 
@@ -61,6 +62,18 @@ const CallLogSideDrawerChild = ({ data }) => {
     ) ||
     data?.observation_span?.find((s) => !s?.parent_span_id) ||
     data?.observation_span?.[0];
+  const traceId = data?.trace_id || data?.id;
+  const annotationSources = useMemo(
+    () =>
+      buildVoiceCallAnnotationSources({
+        traceId,
+        rootSpanId: rootObsSpan?.id,
+        module: data?.module,
+        callExecutionId: data?.id,
+        projectId: data?.project_id,
+      }),
+    [traceId, rootObsSpan?.id, data?.module, data?.id, data?.project_id],
+  );
 
   return (
     <Box
@@ -244,13 +257,7 @@ const CallLogSideDrawerChild = ({ data }) => {
         }}
       >
         <AnnotationSidebarContent
-          sources={
-            rootObsSpan?.id
-              ? [{ sourceType: "observation_span", sourceId: rootObsSpan.id }]
-              : (data?.trace_id || data?.id)
-              ? [{ sourceType: "trace", sourceId: data?.trace_id || data?.id }]
-              : []
-          }
+          sources={annotationSources}
           onClose={() => setAnnotationSidebarOpen(false)}
           onAddLabel={
             urlAgentDefinitionId || resolvedProjectId

@@ -17,11 +17,12 @@ import (
 // FutureAGIGuardrail calls Future AGI's evaluation API for ML-based guardrail checks.
 type FutureAGIGuardrail struct {
 	name      string
-	evalID    string
+	evalIDs   []string
 	apiKey    string
 	secretKey string
 	baseURL   string
 	callType  string
+	maxTokens int
 	retry     int
 	client    *http.Client
 }
@@ -33,12 +34,14 @@ type evalRequest struct {
 }
 
 type evalInput struct {
-	Input    string `json:"input"`
-	CallType string `json:"call_type,omitempty"`
+	Input     string `json:"input"`
+	CallType  string `json:"call_type,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
 }
 
 type evalConfig struct {
-	CallType string `json:"call_type,omitempty"`
+	CallType  string `json:"call_type,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
 }
 
 // evalResponse is the top-level API response.
@@ -62,19 +65,38 @@ type evaluation struct {
 // New creates a FutureAGIGuardrail from rule config.
 func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	g := &FutureAGIGuardrail{
-		name:     name,
-		baseURL:  "https://api.futureagi.com",
-		callType: "protect",
-		retry:    0,
-		client:   &http.Client{Timeout: 15 * time.Second},
+		name:      name,
+		baseURL:   "https://api.futureagi.com",
+		callType:  "protect",
+		maxTokens: 10,
+		retry:     0,
+		client:    &http.Client{Timeout: 15 * time.Second},
 	}
 
 	if cfg == nil {
 		return g
 	}
 
-	if v, ok := cfg["eval_id"].(string); ok {
-		g.evalID = v
+	if v, ok := cfg["eval_ids"]; ok {
+		switch arr := v.(type) {
+		case []interface{}:
+			for _, item := range arr {
+				if s, ok := item.(string); ok && s != "" {
+					g.evalIDs = append(g.evalIDs, s)
+				}
+			}
+		case []string:
+			for _, s := range arr {
+				if s != "" {
+					g.evalIDs = append(g.evalIDs, s)
+				}
+			}
+		}
+	}
+	if len(g.evalIDs) == 0 {
+		if v, ok := cfg["eval_id"].(string); ok && v != "" {
+			g.evalIDs = []string{v}
+		}
 	}
 	if v, ok := cfg["api_key"].(string); ok {
 		g.apiKey = expandEnv(v)
@@ -94,6 +116,14 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 			g.retry = n
 		case float64:
 			g.retry = int(n)
+		}
+	}
+	if v, ok := cfg["max_tokens"]; ok {
+		switch n := v.(type) {
+		case int:
+			g.maxTokens = n
+		case float64:
+			g.maxTokens = int(n)
 		}
 	}
 	if v, ok := cfg["timeout"].(string); ok {
@@ -132,7 +162,7 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
 		}
 	}
-	if g.evalID == "" {
+	if len(g.evalIDs) == 0 {
 		return &guardrails.CheckResult{
 			Pass:    true,
 			Message: "futureagi guardrail: missing eval_id, skipping",
@@ -222,13 +252,15 @@ func extractContentText(raw json.RawMessage) string {
 
 // callAPI sends the evaluation request to Future AGI.
 func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalResponse, error) {
+	configMap := make(map[string]evalConfig, len(g.evalIDs))
+	for _, id := range g.evalIDs {
+		configMap[id] = evalConfig{CallType: g.callType}
+	}
 	payload := evalRequest{
 		Inputs: []evalInput{
-			{Input: text, CallType: g.callType},
+			{Input: text, CallType: g.callType, MaxTokens: g.maxTokens},
 		},
-		Config: map[string]evalConfig{
-			g.evalID: {CallType: g.callType},
-		},
+		Config: configMap,
 	}
 
 	body, err := json.Marshal(payload)
@@ -298,49 +330,60 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 }
 
 // parseResult maps the evaluation API response to a CheckResult.
+// When multiple eval_ids are checked, the result fails if any single eval fails;
+// the failing eval's reason and details are surfaced.
 func parseResult(resp *evalResponse) *guardrails.CheckResult {
 	if resp == nil || len(resp.Result) == 0 {
 		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
 	}
 
-	for _, group := range resp.Result {
-		if len(group.Evaluations) == 0 {
-			continue
-		}
-		eval := group.Evaluations[0]
+	var firstEval *evaluation
+	var firstFail *evaluation
 
-		pass := true
-		score := 0.0
-
-		switch v := eval.Output.(type) {
-		case string:
-			if strings.EqualFold(v, "failed") {
-				pass = false
-				score = 1.0
+	for i := range resp.Result {
+		for j := range resp.Result[i].Evaluations {
+			eval := &resp.Result[i].Evaluations[j]
+			if firstEval == nil {
+				firstEval = eval
 			}
-		case bool:
-			// true = harmful = fail
-			if v {
-				pass = false
-				score = 1.0
+			if isFailedOutput(eval.Output) && firstFail == nil {
+				firstFail = eval
 			}
-		}
-
-		return &guardrails.CheckResult{
-			Pass:    pass,
-			Score:   score,
-			Message: eval.Reason,
-			Details: map[string]interface{}{
-				"eval_id":     eval.EvalID,
-				"eval_name":   eval.Name,
-				"runtime_ms":  eval.Runtime,
-				"output_type": eval.OutputType,
-				"output":      eval.Output,
-			},
 		}
 	}
 
+	if firstFail != nil {
+		return buildResult(firstFail, false, 1.0)
+	}
+	if firstEval != nil {
+		return buildResult(firstEval, true, 0.0)
+	}
 	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
+}
+
+func isFailedOutput(output interface{}) bool {
+	switch v := output.(type) {
+	case string:
+		return strings.EqualFold(v, "failed")
+	case bool:
+		return v
+	}
+	return false
+}
+
+func buildResult(eval *evaluation, pass bool, score float64) *guardrails.CheckResult {
+	return &guardrails.CheckResult{
+		Pass:    pass,
+		Score:   score,
+		Message: eval.Reason,
+		Details: map[string]interface{}{
+			"eval_id":     eval.EvalID,
+			"eval_name":   eval.Name,
+			"runtime_ms":  eval.Runtime,
+			"output_type": eval.OutputType,
+			"output":      eval.Output,
+		},
+	}
 }
 
 // IsFutureAGIConfig returns true if the config map has provider set to "futureagi".

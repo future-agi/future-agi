@@ -10,6 +10,7 @@ import KeysDrawer from "./KeysDrawer";
 import { ShowComponent } from "../show";
 import ModelButtonField from "./ModelButtonField";
 import AddCustomModal from "src/pages/dashboard/settings/AddCustomModal";
+import { normalizeModelOption } from "./common";
 
 const CustomModelDropdown = ({
   isModalContainer = false,
@@ -33,6 +34,9 @@ const CustomModelDropdown = ({
   customTrigger,
   onModelTypeChange,
   modelType,
+  // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
+  // eslint-disable-next-line no-unused-vars
+  shrink: _shrink,
   ...rest
 }) => {
   const btnRef = useRef(null);
@@ -100,7 +104,10 @@ const CustomModelDropdown = ({
   const options = useMemo(() => {
     const filtered =
       modelList?.pages.reduce(
-        (acc, curr) => [...acc, ...curr.data.results],
+        (acc, curr) => [
+          ...acc,
+          ...(curr.data.results || []).map(normalizeModelOption),
+        ],
         [],
       ) || [];
     return filtered.length > 0
@@ -319,4 +326,5 @@ CustomModelDropdown.propTypes = {
   customTrigger: PropTypes.oneOfType([PropTypes.node, PropTypes.func]),
   onModelTypeChange: PropTypes.func,
   modelType: PropTypes.string,
+  shrink: PropTypes.bool,
 };

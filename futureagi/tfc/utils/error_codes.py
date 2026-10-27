@@ -90,6 +90,23 @@ err_dict = {
     "DATASET_CREATE_LIMIT_REACHED": [
         "Dataset creation limit has been reached for your plan."
     ],
+    "USER_FILTER_REQUIRES_CURSOR": [
+        "These user filters need cursor pagination. Retry with cursor_mode=true."
+    ],
+    "SCORE_PROJECT_MISMATCH": [
+        "This queue item belongs to another project's copy of this source. "
+        "Annotate it from that project."
+    ],
+    "SCORE_PROJECT_MISMATCH_EXISTING_SCORE": [
+        "A score on this queue item belongs to another project's copy of "
+        "this source. Annotate it from that project."
+    ],
+    "FILTER_VALUE_INVENTORY_TOO_BROAD": [
+        "Too many values to browse exactly. Enter a more specific search."
+    ],
+    "DATASET_LIMIT_CHECK_FAILED": [
+        "Could not verify your plan's dataset limit. Please try again in a moment."
+    ],
     "DATASET_NAME_MISSING": ["Dataset name is required for Hugging Face datasets."],
     "DATASET_EXIST_IN_ORG": [
         "A dataset with this name already exists in your organization."
@@ -839,6 +856,9 @@ err_dict = {
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
     "FAILED_TO_RERUN_OPERATION": ["Unable to rerun operation. Please try again."],
     "MONITOR_NOT_FOUND": ["Alert Monitor not found for the provided ID."],
+    "MONITOR_PROJECT_REQUIRED": [
+        "This alert is not linked to a project. Link it to a project to evaluate it."
+    ],
     "MISSING_OPERATION_TYPE": ["Operation type is required."],
     "INVALID_PYTHON_CODE_CONFIGURATION": ["Invalid Python code configuration."],
     "INVALID_JSON_EXTRACTION_CONFIGURATION": ["Invalid JSON extraction configuration."],
@@ -1201,6 +1221,36 @@ def get_specific_error_message(error, is_llm_error=None):
     return get_error_message("FAILED_TO_PROCESS_EVALUATION")
 
 
+def get_usage_error_code(error):
+    """Return a billing/usage error_code for rate-limit or credit-exhaustion
+    errors, else None.
+
+    Mirrors the detection in get_specific_error_message so the per-cell eval
+    error path can stamp value_infos with a code the frontend upgrade banner
+    recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
+    same taxonomy as the usage pre-check (CheckResult.error_code).
+    """
+    error_message = str(error)
+    error_status = ""
+    if (
+        isinstance(error, ValueError)
+        and isinstance(error.args, tuple)
+        and len(error.args) > 1
+    ):
+        error_status = str(error.args[1])
+    haystack = f"{error_message} {error_status}".lower()
+    if (
+        "rate_limited" in haystack
+        or "rate limit" in haystack
+        or "too many requests" in haystack
+        or "429" in haystack
+    ):
+        return "RATE_LIMITED"
+    if "insufficient_credits" in haystack or "insufficient credits" in haystack:
+        return "FREE_TIER_LIMIT"
+    return None
+
+
 def get_error_for_api_status(status):
     """
     Maps API call status codes to appropriate error messages.
@@ -1265,5 +1315,39 @@ BILLING_ERROR_CODES = {
 
 # Merge billing error codes into the main dict
 err_dict.update(BILLING_ERROR_CODES)
+
+# ── Login Error Codes ────────────────────────────────────────────────────
+LOGIN_ERROR_CODES = {
+    "LOGIN_IP_BLOCKED": [
+        "Your IP address has been temporarily blocked due to multiple failed attempts. Please try again later."
+    ],
+    "LOGIN_IP_RATE_LIMITED": [
+        "Too many login attempts from your network. Please try again later."
+    ],
+    "LOGIN_ACCOUNT_BLOCKED": [
+        "Account temporarily blocked due to too many failed attempts. Please try again later."
+    ],
+    "LOGIN_RECAPTCHA_FAILED": ["reCAPTCHA verification failed. Please try again."],
+    "LOGIN_INVALID_CREDENTIALS": [
+        "Invalid email or password. Please check your credentials and try again."
+    ],
+    "LOGIN_ACCOUNT_DEACTIVATED": [
+        "Your account has been deactivated. Please contact your organization admin."
+    ],
+    "LOGIN_TOO_MANY_ATTEMPTS": [
+        "Too many failed login attempts. Your account has been temporarily blocked."
+    ],
+    "LOGIN_UNEXPECTED_ERROR": [
+        "An unexpected error occurred during login. Please try again."
+    ],
+    "LOGIN_SERVICE_UNAVAILABLE": [
+        "Sign-in is temporarily unavailable. Please try again in a moment."
+    ],
+    "LOGIN_PASSWORD_RESET_RATE_LIMITED": [
+        "Too many password reset requests. Please try again later."
+    ],
+}
+
+err_dict.update(LOGIN_ERROR_CODES)
 
 # get_error_message("METRIC_VALID_CONTENT")

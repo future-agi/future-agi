@@ -20,10 +20,15 @@ config:
     text: The text to validate as XML
   code: |
     def evaluate(input, output, expected, context, **kwargs):
+        import re
         import xml.etree.ElementTree as ET
         text = str(kwargs.get("text", output or "")).strip()
         if not text:
             return {"score": 0.0, "reason": "Empty text is not valid XML"}
+        if re.search(r"<!DOCTYPE\b", text, flags=re.IGNORECASE):
+            return {"score": 0.0, "reason": "DOCTYPE declarations are rejected (XXE / billion-laughs risk)"}
+        if re.search(r"<!ENTITY\b", text, flags=re.IGNORECASE):
+            return {"score": 0.0, "reason": "ENTITY declarations are rejected (billion-laughs risk)"}
         try:
             ET.fromstring(text)
             return {"score": 1.0, "reason": "Text is valid XML"}

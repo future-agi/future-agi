@@ -3,6 +3,7 @@ import copy
 import structlog
 from django.db import transaction
 from django.db.models import Max
+from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +17,8 @@ from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
+from agentcc.services.config_push import validate_org_config
+from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -168,6 +171,9 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     created_by=request.user,
                     change_description=data.get("change_description", ""),
                 )
+                # Fail closed: a version the gateway contract rejects must not
+                # become active. Raising here rolls the whole save back.
+                validate_org_config(config)
 
             # Push to gateway
             synced = self._push_config_to_gateway(org.id, config)
@@ -177,6 +183,8 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except FeatureUnavailable:
+            raise
         except Exception as e:
             logger.exception("org_config_create_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -214,6 +222,9 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
 
             org = instance.organization
+            # Fail closed: an older version can hold keys the gateway contract
+            # no longer accepts.
+            validate_org_config(instance)
 
             with transaction.atomic():
                 # Deactivate current active config
@@ -233,6 +244,8 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found("Org config not found")
         except Exception as e:
             logger.exception("org_config_activate_error", error=str(e))
             return self._gm.bad_request(str(e))

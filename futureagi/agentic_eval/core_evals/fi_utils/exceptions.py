@@ -22,3 +22,22 @@ class NoFiApiKeyException(CustomException):
 class NoOpenAiApiKeyException(CustomException):
     def __init__(self, message: str = "Please set an Open API key."):
         super().__init__(message)
+
+
+class MediaNotAccessibleError(ValueError):
+    """Raised when a media URL passed as eval input cannot be fetched."""
+
+    def __init__(self, key: str | None = None):
+        suffix = f" for '{key}'" if key else ""
+        super().__init__(
+            f"Media file is not accessible{suffix}. "
+            f"The file could not be downloaded — please ensure "
+            f"the URL is valid and accessible."
+        )
+
+
+class CodeEvalSetupError(ValueError):
+    """Raised when this install cannot run a code eval at all: no code
+    executor, or no Node.js for a JavaScript eval. Its message is always one of
+    the backend's own texts (sandbox.SETUP_ERROR_MESSAGES), never one an eval
+    script returned, so callers may show it to users."""

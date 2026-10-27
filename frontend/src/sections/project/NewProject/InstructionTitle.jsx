@@ -22,7 +22,7 @@ const InstructionTitle = ({ title, description, urltext, url, onUrlClick }) => {
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
         <Typography
           variant="s1"
-          color="text.disabled"
+          color="text.secondary"
           fontWeight={"fontWeightRegular"}
         >
           {description}

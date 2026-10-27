@@ -23,7 +23,7 @@ const GraphBuilderLeftBar = ({ onSave, saveLoading, agentType }) => {
         <Typography typography="m3" fontWeight="fontWeightMedium">
           Basic Information
         </Typography>
-        <Typography typography="s2_1" color="text.disabled">
+        <Typography typography="s2_1" color="text.secondary">
           Configure the basic settings for your agent
         </Typography>
       </Box>
@@ -115,7 +115,7 @@ const GraphBuilderLeftBar = ({ onSave, saveLoading, agentType }) => {
                 <Typography typography="s2" fontWeight="fontWeightMedium">
                   {name}
                 </Typography>
-                <Typography typography="s3" color="text.disabled">
+                <Typography typography="s3" color="text.secondary">
                   {description}
                 </Typography>
               </Box>

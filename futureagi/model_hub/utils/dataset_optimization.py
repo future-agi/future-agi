@@ -57,6 +57,82 @@ OPTIMIZATION_RUN_TABLE_CONFIG = [
     {"id": "status", "name": "Status", "is_visible": True},
 ]
 
+OPTIMIZER_PARAMETER_LABELS = {
+    "num_variations": {
+        "label": "Number of Variations",
+        "description": "Number of prompt variations to generate",
+    },
+    "max_metric_calls": {
+        "label": "Max Metric Calls",
+        "description": "Maximum number of metric evaluations",
+    },
+    "beam_size": {
+        "label": "Beam Size",
+        "description": "Number of candidates to keep at each step",
+    },
+    "num_gradients": {
+        "label": "Number of Gradients",
+        "description": "Number of gradient samples",
+    },
+    "errors_per_gradient": {
+        "label": "Errors per Gradient",
+        "description": "Number of errors to sample per gradient",
+    },
+    "prompts_per_gradient": {
+        "label": "Prompts per Gradient",
+        "description": "Number of prompts per gradient",
+    },
+    "num_rounds": {
+        "label": "Number of Rounds",
+        "description": "Number of optimization rounds",
+    },
+    "min_examples": {
+        "label": "Min Examples",
+        "description": "Minimum number of examples to use",
+    },
+    "max_examples": {
+        "label": "Max Examples",
+        "description": "Maximum number of examples to use",
+    },
+    "n_trials": {
+        "label": "Number of Trials",
+        "description": "Number of trials to run",
+    },
+    "task_description": {
+        "label": "Task Description",
+        "description": "Description of the task",
+    },
+    "mutate_rounds": {
+        "label": "Mutate Rounds",
+        "description": "Number of mutation rounds",
+    },
+    "refine_iterations": {
+        "label": "Refine Iterations",
+        "description": "Number of refinement iterations",
+    },
+}
+
+
+def build_parameters_array(optimizer_config, optimizer_algorithm=None):
+    """Build the parameters array shown in the run-detail sidebar."""
+    if not optimizer_config:
+        return []
+
+    parameters = []
+    for key, value in optimizer_config.items():
+        if key == "model_name":
+            continue
+        info = OPTIMIZER_PARAMETER_LABELS.get(key, {"label": key, "description": ""})
+        parameters.append(
+            {
+                "key": key,
+                "label": info["label"],
+                "description": info.get("description", ""),
+                "value": value,
+            }
+        )
+    return parameters
+
 
 def create_dataset_optimization_steps(optimization_run_id: str) -> None:
     """
@@ -487,7 +563,7 @@ def _build_trial_row(
         "score_percentage_change": score_percentage_change,
         "prompt": trial.prompt,
         "is_best": trial.id == best_trial_id,
-        **eval_scores,
+        "eval_scores": eval_scores,
     }
 
 

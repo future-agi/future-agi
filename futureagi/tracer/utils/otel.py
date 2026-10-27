@@ -21,11 +21,17 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_mapping import require_mapping_paths
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
 from tracer.models.project import PROJECT_TYPES, Project, ProjectSourceChoices
 from tracer.models.project_version import ProjectVersion
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ReservedProjectNameError,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
@@ -35,11 +41,8 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -561,6 +564,10 @@ class ConversationAttributes:
     MONO_ASSISTANT = "mono.assistant"
     """
     The assistant recording of the conversation.
+    """
+    PROVIDER_LOG_ISSUES = "conversation.provider_log.issues"
+    """
+    Warning and error lines of the provider's own call log, as a JSON list.
     """
 
 
@@ -1112,6 +1119,8 @@ def get_or_create_project(
     workspace_id=None,
     source: str = ProjectSourceChoices.PROTOTYPE.value,
 ) -> Project | None:
+    if agent_id_in_simulation_project_name(project_name) is not None:
+        raise ReservedProjectNameError(RESERVED_PROJECT_NAME_MESSAGE)
     try:
         project_type = _get_project_type(project_type)
 
@@ -1184,10 +1193,15 @@ def _get_eval_template(eval_template_name, project):
     return eval_template
 
 
-def _process_eval_tags(eval_tags, project):
+def _process_eval_tags(eval_tags, project, skip_invalid_mappings: bool = False):
     """
     Process and validate eval_tags.
     Returns a list of processed eval tag data ready for database operations.
+
+    ``skip_invalid_mappings`` drops a tag whose mapping is malformed instead of
+    raising. The async ingest path sets it so one bad tag cannot cost a whole
+    span batch; the synchronous span endpoint leaves it off so the caller gets
+    a 400.
     """
     if not eval_tags:
         return []
@@ -1219,6 +1233,25 @@ def _process_eval_tags(eval_tags, project):
             except json.JSONDecodeError as e:
                 logger.exception(f"Invalid JSON format for mapping: {str(e)}")
                 raise Exception(f"Invalid JSON format for mapping: {str(e)}") from e
+
+        # One of four write paths into CustomEvalConfig.mapping, and the only
+        # one that takes the values straight off the wire. Refuse a non-path
+        # value here rather than in _create_custom_eval_configs, so nothing is
+        # created for the whole batch when one tag is malformed.
+        try:
+            require_mapping_paths(mapping, f"eval tag '{custom_eval_name}'")
+        except ValueError:
+            if not skip_invalid_mappings:
+                raise
+            # Async ingest: the export already returned 200 and the activity
+            # runs with max_retries=0, so raising here would drop every span in
+            # the batch with no client-visible error. Drop the tag, keep the spans.
+            logger.exception(
+                "Skipping eval tag %r on project %s: malformed mapping",
+                custom_eval_name,
+                project.id,
+            )
+            continue
 
         processed_eval_tags.append(
             {
@@ -1295,6 +1328,7 @@ def get_or_create_project_version(
     eval_tags: list | None,
     metadata: dict | None,
     project_type: str,
+    skip_invalid_eval_tags: bool = False,
 ) -> ProjectVersion | None:
     try:
         if project_type == "observe":
@@ -1302,7 +1336,7 @@ def get_or_create_project_version(
 
         if project_version_id:
             existing_version = ProjectVersion.objects.filter(
-                id=project_version_id
+                id=project_version_id, project_id=project_id
             ).first()
             if existing_version:
                 return existing_version
@@ -1319,7 +1353,7 @@ def get_or_create_project_version(
 
             if project_version_id:
                 existing_version = ProjectVersion.objects.filter(
-                    id=project_version_id
+                    id=project_version_id, project_id=project_id
                 ).first()
                 if existing_version:
                     return existing_version
@@ -1327,7 +1361,9 @@ def get_or_create_project_version(
             if not project_version_id:
                 project_version_id = uuid.uuid4()
 
-            processed_eval_tags = _process_eval_tags(eval_tags, project)
+            processed_eval_tags = _process_eval_tags(
+                eval_tags, project, skip_invalid_mappings=skip_invalid_eval_tags
+            )
             final_eval_tags = _create_custom_eval_configs(processed_eval_tags, project)
 
             versions_qs = ProjectVersion.objects.filter(project=project)
@@ -1418,6 +1454,8 @@ def _bulk_get_or_create_project_versions(version_keys, projects, organization_id
                     eval_tags=eval_tags,
                     metadata=None,
                     project_type=p_type,
+                    # Only reached from bulk_create_observation_span_task.
+                    skip_invalid_eval_tags=True,
                 )
                 project_versions[version_key] = project_version
     return project_versions
@@ -1460,7 +1498,9 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         version_key = (project.id, project_version_name, project_version_id)
         project_version = project_versions.get(version_key)
     else:
-        raise Exception(f"Project not found for version data: {version_key}")
+        raise Exception(
+            f"Project not found for version data: project_name={project_name}, project_type={project_type}"
+        )
 
     # Process Input/Output
     input_val = attributes.get("fi.llm.input") or attributes.get(

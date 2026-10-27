@@ -1,0 +1,144 @@
+{
+  "_comment": "Config for .github/workflows/reviewer-assigner.yml. Path globs use ** and * (labeler-style). Overlaps are resolved by longest-literal-prefix-wins.",
+  "fallback_lead": "atharva-bhange",
+  "teams": {
+    "morpheus": {
+      "display_name": "Morpheus",
+      "ownership": "Simulation + Simulation SDK + Annotation queues",
+      "lead": "khushalsonawat",
+      "members": ["khushalsonawat", "definitelynotchirag", "cdileep23", "KarthikAvinashFI", "hadarishav"],
+      "paths": [
+        "futureagi/simulate/**",
+        "futureagi/sdk/simulate/**",
+        "frontend/src/sections/scenarios/**",
+        "frontend/src/sections/annotations/**",
+        "frontend/src/sections/persona/**",
+        "frontend/src/sections/journey/**"
+      ]
+    },
+    "heimdall": {
+      "display_name": "heimdall",
+      "ownership": "Observe + Tracing SDK + Dashboard",
+      "lead": "atharva-bhange",
+      "members": ["atharva-bhange", "JayaSurya-27", "commitPirate", "sarthakFuture"],
+      "paths": [
+        "futureagi/tracer/**",
+        "futureagi/sockets/**",
+        "futureagi/analytics/**",
+        "frontend/src/sections/dashboards/**",
+        "frontend/src/sections/overview/**",
+        "frontend/src/sections/project/**",
+        "frontend/src/sections/project-detail/**",
+        "frontend/src/sections/projects/**"
+      ]
+    },
+    "turing": {
+      "display_name": "Turing",
+      "ownership": "Platform Evals + Evals SDK + Falcon",
+      "lead": "hadarishav",
+      "members": ["hadarishav", "KarthikAvinashFI", "cdileep23", "azain-commits"],
+      "paths": [
+        "futureagi/evaluations/**",
+        "futureagi/agentic_eval/**",
+        "futureagi/ee/evals/**",
+        "futureagi/ee/falcon_ai/**",
+        "futureagi/ee/turing/**",
+        "frontend/src/sections/evals/**",
+        "frontend/src/sections/falcon-ai/**"
+      ]
+    },
+    "n11n": {
+      "display_name": "n11n",
+      "ownership": "Agent + Prompt playground",
+      "lead": "JayaSurya-27",
+      "members": ["JayaSurya-27", "commitPirate", "Tanmaycode1"],
+      "paths": [
+        "futureagi/ee/prompts/**",
+        "futureagi/ee/agenthub/**",
+        "frontend/src/sections/agent-playground/**",
+        "frontend/src/sections/agents/**",
+        "frontend/src/sections/prompt/**",
+        "frontend/src/sections/prompt-v2/**",
+        "frontend/src/sections/workbench/**",
+        "frontend/src/sections/workbench-v2/**"
+      ]
+    },
+    "quest": {
+      "display_name": "quest",
+      "ownership": "Experiments",
+      "lead": "atharva-bhange",
+      "members": ["atharva-bhange", "cdileep23", "Tanmaycode1"],
+      "paths": [
+        "futureagi/ee/experiments/**",
+        "frontend/src/sections/experiment-detail/**",
+        "frontend/src/sections/test/**",
+        "frontend/src/sections/test-detail/**",
+        "frontend/src/sections/tasks/**"
+      ]
+    },
+    "adam": {
+      "display_name": "Adam",
+      "ownership": "Platform Optimization + Opt. SDK + Gateway",
+      "lead": "NVJKKartik",
+      "members": ["NVJKKartik", "azain-commits", "hadarishav"],
+      "paths": [
+        "agentcc-gateway/**",
+        "futureagi/agentcc/**",
+        "futureagi/ee/agent_opt/**",
+        "futureagi/ee/agentcc-gateway/**",
+        "frontend/src/sections/gateway/**",
+        "frontend/src/sections/develop/**",
+        "frontend/src/sections/develop-detail/**"
+      ]
+    },
+    "beacon": {
+      "display_name": "Beacon",
+      "ownership": "Error Feed",
+      "lead": "hadarishav",
+      "members": ["hadarishav", "NVJKKartik"],
+      "paths": [
+        "futureagi/tracer/views/feed/**",
+        "frontend/src/sections/alerts/**",
+        "frontend/src/sections/error/**"
+      ]
+    },
+    "frame": {
+      "display_name": "Frame",
+      "ownership": "Datasets + Future AGI + RBAC + Pricing & billing",
+      "lead": "khushalsonawat",
+      "members": ["khushalsonawat", "sarthakFuture", "azain-commits", "cdileep23", "Tanmaycode1"],
+      "paths": [
+        "futureagi/accounts/**",
+        "futureagi/saml2_auth/**",
+        "futureagi/model_hub/**",
+        "futureagi/ee/usage/**",
+        "futureagi/ee/billing*",
+        "futureagi/integrations/**",
+        "frontend/src/sections/account/**",
+        "frontend/src/sections/auth/**",
+        "frontend/src/sections/data/**",
+        "frontend/src/sections/knowledge-base/**",
+        "frontend/src/sections/model/**",
+        "frontend/src/sections/huggingface/**",
+        "frontend/src/sections/settings/**",
+        "frontend/src/sections/keys/**",
+        "frontend/src/sections/user/**",
+        "frontend/src/sections/address/**"
+      ]
+    }
+  },
+  "users": {
+    "khushalsonawat":      { "slack_id": "U087FCUQ77E", "display_name": "Khushal" },
+    "atharva-bhange":      { "slack_id": "U071K8LUQE5", "display_name": "Atharva" },
+    "definitelynotchirag": { "slack_id": "U0ACG3CS7EY", "display_name": "Chirag" },
+    "cdileep23":           { "slack_id": "U099M4FQV97", "display_name": "Dileep" },
+    "KarthikAvinashFI":    { "slack_id": "U09808798MU", "display_name": "Karthik Avinash" },
+    "hadarishav":          { "slack_id": "U07UPK1NZGA", "display_name": "Rishav" },
+    "JayaSurya-27":        { "slack_id": "U083MBRARTL", "display_name": "Jaya" },
+    "commitPirate":        { "slack_id": "U09LC0C8NKE", "display_name": "Nosang" },
+    "sarthakFuture":       { "slack_id": "U07V82HJ17H", "display_name": "Sarthak" },
+    "azain-commits":       { "slack_id": "U09GEEBEATS", "display_name": "Azain" },
+    "NVJKKartik":          { "slack_id": "U0851KZFTV4", "display_name": "Kartik" },
+    "Tanmaycode1":         { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" }
+  }
+}

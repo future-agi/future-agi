@@ -27,6 +27,7 @@ from typing import Optional
 
 from temporalio import workflow
 from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import ApplicationError
 from temporalio.workflow import ParentClosePolicy
 
 from simulate.temporal.constants import (
@@ -334,9 +335,17 @@ class RerunCoordinatorWorkflow:
             input: Coordinator input with org_id, workspace_id, etc.
             calls: List of (call_id, eval_only) tuples
         """
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
+        try:
+            from ee.voice.temporal.workflows.call_execution_workflow import (
+                CallExecutionWorkflow,
+            )
+        except ImportError as exc:
+            raise ApplicationError(
+                "Voice call execution workflow is unavailable in this build "
+                "(requires the `voice` extra / Enterprise Edition).",
+                type="VOICE_EXTRA_UNAVAILABLE",
+                non_retryable=True,
+            ) from exc
 
         for call_id, eval_only in calls:
             # Unique workflow ID includes rerun_id to allow multiple reruns

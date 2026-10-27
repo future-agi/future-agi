@@ -17,6 +17,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, {
   useCallback,
   useEffect,
@@ -27,11 +28,17 @@ import React, {
 import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 
-import { useEvalDetail, useUpdateEval } from "../hooks/useEvalDetail";
+import {
+  useEvalDetail,
+  useUpdateEval,
+  useDuplicateEval,
+} from "../hooks/useEvalDetail";
 import {
   useCreateEvalVersion,
   useEvalVersions,
@@ -49,12 +56,21 @@ import CodeEvalEditor from "./CodeEvalEditor";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import CompositeDetailPanel from "./CompositeDetailPanel";
+import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import EvalFeedbackTab from "./EvalFeedbackTab";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
+import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -85,13 +101,21 @@ const resolve_context_options = (data_injection) => {
     return ["variables_only"];
   }
   const opts = [];
-  if (data_injection.full_row || data_injection.fullRow) opts.push("dataset_row");
-  if (data_injection.span_context || data_injection.spanContext) opts.push("span_context");
-  if (data_injection.trace_context || data_injection.traceContext) opts.push("trace_context");
-  if (data_injection.session_context || data_injection.sessionContext) opts.push("session_context");
-  if (data_injection.call_context || data_injection.callContext) opts.push("call_context");
+  if (data_injection.full_row || data_injection.fullRow)
+    opts.push("dataset_row");
+  if (data_injection.span_context || data_injection.spanContext)
+    opts.push("span_context");
+  if (data_injection.trace_context || data_injection.traceContext)
+    opts.push("trace_context");
+  if (data_injection.session_context || data_injection.sessionContext)
+    opts.push("session_context");
+  if (data_injection.call_context || data_injection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (data_injection.variables_only === false || data_injection.variablesOnly === false) {
+  if (
+    data_injection.variables_only === false ||
+    data_injection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -103,9 +127,22 @@ const getEvalPromptText = (evalData, config = {}) =>
 const EvalDetailPage = () => {
   const { evalId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed). Seed the default model raw and
+  // only strip it on confirmed denial, so entitled users don't lose the
+  // "turing_large" default while capabilities are still loading.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
 
   const {
     data: evalData,
@@ -113,6 +150,7 @@ const EvalDetailPage = () => {
     error: fetchError,
   } = useEvalDetail(evalId);
   const updateEval = useUpdateEval(evalId);
+  const duplicateEval = useDuplicateEval(evalId);
   const createVersion = useCreateEvalVersion(evalId);
   const { data: versionsData } = useEvalVersions(evalId);
   const testPlaygroundRef = useRef(null);
@@ -122,6 +160,12 @@ const EvalDetailPage = () => {
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -143,6 +187,8 @@ const EvalDetailPage = () => {
       "mustache",
   );
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
 
   // Dataset columns for autocomplete
   const [datasetColumns, setDatasetColumns] = useState([]);
@@ -157,6 +203,16 @@ const EvalDetailPage = () => {
   const [testError, setTestError] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isPlaygroundReady, setIsPlaygroundReady] = useState(false);
+  // Variable→column mapping from the active test-panel tab. Used by the
+  // InstructionEditor / LLMPromptEditor to highlight mapped variables in
+  // green instead of leaving them red after the user binds them.
+  const [playgroundMapping, setPlaygroundMapping] = useState({});
+  const handlePlaygroundReadyChange = useCallback((ready, mapping) => {
+    setIsPlaygroundReady(!!ready);
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
+  }, []);
 
   // Auto-dismiss test error after 6 seconds
   useEffect(() => {
@@ -220,15 +276,31 @@ const EvalDetailPage = () => {
 
   // Version viewing state
   const [viewingVersion, setViewingVersion] = useState(null);
+
+  useEffect(() => {
+    if (!viewingVersion || !versionsData?.versions) return;
+    const fresh = versionsData.versions.find((v) => v.id === viewingVersion.id);
+    if (!fresh) return;
+    const freshFlag = fresh.is_default ?? fresh.isDefault ?? false;
+    const localFlag =
+      viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
+    if (freshFlag !== localFlag) {
+      setViewingVersion((prev) =>
+        prev ? { ...prev, is_default: freshFlag, isDefault: freshFlag } : prev,
+      );
+    }
+  }, [versionsData, viewingVersion]);
+
   const defaultVersion = useMemo(() => {
     const list = versionsData?.versions || [];
     if (!list.length) return null;
     const byFlag = list.find((v) => v.is_default || v.isDefault);
     if (byFlag) return byFlag;
+    // matches backend get_default: highest version_number when none flagged
     return [...list].sort(
       (a, b) =>
-        (a.version_number ?? a.versionNumber ?? Number.MAX_SAFE_INTEGER) -
-        (b.version_number ?? b.versionNumber ?? Number.MAX_SAFE_INTEGER),
+        (b.version_number ?? b.versionNumber ?? Number.MIN_SAFE_INTEGER) -
+        (a.version_number ?? a.versionNumber ?? Number.MIN_SAFE_INTEGER),
     )[0];
   }, [versionsData]);
 
@@ -251,8 +323,9 @@ const EvalDetailPage = () => {
         setViewingVersion(null);
         setSearchParams(
           (prev) => {
-            prev.delete("v");
-            return prev;
+            const next = new URLSearchParams(prev);
+            next.delete("v");
+            return next;
           },
           { replace: true },
         );
@@ -272,7 +345,7 @@ const EvalDetailPage = () => {
             setCode("");
           }
           setCodeLanguage(config.language || "python");
-          setModel(config.model || evalData.model || ("turing_large"));
+          setModel(config.model || evalData.model || "turing_large");
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -343,7 +416,11 @@ const EvalDetailPage = () => {
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
       setSearchParams(
-        { v: versionToLoad.version_number ?? versionToLoad.versionNumber },
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("v", String(versionToLoad.version_number));
+          return next;
+        },
         { replace: true },
       );
       const config =
@@ -398,7 +475,7 @@ const EvalDetailPage = () => {
         setCode("");
       }
       setCodeLanguage(config.language || "python");
-      setModel(config.model || versionToLoad.model || ("turing_large"));
+      setModel(config.model || versionToLoad.model || "turing_large");
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -445,11 +522,13 @@ const EvalDetailPage = () => {
         isPopulatingRef.current = false;
       }, 0);
     },
-    [defaultVersion, evalData, isDirty, isComposite, setSearchParams, isOSS],
+    [defaultVersion, evalData, isDirty, isComposite, setSearchParams],
   );
 
   // Three-dot menu
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Warn on page leave with unsaved changes
   useEffect(() => {
@@ -467,6 +546,27 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
+      const isCustom = evalData.owner !== "system";
+      const urlVersion = searchParams.get("v");
+      if (urlVersion && !initialLoadDone.current) {
+        if (!versionsData) return;
+        const match = (versionsData?.versions || []).find(
+          (ver) => String(ver.version_number) === String(urlVersion),
+        );
+        if (match) {
+          initialLoadDone.current = true;
+          handleVersionSelect(match);
+          return;
+        }
+      }
+      if (isCustom && !urlVersion && !initialLoadDone.current) {
+        if (!versionsData) return;
+        if (defaultVersion) {
+          initialLoadDone.current = true;
+          handleVersionSelect(defaultVersion);
+          return;
+        }
+      }
       // On initial load, always populate. On subsequent refetches, only populate
       // if the user hasn't made edits (isDirty).
       if (!initialLoadDone.current || !isDirty) {
@@ -502,7 +602,7 @@ const EvalDetailPage = () => {
             evalData.code_language ||
             "python",
         );
-        setModel(config.model || evalData.model || ("turing_large"));
+        setModel(config.model || evalData.model || "turing_large");
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -571,10 +671,32 @@ const EvalDetailPage = () => {
         }, 100);
       }
     }
-  }, [evalData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [evalData, versionsData, defaultVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evalType = evalData?.eval_type || "llm";
   const isSystemEval = evalData?.owner === "system";
+
+  const hasDataInjection =
+    evalType === "agent" &&
+    Array.isArray(contextOptions) &&
+    contextOptions.some((o) => o && o !== "variables_only");
+
+  const hasTemplateVariable =
+    templateFormat === "jinja"
+      ? extractJinjaVariables(instructions).length > 0
+      : /\{\{\s*[^{}]+?\s*\}\}/.test(instructions);
+
+  const needsTemplateVariable =
+    evalType !== "code" &&
+    !hasDataInjection &&
+    !isComposite &&
+    !hasTemplateVariable;
+
+  const variableTooltip = !instructions?.trim()
+    ? "Instructions are required"
+    : needsTemplateVariable
+      ? `Instructions must contain at least one ${templateFormat === "jinja" ? "Jinja" : "Mustache"} variable (e.g. {{input}})`
+      : "";
 
   // Fetch composite detail (children, weights) when viewing a composite
   const { data: compositeDetail } = useCompositeDetail(evalId, isComposite);
@@ -658,26 +780,28 @@ const EvalDetailPage = () => {
 
   // Save version
   const handleSaveVersion = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     try {
-      const dataInjection =
-        contextOptions.length === 0 ||
-        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-          ? { variables_only: true }
-          : { full_row: true };
+      const dataInjection = buildDataInjection(contextOptions);
       const summary =
         summaryType === "custom"
           ? { type: "custom", custom: "" }
@@ -685,7 +809,8 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions:
+          evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
@@ -702,13 +827,12 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
-        few_shot_examples:
-          evalType === "llm" && fewShotExamples.length > 0
-            ? fewShotExamples
-            : undefined,
+        // Send [] for LLM evals so the BE can persist a user-cleared list.
+        // Omitting on empty would leave the previous examples in place.
+        few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       await updateEval.mutateAsync(payload);
 
@@ -735,31 +859,29 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
-        few_shot_examples:
-          evalType === "llm" && fewShotExamples.length > 0
-            ? fewShotExamples
-            : undefined,
+        few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
         model,
       });
-      enqueueSnackbar(
-        `Version V${newVersion?.version_number ?? newVersion?.versionNumber ?? ""} saved`,
-        {
-          variant: "success",
-        },
-      );
+      enqueueSnackbar(`Version V${newVersion?.version_number ?? ""} saved`, {
+        variant: "success",
+      });
       setIsDirty(false);
       // Switch to viewing the newly created version
-      if (newVersion?.version_number ?? newVersion?.versionNumber) {
+      if (newVersion?.version_number) {
         setViewingVersion({ ...newVersion, config_snapshot: configSnapshot });
         setSearchParams(
-          { v: newVersion.version_number ?? newVersion.versionNumber },
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("v", String(newVersion.version_number));
+            return next;
+          },
           { replace: true },
         );
         // Switch to versions tab and highlight the new version
@@ -768,16 +890,15 @@ const EvalDetailPage = () => {
         setViewingVersion(null);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
   }, [
     evalType,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalData,
     instructions,
     code,
@@ -795,7 +916,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -820,6 +941,7 @@ const EvalDetailPage = () => {
         aggregation_function: compositeAggFunction,
         composite_child_axis: compositeChildAxis || undefined,
         child_template_ids: compositeChildren.map((c) => c.child_id),
+        child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
       };
       const result = await updateComposite.mutateAsync(payload);
@@ -832,12 +954,8 @@ const EvalDetailPage = () => {
       );
       setIsDirty(false);
     } catch (err) {
-      const message =
-        err?.response?.data?.result ||
-        err?.message ||
-        "Failed to save composite";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save composite"),
         { variant: "error" },
       );
     }
@@ -855,6 +973,11 @@ const EvalDetailPage = () => {
 
   // Test evaluation — auto-saves current config before running
   const handleTestEvaluation = useCallback(async () => {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     setIsTesting(true);
     setTestError(null);
     setTestPassed(false);
@@ -862,19 +985,15 @@ const EvalDetailPage = () => {
       // Save current config to the template so the eval runner uses the latest
       // state.
       if (!isSystemEval && !isComposite) {
-        const dataInjection =
-          contextOptions.length === 0 ||
-          (contextOptions.length === 1 &&
-            contextOptions[0] === "variables_only")
-            ? { variables_only: true }
-            : { full_row: true };
+        const dataInjection = buildDataInjection(contextOptions);
         const summary =
           summaryType === "custom"
             ? { type: "custom", custom: "" }
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
-          instructions: evalType === "code" ? "" : instructions,
+          instructions:
+            evalType === "code" ? undefined : instructions || undefined,
           code: evalType === "code" ? code : undefined,
           code_language: evalType === "code" ? codeLanguage : undefined,
           model,
@@ -889,13 +1008,10 @@ const EvalDetailPage = () => {
           knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
           data_injection: evalType === "agent" ? dataInjection : undefined,
           summary: evalType === "agent" ? summary : undefined,
-          error_localizer_enabled: errorLocalizerEnabled,
+          error_localizer_enabled: errorLocalizerActive,
           template_format: templateFormat,
           messages: evalType === "llm" ? messages : undefined,
-          few_shot_examples:
-            evalType === "llm" && fewShotExamples.length > 0
-              ? fewShotExamples
-              : undefined,
+          few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
         });
       }
       // Composite evals: save current children/weights/aggregation config
@@ -913,19 +1029,22 @@ const EvalDetailPage = () => {
           aggregation_function: compositeAggFunction,
           composite_child_axis: compositeChildAxis || undefined,
           child_template_ids: compositeChildren.map((c) => c.child_id),
+          child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
     } catch (error) {
-      const message =
-        error?.response?.data?.result || error?.message || "Failed to run test";
-      handleTestResult(false, message);
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to run test"),
+      );
       setIsTesting(false);
     }
   }, [
     evalId,
     evalType,
+    fagiLocked,
     isSystemEval,
     isComposite,
     instructions,
@@ -942,7 +1061,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -958,7 +1077,19 @@ const EvalDetailPage = () => {
   ]);
 
   // Delete
-  const handleDelete = useCallback(async () => {
+  const handleDeleteClick = useCallback(() => {
+    setMenuAnchor(null);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    if (!deleteLoading) {
+      setDeleteDialogOpen(false);
+    }
+  }, [deleteLoading]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    setDeleteLoading(true);
     try {
       await axios.post(endpoints.develop.eval.deleteEvalsTemplate, {
         eval_template_id: evalId,
@@ -967,40 +1098,12 @@ const EvalDetailPage = () => {
       navigate("/dashboard/evaluations");
     } catch {
       enqueueSnackbar("Failed to delete evaluation", { variant: "error" });
+      setDeleteLoading(false);
     }
-    setMenuAnchor(null);
-  }, [evalId, enqueueSnackbar, navigate]);
-
-  // Duplicate
-  const handleDuplicate = useCallback(async () => {
-    try {
-      const { data } = await axios.post(
-        endpoints.develop.eval.duplicateEvalsTemplate,
-        { eval_template_id: evalId },
-      );
-      enqueueSnackbar("Evaluation duplicated", { variant: "success" });
-      if (data?.result?.id)
-        navigate(`/dashboard/evaluations/${data.result.id}`);
-    } catch {
-      enqueueSnackbar("Failed to duplicate evaluation", { variant: "error" });
-    }
-    setMenuAnchor(null);
   }, [evalId, enqueueSnackbar, navigate]);
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100%",
-          py: 8,
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (fetchError || !evalData) {
@@ -1061,7 +1164,7 @@ const EvalDetailPage = () => {
           <VersionBadge
             version={
               viewingVersion
-                ? `V${viewingVersion.version_number ?? viewingVersion.versionNumber}`
+                ? `V${viewingVersion.version_number}`
                 : evalData.current_version || "V1"
             }
           />
@@ -1088,13 +1191,16 @@ const EvalDetailPage = () => {
                       : evalType === "agent"
                         ? "rgba(46,203,113,0.08)"
                         : "rgba(124,77,255,0.08)",
-              color: isComposite
-                ? "info.main"
-                : evalType === "code"
-                  ? "warning.main"
-                  : evalType === "agent"
-                    ? "success.main"
-                    : "primary.main",
+              color: (theme) =>
+                isComposite
+                  ? theme.palette.info.main
+                  : evalType === "code"
+                    ? theme.palette.mode === "light"
+                      ? "#B45309"
+                      : theme.palette.warning.main
+                    : evalType === "agent"
+                      ? theme.palette.success.main
+                      : theme.palette.primary.main,
             }}
           >
             {(() => {
@@ -1124,39 +1230,90 @@ const EvalDetailPage = () => {
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
-          {isSystemEval && (
+          {isSystemEval ? (
             <Typography variant="caption" color="text.disabled">
               Read-only (system eval)
             </Typography>
+          ) : (
+            <>
+              <IconButton
+                size="small"
+                onClick={(e) => setMenuAnchor(e.currentTarget)}
+              >
+                <Iconify icon="solar:menu-dots-bold" width={18} />
+              </IconButton>
+              <Menu
+                anchorEl={menuAnchor}
+                open={Boolean(menuAnchor)}
+                onClose={() => setMenuAnchor(null)}
+              >
+                <CustomTooltip
+                  show
+                  type="black"
+                  size="small"
+                  title="Create an editable copy of this eval"
+                  placement="left"
+                  arrow
+                >
+                  <MenuItem
+                    disabled={!canEditEvals}
+                    onClick={() => {
+                      setMenuAnchor(null);
+                      duplicateEval.mutate(evalData?.name, {
+                        onSuccess: (result) => {
+                          enqueueSnackbar("Evaluation duplicated", {
+                            variant: "success",
+                          });
+                          if (result?.eval_template_id)
+                            navigate(
+                              `/dashboard/evaluations/${result.eval_template_id}`,
+                            );
+                        },
+                        onError: () =>
+                          enqueueSnackbar("Failed to duplicate evaluation", {
+                            variant: "error",
+                          }),
+                      });
+                    }}
+                  >
+                    <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
+                    Duplicate
+                  </MenuItem>
+                </CustomTooltip>
+                <CustomTooltip
+                  show
+                  type="black"
+                  size="small"
+                  title="Permanently delete this eval"
+                  placement="left"
+                  arrow
+                >
+                  <MenuItem
+                    disabled={!canEditEvals}
+                    onClick={handleDeleteClick}
+                    sx={{ color: "error.main" }}
+                  >
+                    <Iconify
+                      icon="solar:trash-bin-trash-bold"
+                      width={16}
+                      sx={{ mr: 1 }}
+                    />{" "}
+                    Delete
+                  </MenuItem>
+                </CustomTooltip>
+              </Menu>
+            </>
           )}
-          <IconButton
-            size="small"
-            onClick={(e) => setMenuAnchor(e.currentTarget)}
-          >
-            <Iconify icon="solar:menu-dots-bold" width={18} />
-          </IconButton>
-          <Menu
-            anchorEl={menuAnchor}
-            open={Boolean(menuAnchor)}
-            onClose={() => setMenuAnchor(null)}
-          >
-            <MenuItem onClick={handleDuplicate}>
-              <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
-              Duplicate
-            </MenuItem>
-            {!isSystemEval && (
-              <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
-                <Iconify
-                  icon="solar:trash-bin-trash-bold"
-                  width={16}
-                  sx={{ mr: 1 }}
-                />{" "}
-                Delete
-              </MenuItem>
-            )}
-          </Menu>
         </Box>
       </Box>
+
+      <BulkDeleteDialog
+        open={deleteDialogOpen}
+        count={1}
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        isLoading={deleteLoading}
+      />
 
       {/* Top Tabs */}
       <Tabs
@@ -1283,11 +1440,7 @@ const EvalDetailPage = () => {
                         sx={{ flex: 1, fontSize: "12px" }}
                       >
                         Viewing{" "}
-                        <strong>
-                          V
-                          {viewingVersion.version_number ??
-                            viewingVersion.versionNumber}
-                        </strong>{" "}
+                        <strong>V{viewingVersion.version_number}</strong>{" "}
                         config. Edit and save to create a new version.
                       </Typography>
                       <Button
@@ -1373,6 +1526,7 @@ const EvalDetailPage = () => {
                 {/* Agent type — InstructionEditor with model bar */}
                 {!isComposite && evalType === "agent" && (
                   <InstructionEditor
+                    openModelMenuSignal={openModelMenuSignal}
                     value={instructions}
                     onChange={(v) => {
                       setInstructions(v);
@@ -1387,6 +1541,7 @@ const EvalDetailPage = () => {
                     onTemplateFormatChange={setTemplateFormat}
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
+                    mappedVariables={playgroundMapping}
                     disabled={isSystemEval}
                     modelSelectorDisabled={false}
                     mode={agentMode}
@@ -1427,6 +1582,7 @@ const EvalDetailPage = () => {
                 {!isComposite && evalType === "llm" && (
                   <>
                     <LLMPromptEditor
+                      openModelMenuSignal={openModelMenuSignal}
                       messages={messages}
                       onMessagesChange={(msgs) => {
                         setMessages(msgs);
@@ -1444,6 +1600,7 @@ const EvalDetailPage = () => {
                       datasetColumns={datasetColumns}
                       datasetJsonSchemas={datasetJsonSchemas}
                       disabled={isSystemEval}
+                      modelSelectorDisabled={false}
                     />
                     <FewShotExamples
                       selectedDatasets={fewShotExamples}
@@ -1503,7 +1660,7 @@ const EvalDetailPage = () => {
                       >
                         <Typography variant="caption">0</Typography>
                         <Slider
-                          value={passThreshold * 100}
+                          value={Math.round(passThreshold * 100)}
                           onChange={(_, val) => {
                             setPassThreshold(val / 100);
                             markDirty();
@@ -1545,37 +1702,48 @@ const EvalDetailPage = () => {
                     />
                   ))}
 
-                {/* Error Localization */}
-                {!isComposite && (
-                  <Box>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={errorLocalizerEnabled}
-                          onChange={(e) => {
-                            setErrorLocalizerEnabled(e.target.checked);
-                            markDirty();
-                          }}
-                          size="small"
-                        />
-                      }
-                      label={
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                      }
-                      sx={{ ml: 0 }}
-                    />
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", ml: 3.5, mt: -0.5 }}
-                    >
-                      Pinpoints which parts of the input caused evaluation
-                      failures
-                    </Typography>
-                  </Box>
-                )}
+                {errorLocalizerAvailable &&
+                  !isComposite &&
+                  evalType !== "code" && (
+                    <Box>
+                      <CustomTooltip
+                        show={agentEvalLocked}
+                        type=""
+                        arrow
+                        title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                      >
+                        <Box sx={{ display: "inline-flex" }}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={errorLocalizerActive}
+                                disabled={agentEvalLocked}
+                                onChange={(e) => {
+                                  setErrorLocalizerEnabled(e.target.checked);
+                                  markDirty();
+                                }}
+                                size="small"
+                              />
+                            }
+                            label={
+                              <Typography variant="body2" fontWeight={500}>
+                                Error Localization
+                              </Typography>
+                            }
+                            sx={{ ml: 0 }}
+                          />
+                        </Box>
+                      </CustomTooltip>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block", ml: 3.5, mt: -0.5 }}
+                      >
+                        Pinpoints which parts of the input caused evaluation
+                        failures
+                      </Typography>
+                    </Box>
+                  )}
 
                 {/* Description */}
                 {!isComposite && (
@@ -1743,9 +1911,13 @@ const EvalDetailPage = () => {
                           : instructions
                     }
                     evalType={evalType}
+                    code={code}
+                    codeLanguage={codeLanguage}
+                    isSystemEval={isSystemEval}
                     requiredKeys={variables}
+                    multiChoice={multiChoice}
                     showVersions={!(isSystemEval && evalType === "code")}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onVersionSelect={handleVersionSelect}
@@ -1769,7 +1941,7 @@ const EvalDetailPage = () => {
                       setTestError(null);
                       setTestPassed(false);
                     }}
-                    onReadyChange={setIsPlaygroundReady}
+                    onReadyChange={handlePlaygroundReadyChange}
                   />
                 </Box>
 
@@ -1824,8 +1996,13 @@ const EvalDetailPage = () => {
                   {isDirty && (
                     <Typography
                       variant="caption"
-                      color="warning.main"
-                      sx={{ fontSize: "11px" }}
+                      sx={{
+                        fontSize: "11px",
+                        color: (theme) =>
+                          theme.palette.mode === "light"
+                            ? theme.palette.amber[700]
+                            : theme.palette.warning.main,
+                      }}
                     >
                       Unsaved changes
                     </Typography>
@@ -1833,9 +2010,10 @@ const EvalDetailPage = () => {
 
                   <Tooltip
                     title={
-                      !isPlaygroundReady && !isTesting
+                      variableTooltip ||
+                      (!isPlaygroundReady && !isTesting
                         ? "Map all required keys before running"
-                        : ""
+                        : "")
                     }
                     placement="top"
                   >
@@ -1844,7 +2022,12 @@ const EvalDetailPage = () => {
                         variant={isComposite ? "contained" : "outlined"}
                         size="small"
                         onClick={handleTestEvaluation}
-                        disabled={isTesting || !isPlaygroundReady}
+                        disabled={
+                          isTesting ||
+                          !isPlaygroundReady ||
+                          needsTemplateVariable ||
+                          !canEditEvals
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
@@ -1866,40 +2049,78 @@ const EvalDetailPage = () => {
                     </span>
                   </Tooltip>
                   {!isSystemEval && !isComposite && (
-                    <Button
-                      variant="contained"
+                    <CustomTooltip
+                      show={!!variableTooltip}
+                      title={variableTooltip}
+                      arrow
                       size="small"
-                      onClick={handleSaveVersion}
-                      disabled={isSaving}
-                      startIcon={
-                        isSaving ? (
-                          <CircularProgress size={14} />
-                        ) : (
-                          <Iconify icon="mdi:content-save-outline" width={16} />
-                        )
-                      }
-                      sx={{ textTransform: "none" }}
+                      type="black"
+                      placement="top"
                     >
-                      {isSaving ? "Saving..." : "Save Version"}
-                    </Button>
+                      <span>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={handleSaveVersion}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            needsTemplateVariable ||
+                            !canEditEvals
+                          }
+                          startIcon={
+                            isSaving ? (
+                              <CircularProgress size={14} />
+                            ) : (
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
+                            )
+                          }
+                          sx={{ textTransform: "none" }}
+                        >
+                          {isSaving ? "Saving..." : "Save Version"}
+                        </Button>
+                      </span>
+                    </CustomTooltip>
                   )}
                   {!isSystemEval && isComposite && (
-                    <Button
-                      variant="contained"
+                    <CustomTooltip
+                      show={compositeChildren.length === 0}
+                      title="Select at least one child evaluation"
+                      arrow
                       size="small"
-                      onClick={handleSaveComposite}
-                      disabled={isSaving || !isDirty}
-                      startIcon={
-                        isSaving ? (
-                          <CircularProgress size={14} />
-                        ) : (
-                          <Iconify icon="mdi:content-save-outline" width={16} />
-                        )
-                      }
-                      sx={{ textTransform: "none" }}
+                      type="black"
+                      placement="top"
                     >
-                      {isSaving ? "Saving..." : "Save Changes"}
-                    </Button>
+                      <span>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={handleSaveComposite}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            compositeChildren.length === 0 ||
+                            !canEditEvals
+                          }
+                          startIcon={
+                            isSaving ? (
+                              <CircularProgress size={14} />
+                            ) : (
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
+                            )
+                          }
+                          sx={{ textTransform: "none" }}
+                        >
+                          {isSaving ? "Saving..." : "Save Changes"}
+                        </Button>
+                      </span>
+                    </CustomTooltip>
                   )}
                 </Box>
               </Box>
@@ -1929,7 +2150,10 @@ const EvalDetailPage = () => {
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
-          <EvalGroundTruthTab templateId={evalId} />
+          <EvalGroundTruthTab
+            templateId={evalId}
+            onSwitchToDetails={() => setActiveTab("details")}
+          />
         </Box>
       )}
     </Box>

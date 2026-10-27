@@ -3,18 +3,17 @@ import re
 import traceback
 import uuid
 
+from accounts.models.user import User
 from django.db import close_old_connections, models, transaction
 from django.db.models import Count, Max, OuterRef, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from accounts.models.user import User
-
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -39,24 +38,38 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.serializers.develop_dataset import ColumnSerializer
+
 try:
     from ee.voice.constants.voice_mapper import get_personas_by_language
 except ImportError:
     get_personas_by_language = None
+from drf_yasg.utils import swagger_auto_schema
 from simulate.models import AgentDefinition, AgentVersion, Persona, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
-from simulate.serializers.scenarios import (
-    AddScenarioColumnsSerializer,
-    AddScenarioRowsSerializer,
-    CreateScenarioSerializer,
-    EditScenarioPromptsSerializer,
-    EditScenarioSerializer,
-    ScenariosSerializer,
+from simulate.serializers.requests.scenarios import (
+    ScenarioAddColumnsRequestSerializer,
+    ScenarioAddRowsRequestSerializer,
+    ScenarioCreateRequestSerializer,
+    ScenarioEditPromptsRequestSerializer,
+    ScenarioEditRequestSerializer,
+    ScenarioFilterSerializer,
+    ScenarioMultiDatasetFilterSerializer,
+)
+from simulate.serializers.response.scenarios import (
+    ScenarioAddColumnsResponseSerializer,
+    ScenarioAddRowsResponseSerializer,
+    ScenarioCreateResponseSerializer,
+    ScenarioDeleteResponseSerializer,
+    ScenarioDetailResponseSerializer,
+    ScenarioEditResponseSerializer,
+    ScenarioErrorResponseSerializer,
+    ScenarioListResponseSerializer,
+    ScenarioMultiDatasetResponseSerializer,
+    ScenarioPromptsUpdateResponseSerializer,
+    ScenarioResponseSerializer,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from simulate.views import agent_definition
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal.simulate import (
     start_add_columns_workflow_sync,
@@ -64,8 +77,8 @@ from tfc.temporal.simulate import (
     start_create_dataset_scenario_workflow_sync,
     start_create_graph_scenario_workflow_sync,
     start_create_script_scenario_workflow_sync,
-    start_scenario_generation_workflow_sync,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
@@ -143,6 +156,34 @@ def convert_personas_to_property_list(persona_ids):
     return property_list if property_list else None
 
 
+def _scenario_add_columns_serializer_context(request, scenario_id=None):
+    """Attach the scenario when available so duplicate-column validation stays in the serializer."""
+
+    organization = getattr(request, "organization", None) or request.user.organization
+    scenario = None
+    if scenario_id and organization:
+        scenario = (
+            Scenarios.objects.filter(
+                id=scenario_id,
+                organization=organization,
+                deleted=False,
+            )
+            .select_related("dataset")
+            .first()
+        )
+    return {"request": request, "scenario": scenario}
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace(request):
+    return getattr(request, "workspace", None) or getattr(
+        request.user, "workspace", None
+    )
+
+
 class ScenariosListView(APIView):
     """
     API View to list scenarios for an organization with pagination and search
@@ -182,6 +223,18 @@ class ScenariosListView(APIView):
         self.response = self.finalize_response(request, response, *args, **kwargs)
         return self.response
 
+    @validated_request(
+        query_serializer=ScenarioFilterSerializer,
+        tags=["Scenarios"],
+        operation_summary="List scenarios",
+        operation_description="Returns a paginated list of scenarios for the user's organization.",
+        responses={
+            200: ScenarioListResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def get(self, request, *args, **kwargs):
         """
         Get paginated list of scenarios for the user's organization
@@ -197,15 +250,12 @@ class ScenariosListView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
-            # Get search query parameter
-            search_query = request.query_params.get("search", "").strip()
-            agent_definition_id = request.query_params.get("agent_definition_id", None)
-            agent_type = request.query_params.get("agent_type", None)
+            validated_query = request.validated_query_data
+            search_query = validated_query.get("search", "").strip()
+            agent_definition_id = validated_query.get("agent_definition_id", None)
+            agent_type = validated_query.get("agent_type", None)
 
             # Build base queryset with optimized joins
             base_queryset = Scenarios.objects.filter(
@@ -259,7 +309,7 @@ class ScenariosListView(APIView):
             result_page = paginator.paginate_queryset(scenarios, request)
 
             # Serialize the data
-            serializer = ScenariosSerializer(result_page, many=True)
+            serializer = ScenarioResponseSerializer(result_page, many=True)
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -267,22 +317,32 @@ class ScenariosListView(APIView):
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve scenarios: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to retrieve scenarios: {str(e)}"
             )
 
+    @validated_request(
+        query_serializer=ScenarioMultiDatasetFilterSerializer,
+        tags=["Scenarios"],
+        operation_summary="Get multi-dataset column configs",
+        operation_description="Returns column configurations for multiple scenarios.",
+        responses={
+            200: ScenarioMultiDatasetResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def get_multi_datasets_column_configs(self, request, *args, **kwargs):
-        try:
-            scenario_ids = json.loads(request.query_params.get("scenarios"))
+        scenario_ids = request.validated_query_data["scenarios"]
 
+        try:
             # Get all unique dataset IDs from the filtered scenarios
             scenarios = Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
 
             return Response(
-                {
-                    "column_configs": ScenariosSerializer(scenarios, many=True).data,
-                },
+                ScenarioMultiDatasetResponseSerializer(
+                    {"column_configs": scenarios}
+                ).data,
                 status=status.HTTP_200_OK,
             )
         except Exception as e:
@@ -300,82 +360,31 @@ class CreateScenarioView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ScenarioCreateRequestSerializer,
+        tags=["Scenarios"],
+        operation_summary="Create scenario",
+        operation_description="Creates a new scenario (dataset, script, or graph kind). Returns 202 with processing status.",
+        responses={
+            202: ScenarioCreateResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
+    )
     def post(self, request, *args, **kwargs):
         """
         Create a new scenario by copying the specified dataset
         """
         from tfc.ee_gating import EEFeature, check_ee_feature
 
-        org = getattr(request, "organization", None) or request.user.organization
+        org = _request_organization(request)
         check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
 
         try:
-            serializer = CreateScenarioSerializer(
-                data=request.data, context={"request": request}
-            )
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            scenario_kind = validated_data.get("kind", "dataset")
-
-            # Validate custom columns for duplicate names (for script and graph scenarios)
-            if scenario_kind in ["script", "graph"]:
-                custom_columns = validated_data.get("custom_columns", [])
-                if custom_columns:
-                    column_names = [col["name"] for col in custom_columns]
-                    duplicate_names = [
-                        name for name in column_names if column_names.count(name) > 1
-                    ]
-                    if duplicate_names:
-                        return self.gm.bad_request(
-                            f"Duplicate column name(s) in custom columns: {', '.join(set(duplicate_names))}"
-                        )
-
-            # Validate persona column data type for dataset scenarios before creating temp scenario
-            if scenario_kind == "dataset" and "dataset_id" in validated_data:
-                source_dataset = get_object_or_404(
-                    Dataset,
-                    id=validated_data["dataset_id"],
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-
-                existing_persona_column = Column.objects.filter(
-                    dataset=source_dataset, name="persona", deleted=False
-                ).first()
-
-                if (
-                    existing_persona_column
-                    and existing_persona_column.data_type
-                    != DataTypeChoices.PERSONA.value
-                ):
-                    return self.gm.bad_request(
-                        f"Invalid data type for 'persona' column. Expected '{DataTypeChoices.PERSONA.value}' "
-                        f"but found '{existing_persona_column.data_type}'. Please ensure the persona column "
-                        f"has the correct data type before creating a scenario."
-                    )
-
-                # Check for duplicate column names in source dataset
-                source_columns = Column.objects.filter(
-                    dataset=source_dataset, deleted=False
-                ).exclude(
-                    source__in=[
-                        SourceChoices.EXPERIMENT.value,
-                        SourceChoices.EXPERIMENT_EVALUATION.value,
-                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                    ]
-                )
-                column_names = [col.name for col in source_columns]
-                duplicate_names = [
-                    name for name in column_names if column_names.count(name) > 1
-                ]
-                if duplicate_names:
-                    return self.gm.bad_request(
-                        f"Source dataset contains duplicate column name(s): {', '.join(set(duplicate_names))}"
-                    )
+            validated_data = request.validated_data
+            scenario_kind = validated_data.get("kind", Scenarios.ScenarioTypes.DATASET)
 
             # Create a temporary scenario record with PROCESSING status
             temp_scenario = self._create_temp_scenario(request, validated_data)
@@ -406,13 +415,14 @@ class CreateScenarioView(APIView):
                 )
 
             # Return immediate response with processing status
-            scenario_serializer = ScenariosSerializer(temp_scenario)
             return Response(
-                {
-                    "message": f"{scenario_kind.title()} scenario creation started",
-                    "scenario": scenario_serializer.data,
-                    "status": "processing",
-                },
+                ScenarioCreateResponseSerializer(
+                    {
+                        "message": f"{scenario_kind.title()} scenario creation started",
+                        "scenario": temp_scenario,
+                        "status": "processing",
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -439,16 +449,17 @@ class CreateScenarioView(APIView):
                 pt_filters = {
                     "id": validated_data.get("prompt_template_id"),
                     "deleted": False,
-                    "organization": getattr(request, "organization", None)
-                    or request.user.organization,
+                    "organization": _request_organization(request),
                 }
-                if hasattr(request.user, "workspace") and request.user.workspace:
-                    pt_filters["workspace"] = request.user.workspace
+                request_workspace = _request_workspace(request)
+                if request_workspace:
+                    pt_filters["workspace"] = request_workspace
                 prompt_template = PromptTemplate.objects.get(**pt_filters)
 
                 pv_filters = {
                     "id": validated_data.get("prompt_version_id"),
                     "deleted": False,
+                    "original_template": prompt_template,
                 }
                 prompt_version = PromptVersion.objects.get(**pv_filters)
                 # Create simulator agent with generic prompt for prompt-based scenarios
@@ -456,18 +467,15 @@ class CreateScenarioView(APIView):
                 simulator_agent = SimulatorAgent.objects.create(
                     name=validated_data.get("name", "Default Agent"),
                     prompt=agent_prompt,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    workspace=(
-                        request.user.workspace
-                        if hasattr(request.user, "workspace")
-                        else None
-                    ),
+                    organization=_request_organization(request),
+                    workspace=request_workspace,
                 )
             else:
                 simulator_agent = self._create_simulator_agent(request, validated_data)
                 agent_definition = AgentDefinition.objects.get(
-                    id=validated_data.get("agent_definition_id")
+                    id=validated_data.get("agent_definition_id"),
+                    organization=_request_organization(request),
+                    deleted=False,
                 )
 
             # Create temporary scenario with PROCESSING status
@@ -505,13 +513,8 @@ class CreateScenarioView(APIView):
                     scenario_kind, Scenarios.ScenarioTypes.DATASET
                 ),
                 source_type=source_type,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                workspace=(
-                    request.user.workspace
-                    if hasattr(request.user, "workspace")
-                    else None
-                ),
+                organization=_request_organization(request),
+                workspace=_request_workspace(request),
                 dataset=None,
                 simulator_agent=simulator_agent,
                 status=StatusType.PROCESSING.value,
@@ -528,7 +531,9 @@ class CreateScenarioView(APIView):
         """Create a simulator agent from validated data"""
         try:
             agent_definition = AgentDefinition.objects.get(
-                id=validated_data.get("agent_definition_id")
+                id=validated_data.get("agent_definition_id"),
+                organization=_request_organization(request),
+                deleted=False,
             )
             agent_version = None
             agent_definition_version_id = validated_data.get(
@@ -539,8 +544,7 @@ class CreateScenarioView(APIView):
                     agent_version = AgentVersion.objects.get(
                         id=agent_definition_version_id,
                         agent_definition=agent_definition,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
+                        organization=_request_organization(request),
                         deleted=False,
                     )
                 except AgentVersion.DoesNotExist:
@@ -566,17 +570,49 @@ class CreateScenarioView(APIView):
                     "finished_speaking_sensitivity", 0.5
                 ),
                 initial_message_delay=validated_data.get("initial_message_delay", 0),
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                workspace=(
-                    request.user.workspace
-                    if hasattr(request.user, "workspace")
-                    else None
-                ),
+                organization=_request_organization(request),
+                workspace=_request_workspace(request),
             )
             return simulator_agent
         except Exception as e:
             raise Exception(f"Failed to create simulator agent: {str(e)}")  # noqa: B904
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
+    if dataset is None:
+        return None
+    column_order = [str(cid) for cid in (dataset.column_order or [])]
+    columns_by_id = {
+        str(col.id): col
+        for col in Column.objects.filter(
+            deleted=False,
+            id__in=column_order,
+            dataset=dataset,
+        )
+    }
+
+    config = {}
+    for cid in column_order:
+        if cid not in columns_by_id:
+            logger.warning(
+                "scenario_column_order_references_missing_column",
+                extra={
+                    "dataset_id": str(dataset.id),
+                    "column_id": cid,
+                },
+            )
+            continue
+
+        config[cid] = {
+            "name": columns_by_id[cid].name,
+            "type": columns_by_id[cid].data_type,
+        }
+    return config
 
 
 class ScenarioDetailView(APIView):
@@ -585,7 +621,18 @@ class ScenarioDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Get scenario detail",
+        operation_description="Returns full detail of a specific scenario including graph data and prompts.",
+        responses={
+            200: ScenarioDetailResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def get(self, request, scenario_id, *args, **kwargs):
         """
         Get details of a specific scenario with graph and prompts information
@@ -595,8 +642,7 @@ class ScenarioDetailView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -649,17 +695,22 @@ class ScenarioDetailView(APIView):
             else:
                 response_data["dataset_rows"] = 0
 
-            # Return the response
-            return Response(response_data, status=status.HTTP_200_OK)
+            # Add dataset column config so frontend can show actual column names in eval mapping
+            response_data["dataset_column_config"] = get_dataset_column_config(
+                scenario.dataset
+            )
+
+            # Return the response — pass through serializer to whitelist permitted fields
+            return Response(
+                ScenarioDetailResponseSerializer(response_data).data,
+                status=status.HTTP_200_OK,
+            )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self._gm.not_found("Scenario not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve scenario: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to retrieve scenario: {str(e)}"
             )
 
     def _get_scenario_graph_data(self, scenario):
@@ -699,7 +750,18 @@ class DeleteScenarioView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Delete scenario",
+        operation_description="Soft-deletes a scenario by setting deleted=True.",
+        responses={
+            200: ScenarioDeleteResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
     def delete(self, request, scenario_id, *args, **kwargs):
         """
         Soft delete a scenario by setting deleted=True
@@ -709,27 +771,29 @@ class DeleteScenarioView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
-            # Soft delete the scenario
-            scenario.deleted = True
-            scenario.save()
+            with transaction.atomic():
+                scenario.delete()
+                ScenarioGraph.objects.filter(
+                    scenario=scenario,
+                    deleted=False,
+                ).update(deleted=True, deleted_at=timezone.now())
 
             return Response(
-                {"message": "Scenario deleted successfully"}, status=status.HTTP_200_OK
+                ScenarioDeleteResponseSerializer(
+                    {"message": "Scenario deleted successfully"}
+                ).data,
+                status=status.HTTP_200_OK,
             )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self._gm.not_found("Scenario not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete scenario: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to delete scenario: {str(e)}"
             )
 
 
@@ -744,6 +808,19 @@ class EditScenarioView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ScenarioEditRequestSerializer,
+        tags=["Scenarios"],
+        operation_summary="Edit scenario",
+        operation_description="Updates scenario name, description, graph, or prompt.",
+        responses={
+            200: ScenarioEditResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario name and description
@@ -753,25 +830,18 @@ class EditScenarioView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
-            # Validate the data
-            serializer = EditScenarioSerializer(data=request.data)
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Update the scenario
-            if validated_data.get("name"):
+            if "name" in validated_data:
                 scenario.name = validated_data.get("name")
-            if validated_data.get("description"):
+            if "description" in validated_data:
                 scenario.description = validated_data.get("description")
-            if validated_data.get("graph"):
+            if "graph" in validated_data and validated_data.get("graph") is not None:
                 # Handle graph update through ScenarioGraph model
                 # Get the most recent active graph for this scenario
                 scenario_graph = (
@@ -793,36 +863,35 @@ class EditScenarioView(APIView):
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": validated_data.get("graph"),
                             "source": "user_provided",
                         },
                     )
-            if validated_data.get("prompt"):
+            if "prompt" in validated_data:
+                if not scenario.simulator_agent:
+                    return self.gm.bad_request(
+                        "Scenario does not have an associated simulator agent."
+                    )
                 scenario.simulator_agent.prompt = validated_data.get("prompt")
                 scenario.simulator_agent.save()
             scenario.save()
 
-            # Serialize and return the updated scenario
-            scenario_serializer = ScenariosSerializer(scenario)
-
             return Response(
-                {
-                    "message": "Scenario updated successfully",
-                    "scenario": scenario_serializer.data,
-                },
+                ScenarioEditResponseSerializer(
+                    {
+                        "message": "Scenario updated successfully",
+                        "scenario": scenario,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self.gm.not_found("Scenario not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to update scenario: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to update scenario: {str(e)}"
             )
 
 
@@ -837,6 +906,19 @@ class EditScenarioPromptsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ScenarioEditPromptsRequestSerializer,
+        tags=["Scenarios"],
+        operation_summary="Edit scenario prompts",
+        operation_description="Updates the simulator agent prompt for a scenario.",
+        responses={
+            200: ScenarioPromptsUpdateResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request, scenario_id, *args, **kwargs):
         """
         Update scenario prompts
@@ -846,18 +928,11 @@ class EditScenarioPromptsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
-            # Validate the data
-            serializer = EditScenarioPromptsSerializer(data=request.data)
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             prompts = validated_data["prompts"]
 
             # # Update the simulator agent prompt
@@ -869,26 +944,30 @@ class EditScenarioPromptsView(APIView):
             #             system_prompt = prompt.get('content', '')
             #             break
 
+            if not scenario.simulator_agent:
+                return self.gm.bad_request(
+                    "Scenario does not have an associated simulator agent."
+                )
+
             # Update the simulator agent prompt
             scenario.simulator_agent.prompt = prompts
             scenario.simulator_agent.save()
 
             return Response(
-                {
-                    "message": "Scenario prompts updated successfully",
-                    "prompts": prompts,
-                },
+                ScenarioPromptsUpdateResponseSerializer(
+                    {
+                        "message": "Scenario prompts updated successfully",
+                        "prompts": prompts,
+                    }
+                ).data,
                 status=status.HTTP_200_OK,
             )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self.gm.not_found("Scenario not found.")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to update scenario prompts: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to update scenario prompts: {str(e)}"
             )
 
 
@@ -903,18 +982,31 @@ class AddScenarioRowsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ScenarioAddRowsRequestSerializer,
+        tags=["Scenarios"],
+        operation_summary="Add rows to scenario",
+        operation_description="Adds new rows to a scenario's dataset via Temporal workflow. Returns 202 Accepted.",
+        responses={
+            202: ScenarioAddRowsResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, scenario_id, *args, **kwargs):
         """
         Add new rows to a scenario's dataset
         Expected payload:
         {
-            "num_rows": int (required, 1-100),
+            "num_rows": int (required, 10-20000),
             "description": str (optional)
         }
         """
         from tfc.ee_gating import EEFeature, check_ee_feature
 
-        org = getattr(request, "organization", None) or request.user.organization
+        org = _request_organization(request)
         check_ee_feature(EEFeature.AGENTIC_EVAL, org_id=str(org.id))
 
         try:
@@ -922,8 +1014,7 @@ class AddScenarioRowsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -933,13 +1024,7 @@ class AddScenarioRowsView(APIView):
                     "Scenario does not have an associated dataset."
                 )
 
-            # Validate the input data
-            serializer = AddScenarioRowsSerializer(data=request.data)
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             num_rows = validated_data["num_rows"]
             description = validated_data.get("description", "")
 
@@ -1009,26 +1094,25 @@ class AddScenarioRowsView(APIView):
             )
 
             return Response(
-                {
-                    "message": f"Started generating {num_rows} new rows for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "num_rows": num_rows,
-                },
+                ScenarioAddRowsResponseSerializer(
+                    {
+                        "message": f"Started generating {num_rows} new rows for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "num_rows": num_rows,
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self.gm.not_found("Scenario not found.")
         except Exception as e:
             import traceback
 
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to add rows: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to add rows: {str(e)}"
             )
 
 
@@ -1043,6 +1127,20 @@ class AddScenarioColumnsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        tags=["Scenarios"],
+        operation_summary="Add columns to scenario",
+        operation_description="Adds new columns to a scenario's dataset via Temporal workflow. Returns 202 Accepted.",
+        request_serializer=ScenarioAddColumnsRequestSerializer,
+        responses={
+            202: ScenarioAddColumnsResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            404: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        serializer_context=_scenario_add_columns_serializer_context,
+    )
     def post(self, request, scenario_id, *args, **kwargs):
         """
         Add new columns to a scenario's dataset
@@ -1065,12 +1163,13 @@ class AddScenarioColumnsView(APIView):
                 except ImportError:
                     Entitlements = None
 
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(str(org.id), "has_agentic_eval")
-                if not feat_check.allowed:
-                    return self.gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    org = _request_organization(request)
+                    feat_check = Entitlements.check_feature(
+                        str(org.id), "has_agentic_eval"
+                    )
+                    if not feat_check.allowed:
+                        return self.gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 
@@ -1078,8 +1177,7 @@ class AddScenarioColumnsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -1089,40 +1187,10 @@ class AddScenarioColumnsView(APIView):
                     "Scenario does not have an associated dataset."
                 )
 
-            # Validate the input data
-            serializer = AddScenarioColumnsSerializer(data=request.data)
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            columns_info = validated_data["columns"]
-
-            # Check for duplicate column names within the request
-            column_names = [col["name"] for col in columns_info]
-            duplicate_names = [
-                name for name in column_names if column_names.count(name) > 1
-            ]
-            if duplicate_names:
-                return self.gm.bad_request(
-                    f"Duplicate column name(s) in request: {', '.join(set(duplicate_names))}"
-                )
+            columns_info = request.validated_data["columns"]
 
             # Get the dataset
             dataset = scenario.dataset
-
-            # Check if columns already exist in the dataset
-            existing_column_names = set(
-                Column.objects.filter(dataset=dataset, deleted=False).values_list(
-                    "name", flat=True
-                )
-            )
-
-            for column in columns_info:
-                if column["name"] in existing_column_names:
-                    return self.gm.bad_request(
-                        f"Column '{column['name']}' already exists in the dataset."
-                    )
 
             # Get all rows in the dataset
             all_rows = Row.objects.filter(dataset=dataset, deleted=False)
@@ -1160,7 +1228,7 @@ class AddScenarioColumnsView(APIView):
                 current_column_order = dataset.column_order or []
                 current_column_config = dataset.column_config or {}
 
-                for col_id, col_info in zip(new_column_ids, columns_info):
+                for col_id, col_info in zip(new_column_ids, columns_info, strict=False):
                     current_column_order.append(col_id)
                     current_column_config[col_id] = {
                         "name": col_info["name"],
@@ -1199,26 +1267,25 @@ class AddScenarioColumnsView(APIView):
             )
 
             return Response(
-                {
-                    "message": f"Started generating {len(columns_info)} new column(s) for scenario",
-                    "scenario_id": str(scenario_id),
-                    "dataset_id": str(dataset.id),
-                    "columns": [col["name"] for col in columns_info],
-                },
+                ScenarioAddColumnsResponseSerializer(
+                    {
+                        "message": f"Started generating {len(columns_info)} new column(s) for scenario",
+                        "scenario_id": str(scenario_id),
+                        "dataset_id": str(dataset.id),
+                        "columns": [col["name"] for col in columns_info],
+                    }
+                ).data,
                 status=status.HTTP_202_ACCEPTED,
             )
 
         except Http404:
-            return Response(
-                {"error": "Scenario not found."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self.gm.not_found("Scenario not found.")
         except Exception as e:
             import traceback
 
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to add columns: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to add columns: {str(e)}"
             )
 
 

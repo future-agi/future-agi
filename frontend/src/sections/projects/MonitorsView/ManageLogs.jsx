@@ -58,18 +58,18 @@ const ManageLogs = ({ alertId }) => {
     enabled: !!alertId,
     queryFn: ({ pageParam = 0 }) =>
       axiosInstance
-        .get(endpoints.project.getMonitorLogs(alertId), {
+        .get(endpoints.project.getAlertDetails(alertId), {
           params: {
             page_number: pageParam,
             page_size: PAGE_SIZE,
           },
         })
         .then((res) => {
-          return res.data.result;
+          return res.data.result.logs;
         }),
     getNextPageParam: (lastPage, pages) => {
       const currentPage = pages.length - 1;
-      const totalPages = lastPage.total_pages;
+      const totalPages = lastPage.metadata?.total_pages || 0;
       const nextPage = currentPage + 1;
       return nextPage < totalPages ? nextPage : undefined;
     },
@@ -125,7 +125,7 @@ const ManageLogs = ({ alertId }) => {
   return (
     <Box display="flex" flexDirection="column" height={"650px"} overflow="auto">
       {data?.pages?.map((page, pageIndex) =>
-        page.logs?.map((log, index) => (
+        page.results?.map((log, index) => (
           <Box
             key={`${log.timestamp}-${pageIndex}-${index}`}
             sx={{

@@ -264,7 +264,7 @@ const ImprovePromptDrawer = (props) => {
         </Typography>
         <Box sx={{ display: "flex", gap: 0.8, alignItems: "center" }}>
           {/* <Iconify icon="solar:info-circle-bold" color="#637381" width="15px" /> */}
-          <Typography variant="caption" color="text.disabled">
+          <Typography variant="caption" color="text.secondary">
             Enhance your prompt with nuanced refinements for more precise and
             effective results.
           </Typography>

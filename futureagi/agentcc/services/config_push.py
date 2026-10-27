@@ -3,9 +3,18 @@ Config Push Service — pushes per-org configs from Django to the Go gateway.
 Called when org configs are created, activated, or deleted.
 """
 
+import copy
+
 import structlog
 from django.conf import settings as django_settings
+from pydantic import ValidationError
 
+from agentcc.contracts.gateway_admin import (
+    AlertChannelConfig as GatewayAlertChannelConfig,
+)
+from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
+from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -50,6 +59,72 @@ _RULE_PROVIDER_DEFAULTS = {
     "mcp-security": "mcp_security",
 }
 
+_PROVIDER_CREDENTIAL_ALIASES = {
+    "access_key": "aws_access_key_id",
+    "secret_key": "aws_secret_access_key",
+    "region": "aws_region",
+}
+
+
+def _contract_input_names(contract_model):
+    names = set(contract_model.model_fields)
+    for field in contract_model.model_fields.values():
+        if field.alias:
+            names.add(field.alias)
+        validation_alias = field.validation_alias
+        if validation_alias is None:
+            continue
+        choices = getattr(validation_alias, "choices", (validation_alias,))
+        names.update(choice for choice in choices if isinstance(choice, str))
+    return frozenset(names)
+
+
+_PROVIDER_INPUT_FIELDS = _contract_input_names(GatewayProviderConfig)
+_ALERT_RULE_INPUT_FIELDS = _contract_input_names(GatewayAlertRuleConfig)
+_ALERT_CHANNEL_INPUT_FIELDS = _contract_input_names(GatewayAlertChannelConfig)
+
+# Keys the Monitoring UI stores on alert rules/channels to drive its own
+# rendering (severity chip, Active/Disabled status). The gateway has no
+# equivalent, so they are projected out here — and not logged, because they are
+# expected rather than a misconfiguration.
+_UI_ONLY_ALERTING_KEYS = frozenset({"enabled", "severity", "severity_filter"})
+
+
+class UnsupportedProviderCredentialFields(ValueError):
+    def __init__(self, provider_name, fields):
+        self.provider_name = provider_name
+        self.fields = tuple(sorted(fields))
+        super().__init__(
+            "Unsupported gateway credential fields for provider "
+            f"{provider_name}: {', '.join(self.fields)}"
+        )
+
+
+def _normalize_eval_ids(cfg):
+    """
+    Normalize futureagi eval id config so the gateway receives both shapes:
+    - eval_ids: ["76", "15", "22"] — array, what the new gateway iterates
+    - eval_id: "76" — first id, fallback for older gateway builds
+
+    Accepts either input shape. No-op if neither is present.
+    """
+    if not isinstance(cfg, dict):
+        return
+    raw = cfg.get("eval_ids")
+    if raw is None and "eval_id" in cfg:
+        raw = [cfg.get("eval_id")]
+    if raw is None:
+        return
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    eval_ids = [str(i) for i in raw if i not in (None, "")]
+    if eval_ids:
+        cfg["eval_ids"] = eval_ids
+        cfg["eval_id"] = eval_ids[0]
+    else:
+        cfg.pop("eval_ids", None)
+        cfg.pop("eval_id", None)
+
 
 def _inject_guardrail_credentials(checks):
     """
@@ -57,8 +132,8 @@ def _inject_guardrail_credentials(checks):
     "__encrypted__" sentinel values with actual secrets from the policy's
     encrypted_check_configs blob.
     """
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+    from integrations.services.credentials import CredentialManager
 
     ENCRYPTED_SENTINEL = "__encrypted__"
 
@@ -119,10 +194,16 @@ def _transform_guardrails(guardrails_data, org_id=None):
 
     Django stores: {"rules": [{"name": "pii-detector", "action": "block", ...}], "enabled": true}
     Gateway expects: {"checks": {"pii-detection": {"enabled": true, "action": "block", ...}}}
+
+    Deep-copies the input because downstream helpers (_inject_guardrail_credentials,
+    _inject_fi_credentials) mutate sub-dicts in place — without the copy those
+    mutations would leak back into the caller's Django model instance and the
+    next AgentccOrgConfigSerializer(config).data would render decrypted secrets.
     """
     if not guardrails_data:
         return guardrails_data
 
+    guardrails_data = copy.deepcopy(guardrails_data)
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
 
@@ -138,10 +219,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
             cfg = dict(rule.get("config") or {})
             if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
                 cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
-            if "eval_ids" in cfg and "eval_id" not in cfg:
-                ids = cfg.pop("eval_ids", [])
-                if ids:
-                    cfg["eval_id"] = str(ids[0])
+            _normalize_eval_ids(cfg)
             checks[registry_name] = {
                 "enabled": rule.get("enabled", True),
                 "action": rule.get("action", "block"),
@@ -176,14 +254,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 else cfg
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
-            if (
-                isinstance(inner, dict)
-                and "eval_ids" in inner
-                and "eval_id" not in inner
-            ):
-                ids = inner.pop("eval_ids", [])
-                if ids:
-                    inner["eval_id"] = str(ids[0])
+            _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
@@ -203,10 +274,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         cfg = dict(rule.get("config") or {})
         if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
             cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
-        if "eval_ids" in cfg and "eval_id" not in cfg:
-            ids = cfg.pop("eval_ids", [])
-            if ids:
-                cfg["eval_id"] = str(ids[0])
+        _normalize_eval_ids(cfg)
         checks[registry_name] = {
             "enabled": rule.get("enabled", True),
             "action": rule.get("action", "block"),
@@ -230,13 +298,29 @@ def _transform_guardrails(guardrails_data, org_id=None):
     return result
 
 
+def _normalize_url(url):
+    """Strip trailing slash and lowercase scheme+host for comparison."""
+    if not url or not isinstance(url, str):
+        return ""
+    return url.strip().rstrip("/").lower()
+
+
 def _inject_fi_credentials(checks, org_id):
     """
-    Auto-inject the org's FI platform API credentials into futureagi-eval config.
-    Since FutureAGI IS the platform, the org's own api_key/secret_key are already
-    stored in the OrgApiKey model — no need for users to configure them manually.
+    Inject the org's FI platform credentials into futureagi-eval config.
+
+    Behavior:
+    - base_url missing → fill with django_settings.BASE_URL, force-inject the
+      org's OrgApiKey for api_key/secret_key. This is the common case: the
+      guardrail is calling its own platform, and the user shouldn't have to
+      know their own platform's API key.
+    - base_url present and matches this platform's BASE_URL → same as above,
+      force-inject (heals user-typed wrong keys for the local platform).
+    - base_url points at a *different* environment (e.g. local gateway
+      explicitly targeting https://dev.api.futureagi.com) → respect whatever
+      api_key/secret_key the user provided. Local keys would 401 against the
+      remote env, so auto-injecting would break this case.
     """
-    # Check both possible names (pre and post registry mapping)
     fi_check = checks.get("futureagi-eval")
     if fi_check is None:
         return
@@ -246,8 +330,19 @@ def _inject_fi_credentials(checks, org_id):
 
     cfg = fi_check.get("config") or {}
 
-    # Only inject if not already set (don't overwrite explicit config)
-    if cfg.get("api_key") and cfg.get("secret_key"):
+    cfg.setdefault("call_type", "protect")
+    cfg.setdefault("base_url", django_settings.BASE_URL)
+    fi_check["config"] = cfg
+
+    targets_local_platform = _normalize_url(cfg.get("base_url")) == _normalize_url(
+        django_settings.BASE_URL
+    )
+    if not targets_local_platform:
+        logger.info(
+            "fi_credentials_skipped_cross_env",
+            org_id=str(org_id),
+            base_url=cfg.get("base_url"),
+        )
         return
 
     try:
@@ -260,11 +355,8 @@ def _inject_fi_credentials(checks, org_id):
             deleted=False,
         ).first()
         if org_key:
-            cfg.setdefault("api_key", org_key.api_key)
-            cfg.setdefault("secret_key", org_key.secret_key)
-            cfg.setdefault("base_url", django_settings.BASE_URL)
-            cfg.setdefault("call_type", "protect")
-            fi_check["config"] = cfg
+            cfg["api_key"] = org_key.api_key
+            cfg["secret_key"] = org_key.secret_key
             logger.info(
                 "fi_credentials_injected",
                 org_id=str(org_id),
@@ -282,10 +374,48 @@ def _inject_fi_credentials(checks, org_id):
         )
 
 
+def _normalize_provider_credentials(provider_name, decrypted):
+    normalized = {}
+    unsupported = []
+    for key, value in decrypted.items():
+        if value in (None, ""):
+            continue
+        canonical_key = _PROVIDER_CREDENTIAL_ALIASES.get(key, key)
+        if canonical_key in GatewayProviderConfig.model_fields:
+            normalized[canonical_key] = value
+        else:
+            unsupported.append(key)
+
+    if unsupported:
+        raise UnsupportedProviderCredentialFields(provider_name, unsupported)
+    return normalized
+
+
+def _normalize_provider_extra_config(provider_name, extra_config):
+    if not isinstance(extra_config, dict):
+        return {}
+
+    normalized = {}
+    ignored = []
+    for key, value in extra_config.items():
+        if key in _PROVIDER_INPUT_FIELDS:
+            normalized[key] = value
+        elif value not in (None, "", [], {}):
+            ignored.append(key)
+
+    if ignored:
+        logger.warning(
+            "provider_extra_config_ignored",
+            provider=provider_name,
+            keys=sorted(ignored),
+        )
+    return normalized
+
+
 def _assemble_providers(org_id):
     """Build providers dict from AgentccProviderCredential rows for an org."""
-    from integrations.services.credentials import CredentialManager
     from agentcc.models.provider_credential import AgentccProviderCredential
+    from integrations.services.credentials import CredentialManager
 
     credentials = AgentccProviderCredential.no_workspace_objects.filter(
         organization_id=org_id,
@@ -303,33 +433,100 @@ def _assemble_providers(org_id):
                 provider=cred.provider_name,
             )
             continue
-        providers[cred.provider_name] = {
-            **cred.extra_config,
-            "api_key": decrypted.get("api_key", ""),
-            **{k: v for k, v in decrypted.items() if k != "api_key"},
-            "base_url": cred.base_url,
-            "api_format": cred.api_format,
-            "models": cred.models_list,
-            "enabled": True,
-            "default_timeout": f"{cred.default_timeout_seconds}s",
-            "max_concurrent": cred.max_concurrent,
-            "conn_pool_size": cred.conn_pool_size,
-        }
+
+        try:
+            raw = {
+                **_normalize_provider_extra_config(
+                    cred.provider_name, cred.extra_config
+                ),
+                **_normalize_provider_credentials(cred.provider_name, decrypted),
+                "base_url": cred.base_url,
+                "api_format": cred.api_format,
+                "models": cred.models_list,
+                "enabled": True,
+                "timeout": cred.default_timeout_seconds,
+                "max_concurrent": cred.max_concurrent,
+                "conn_pool_size": cred.conn_pool_size,
+            }
+            providers[cred.provider_name] = GatewayProviderConfig.model_validate(
+                raw
+            ).model_dump(by_alias=True, exclude_none=True)
+        except UnsupportedProviderCredentialFields as e:
+            logger.warning(
+                "provider_credential_unsupported_fields",
+                org_id=str(org_id),
+                provider=cred.provider_name,
+                fields=list(e.fields),
+            )
+            continue
     return providers
 
 
+def _as_named_entries(value):
+    """
+    Coerce an alerting rules/channels collection into a list of dicts.
+
+    Two writers produce two shapes: Settings → Alerting saves an array, while
+    Monitoring → Create Rule saves a name-keyed object so its patch can add one
+    entry without clobbering the rest. Returns None when the value is neither.
+    """
+    if isinstance(value, dict):
+        return [
+            {"name": name, **entry} if isinstance(entry, dict) else {"name": name}
+            for name, entry in value.items()
+        ]
+    if isinstance(value, list):
+        return [entry for entry in value if isinstance(entry, dict)]
+    return None
+
+
+def _project_alerting_entries(entries, allowed_fields, kind):
+    """
+    Drop disabled entries and any key the gateway's alerting contract forbids.
+
+    The gateway evaluates every rule it is given — it has no per-rule enable
+    switch — so a rule stored with `enabled: false` is omitted rather than
+    forwarded with the flag stripped.
+    """
+    projected = []
+    unknown = set()
+    for entry in entries:
+        if entry.get("enabled") is False:
+            continue
+        projected.append({k: v for k, v in entry.items() if k in allowed_fields})
+        unknown.update(
+            k
+            for k in entry
+            if k not in allowed_fields and k not in _UI_ONLY_ALERTING_KEYS
+        )
+
+    if unknown:
+        logger.warning("alerting_fields_ignored", kind=kind, keys=sorted(unknown))
+    return projected
+
+
 def _normalize_alerting(alerting):
-    """Normalize alerting config so rules/channels are always arrays (Go expects arrays)."""
+    """
+    Project stored alerting config onto the gateway admin contract.
+
+    The `alerting` column is a free-form JSONField that the UI writes directly,
+    but `AlertingConfig` is `extra="forbid"`. Without this projection any key
+    the UI adds for its own use fails validation, and because the bulk sync
+    endpoint validates every org in one pass, a single such rule takes the whole
+    fleet's config sync down.
+    """
     if not alerting or not isinstance(alerting, dict):
         return alerting
+
     result = {**alerting}
-    for key in ("rules", "channels"):
-        val = result.get(key)
-        if isinstance(val, dict):
-            result[key] = [
-                {"name": name, **cfg} if isinstance(cfg, dict) else {"name": name}
-                for name, cfg in val.items()
-            ]
+    for key, allowed_fields in (
+        ("rules", _ALERT_RULE_INPUT_FIELDS),
+        ("channels", _ALERT_CHANNEL_INPUT_FIELDS),
+    ):
+        entries = _as_named_entries(result.get(key))
+        if entries is None:
+            continue
+        result[key] = _project_alerting_entries(entries, allowed_fields, key)
     return result
 
 
@@ -337,7 +534,13 @@ def _extract_budget_action(entry):
     if not isinstance(entry, dict):
         return None
 
-    action = entry.get("action") or entry.get("action_mode") or entry.get("on_exceed")
+    action = (
+        entry.get("action")
+        or entry.get("action_mode")
+        or entry.get("actionMode")
+        or entry.get("on_exceed")
+        or entry.get("onExceed")
+    )
     if isinstance(action, str) and action:
         return action.lower()
     return None
@@ -434,7 +637,7 @@ def _transform_budgets(budgets):
 
 def _build_payload(org_id, config):
     """Build the config payload for the gateway, assembling providers from credentials."""
-    return {
+    payload = {
         "providers": _assemble_providers(org_id),
         "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
         "routing": config.routing,
@@ -452,6 +655,34 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
+    return GatewayOrgConfig.model_validate(payload).model_dump(
+        by_alias=True,
+        exclude_none=True,
+    )
+
+
+class OrgConfigRejected(ValueError):
+    """The gateway contract does not accept an org config."""
+
+
+def validate_org_config(config):
+    """
+    Raise OrgConfigRejected if the gateway cannot accept `config`.
+
+    Call it before a config version becomes active. The gateway pulls every
+    active config through the same contract, so a version the contract rejects
+    stops that org's sync until someone repairs the row.
+    """
+    try:
+        _build_payload(str(config.organization_id), config)
+    except ValidationError as e:
+        fields = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in e.errors()
+        )
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {fields}"
+        ) from e
 
 
 def push_org_config(org_id, config):
@@ -509,12 +740,15 @@ def push_all_org_configs():
     failed = 0
     for cfg in configs:
         org_id = str(cfg.organization_id)
-        payload = _build_payload(org_id, cfg)
         try:
+            payload = _build_payload(org_id, cfg)
             client.set_org_config(org_id, payload)
             success += 1
         except GatewayClientError as e:
             logger.warning("config_push_failed", org_id=org_id, error=str(e))
+            failed += 1
+        except Exception as e:
+            logger.warning("config_push_error", org_id=org_id, error=str(e))
             failed += 1
 
     logger.info("config_push_all_complete", success=success, failed=failed)

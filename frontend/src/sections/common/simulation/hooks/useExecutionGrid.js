@@ -13,7 +13,6 @@ export const DEFAULT_COLUMN_DEF = {
   resizable: true,
   suppressHeaderMenuButton: true,
   suppressHeaderContextMenu: true,
-  suppressMultiSort: true,
 };
 
 /**

@@ -18,7 +18,9 @@ describe("stripAttributePathPrefix", () => {
 
   it("strips the wrapper for multi-digit indices", () => {
     expect(
-      stripAttributePathPrefix("observation_span.42.span_attributes.transcript"),
+      stripAttributePathPrefix(
+        "observation_span.42.span_attributes.transcript",
+      ),
     ).toBe("transcript");
   });
 
@@ -40,9 +42,14 @@ describe("stripAttributePathPrefix", () => {
     expect(stripAttributePathPrefix("")).toBe("");
   });
 
-  it("only strips an actual prefix, not a mid-string occurrence", () => {
+  it("strips a span_attributes segment anywhere in the path, not only as a prefix", () => {
+    // The `span_attributes.` strip is intentionally unanchored — see the
+    // implementation comment at src/utils/utils.js. The FE walker over a
+    // fetched span detail hits `span_attributes.` mid-path; collapsing both
+    // forms keeps fieldSet and flatValueMap lookups aligned with the saved
+    // mapping (which uses bare attribute paths).
     expect(stripAttributePathPrefix("metadata.span_attributes.input")).toBe(
-      "metadata.span_attributes.input",
+      "metadata.input",
     );
   });
 });

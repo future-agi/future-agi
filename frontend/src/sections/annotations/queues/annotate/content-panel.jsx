@@ -14,13 +14,13 @@ import {
   CircularProgress,
   Dialog,
   Divider,
-  Grid,
   IconButton,
   LinearProgress,
   Stack,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
@@ -32,12 +32,12 @@ import axios, { endpoints } from "src/utils/axios";
 import SessionHistory from "src/sections/projects/TracesDrawer/SessionHistory";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import { canonicalKeys, formatMs } from "src/utils/utils";
-import TraceDetailDrawer from "src/components/traceDetailDrawer/trace-detail-drawer";
-import { SelectedNodeProvider } from "src/components/traceDetailDrawer/selectedNodeContext";
 import SpanTreeTimeline from "src/components/traceDetail/SpanTreeTimeline";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import LeftPanelSplit from "src/components/traceDetail/TraceLeftPanel";
-import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
+import DrawerToolbar, {
+  ToolbarPill,
+} from "src/components/traceDetail/DrawerToolbar";
 import TraceDisplayPanel, {
   DEFAULT_VIEW_CONFIG,
 } from "src/components/traceDetail/TraceDisplayPanel";
@@ -49,33 +49,13 @@ import {
 import ImagineTab from "src/components/imagine/ImagineTab";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
-import CallStatus from "src/sections/test/CallLogs/CallStatus";
-import { format, isValid } from "date-fns";
-import TestDetailDrawerScenarioTable from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerScenarioTable";
-import AudioPlayerCustom from "src/sections/test-detail/TestDetailDrawer/AudioPlayerCustom";
-import LeftSection from "src/components/CallLogsDetailDrawer/LeftSection";
-import TestDetailDrawerRightSection from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerRightSection";
-import RightSection from "src/components/CallLogsDetailDrawer/RightSection";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { formatDurationSafe } from "src/components/CallLogsDrawer/CustomCallLogHeader";
-import { getCsatScoreColor } from "src/components/CallLogsDrawer/common";
-import SvgColor from "src/components/svg-color";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import ChatDetailDrawerV2 from "src/components/ChatDetailDrawerV2";
 
 const CustomJsonViewer = lazy(
   () => import("src/components/custom-json-viewer/CustomJsonViewer"),
-);
-
-const Separator = () => (
-  <Typography
-    typography="s2_1"
-    color="text.disabled"
-    fontWeight="fontWeightRegular"
-    sx={{ mx: 0.5 }}
-  >
-    |
-  </Typography>
 );
 
 const SOURCE_LABELS = {
@@ -86,6 +66,23 @@ const SOURCE_LABELS = {
   call_execution: "Simulation",
   trace_session: "Session",
 };
+
+const ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS = ["queue", "tags"];
+
+function neutralChipSx(theme, height = 22) {
+  return {
+    height,
+    fontSize: height <= 18 ? 10 : 11,
+    fontWeight: 700,
+    borderColor: alpha(theme.palette.text.primary, 0.12),
+    bgcolor: alpha(
+      theme.palette.text.primary,
+      theme.palette.mode === "dark" ? 0.04 : 0.025,
+    ),
+    color: "text.secondary",
+    "& .MuiChip-label": { px: 0.75 },
+  };
+}
 
 export default function ContentPanel({ item }) {
   if (!item) return null;
@@ -104,47 +101,55 @@ export default function ContentPanel({ item }) {
   }
 
   // For trace / observation_span, show the full trace view inline
-  // Voice traces (from simulator projects) get the voice-specific UI
+  // Voice traces (conversation root span) get the voice-specific UI
   if (sourceType === "trace" || sourceType === "observation_span") {
     const traceId = content?.trace_id;
-    const isVoiceProject = content?.project_source === "simulator";
+    const isVoiceTrace =
+      content?.observation_type === "conversation" ||
+      content?.project_source === "simulator";
     const spanId =
       sourceType === "observation_span" ? content?.span_id : undefined;
+    // The same trace id can live in several projects; the content above was
+    // read from the queue item's copy, so pin the detail reads to it.
+    const projectId = content?.project_id || undefined;
 
-    if (traceId && sourceType === "trace" && isVoiceProject) {
+    if (traceId && sourceType === "trace" && isVoiceTrace) {
       // Voice calls mount the embedded drawer which manages its own
       // scroll; skip the padding/overflow wrapper the other sources use
       // so the drawer can fill the full content panel height.
       return (
         <Box sx={{ height: "100%", minHeight: 0, display: "flex" }}>
-          <VoiceCallContent traceId={traceId} />
+          <VoiceCallContent traceId={traceId} projectId={projectId} />
         </Box>
       );
     }
 
     if (traceId) {
-      return <InlineTraceView traceId={traceId} spanId={spanId} />;
+      return (
+        <InlineTraceView
+          traceId={traceId}
+          spanId={spanId}
+          projectId={projectId}
+        />
+      );
     }
     // Fallback to simple view if no trace_id
   }
 
-  // For call_execution, show the full Call Log Details view inline
+  // For call_execution, show the full simulation detail view inline.
+  // Voice calls use the shared VoiceDetailDrawerV2; chat simulations keep
+  // the chat-specific detail layout.
   if (sourceType === "call_execution") {
-    return (
-      <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
-        <SimulationContent hideAnnotationTab={true} content={content} />
-      </Box>
-    );
+    return <SimulationContent hideAnnotationTab={true} content={content} />;
   }
 
   return (
-    <Box sx={{ p: 3, overflow: "auto", height: "100%" }}>
+    <Box sx={{ p: 3, overflow: "auto", height: "100%", minWidth: 0 }}>
       <Chip
         label={SOURCE_LABELS[sourceType] || sourceType}
         size="small"
-        color="primary"
         variant="outlined"
-        sx={{ mb: 2 }}
+        sx={(theme) => ({ ...neutralChipSx(theme), mb: 2 })}
       />
 
       {sourceType === "dataset_row" && <DatasetRowContent content={content} />}
@@ -178,10 +183,19 @@ function findEntryBySpanId(entries, spanId) {
 
 const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
 
-function InlineTraceView({ traceId, spanId }) {
+function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(traceId);
-  const projectId = data?.trace?.project;
+  const { data, isLoading } = useGetTraceDetail(traceId, {
+    projectId: pinnedProjectId,
+  });
+  const projectId = data?.trace?.project || pinnedProjectId;
+  const sessionId = data?.trace?.session;
+  const [showSession, setShowSession] = useState(false);
+
+  // Drop session overlay when the queue item / trace changes.
+  useEffect(() => {
+    setShowSession(false);
+  }, [traceId]);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -348,6 +362,63 @@ function InlineTraceView({ traceId, spanId }) {
     );
   }
 
+  // Session overlay — same SessionContent used for trace_session queue items.
+  // Keeps the annotator in the queue workspace so they can return to the trace.
+  if (showSession && sessionId) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          bgcolor: "background.paper",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+            minHeight: 36,
+          }}
+        >
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            onClick={() => setShowSession(false)}
+            sx={{
+              fontSize: 12,
+              fontWeight: 500,
+              textTransform: "none",
+              minWidth: 0,
+              px: 0.75,
+            }}
+          >
+            Back to trace
+          </Button>
+          <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+          <Typography
+            variant="body2"
+            sx={{ fontSize: 12, color: "text.secondary", fontWeight: 500 }}
+          >
+            Session
+          </Typography>
+        </Stack>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
+          <SessionContent content={{ session_id: sessionId }} />
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -371,6 +442,15 @@ function InlineTraceView({ traceId, spanId }) {
         readOnly
         readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
         hideFilter
+        rightSlot={
+          sessionId ? (
+            <ToolbarPill
+              icon="mdi:forum-outline"
+              label="View session"
+              onClick={() => setShowSession(true)}
+            />
+          ) : null
+        }
       />
 
       {/* Display options popover */}
@@ -471,6 +551,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               </Box>
@@ -508,6 +589,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               ) : (
@@ -567,6 +649,7 @@ function InlineTraceView({ traceId, spanId }) {
 InlineTraceView.propTypes = {
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -576,8 +659,11 @@ InlineTraceView.propTypes = {
 // time we shipped a feature. Mounting the drawer directly keeps the
 // annotate view and the main simulate/observe drawers in lockstep.
 // ---------------------------------------------------------------------------
-function VoiceCallContent({ traceId }) {
-  const { data: callData, isLoading } = useVoiceCallDetail(traceId, true);
+function VoiceCallContent({ traceId, projectId }) {
+  const { data: callData, isLoading } = useVoiceCallDetail(traceId, {
+    enabled: true,
+    projectId,
+  });
 
   if (isLoading) {
     return (
@@ -588,11 +674,7 @@ function VoiceCallContent({ traceId }) {
   }
 
   if (!callData) {
-    return (
-      <Typography color="text.secondary">
-        Voice call data not available.
-      </Typography>
-    );
+    return <InlineTraceView traceId={traceId} projectId={projectId} />;
   }
 
   const drawerData = {
@@ -602,6 +684,8 @@ function VoiceCallContent({ traceId }) {
     module: "simulate",
     id: traceId,
     trace_id: traceId,
+    call_execution_id: callData.call_execution_id,
+    test_execution_id: callData.test_execution_id,
     // Needed by VoiceDetailDrawerV2 to fetch saved views (Imagine tabs) —
     // the annotate route has no `observeId` URL param, so the drawer falls
     // back to data.project_id.
@@ -609,10 +693,14 @@ function VoiceCallContent({ traceId }) {
     status: callData.status,
     simulationCallType: "voice",
     callType: callData.call_type,
+    call_type: callData.call_type,
     timestamp: callData.created_at || callData.started_at,
     duration: callData.duration_seconds,
     scenario: callData.scenario_name,
     scenarioId: callData.scenario_id,
+    scenario_id: callData.scenario_id,
+    scenario_graph: callData.scenario_graph || {},
+    scenario_graph_id: callData.scenario_graph_id,
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name || callData.phone_number,
     phoneNumber: callData.phone_number,
@@ -646,7 +734,7 @@ function VoiceCallContent({ traceId }) {
     evalMetrics: callData.eval_outputs || {},
     evalOutputs: callData.eval_outputs || {},
     overallStatus: callData.overall_status || callData.status,
-     turn_count: callData.turn_count,
+    turn_count: callData.turn_count,
     talk_ratio: callData.talk_ratio,
     agent_talk_percentage: callData.agent_talk_percentage,
     avg_agent_latency_ms: callData.avg_agent_latency_ms,
@@ -678,6 +766,7 @@ function VoiceCallContent({ traceId }) {
         onClose={() => {}}
         hasPrev={false}
         hideAnnotationTab={true}
+        hiddenActionIds={ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS}
         hasNext={false}
         scenarioId={drawerData.scenarioId}
         embedded
@@ -688,6 +777,7 @@ function VoiceCallContent({ traceId }) {
 
 VoiceCallContent.propTypes = {
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -972,16 +1062,46 @@ JsonValue.propTypes = {
 // ---------------------------------------------------------------------------
 // ContentSection — wraps a field with title and styled box
 // ---------------------------------------------------------------------------
+function copyTextForContentValue(value, dataType) {
+  const type = (dataType || "").toLowerCase();
+
+  if (type === "boolean") {
+    return value === true || value === "true" ? "True" : "False";
+  }
+
+  if (value === null || value === undefined) return "";
+
+  if (type === "json" || type === "array") {
+    const parsed =
+      typeof value === "string"
+        ? (() => {
+            try {
+              return JSON.parse(value);
+            } catch {
+              return value;
+            }
+          })()
+        : value;
+    if (typeof parsed === "object" && parsed !== null) {
+      return JSON.stringify(parsed, null, 2);
+    }
+    return String(parsed);
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+
+  return String(value);
+}
+
 function ContentSection({ title, children, dataType, copyValue }) {
   const [copied, setCopied] = useState(false);
-  const showCopy = copyValue !== undefined && dataType !== "json";
+  const showCopy = copyValue !== undefined;
 
   const handleCopy = (e) => {
     e.stopPropagation();
-    const text =
-      typeof copyValue === "object"
-        ? JSON.stringify(copyValue, null, 2)
-        : String(copyValue ?? "");
+    const text = copyTextForContentValue(copyValue, dataType);
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
@@ -1004,14 +1124,18 @@ function ContentSection({ title, children, dataType, copyValue }) {
             label={dataType}
             size="small"
             variant="outlined"
-            color="primary"
-            sx={{ height: 18, fontSize: 10 }}
+            sx={(theme) => neutralChipSx(theme, 18)}
           />
         )}
         <Box sx={{ flex: 1 }} />
         {showCopy && (
           <Tooltip title={copied ? "Copied!" : "Copy"} placement="top">
-            <IconButton size="small" onClick={handleCopy} sx={{ p: 0.25 }}>
+            <IconButton
+              size="small"
+              aria-label={`Copy ${title || "content"}`}
+              onClick={handleCopy}
+              sx={{ p: 0.25 }}
+            >
               <Iconify
                 icon={copied ? "eva:checkmark-fill" : "eva:copy-fill"}
                 width={14}
@@ -1054,7 +1178,7 @@ function DatasetRowContent({ content }) {
   const fieldTypes = content?.field_types || {};
   const datasetName = content?.dataset_name;
   const rowOrder = content?.row_order;
-  // canonicalKeys strips the camelCase aliases the axios interceptor
+  // canonicalKeys strips legacy camelCase aliases
   // adds next to any user-authored snake_case column names so a column
   // like `user_email` doesn't render twice in the annotation panel.
   const keys = canonicalKeys(fields);
@@ -1188,9 +1312,11 @@ PrototypeContent.propTypes = {
 };
 
 // ---------------------------------------------------------------------------
-// Simulation Content — reuses the same components as the Call Log Details drawer
+// Simulation Content — voice calls reuse VoiceDetailDrawerV2 so simulation
+// queue items stay aligned with the main voice drawer. Chat simulations keep
+// the chat detail layout below.
 // ---------------------------------------------------------------------------
-function SimulationContent({ content, hideAnnotationTab=false }) {
+function SimulationContent({ content, hideAnnotationTab = false }) {
   const callId = content?.call_id;
 
   const { data: callData, isLoading } = useQuery({
@@ -1202,7 +1328,7 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
 
   if (isLoading) {
     return (
-      <Box sx={{ py: 4 }}>
+      <Box sx={{ p: 3, py: 4, overflow: "auto", height: "100%" }}>
         <LinearProgress />
       </Box>
     );
@@ -1211,7 +1337,7 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
   // Fallback to minimal view if call data fetch fails
   if (!callData) {
     return (
-      <Stack spacing={1}>
+      <Stack spacing={1} sx={{ p: 3, overflow: "auto", height: "100%" }}>
         <Stack direction="row" spacing={1}>
           {content.simulation_call_type && (
             <Chip label={content.simulation_call_type} size="small" />
@@ -1236,260 +1362,129 @@ function SimulationContent({ content, hideAnnotationTab=false }) {
   const drawerData = {
     module: "simulate",
     id: callId,
+    call_execution_id: callId,
+    test_execution_id: callData.test_execution_id,
+    trace_id: callData.trace_id || callData.trace_details?.trace_id,
+    project_id: callData.project_id || content?.project_id,
     status: callData.status || callData.overall_status,
     simulationCallType,
+    simulation_call_type: simulationCallType,
     callType: callData.call_type,
+    call_type: callData.call_type,
     timestamp: callData.timestamp || callData.started_at,
-    duration: callData.duration || callData.duration_seconds,
+    duration: callData.duration ?? callData.duration_seconds,
+    duration_seconds: callData.duration_seconds ?? callData.duration,
     scenario: callData.scenario || callData.scenario_name,
     scenarioId: callData.scenario_id,
+    scenario_id: callData.scenario_id,
+    scenario_graph: callData.scenario_graph || {},
+    scenario_graph_id: callData.scenario_graph_id,
+    scenario_columns: callData.scenario_columns || {},
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name,
+    customer_name: callData.customer_name,
     phoneNumber: callData.phone_number,
+    phone_number: callData.phone_number,
     endedReason: callData.ended_reason,
+    ended_reason: callData.ended_reason,
     overallScore: callData.overall_score,
+    overall_score: callData.overall_score,
     transcript: callData.transcripts || callData.transcript || [],
     recordings: callData.recordings,
+    recording: callData.recording,
+    recording_url: callData.recording_url,
     audioUrl: callData.recording_url || callData.stereo_recording_url,
+    audio_url: callData.audio_url ?? callData.recording_url,
     agentName: callData.agent_definition_used_name,
     simulatorName: callData.simulator_agent_name,
     callSummary: callData.call_summary,
+    call_summary: callData.call_summary,
     customerLatencyMetrics: callData.customer_latency_metrics,
+    customer_latency_metrics: callData.customer_latency_metrics,
     customerCostBreakdown: callData.customer_cost_breakdown,
+    customer_cost_breakdown: callData.customer_cost_breakdown,
     evalMetrics: callData.eval_outputs || callData.eval_metrics || {},
+    eval_metrics: callData.eval_metrics,
+    eval_outputs: callData.eval_outputs,
     overallStatus: callData.overall_status || callData.status,
     sessionId: callData.session_id,
+    session_id: callData.session_id,
     serviceProviderCallId: callData.service_provider_call_id,
+    service_provider_call_id: callData.service_provider_call_id,
     customerCallId: callData.customer_call_id,
+    customer_call_id: callData.customer_call_id,
+    provider: callData.provider,
+    attributes: callData.attributes,
+    trace_details: callData.trace_details,
+    observation_span: callData.observation_span || [],
+    turn_count: callData.turn_count,
+    talk_ratio: callData.talk_ratio,
+    agent_talk_percentage: callData.agent_talk_percentage,
+    avg_agent_latency_ms:
+      callData.avg_agent_latency_ms ?? callData.avg_agent_latency,
+    user_wpm: callData.user_wpm,
+    bot_wpm: callData.bot_wpm,
+    user_interruption_count: callData.user_interruption_count,
+    ai_interruption_count: callData.ai_interruption_count,
   };
 
   const isVoice = simulationCallType !== AGENT_TYPES.CHAT;
+
+  if (isVoice) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          width: "100%",
+          height: "100%",
+        }}
+      >
+        <VoiceDetailDrawerV2
+          data={drawerData}
+          onClose={() => {}}
+          hasPrev={false}
+          hasNext={false}
+          scenarioId={drawerData.scenarioId}
+          hiddenActionIds={ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS}
+          hideAnnotationTab={hideAnnotationTab}
+          embedded
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box
       sx={{
         display: "flex",
         flexDirection: "column",
-        gap: 2,
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        width: "100%",
+        height: "100%",
       }}
     >
-      {/* Header — same style as CustomCallLogHeader without nav/close buttons */}
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          pb: 2,
-        }}
-      >
-        <Typography typography="m3" fontWeight="fontWeightSemiBold">
-          {simulationCallType === AGENT_TYPES.CHAT
-            ? "Chat Log Details"
-            : "Call Log Details"}
-        </Typography>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 0.5,
-          }}
-        >
-          {drawerData.scenario && (
-            <>
-              <Typography
-                typography="s2_1"
-                color="text.disabled"
-                fontWeight="fontWeightRegular"
-              >
-                {drawerData.scenario}
-              </Typography>
-              <Separator />
-            </>
-          )}
-          {drawerData.timestamp && (
-            <>
-              <Typography
-                typography="s2_1"
-                color="text.disabled"
-                fontWeight="fontWeightRegular"
-              >
-                {(() => {
-                  const ts = new Date(drawerData.timestamp);
-                  return isValid(ts)
-                    ? format(ts, "yyyy-MM-dd HH:mm:ss")
-                    : drawerData.timestamp;
-                })()}
-              </Typography>
-              <Separator />
-            </>
-          )}
-          {drawerData.duration && (
-            <>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Iconify
-                  icon="material-symbols:schedule-outline"
-                  width="14px"
-                  height="14px"
-                  color="text.disabled"
-                />
-                <Typography
-                  typography="s2_1"
-                  color="text.disabled"
-                  fontWeight="fontWeightRegular"
-                >
-                  {formatDurationSafe(drawerData.duration)}
-                </Typography>
-              </Box>
-              <Separator />
-            </>
-          )}
-          {drawerData.overallScore && (
-            <>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Typography typography="s2_1" fontWeight="fontWeightRegular">
-                  CSAT Score:
-                </Typography>
-                <Typography
-                  typography="s2_1"
-                  color={getCsatScoreColor(drawerData.overallScore)}
-                  fontWeight="fontWeightSemiBold"
-                >
-                  {`${drawerData.overallScore}/10`}
-                </Typography>
-              </Box>
-              <Separator />
-            </>
-          )}
-          {drawerData.callType && isVoice && (
-            <>
-              <Chip
-                label={
-                  (drawerData.callType ?? "").toLowerCase().includes("inbound")
-                    ? "Inbound"
-                    : "Outbound"
-                }
-                icon={
-                  <SvgColor
-                    sx={{ width: 20 }}
-                    src={
-                      (drawerData.callType ?? "")
-                        .toLowerCase()
-                        .includes("inbound")
-                        ? "/assets/icons/ic_call_inbound.svg"
-                        : "/assets/icons/ic_call_outbound.svg"
-                    }
-                  />
-                }
-                size="small"
-                sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightMedium",
-                  color: "blue.700",
-                  bgcolor: "blue.o10",
-                  borderRadius: 0.25,
-                  paddingX: 1,
-                  "& .MuiChip-icon": { color: "blue.700" },
-                }}
-              />
-              <Separator />
-            </>
-          )}
-          <CallStatus value={drawerData.status ?? ""} />
-        </Box>
-        {drawerData.endedReason && (
-          <Typography
-            variant="s2_1"
-            color="text.disabled"
-            fontWeight="fontWeightRegular"
-          >
-            {simulationCallType === AGENT_TYPES.CHAT ? "Chat" : "Call"} end
-            reason : {drawerData.endedReason}
-          </Typography>
-        )}
-      </Box>
-
-      {/* Scenario Details */}
-      <Box
-        sx={{
-          "& .MuiBox-root": {
-            width: "100% !important",
-            flexShrink: "1 !important",
-          },
-        }}
-      >
-        <TestDetailDrawerScenarioTable data={drawerData} />
-      </Box>
-
-      {/* Recording — only for voice */}
-      {isVoice && (
-        <Stack
-          sx={{
-            mx: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            backgroundColor: "background.neutral",
-            padding: "14px",
-            borderRadius: 0.5,
-            border: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography variant="m3" fontWeight="fontWeightMedium">
-            Recording
-          </Typography>
-          <AudioPlayerCustom data={drawerData} />
-        </Stack>
-      )}
-
-      {/* Two-column layout — Left: Transcript, Right: Analytics/Evaluations */}
-      <Grid container spacing={2}>
-        <Grid
-          item
-          xs={6}
-          md={6}
-          display="flex"
-          flexDirection="column"
-          gap={2}
-          height="100%"
-        >
-          <LeftSection data={drawerData} />
-        </Grid>
-        <Grid item xs={6} md={6} height="100%">
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-              alignItems: "center",
-            }}
-          >
-            <TestDetailDrawerRightSection
-              scenarioId={drawerData.scenarioId}
-              openedExecutionId={callId}
-              latencies={drawerData.customerLatencyMetrics?.systemMetrics}
-              analysisSummary={drawerData.callSummary}
-              costBreakdown={drawerData.customerCostBreakdown}
-              evalOutputs={drawerData.evalMetrics}
-              callStatus={drawerData.overallStatus}
-              status={drawerData.status}
-              simulationCallType={drawerData.simulationCallType}
-              sessionId={drawerData.sessionId}
-              hideAnnotationTab={hideAnnotationTab}
-            />
-          </Box>
-        </Grid>
-      </Grid>
+      <ChatDetailDrawerV2
+        data={drawerData}
+        onClose={() => {}}
+        hasPrev={false}
+        hasNext={false}
+        scenarioId={drawerData.scenarioId}
+        hideAnnotationTab={hideAnnotationTab}
+        embedded
+      />
     </Box>
   );
 }
 
 SimulationContent.propTypes = {
   content: PropTypes.object,
-    hideAnnotationTab: PropTypes.bool,
+  hideAnnotationTab: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -1497,7 +1492,6 @@ SimulationContent.propTypes = {
 // ---------------------------------------------------------------------------
 function SessionContent({ content }) {
   const sessionId = content?.session_id;
-  const [openTraceData, setOpenTraceData] = useState(null);
 
   const {
     data: tracePages,
@@ -1522,10 +1516,6 @@ function SessionContent({ content }) {
     }
   }, [isFetchingNextPage, isLoading]);
 
-  const handleTraceClick = useCallback((traceId) => {
-    setOpenTraceData({ traceId });
-  }, []);
-
   const sessionMetadata = tracePages?.pages[0]?.data?.result?.session_metadata;
   const traceDetail =
     tracePages?.pages?.reduce(
@@ -1540,7 +1530,7 @@ function SessionContent({ content }) {
   }
 
   return (
-    <Stack spacing={1.5} sx={{ height: "100%" }}>
+    <Stack spacing={1.5} sx={{ height: "100%", minWidth: 0 }}>
       {/* Session metadata chips */}
       {sessionMetadata && (
         <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 0.5 }}>
@@ -1572,29 +1562,17 @@ function SessionContent({ content }) {
       <Divider />
 
       {/* Session conversation history — same UI as TracesDrawer */}
-      <Box ref={scrollRef} sx={{ flex: 1, overflow: "auto" }}>
+      <Box
+        ref={scrollRef}
+        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "hidden" }}
+      >
         <SessionHistory
           traceDetail={traceDetail}
           loading={isLoading}
           isFetchingNextPage={isFetchingNextPage}
           activeSessionId={sessionId}
-          onTraceClick={handleTraceClick}
         />
       </Box>
-
-      {/* Trace detail side drawer */}
-      <SelectedNodeProvider>
-        <TraceDetailDrawer
-          open={Boolean(openTraceData)}
-          onClose={() => setOpenTraceData(null)}
-          traceData={openTraceData}
-          setTraceDetailDrawerOpen={null}
-          setSelectedTraceId={(newTraceId) =>
-            setOpenTraceData((prev) => ({ ...prev, traceId: newTraceId }))
-          }
-          viewOptions={{ showAnnotation: true, showNavigation: false }}
-        />
-      </SelectedNodeProvider>
     </Stack>
   );
 }

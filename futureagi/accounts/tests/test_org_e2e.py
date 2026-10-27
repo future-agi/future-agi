@@ -24,7 +24,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.levels import Level
-from tfc.constants.roles import OrganizationRoles, RolePermissions
+from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
@@ -53,7 +53,7 @@ def _make_user(
         organization_role=role_str,
         is_active=True,
     )
-    OrganizationMembership.no_workspace_objects.get_or_create(
+    org_membership, _ = OrganizationMembership.no_workspace_objects.get_or_create(
         user=u,
         organization=organization,
         defaults={
@@ -82,6 +82,7 @@ def _make_user(
                 "role": ws_role_str.get(level, OrganizationRoles.WORKSPACE_MEMBER),
                 "level": ws_level_int.get(level, Level.WORKSPACE_MEMBER),
                 "is_active": True,
+                "organization_membership": org_membership,
             },
         )
     return u
@@ -260,10 +261,10 @@ class TestOrgInviteAndJoinFlow:
         )
         assert invite.level == Level.MEMBER
 
-    def test_invite_existing_active_user_returns_error(
+    def test_invite_existing_active_user_updates_access(
         self, owner_client, org, default_ws
     ):
-        """Inviting an already-active user returns an error."""
+        """Inviting an already-active user records them as already a member."""
         existing = _make_user(
             org,
             "existing@acme.com",
@@ -273,13 +274,17 @@ class TestOrgInviteAndJoinFlow:
         )
 
         resp = _invite_user(owner_client, ["existing@acme.com"], Level.ADMIN)
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.data["result"] == {
+            "invited": [],
+            "already_members": ["existing@acme.com"],
+        }
 
-        # Membership should NOT be updated (still Member)
+        # Existing active members are upgraded when the requested org level is higher.
         mem = OrganizationMembership.no_workspace_objects.get(
             user=existing, organization=org
         )
-        assert mem.level == Level.MEMBER
+        assert mem.level == Level.ADMIN
 
     def test_invite_with_workspace_access(
         self, owner_client, org, default_ws, second_ws
@@ -379,10 +384,10 @@ class TestOrgInviteAndJoinFlow:
 class TestInvitePermissionBoundaries:
     """Verify permission enforcement for invite operations."""
 
-    def test_admin_cannot_invite_at_admin_level(self, admin_client, org):
-        """Admin cannot invite at their own level or above."""
+    def test_admin_can_invite_at_admin_level(self, admin_client, org):
+        """Admin can invite at their own level."""
         resp = _invite_user(admin_client, ["peer@example.com"], Level.ADMIN)
-        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert resp.status_code == status.HTTP_200_OK
 
     def test_admin_cannot_invite_owner(self, admin_client, org):
         """Admin cannot invite at Owner level."""
@@ -448,14 +453,12 @@ class TestInvitePermissionBoundaries:
         # Since they're only org Member, the view should downgrade to Viewer.
         client = _make_client(ws_admin, second_ws)
         resp = _invite_user(client, ["downgraded@example.com"], Level.MEMBER)
-        # Either 403 (not org admin) or 200 with downgrade to Viewer
-        if resp.status_code == status.HTTP_200_OK:
-            user = User.objects.get(email="downgraded@example.com")
-            mem = OrganizationMembership.no_workspace_objects.get(
-                user=user, organization=org
-            )
-            # Should be capped at Viewer
-            assert mem.level == Level.VIEWER
+        assert resp.status_code == status.HTTP_200_OK
+        user = User.objects.get(email="downgraded@example.com")
+        mem = OrganizationMembership.no_workspace_objects.get(
+            user=user, organization=org
+        )
+        assert mem.level == Level.VIEWER
 
     def test_invite_invalid_workspace_in_different_org(self, owner_client, org, owner):
         """Cannot invite with workspace_access pointing to another org's workspace."""
@@ -519,7 +522,8 @@ class TestMemberListAPI:
 
         # Filter for Pending only
         resp = owner_client.get(
-            '/accounts/organization/members/?filterStatus=["Pending"]'
+            "/accounts/organization/members/",
+            {"filter_status": "Pending"},
         )
         data = resp.json()["result"]
         assert all(m["status"] == "Pending" for m in data["results"])
@@ -602,8 +606,8 @@ class TestMemberRoleUpdate:
         )
         assert mem.level == Level.VIEWER
 
-    def test_admin_cannot_promote_to_admin(self, admin_client, org, default_ws):
-        """Admin cannot promote to Admin level (escalation guard)."""
+    def test_admin_can_promote_to_admin(self, admin_client, org, default_ws):
+        """Admin can assign Admin level to a lower-level member."""
         member = _make_user(
             org, "noprom@acme.com", OrganizationRoles.MEMBER, Level.MEMBER, default_ws
         )
@@ -612,7 +616,7 @@ class TestMemberRoleUpdate:
             {"user_id": str(member.id), "org_level": Level.ADMIN},
             format="json",
         )
-        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert resp.status_code == status.HTTP_200_OK
 
     def test_admin_cannot_change_owner_role(self, admin_client, owner):
         """Admin cannot modify Owner's role."""
@@ -897,7 +901,7 @@ class TestOrgAccessModel:
             Level.MEMBER,
         )
         # Create a workspace for other_org so outsider can function
-        other_ws = Workspace.objects.create(
+        Workspace.objects.create(
             name="Other WS",
             organization=other_org,
             is_default=True,
@@ -1168,6 +1172,10 @@ class TestOrgWorkspaceIntegration:
 class TestOrgUpdate:
     """PATCH /accounts/organizations/update/ — org name/display updates."""
 
+    def _assert_unknown_field(self, response, field_name):
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert field_name in response.json()["details"]
+
     def test_owner_can_update_org_name(self, owner_client, org):
         """Owner can update organization name."""
         resp = owner_client.patch(
@@ -1189,6 +1197,82 @@ class TestOrgUpdate:
         assert resp.status_code == status.HTTP_200_OK
         org.refresh_from_db()
         assert org.display_name == "ACME Corporation"
+
+    def test_update_rejects_unknown_request_fields(self, owner_client, org):
+        """Org updates reject camelCase aliases and other stray fields."""
+        resp = owner_client.patch(
+            "/accounts/organizations/update/",
+            {
+                "display_name": "ACME Corporation",
+                "displayName": "legacy camel alias",
+            },
+            format="json",
+        )
+        self._assert_unknown_field(resp, "displayName")
+
+    def test_member_cannot_update_org(self, org, default_ws):
+        """Member role cannot update organization settings."""
+        member = _make_user(
+            org,
+            "member-noupdate@acme.com",
+            OrganizationRoles.MEMBER,
+            Level.MEMBER,
+            default_ws,
+        )
+        client = _make_client(member, default_ws)
+        resp = client.patch(
+            "/accounts/organizations/update/",
+            {"name": "Hacked Name"},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        org.refresh_from_db()
+        assert org.name != "Hacked Name"
+
+    def test_other_org_owner_update_does_not_mutate_foreign_org(self, org, db):
+        """Org B owner can rename B; org A must remain unchanged."""
+        other = Organization.objects.create(name="Other Corp For Update")
+        other_owner = _make_user(
+            other, "other-owner-update@x.com", OrganizationRoles.OWNER, Level.OWNER
+        )
+        other_ws = Workspace.objects.create(
+            name="Other WS",
+            organization=other,
+            is_default=True,
+            is_active=True,
+            created_by=other_owner,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.get(
+            user=other_owner, organization=other
+        )
+        WorkspaceMembership.no_workspace_objects.get_or_create(
+            user=other_owner,
+            workspace=other_ws,
+            defaults={
+                "role": OrganizationRoles.WORKSPACE_ADMIN,
+                "level": Level.WORKSPACE_ADMIN,
+                "is_active": True,
+                "organization_membership": org_membership,
+            },
+        )
+        other_client = _make_client(other_owner, other_ws)
+        original_name = org.name
+
+        resp = other_client.patch(
+            "/accounts/organizations/update/",
+            {"name": "Renamed Other Corp"},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.content
+        body = resp.json()
+        result = body.get("result", body)
+        assert str(result.get("id")) == str(other.id)
+        assert result.get("name") == "Renamed Other Corp"
+
+        org.refresh_from_db()
+        assert org.name == original_name
+        other.refresh_from_db()
+        assert other.name == "Renamed Other Corp"
 
 
 # =====================================================================
@@ -1297,6 +1381,10 @@ class TestCrossOrgIsolation:
             is_active=True,
             created_by=gamma_owner,
         )
+        org_membership = OrganizationMembership.no_workspace_objects.get(
+            user=gamma_owner,
+            organization=org_gamma,
+        )
         WorkspaceMembership.no_workspace_objects.get_or_create(
             user=gamma_owner,
             workspace=ws,
@@ -1304,6 +1392,7 @@ class TestCrossOrgIsolation:
                 "role": OrganizationRoles.WORKSPACE_ADMIN,
                 "level": Level.WORKSPACE_ADMIN,
                 "is_active": True,
+                "organization_membership": org_membership,
             },
         )
         return ws
@@ -1338,6 +1427,14 @@ class TestCrossOrgIsolation:
             ],
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not OrganizationInvite.objects.filter(
+            organization=org,
+            target_email="xorg@example.com",
+            status=InviteStatus.PENDING,
+        ).exists()
+        assert not WorkspaceMembership.no_workspace_objects.filter(
+            workspace=gamma_ws, user__email="xorg@example.com"
+        ).exists()
 
     def test_org_member_count_isolated(
         self, owner_client, org, default_ws, org_gamma, gamma_ws, gamma_owner, owner
@@ -1353,14 +1450,16 @@ class TestCrossOrgIsolation:
         )
 
         acme_resp = owner_client.get("/accounts/organization/members/")
+        assert acme_resp.status_code == status.HTTP_200_OK
         acme_count = acme_resp.json()["result"]["total"]
 
         gamma_client = _make_client(gamma_owner, gamma_ws)
         gamma_resp = gamma_client.get("/accounts/organization/members/")
+        assert gamma_resp.status_code == status.HTTP_200_OK, gamma_resp.json()
         gamma_count = gamma_resp.json()["result"]["total"]
 
-        # Counts should be independent
-        assert acme_count != gamma_count or acme_count == 1  # edge case: both have 1
+        assert acme_count == 2
+        assert gamma_count == 1
 
 
 # =====================================================================
@@ -1384,10 +1483,11 @@ class TestSoftDeleteVerification:
         )
 
         resp = owner_client.get("/accounts/organization/members/")
+        assert resp.status_code == status.HTTP_200_OK
         data = resp.json()["result"]
         member_row = [m for m in data["results"] if m["email"] == "deact@acme.com"]
-        if member_row:
-            assert member_row[0]["status"] == "Deactivated"
+        assert member_row
+        assert member_row[0]["status"] == "Deactivated"
 
     def test_deactivated_member_no_workspace_access(self, org, default_ws, second_ws):
         """Deactivated org member has no workspace access."""

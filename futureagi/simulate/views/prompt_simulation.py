@@ -9,6 +9,7 @@ import structlog
 from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -17,11 +18,32 @@ from accounts.utils import get_request_organization
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import RunTest, Scenarios, SimulateEvalConfig
-from simulate.serializers.run_test import (
+from simulate.serializers.prompt_simulation import (
+    ExecutePromptSimulationRequestSerializer,
+    ExecutePromptSimulationResponseSerializer,
+    PromptSimulationListResponseSerializer,
+    PromptSimulationRunResponseSerializer,
+    PromptSimulationScenariosResponseSerializer,
+    PromptSimulationUpdateRequestSerializer,
+)
+from simulate.serializers.requests.run_test import (
+    CreatePromptSimulationRequestSerializer,
     CreatePromptSimulationSerializer,
+    PromptSimulationListQuerySerializer,
+)
+from simulate.serializers.run_test import (
     RunTestSerializer,
+    harness_run_tests_context,
 )
 from simulate.services.test_executor import TestExecutor
+from simulate.utils.scenario_completeness import check_scenarios_incomplete
+from simulate.views.run_test import (
+    _bounded_run_test_list_read,
+    _run_test_read_queryset,
+    _run_test_response_data,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -41,6 +63,17 @@ class PromptSimulationListCreateView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @_bounded_run_test_list_read
+    @validated_request(
+        query_serializer=PromptSimulationListQuerySerializer,
+        responses={
+            200: PromptSimulationListResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, prompt_template_id, *args, **kwargs):
         """
         Get paginated list of simulation runs for a specific prompt template.
@@ -64,22 +97,21 @@ class PromptSimulationListCreateView(APIView):
                 deleted=False,
             )
 
-            # Get query parameters
-            version_id = request.query_params.get("version_id")
-            limit = int(request.query_params.get("limit", 10))
-            page = int(request.query_params.get("page", 1))
+            # Get validated query parameters
+            query_data = request.validated_query_data
+            version_id = query_data.get("version_id")
+            limit = query_data["limit"]
+            page = query_data["page"]
 
             # Filter run tests by prompt_template and source_type='prompt'
-            run_tests = (
+            run_tests = _run_test_read_queryset(
                 RunTest.objects.filter(
                     prompt_template=prompt_template,
                     source_type="prompt",
                     organization=user_organization,
                     deleted=False,
                 )
-                .prefetch_related("scenarios")
-                .order_by("-created_at")
-            )
+            ).order_by("-created_at")
 
             # Filter by version if specified
             if version_id:
@@ -88,10 +120,14 @@ class PromptSimulationListCreateView(APIView):
             # Pagination
             total_count = run_tests.count()
             offset = (page - 1) * limit
-            run_tests = run_tests[offset : offset + limit]
+            run_tests = list(run_tests[offset : offset + limit])
 
             # Serialize
-            serializer = RunTestSerializer(run_tests, many=True)
+            serializer = RunTestSerializer(
+                run_tests,
+                many=True,
+                context=harness_run_tests_context(run_tests),
+            )
 
             return self.gm.success_response(
                 {
@@ -112,6 +148,16 @@ class PromptSimulationListCreateView(APIView):
             logger.exception("Error listing prompt simulations", error=str(e))
             return self.gm.internal_server_error_response("Failed to list simulations")
 
+    @validated_request(
+        request_serializer=CreatePromptSimulationRequestSerializer,
+        responses={
+            201: PromptSimulationRunResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, prompt_template_id, *args, **kwargs):
         """
         Create a new prompt-based simulation run.
@@ -139,8 +185,10 @@ class PromptSimulationListCreateView(APIView):
                 deleted=False,
             )
 
-            # Add prompt_template_id to request data
-            data = request.data.copy()
+            # The template id is path-owned. Keep the public body contract
+            # focused on simulation fields and inject the path id only for
+            # cross-field business validation.
+            data = request.validated_data.copy()
             data["prompt_template_id"] = str(prompt_template_id)
 
             logger.info(
@@ -221,7 +269,7 @@ class PromptSimulationListCreateView(APIView):
                                     config=eval_config_data.get("config", {}),
                                     mapping=eval_config_data.get("mapping", {}),
                                     run_test=run_test,
-                                    filters=eval_config_data.get("filters", {}),
+                                    filters=eval_config_data.get("filters", []),
                                     error_localizer=eval_config_data.get(
                                         "error_localizer", False
                                     ),
@@ -242,9 +290,8 @@ class PromptSimulationListCreateView(APIView):
                 )
 
                 # Serialize and return
-                response_serializer = RunTestSerializer(run_test)
                 return self.gm.success_response(
-                    response_serializer.data, status=status.HTTP_201_CREATED
+                    _run_test_response_data(run_test), status=status.HTTP_201_CREATED
                 )
 
         except Exception as e:
@@ -263,6 +310,15 @@ class PromptSimulationDetailView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: PromptSimulationRunResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
+    @_bounded_run_test_list_read
     def get(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """Retrieve a specific prompt simulation run."""
         try:
@@ -278,7 +334,7 @@ class PromptSimulationDetailView(APIView):
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest,
+                _run_test_read_queryset(RunTest.objects),
                 id=run_test_id,
                 prompt_template=prompt_template,
                 source_type="prompt",
@@ -297,6 +353,17 @@ class PromptSimulationDetailView(APIView):
                 "Failed to retrieve simulation"
             )
 
+    @validated_request(
+        request_serializer=PromptSimulationUpdateRequestSerializer,
+        responses={
+            200: PromptSimulationRunResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        partial_request_validation=True,
+    )
     def patch(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """Update a prompt simulation run (version, scenarios, etc.)."""
         try:
@@ -320,8 +387,10 @@ class PromptSimulationDetailView(APIView):
                 deleted=False,
             )
 
+            validated = request.validated_data
+
             # Update prompt version if provided
-            prompt_version_id = request.data.get("prompt_version_id")
+            prompt_version_id = validated.get("prompt_version_id")
             if prompt_version_id:
                 prompt_version = get_object_or_404(
                     PromptVersion,
@@ -332,7 +401,7 @@ class PromptSimulationDetailView(APIView):
                 run_test.prompt_version = prompt_version
 
             # Update scenarios if provided
-            scenario_ids = request.data.get("scenario_ids")
+            scenario_ids = validated.get("scenario_ids")
             if scenario_ids is not None:
                 scenarios = Scenarios.objects.filter(
                     id__in=scenario_ids,
@@ -342,17 +411,17 @@ class PromptSimulationDetailView(APIView):
                 run_test.scenarios.set(scenarios)
 
             # Update name if provided
-            name = request.data.get("name")
+            name = validated.get("name")
             if name:
                 run_test.name = name
 
             # Update description if provided
-            description = request.data.get("description")
+            description = validated.get("description")
             if description is not None:
                 run_test.description = description
 
             # Update enable_tool_evaluation if provided
-            enable_tool_evaluation = request.data.get("enable_tool_evaluation")
+            enable_tool_evaluation = validated.get("enable_tool_evaluation")
             if enable_tool_evaluation is not None:
                 run_test.enable_tool_evaluation = enable_tool_evaluation
 
@@ -364,8 +433,7 @@ class PromptSimulationDetailView(APIView):
                 prompt_template_id=str(prompt_template_id),
             )
 
-            serializer = RunTestSerializer(run_test)
-            return self.gm.success_response(serializer.data)
+            return self.gm.success_response(_run_test_response_data(run_test))
 
         except Http404:
             return self.gm.not_found("Simulation or related resource not found")
@@ -373,6 +441,12 @@ class PromptSimulationDetailView(APIView):
             logger.exception("Error updating prompt simulation", error=str(e))
             return self.gm.internal_server_error_response("Failed to update simulation")
 
+    @swagger_auto_schema(
+        responses={
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def delete(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """Soft delete a prompt simulation run."""
         try:
@@ -424,6 +498,16 @@ class ExecutePromptSimulationView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ExecutePromptSimulationRequestSerializer,
+        responses={
+            200: ExecutePromptSimulationResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """
         Execute a prompt-based simulation run.
@@ -462,9 +546,11 @@ class ExecutePromptSimulationView(APIView):
                     "Prompt version has been deleted. Please update the simulation with a valid version."
                 )
 
-            # Get parameters from request
-            scenario_ids = request.data.get("scenario_ids", [])
-            select_all = request.data.get("select_all", False)
+            validated = request.validated_data
+            scenario_ids = [
+                str(scenario_id) for scenario_id in validated.get("scenario_ids", [])
+            ]
+            select_all = validated.get("select_all", False)
 
             # Get all available scenario IDs linked to this run test
             all_scenario_ids = list(
@@ -493,6 +579,10 @@ class ExecutePromptSimulationView(APIView):
                     final_scenario_ids = [
                         str(scenario_id) for scenario_id in all_scenario_ids
                     ]
+
+            gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
+            if gate_response is not None:
+                return gate_response
 
             # Use the existing TestExecutor
             test_executor = TestExecutor()
@@ -547,6 +637,13 @@ class PromptSimulationScenariosView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: PromptSimulationScenariosResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """
         Get list of scenarios available for prompt simulations.

@@ -23,7 +23,7 @@ Wrapper.propTypes = {
 };
 
 describe("CategoricalSettings", () => {
-  describe("delete option behavior (TH-3531)", () => {
+  describe("delete option behavior", () => {
     it("shows delete buttons when there are 2 options", () => {
       render(<Wrapper defaultOptions={[{ label: "A" }, { label: "B" }]} />);
 

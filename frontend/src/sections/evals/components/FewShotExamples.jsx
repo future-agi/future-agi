@@ -125,7 +125,7 @@ const FewShotExamples = ({
       {selectedDatasets.length > 0 && (
         <Typography
           variant="caption"
-          color="text.disabled"
+          color="text.secondary"
           sx={{ mt: 0.5, display: "block" }}
         >
           Rows from selected datasets will be used as few-shot examples at

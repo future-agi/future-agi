@@ -1,6 +1,7 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -13,40 +14,75 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { fDateTime } from "src/utils/format-time";
-import { useDeleteConnection } from "src/api/integrations";
+import { useDeleteConnection, useStartSlackInstall } from "src/api/integrations";
 import PlatformLogo from "./PlatformLogo";
 import StatusBadge from "./StatusBadge";
 import { SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
+import { getErrorMessage } from "./utils";
 
 export default function IntegrationCard({ connection }) {
   const theme = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const isActionOnly = SKIP_SYNC_SETTINGS_PLATFORMS.includes(
     connection.platform,
   );
+  const workspaceIntegrationsMatch = location.pathname.match(
+    /^\/dashboard\/settings\/workspace\/([^/]+)\/integrations\/?$/,
+  );
   const displayName =
-    connection.displayName || connection.externalProjectName || "Unnamed";
+    connection.display_name ||
+    connection.displayName ||
+    connection.external_project_name ||
+    connection.externalProjectName ||
+    "Unnamed";
+  const hostUrl = connection.host_url || connection.hostUrl;
+  const createdAt = connection.created_at || connection.createdAt;
+  const totalTracesSynced =
+    connection.total_traces_synced ?? connection.totalTracesSynced;
+  const lastSyncedAt = connection.last_synced_at || connection.lastSyncedAt;
 
   const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const { mutate: deleteConnection, isPending: deleting } =
     useDeleteConnection();
+  const startSlackInstall = useStartSlackInstall();
 
   const handleClick = () => {
     if (isActionOnly) {
       setDisconnectOpen(true);
     } else {
-      navigate(paths.dashboard.settings.integrationDetail(connection.id));
+      navigate(
+        workspaceIntegrationsMatch
+          ? paths.dashboard.settings.workspaceIntegrationDetail(
+              workspaceIntegrationsMatch[1],
+              connection.id,
+            )
+          : paths.dashboard.settings.integrationDetail(connection.id),
+      );
     }
   };
 
   const handleDisconnect = () => {
     deleteConnection(connection.id, {
       onSuccess: () => setDisconnectOpen(false),
+    });
+  };
+
+  const handleReconnectSlack = () => {
+    setConnectionError("");
+    startSlackInstall.mutate(connection.id, {
+      onSuccess: (response) => {
+        const authorizationUrl = response.data?.result?.authorization_url;
+        if (authorizationUrl) window.location.assign(authorizationUrl);
+        else setConnectionError("Could not start Slack authorization. Please try again.");
+      },
+      onError: (error) => setConnectionError(getErrorMessage(error, "Could not reconnect Slack.")),
     });
   };
 
@@ -75,10 +111,10 @@ export default function IntegrationCard({ connection }) {
               </Typography>
               <Typography
                 noWrap
-                title={connection.hostUrl}
+                title={hostUrl}
                 sx={{ typography: "s2", color: "text.disabled" }}
               >
-                {connection.hostUrl || "—"}
+                {hostUrl || "—"}
               </Typography>
             </Box>
             {isActionOnly ? (
@@ -104,19 +140,17 @@ export default function IntegrationCard({ connection }) {
                   Action integration
                 </Typography>
                 <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {connection.createdAt
-                    ? `Connected ${fToNow(connection.createdAt)}`
-                    : ""}
+                  {createdAt ? `Connected ${fToNow(createdAt)}` : ""}
                 </Typography>
               </>
             ) : (
               <>
                 <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {connection.totalTracesSynced?.toLocaleString() || 0} traces
+                  {totalTracesSynced?.toLocaleString() || 0} traces
                 </Typography>
                 <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                  {connection.lastSyncedAt
-                    ? `Synced ${fToNow(connection.lastSyncedAt)}`
+                  {lastSyncedAt
+                    ? `Synced ${fToNow(lastSyncedAt)}`
                     : "Never synced"}
                 </Typography>
               </>
@@ -135,16 +169,21 @@ export default function IntegrationCard({ connection }) {
           <DialogTitle>Manage {displayName}</DialogTitle>
           <DialogContent>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Connected{" "}
-              {connection.createdAt ? fDateTime(connection.createdAt) : "—"}.
-              Disconnecting will remove the API key and disable issue creation
-              from Error Feed.
+              {connection.platform === "slack"
+                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.`
+                : `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Disconnecting will remove the API key and disable issue creation from Error Feed.`}
             </Typography>
+            {connectionError && <Alert severity="error" sx={{ mt: 2 }}>{connectionError}</Alert>}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDisconnectOpen(false)} size="small">
               Cancel
             </Button>
+            {connection.platform === "slack" && (
+              <Button onClick={handleReconnectSlack} size="small" disabled={startSlackInstall.isPending}>
+                {startSlackInstall.isPending ? "Connecting…" : "Reconnect Slack"}
+              </Button>
+            )}
             <Button
               onClick={handleDisconnect}
               color="error"

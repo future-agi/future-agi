@@ -1,5 +1,4 @@
 import structlog
-from langfuse import Langfuse
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -12,10 +11,7 @@ from tracer.models.external_eval_config import (
     PlatformChoices,
     StatusChoices,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -63,23 +59,26 @@ def _log_and_deduct_cost_for_external_eval(
     except ImportError:
         check_usage = None
 
-    usage_check = check_usage(str(config.organization.id), api_call_type)
-    if not usage_check.allowed:
-        raise ValueError(usage_check.reason or "Usage limit exceeded")
+    if check_usage is not None:
+        usage_check = check_usage(str(config.organization.id), api_call_type)
+        if not usage_check.allowed:
+            raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=config.organization,
-        api_call_type=api_call_type,
-        source="tracer",
-        source_id=config.id,
-        config=log_config,
-        workspace=config.workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=config.organization,
+            api_call_type=api_call_type,
+            source="tracer",
+            source_id=config.id,
+            config=log_config,
+            workspace=config.workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
 
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # Dual-write: emit usage event for new billing system
     try:
@@ -91,17 +90,23 @@ def _log_and_deduct_cost_for_external_eval(
             from ee.usage.services.emitter import emit
         except ImportError:
             emit = None
+        try:
+            from ee.usage.utils.event_properties import token_usage_properties
+        except ImportError:
+            token_usage_properties = lambda token_usage: {}
 
-        emit(
-            UsageEvent(
-                org_id=str(config.organization.id),
-                event_type=api_call_type,
-                properties={
-                    "source": "tracer",
-                    "source_id": str(config.id),
-                },
+        if emit is not None and UsageEvent is not None:
+            emit(
+                UsageEvent(
+                    org_id=str(config.organization.id),
+                    event_type=api_call_type,
+                    properties={
+                        "source": "tracer",
+                        "source_id": str(config.id),
+                        **token_usage_properties(log_config.get("token_usage", {})),
+                    },
+                )
             )
-        )
     except Exception:
         pass  # Metering failure must not break the action
 
@@ -273,6 +278,7 @@ def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
 
 
 def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
+    from langfuse import Langfuse  # lazy
     langfuse = Langfuse(
         secret_key=config.credentials.get("langfuse_secret_key"),
         public_key=config.credentials.get("langfuse_public_key"),

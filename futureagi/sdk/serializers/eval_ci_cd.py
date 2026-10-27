@@ -56,6 +56,7 @@ class CICDEvaluationItemSerializer(serializers.Serializer):
         required_keys = eval_template.config.get("required_keys", [])
         optional_keys = eval_template.config.get("optional_keys", [])
         compulsory_keys = set(required_keys) - set(optional_keys)
+        is_user_custom_eval = bool(eval_template.config.get("custom_eval", False))
 
         extra_keys = set(inputs.keys()) - set(required_keys)
         if extra_keys:
@@ -65,11 +66,14 @@ class CICDEvaluationItemSerializer(serializers.Serializer):
                 }
             )
 
-        missing_keys = [key for key in compulsory_keys if key not in inputs]
-        if missing_keys:
-            raise serializers.ValidationError(
-                {"inputs": f"Missing required keys: {', '.join(missing_keys)}"}
-            )
+        # System evals stay strict at the SDK boundary. Custom evals let
+        # missing keys flow through to the shared validator at run time.
+        if not is_user_custom_eval:
+            missing_keys = [key for key in compulsory_keys if key not in inputs]
+            if missing_keys:
+                raise serializers.ValidationError(
+                    {"inputs": f"Missing required keys: {', '.join(missing_keys)}"}
+                )
 
     def _check_input_values(self, inputs):
         """Validates the types and lengths of values in the inputs dictionary."""

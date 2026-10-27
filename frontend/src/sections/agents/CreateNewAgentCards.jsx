@@ -65,7 +65,7 @@ const CreateNewAgentCards = ({ title, subtitle, children }) => {
           <Typography
             variant="s2_1"
             fontWeight="fontWeightRegular"
-            color="text.disabled"
+            color="text.secondary"
           >
             {subtitle}
           </Typography>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useTransition } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -13,21 +13,18 @@ import NestedJsonTable from "./NestedJsonTable";
  */
 const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
   const [query, setQuery] = useState("");
-  // `appliedQuery` is what actually drives filtering. We update it on a
-  // short debounce and inside `startTransition` so:
-  //   1. The input reflects the typed value immediately (urgent state).
-  //   2. The expensive tree re-filter/re-render happens once per typing
-  //      burst, not once per keystroke — the difference is visible when
-  //      the user clears the box and retypes over a huge payload.
+  // `appliedQuery` drives the filter and is committed as an URGENT update.
+  // It must never go through `startTransition`/`useDeferredValue`: both are
+  // interruptible, and this drawer re-renders often enough to restart such
+  // an update indefinitely — the query then never reaches the table and the
+  // search silently does nothing. The 120ms debounce alone is what keeps the
+  // re-filter to once per typing burst.
   const [appliedQuery, setAppliedQuery] = useState("");
-  const [, startFilterTransition] = useTransition();
   const debounceRef = useRef(null);
 
   const scheduleQueryApply = (value) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      startFilterTransition(() => setAppliedQuery(value));
-    }, 120);
+    debounceRef.current = setTimeout(() => setAppliedQuery(value), 120);
   };
 
   const handleQueryChange = (e) => {
@@ -39,7 +36,7 @@ const AttributesTable = ({ attributes, maxHeight = "65vh" }) => {
   const handleClearQuery = () => {
     setQuery("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    startFilterTransition(() => setAppliedQuery(""));
+    setAppliedQuery("");
   };
 
   useEffect(

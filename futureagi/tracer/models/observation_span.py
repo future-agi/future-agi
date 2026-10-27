@@ -13,6 +13,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 
 
 def validate_span_status(value):
@@ -28,6 +29,27 @@ class UserIdType(models.TextChoices):
     PHONE = "phone", "Phone"
     UUID = "uuid", "UUID"
     CUSTOM = "custom", "Custom"
+
+
+class ObservationType(models.TextChoices):
+    """Typed enum mirroring ``ObservationSpan.OBSERVATION_SPAN_TYPES``.
+
+    Use this for equality checks against ``ObservationSpan.observation_type``
+    instead of bare string literals. Values must stay in lockstep with the
+    ``OBSERVATION_SPAN_TYPES`` tuple below.
+    """
+
+    TOOL = "tool", "Tool"
+    CHAIN = "chain", "Chain"
+    LLM = "llm", "LLM"
+    RETRIEVER = "retriever", "Retriever"
+    EMBEDDING = "embedding", "Embedding"
+    AGENT = "agent", "Agent"
+    RERANKER = "reranker", "Reranker"
+    UNKNOWN = "unknown", "Unknown"
+    GUARDRAIL = "guardrail", "Guardrail"
+    EVALUATOR = "evaluator", "Evaluator"
+    CONVERSATION = "conversation", "Conversation"
 
 
 class EndUser(BaseModel):
@@ -64,6 +86,26 @@ class EndUser(BaseModel):
 
 
 class ObservationSpan(BaseModel):
+    """[DEPRECATED] PG-side span model superseded by CH v2 ``spans``.
+
+    CH25 cutover status:
+    - Writes: fi-collector is the canonical ingest path for span data
+      into CH ``spans``. The PG row is still produced by legacy ingest
+      shims and consumed by a small set of readers (see below).
+    - Reads remaining:
+        • ``tracer/socket.py`` (graph data WebSocket)
+        • ``tracer/utils/sql_queries.py``
+        • ``model_hub/utils/SQL_queries.py``
+        • ``ee/usage/management/commands/backfill_usage_summary.py``
+      Those four PG readers need migration to v2 CH ``spans`` before
+      the PG table can be dropped.
+
+    Dev / local docker compose: the
+    ``drop_legacy_observation_span`` management command can run after
+    fi-collector verification. In prod, the drop stays manual until
+    those four readers are migrated. See ``docs/CH25_MIGRATION.md``.
+    """
+
     OBSERVATION_SPAN_TYPES = (
         ("tool", "Tool"),
         ("chain", "Chain"),
@@ -110,6 +152,7 @@ class ObservationSpan(BaseModel):
         related_name="observation_spans",
         null=False,
         blank=False,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     parent_span_id = models.CharField(max_length=255, null=True, blank=True)
     name = models.CharField(max_length=2000, null=False, blank=False)
@@ -185,6 +228,7 @@ class ObservationSpan(BaseModel):
         null=True,
         blank=True,
         default=None,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     prompt_version = models.ForeignKey(
@@ -238,26 +282,70 @@ class ObservationSpan(BaseModel):
             GinIndex(fields=["metadata"]),
             models.Index(fields=["start_time"]),
             models.Index(fields=["trace", "start_time"]),
-            # GenAI Schema Foundation indexes
-            GinIndex(fields=["span_attributes"], name="tracer_obse_span_at_gin"),
         ]
+
+
+class EvalTargetType(models.TextChoices):
+    """The unit of evaluation an EvalLogger row represents.
+
+    The discriminator that distinguishes span-level results (current shape)
+    from trace-level results (anchored to the trace's root span — same FK
+    columns as a span row, target_type tells them apart) and session-level
+    results (FKs nullable on this row, ``trace_session`` set instead).
+    See ``EvalLogger.Meta.constraints`` for the per-target_type FK rule.
+    """
+
+    SPAN = "span", "Span"
+    TRACE = "trace", "Trace"
+    SESSION = "session", "Session"
+
+
+class EvalEntryStatus(models.TextChoices):
+    """Lifecycle of one (task, row, eval) work-item: pending -> running ->
+    completed | errored | skipped."""
+
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    COMPLETED = "completed", "Completed"
+    ERRORED = "errored", "Errored"
+    SKIPPED = "skipped", "Skipped"
 
 
 class EvalLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Nullable for ``target_type='session'`` rows; populated otherwise.
+    # Per the eval_logger_target_type_fks check constraint:
+    #   span/trace target -> observation_span + trace set, trace_session NULL
+    #   session target    -> observation_span + trace NULL,  trace_session set
     trace = models.ForeignKey(
         Trace,
         on_delete=models.CASCADE,
         related_name="eval_logs",
-        null=False,
-        blank=False,
+        null=True,
+        blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     observation_span = models.ForeignKey(
         ObservationSpan,
         on_delete=models.CASCADE,
         related_name="eval_logs",
-        null=False,
-        blank=False,
+        null=True,
+        blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
+    )
+    trace_session = models.ForeignKey(
+        TraceSession,
+        on_delete=models.CASCADE,
+        related_name="eval_logs",
+        null=True,
+        blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
+    )
+    target_type = models.CharField(
+        max_length=16,
+        choices=EvalTargetType.choices,
+        default=EvalTargetType.SPAN,
+        db_index=True,
     )
     eval_type_id = models.CharField(max_length=255, null=True, blank=True)
     output_metadata = models.JSONField(null=True, blank=True)
@@ -280,9 +368,66 @@ class EvalLogger(BaseModel):
     )
     error = models.BooleanField(default=False)
     error_message = models.TextField(null=True, blank=True)
+    # Set when the eval was skipped rather than run — e.g. a mapped span
+    # attribute was absent. Distinct from `error` so read paths render
+    # "Skipped" and drop these rows from failure-rate metrics.
+    skipped_reason = models.TextField(null=True, blank=True)
+    # Defaults to a terminal state; the engine sets it explicitly on each run.
+    status = models.CharField(
+        max_length=16,
+        choices=EvalEntryStatus.choices,
+        default=EvalEntryStatus.COMPLETED,
+    )
+    # sha256 of the resolved eval definition that produced this result.
+    config_hash = models.CharField(max_length=64, null=True, blank=True)
+    # Reaper reclaim count; capped so a poison item can't block completion.
+    attempts = models.IntegerField(default=0)
 
     def __str__(self):
         return f"Eval Log {self.id}"
+
+    def clean(self):
+        """Enforce the per-``target_type`` FK shape at the Python layer.
+
+        Mirrors the ``eval_logger_target_type_fks`` DB CHECK constraint so
+        single-row ``.save()`` writes raise a clean ``ValidationError`` early
+        instead of bubbling an opaque ``IntegrityError`` from Postgres. The
+        DB CHECK remains the authoritative defense for paths that bypass
+        ``Model.save()`` — ``bulk_create``, raw SQL, the ClickHouse CDC
+        mirror.
+        """
+        super().clean()
+        if self.target_type == EvalTargetType.SESSION:
+            if self.observation_span_id or self.trace_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must not set "
+                    "observation_span or trace."
+                )
+            if not self.trace_session_id:
+                raise ValidationError(
+                    "Session-target EvalLogger rows must set trace_session."
+                )
+        else:
+            if self.trace_session_id:
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must not set trace_session."
+                )
+            if not (self.observation_span_id and self.trace_id):
+                raise ValidationError(
+                    "Span/trace-target EvalLogger rows must set both "
+                    "observation_span and trace."
+                )
+
+    def save(self, *args, **kwargs):
+        # ``full_clean()`` runs field validators + ``clean()``. Single-row
+        # writes via ``.save()`` get this validation; ``bulk_create`` / raw
+        # inserts rely on the DB CHECK constraint instead (Django skips
+        # ``clean()`` for ``bulk_create`` by design).
+        # The target FKs are ``db_constraint=False`` and may reference rows that
+        # live only in ClickHouse (the eval engine reads spans/traces from CH),
+        # so they're excluded from full_clean's non-PG existence check.
+        self.full_clean(exclude=["observation_span", "trace", "trace_session"])
+        super().save(*args, **kwargs)
 
     class Meta:
         db_table = "tracer_eval_logger"
@@ -291,8 +436,87 @@ class EvalLogger(BaseModel):
         indexes = [
             models.Index(fields=["trace", "created_at"]),
             models.Index(fields=["observation_span"]),
+            models.Index(fields=["trace_session"]),
             models.Index(fields=["custom_eval_config"]),
             models.Index(fields=["output_bool"]),
             models.Index(fields=["output_float"]),
             models.Index(fields=["error"]),
+            # Dedup queries from the trace + session evaluators (PR4) and
+            # span-only readers narrow on this triple. Created concurrently
+            # in the migration to avoid table locks in prod.
+            models.Index(
+                fields=["eval_task_id", "target_type", "custom_eval_config"],
+                name="eval_logger_task_target_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "status"],
+                name="eval_logger_task_status_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "created_at", "id"],
+                name="eval_logger_task_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
+            ),
+            models.Index(
+                fields=[
+                    "eval_task_id",
+                    "custom_eval_config",
+                    "created_at",
+                    "id",
+                ],
+                name="eval_log_task_cfg_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
+            ),
+        ]
+        constraints = [
+            # Mutual-exclusion rule: span and trace targets share the
+            # span+trace FK shape (trace anchors to the trace's root span,
+            # disambiguated by ``target_type``); session targets have NULL
+            # span/trace and a populated ``trace_session`` instead. The
+            # FE-visible "session evals never appear on span/trace
+            # surfaces" rule is enforced at the reader level by
+            # ``target_type IN ('span','trace')`` filters; this constraint
+            # just keeps the DB shape consistent.
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(target_type__in=["span", "trace"])
+                        & models.Q(observation_span__isnull=False)
+                        & models.Q(trace__isnull=False)
+                        & models.Q(trace_session__isnull=True)
+                    )
+                    | (
+                        models.Q(target_type="session")
+                        & models.Q(observation_span__isnull=True)
+                        & models.Q(trace__isnull=True)
+                        & models.Q(trace_session__isnull=False)
+                    )
+                ),
+                name="eval_logger_target_type_fks",
+            ),
+            # §3.2: one live entry per (task, row, eval), keyed per target_type
+            # on the row's identity column. Scoped to work-items (non-null
+            # task); inline evals are exempt. Built CONCURRENTLY in the
+            # migration. voiceCalls ride the span index (target_type='span').
+            models.UniqueConstraint(
+                fields=["eval_task_id", "observation_span", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="span", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_span_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="trace", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_trace_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace_session", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="session", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_session_uniq",
+            ),
         ]

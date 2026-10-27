@@ -4,12 +4,10 @@ from random import sample
 import structlog
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import OuterRef, Q
 from django.utils import timezone
 
-logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.fi_evals import *
-
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from analytics.utils import (
     MixpanelEvents,
     MixpanelTypes,
@@ -17,13 +15,26 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from tfc.temporal import temporal_activity
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.services.filter_principal_context import bound_my_annotations_principal
+from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.eval import (
     evaluate_observation_span_observe,
+    evaluate_trace_observe,
+    evaluate_trace_session_observe,
 )
 from tracer.utils.filters import FilterEngine
+from tracer.utils.helper import get_annotation_labels_for_project
+
+logger = structlog.get_logger(__name__)
 
 # Cron-side drain window — once the dispatcher has fired every
 # per-span activity, the task stays in RUNNING until either the
@@ -73,9 +84,7 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     to this helper.
     """
     if eval_task_logger is None:
-        eval_task_logger = EvalTaskLogger.objects.filter(
-            eval_task=eval_task
-        ).first()
+        eval_task_logger = EvalTaskLogger.objects.filter(eval_task=eval_task).first()
 
     dispatched = (eval_task_logger.offset if eval_task_logger else 0) or 0
     eval_count = eval_task.evals.count() or 1
@@ -106,12 +115,13 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     is_stalled = False
     if expected > 0:
         now = timezone.now()
-        _logger_ref = (
-            eval_task_logger.updated_at if eval_task_logger else None
-        )
+        _logger_ref = eval_task_logger.updated_at if eval_task_logger else None
         candidates = [c for c in (latest_row_at, _logger_ref) if c is not None]
         stall_ref = max(candidates) if candidates else None
-        if stall_ref is not None and (now - stall_ref).total_seconds() > _DRAIN_STALL_SECONDS:
+        if (
+            stall_ref is not None
+            and (now - stall_ref).total_seconds() > _DRAIN_STALL_SECONDS
+        ):
             is_stalled = True
 
     return {
@@ -124,25 +134,105 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     }
 
 
-def parsing_evaltask_filters(filters: dict) -> Q:
+def annotation_source_q_for_row_type(row_type: RowType | str) -> Q:
+    """Q matching Score rows against a span-outer queryset, scoped per row_type.
+
+    Mirrors each row_type's grid so the runner selects the same rows the
+    user previewed. Voice/trace annotations are stored trace-scoped, so
+    those bridge trace OR span; spans and sessions match their own scope.
     """
-    Parses the input filters dictionary and returns a single combined Q object
-    for Django ORM filtering.
+    row_type = RowType(row_type)
+    if row_type in (RowType.TRACES, RowType.VOICE_CALLS):
+        return Q(trace_id=OuterRef("trace_id")) | Q(
+            observation_span__trace_id=OuterRef("trace_id")
+        )
+    if row_type == RowType.SESSIONS:
+        return Q(trace_session_id=OuterRef("trace__session_id"))
+    return Q(observation_span_id=OuterRef("id"))
+
+
+def parsing_evaltask_filters(
+    filters: dict, *, row_type: RowType | str
+) -> tuple[Q, dict]:
+    """Combine eval-task filter JSON into ``(Q, annotation_kwargs)``.
+
+    Per-handler dispatch mirrors ``list_spans_observe``
+    (``tracer/views/observation_span.py:1755-1826``): one flat ``filters``
+    list, each item carrying ``col_type``, passed to every handler.
+
+    ANNOTATION predicates are scoped per ``row_type`` (see
+    ``annotation_source_q_for_row_type``); everything else stays span-outer.
+
+    Callers must apply ``.annotate(**extra_annotations).filter(combined_q)``.
+    Per-label ANNOTATION filters (e.g. ``columnId == "<label_uuid>"``)
+    additionally require ``build_annotation_subqueries`` (with the same
+    row_type source Q) to have been applied to the queryset first —
+    ``process_eval_task`` does that; other callers must mirror it if they
+    accept per-label filters.
+
+    Accepts both ``filters`` and legacy ``span_attributes_filters`` keys.
     """
+    annotation_source_q = annotation_source_q_for_row_type(row_type)
     combined_q = Q()
+    extra_anns: dict = {}
 
     if filters is None:
-        return combined_q
+        return combined_q, extra_anns
 
     for key, value in filters.items():
-        if (
-            key == "span_attributes_filters"
-            and value is not None
-            and isinstance(value, list)
-        ):
-            q_span = FilterEngine.get_filter_conditions_for_span_attributes(value)
-            if q_span and (q_span.children or hasattr(q_span, "connector")):
+        if key in ("filters", "span_attributes_filters") and isinstance(value, list):
+            if key == "span_attributes_filters":
+                logger.error(
+                    "Eval task still uses the legacy "
+                    "`span_attributes_filters` key; re-save the task to "
+                    "migrate it to the canonical `filters` key."
+                )
+
+            items = value
+            if not items:
+                continue
+
+            q_sys = FilterEngine.get_filter_conditions_for_system_metrics(items)
+            if q_sys:
+                combined_q &= q_sys
+
+            # ANNOTATION rows (incl. my_annotations/annotator pinned to
+            # col_type=ANNOTATION) are skipped inside the handler at
+            # filters.py:1386-1391 — no call-site pre-filter needed.
+            q_eval = FilterEngine.get_filter_conditions_for_non_system_metrics(items)
+            if q_eval:
+                combined_q &= q_eval
+
+            # Eval-task creation binds user-relative filters to the creator.
+            # Legacy payloads without that binding fail closed inside
+            # FilterEngine instead of silently broadening the task selection.
+            q_anno, anno_anns = (
+                FilterEngine.get_filter_conditions_for_voice_call_annotations(
+                    items,
+                    user_id=bound_my_annotations_principal(items),
+                    source_q=annotation_source_q,
+                )
+            )
+            if q_anno:
+                combined_q &= q_anno
+            if anno_anns:
+                extra_anns.update(anno_anns)
+
+            q_span = FilterEngine.get_filter_conditions_for_span_attributes(items)
+            if q_span:
                 combined_q &= q_span
+
+            q_has_eval = FilterEngine.get_filter_conditions_for_has_eval(
+                items, observe_type="span"
+            )
+            if q_has_eval:
+                combined_q &= q_has_eval
+            q_has_anno = FilterEngine.get_filter_conditions_for_has_annotation(
+                items, source_q=annotation_source_q
+            )
+            if q_has_anno:
+                combined_q &= q_has_anno
+
         elif key == "observation_type":
             if isinstance(value, list):
                 combined_q &= Q(observation_type__in=list(value))
@@ -164,7 +254,106 @@ def parsing_evaltask_filters(filters: dict) -> Q:
         elif key == "project_id":
             combined_q &= Q(project_id=value)
 
-    return combined_q
+    return combined_q, extra_anns
+
+
+def _derive_session_candidate_ids(eval_task) -> list[str]:
+    """Re-derive the in-scope session candidate ids from ClickHouse (P3b step2,
+    Slice C / DESIGN §5) — the CH replacement for the old PG ``Trace.objects
+    .filter(span matches).exclude(session__isnull=True).values('session_id')``
+    subquery.
+
+    Post-flip the ``Trace.session`` FK is ``None`` (only spans carry the
+    deterministic ``trace_session_id``), so the PG subquery silently omits every
+    net-new session and a session-level eval would never run on it. CH derives
+    the candidate set straight off the spans the filters match:
+
+      • ``parsing_evaltask_filters_for_ch`` produces the same narrow filter
+        kwargs the PG ``parsing_evaltask_filters`` Q encodes (the companion used
+        by ``eval_task.py`` for the rerun count).
+      • ``project_id`` is force-scoped to the eval_task's own tenant (the spans
+        table is multi-tenant — defense-in-depth, exactly like
+        ``eval_task.py``'s tenant gate), so the candidate set can't leak another
+        tenant's sessions even if ``filters`` carry a different project_id.
+      • ``distinct_session_ids_with_filters`` is remap-aware: a straddler's old +
+        new id spans collapse to ONE survivor id (the session appears once,
+        under its canonical/old id) and a net-new session's deterministic id has
+        no remap row → it is included.
+
+    ``span_attributes_filters`` are NOT translated by ``_for_ch`` (they need the
+    v2 FilterEngine) and — unlike the trace/span paths — sessions have no PG
+    fallback to widen to. We log when a task carries them so an over-inclusive
+    candidate set (the filtered-out attribute subset is ignored) is visible
+    rather than silent; the CH25-TODO mirrors ``eval_task.py:1554``.
+    CH25-TODO(span_attributes_filters_for_ch): wire a v2-FilterEngine-backed
+    attribute predicate so 100% of session filter shapes route through CH.
+    """
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    raw_filters = eval_task.filters or {}
+    if isinstance(raw_filters, dict) and raw_filters.get("span_attributes_filters"):
+        logger.warning(
+            "eval_task_session_candidates_span_attr_filters_ignored",
+            eval_task_id=str(eval_task.id),
+            note=(
+                "span_attributes_filters are not yet translated to CH for the "
+                "session candidate derivation; candidate set ignores that subset"
+            ),
+        )
+    ch_kwargs = CHSpanReader.parsing_evaltask_filters_for_ch(raw_filters)
+    # Force-scope to the eval_task's tenant regardless of any project_id the
+    # payload filters carry (mirrors eval_task.py's tenant gate).
+    ch_kwargs["project_id"] = str(eval_task.project_id)
+    with get_reader() as reader:
+        return reader.distinct_session_ids_with_filters(**ch_kwargs)
+
+
+def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
+    """Route legacy eval-task invocations through the cutover workflow.
+
+    ``eval_task_cron`` was removed from the schedule registry at the workflow
+    cutover, but both that activity and ``process_eval_task`` remain registered
+    for in-flight/orphaned Temporal work.  A stale schedule can therefore still
+    call this module after a deploy.  The old branches select candidates outside
+    the current ClickHouse reconciler and directly dispatch evaluators, bypassing
+    live-entry reconciliation (and, for traces, exact filter-witness binding).
+
+    Always return ``True`` so callers stop before the retired engine.  A
+    transient workflow-start failure is deliberately fail-closed: leave the
+    task untouched for retry instead of falling back to the retired picker.
+    """
+    if eval_task.status not in (EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING):
+        logger.info(
+            "legacy_eval_dispatch_skipped_terminal_task",
+            eval_task_id=str(eval_task.id),
+            status=str(eval_task.status),
+        )
+        return True
+
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+    from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
+
+    try:
+        start_eval_task_workflow_sync(eval_task)
+    except WorkflowAlreadyStartedError:
+        # Expected when an orphaned cron overlaps the workflow already started
+        # by create/edit.  Workflow id is per-task, so this is an idempotent no-op.
+        logger.info(
+            "legacy_eval_dispatch_workflow_already_running",
+            eval_task_id=str(eval_task.id),
+        )
+    except Exception:
+        logger.exception(
+            "legacy_eval_dispatch_bridge_failed",
+            eval_task_id=str(eval_task.id),
+        )
+    else:
+        logger.info(
+            "legacy_eval_dispatch_bridged",
+            eval_task_id=str(eval_task.id),
+        )
+    return True
 
 
 @temporal_activity(
@@ -207,6 +396,13 @@ def process_eval_task(eval_task_id: str):
             logger.error(f"Eval task with id {eval_task_id} not found")
             return
 
+        # The per-task workflow is the only supported eval-task engine after
+        # cutover.  Keep this guard ahead of every status write/query performed
+        # by the retired dispatcher so a stale Temporal schedule cannot bypass
+        # ClickHouse candidate selection and filter-witness propagation.
+        if _bridge_retired_dispatcher(eval_task):
+            return
+
         if eval_task.status == EvalTaskStatus.PENDING:
             properties = get_mixpanel_properties(
                 org=eval_task.project.organization,
@@ -228,13 +424,91 @@ def process_eval_task(eval_task_id: str):
             )
 
         filters = Q()
+        extra_anns: dict = {}
         if eval_task.filters is not None:
-            filters = parsing_evaltask_filters(eval_task.filters)
+            filters, extra_anns = parsing_evaltask_filters(
+                eval_task.filters, row_type=eval_task.row_type
+            )
+
+        # Pre-annotate the ``annotation_<label_id>`` columns that per-label
+        # ANNOTATION filters reference, scoped to the row_type's Score sources.
+        annotation_labels = get_annotation_labels_for_project(eval_task.project_id)
+        span_qs = build_annotation_subqueries(
+            ObservationSpan.objects.all(),
+            annotation_labels,
+            eval_task.project.organization,
+            source_q=annotation_source_q_for_row_type(eval_task.row_type),
+        )
+        span_qs = span_qs.annotate(**extra_anns).filter(filters)
+
+        # Branch the candidate queryset and dispatch activity on
+        # row_type. The rest of the function operates on ``entity_qs``
+        # (a Django queryset of the entities we'll evaluate) and
+        # ``dispatch`` (the activity to fan out to). The span path stays
+        # the original behaviour. The ``spanids_processed`` JSONField
+        # stores the processed entity ids generically — its name is
+        # historical (it once held only span ids); a future rename to
+        # ``processed_target_ids`` is intentionally deferred so this PR
+        # stays focused on dispatcher behaviour.
+        #
+        # SESSIONS is the exception: its candidates are a Python LIST of CH-
+        # derived ids (``session_candidate_ids``), not a queryset, because the
+        # ``Trace.session`` FK is gone post-flip (Slice C). When it is set the
+        # shared downstream branches on it instead of ``entity_qs``.
+        session_candidate_ids: list[str] | None = None
+        if eval_task.row_type == RowType.TRACES:
+            # A trace is in scope iff at least one of its spans matches
+            # the existing span-level filters.
+            entity_qs = Trace.objects.filter(
+                id__in=span_qs.values("trace_id").distinct()
+            )
+            dispatch = evaluate_trace_observe
+        elif eval_task.row_type == RowType.SESSIONS:
+            # A session is in scope iff any of its spans matches the filters.
+            # P3b step2 / Slice C (DESIGN §5): re-derive the candidate session
+            # ids from CH, NOT the ``Trace.session`` FK. Post-flip that FK is
+            # ``None`` (only spans carry the deterministic ``trace_session_id``),
+            # so the old ``Trace.objects…exclude(session__isnull=True)
+            # .values('session_id')`` subquery silently omits EVERY net-new
+            # session → session-level evals would never run on them. The CH
+            # derivation is remap-aware (straddler old+new id → one survivor
+            # id) and project-pinned (the spans table is multi-tenant). The
+            # candidate set is a plain Python ``list`` of ids, NOT a
+            # ``TraceSession`` queryset: re-wrapping it in
+            # ``TraceSession.objects.filter(id__in=…)`` would re-introduce the
+            # exact bug (net-new ids have no PG row → dropped again). The shared
+            # downstream below branches on ``session_candidate_ids`` accordingly.
+            session_candidate_ids = _derive_session_candidate_ids(eval_task)
+            entity_qs = None
+            dispatch = evaluate_trace_session_observe
+        elif eval_task.row_type in (RowType.SPANS, RowType.VOICE_CALLS):
+            # Voice calls share the spans dispatch — the picker layer
+            # already aliases voiceCalls→spans (observation_span.py:2890),
+            # and any conversation-type narrowing the user wants comes
+            # through ``filters`` like every other span query.
+            entity_qs = span_qs
+            dispatch = evaluate_observation_span_observe
+        else:
+            # Fail fast on unknown / future row types instead of silently
+            # dispatching down the span path. Catches both corrupt rows and
+            # the case where a new RowType enum value is added without
+            # updating this dispatcher.
+            raise ValueError(
+                f"Unhandled row_type {eval_task.row_type!r} on EvalTask {eval_task.id}"
+            )
 
         sampling_rate = eval_task.sampling_rate
         span_limit = eval_task.spans_limit
         cnt = None
-        total_spans_count = ObservationSpan.objects.filter(filters).count()
+        # SESSIONS (Slice C) operate on a materialized Python list of CH-derived
+        # ids rather than a queryset (``entity_qs`` is ``None`` for that path —
+        # see the row_type branch). Sessions are few, so materializing every
+        # candidate is fine; the span/trace paths keep the queryset so they can
+        # sample at the DB level without pulling all ids into memory.
+        is_session = session_candidate_ids is not None
+        total_spans_count = (
+            len(session_candidate_ids) if is_session else entity_qs.count()
+        )
 
         if eval_task.run_type == RunType.HISTORICAL and span_limit is not None:
             # Use ``offset`` (dedup-set size recorded below, before the
@@ -326,7 +600,7 @@ def process_eval_task(eval_task_id: str):
                 eval_task.status = EvalTaskStatus.COMPLETED
                 eval_task_logger.status = EvalTaskStatus.COMPLETED
                 eval_task_logger.save()
-                eval_task.save()
+                eval_task.save(update_fields=["status", "updated_at"])
                 properties = get_mixpanel_properties(
                     org=eval_task.project.organization,
                     project=eval_task.project,
@@ -355,35 +629,77 @@ def process_eval_task(eval_task_id: str):
             if eval_task.run_type == RunType.CONTINUOUS:
                 filters = filters & Q(created_at__gte=eval_task_logger.updated_at)
 
-            if len(spanids_processed) > 0:
-                spans = ObservationSpan.objects.filter(filters).only("id").exclude(
-                    id__in=spanids_processed
-                )
+            if is_session:
+                # Sessions: the candidate set is the CH-derived id list. Dedup
+                # against ``spanids_processed`` in Python (both sides stringified
+                # — the CH method already returns str ids, the stored list is
+                # str). ``pending_ids`` stands in for the queryset paths'
+                # ``pending_entities`` below; the ``.count()``/``.order_by('?')``
+                # uses are branched on ``is_session`` to ``len()``/``sample()``.
+                _processed = set(spanids_processed)
+                pending_ids = [
+                    sid for sid in session_candidate_ids if str(sid) not in _processed
+                ]
+                pending_entities = None
+                filtered_spans = list(pending_ids)
             else:
-                spans = ObservationSpan.objects.filter(filters).only("id")
+                # ``spanids_processed`` is stored as strings; trace/session
+                # ids are UUIDs and Django coerces on ``id__in`` lookup.
+                # The field name is historical (it once held only span ids);
+                # for row_type=traces/sessions it now holds trace/session ids.
+                if len(spanids_processed) > 0:
+                    pending_entities = entity_qs.only("id").exclude(
+                        id__in=spanids_processed
+                    )
+                else:
+                    pending_entities = entity_qs.only("id")
 
-
-            filtered_spans = spans.values_list("id", flat=True)
+                filtered_spans = pending_entities.values_list("id", flat=True)
 
             # Filter spans based on sampling rate
             if sampling_rate and sampling_rate > 0 and sampling_rate <= 100:
                 sample_size = int((sampling_rate / 100) * total_spans_count)
                 runned_spans_count = eval_task_logger.offset or 0
-                if runned_spans_count >= sample_size:
+                # CONTINUOUS tasks have no sampling cap — they run forever
+                # on incoming spans. The historical-style "stop when offset
+                # >= sample_size" check would silently no-op once the
+                # cumulative offset crosses sample_size, even though new
+                # spans keep arriving
+                is_continuous = eval_task.run_type == RunType.CONTINUOUS
+                if not is_continuous and runned_spans_count >= sample_size:
                     filtered_spans = []
                 else:
-                    max_samples = sample_size - runned_spans_count
+                    # ``pending_count`` abstracts the unprocessed candidate-set
+                    # size: ``len(pending_ids)`` for the session list path,
+                    # ``pending_entities.count()`` for the queryset paths.
+                    pending_count = (
+                        len(pending_ids) if is_session else pending_entities.count()
+                    )
+                    if is_continuous:
+                        # For continuous, sampling applies to the CURRENT
+                        # batch of unprocessed spans, not against accumulated
+                        # offset.
+                        max_samples = max(int((sampling_rate / 100) * pending_count), 1)
+                    else:
+                        max_samples = sample_size - runned_spans_count
                     if cnt is not None:
                         max_samples = min(max_samples, cnt)
                     # Sample at the DB level instead of materializing every
-                    # candidate span id into Python memory. ``order_by("?")``
+                    # candidate entity id into Python memory. ``order_by("?")``
                     # is backed by RANDOM() in PostgreSQL, which is sufficient
-                    # here and bounded by ``LIMIT sample_count``.
-                    total_available = spans.count()
+                    # here and bounded by ``LIMIT sample_count``. Sessions are a
+                    # materialized list, so ``random.sample`` (already imported)
+                    # draws the same uniform sample without a DB round-trip.
+                    total_available = pending_count
                     sample_count = min(max_samples, total_available)
-                    sampled_span_ids = list(
-                        spans.order_by("?").values_list("id", flat=True)[:sample_count]
-                    )
+                    if is_session:
+                        sampled_span_ids = sample(list(pending_ids), sample_count)
+                    else:
+                        sampled_span_ids = list(
+                            pending_entities.order_by("?").values_list("id", flat=True)[
+                                :sample_count
+                            ]
+                        )
                     filtered_spans = sampled_span_ids
             if cnt is not None:
                 filtered_spans = list(filtered_spans[:cnt])
@@ -393,8 +709,15 @@ def process_eval_task(eval_task_id: str):
             # BEFORE truncation so completion checks reflect actual progress
             # (the in-DB list only retains the most recent ids for future
             # dedup).
+            #
+            # Stringify the entity ids before storing. ObservationSpan.id is
+            # already a CharField (str), but Trace.id and TraceSession.id are
+            # UUIDField — psycopg's JSONField adapter can't serialize raw
+            # UUID objects, so we coerce here. Existing entries from
+            # span-only tasks are already strings, so the coercion is
+            # idempotent.
             MAX_STORED_IDS = 10000
-            new_ids = list(filtered_spans)
+            new_ids = [str(eid) for eid in filtered_spans]
             updated_spanids_processed = list(set(spanids_processed + new_ids))
             eval_task_logger.offset = len(updated_spanids_processed)
             if len(updated_spanids_processed) > MAX_STORED_IDS:
@@ -408,10 +731,10 @@ def process_eval_task(eval_task_id: str):
 
         evals = eval_task.evals.all()
 
-        for span_id in filtered_spans:
+        for entity_id in filtered_spans:
             for eval_config in evals:
-                evaluate_observation_span_observe.delay(
-                    str(span_id),
+                dispatch.delay(
+                    str(entity_id),
                     str(eval_config.id),
                     str(eval_task.id),
                 )
@@ -423,20 +746,21 @@ def process_eval_task(eval_task_id: str):
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")
 def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
+    """Compatibility shim for already-enqueued legacy batch activities.
+
+    The cutover workflow owns candidate reconciliation and entry draining.  A
+    batch activity emitted before the cutover (or by an orphaned schedule) must
+    therefore ensure that workflow instead of directly dispatching evaluators.
+    ``span_ids``/``eval_ids`` are intentionally ignored: the reconciler derives
+    the authoritative desired set from the persisted task configuration.
+    """
     try:
         eval_task = EvalTask.objects.get(id=eval_task_id)
-        evals = eval_task.evals.filter(id__in=eval_ids)
-        spans = ObservationSpan.objects.filter(id__in=span_ids)
+    except EvalTask.DoesNotExist:
+        logger.error(
+            "legacy_eval_batch_task_missing",
+            eval_task_id=str(eval_task_id),
+        )
+        return
 
-        for span in spans:
-            for eval_config in evals:
-                evaluate_observation_span_observe.delay(
-                    str(span.id),
-                    str(eval_config.id),
-                    str(eval_task.id),
-                )
-
-    except Exception as e:
-        logger.exception(f"{e}")
-        eval_task.status = EvalTaskStatus.FAILED
-        eval_task.save()
+    _bridge_retired_dispatcher(eval_task)

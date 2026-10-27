@@ -8,10 +8,12 @@ Also handles cascade soft-delete when Dataset, PromptTemplate, or
 PromptVersion are soft-deleted.
 """
 
+from functools import partial
 from threading import local
 
 import structlog
-from django.db.models.signals import post_save, pre_save
+from django.db import transaction
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
 logger = structlog.get_logger(__name__)
@@ -99,16 +101,15 @@ def _has_relevant_changes(prompt_version) -> bool:
     if not old_state:
         return False
 
-    old_vars = (
-        set(old_state["variable_names"].keys())
-        if old_state.get("variable_names")
-        else set()
-    )
-    new_vars = (
-        set(prompt_version.variable_names.keys())
-        if prompt_version.variable_names
-        else set()
-    )
+    def _variable_keys(value):
+        if isinstance(value, dict):
+            return set(value.keys())
+        if isinstance(value, (list, tuple, set)):
+            return set(value)
+        return set()
+
+    old_vars = _variable_keys(old_state.get("variable_names"))
+    new_vars = _variable_keys(prompt_version.variable_names)
 
     if old_vars != new_vars:
         logger.info(
@@ -120,11 +121,16 @@ def _has_relevant_changes(prompt_version) -> bool:
         return True
 
     # Check if response_format changed
-    old_config = old_state.get("prompt_config_snapshot") or {}
-    new_config = prompt_version.prompt_config_snapshot or {}
+    def _response_format(config):
+        if not isinstance(config, dict):
+            return None
+        configuration = config.get("configuration")
+        if not isinstance(configuration, dict):
+            return None
+        return configuration.get("response_format")
 
-    old_format = old_config.get("configuration", {}).get("response_format")
-    new_format = new_config.get("configuration", {}).get("response_format")
+    old_format = _response_format(old_state.get("prompt_config_snapshot"))
+    new_format = _response_format(prompt_version.prompt_config_snapshot)
 
     if old_format != new_format:
         logger.info(
@@ -285,3 +291,19 @@ def cascade_soft_delete_on_prompt_version_deletion(sender, instance, **kwargs):
                 prompt_version_id=str(instance.id),
                 nodes_deleted=nodes_cascaded,
             )
+
+
+@receiver(post_delete, sender="model_hub.Feedback")
+def tombstone_feedback_vectors_on_delete(sender, instance, using, **kwargs):
+    """Revoke vector eligibility on collector-path deletes.
+
+    ``Feedback.delete()`` only covers instance deletes (soft-delete saves);
+    queryset ``.delete()`` and FK cascades reach the collector instead and
+    fire ``post_delete`` — tombstone the ClickHouse vectors here.
+    """
+    from model_hub.models.evals_metric import tombstone_feedback_vectors
+
+    transaction.on_commit(
+        partial(tombstone_feedback_vectors, instance.id),
+        using=using,
+    )

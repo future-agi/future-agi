@@ -26,6 +26,7 @@ import { useDeleteCompare } from "src/api/develop/dataset-compare";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import { APP_CONSTANTS } from "src/utils/constants";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 
 // Define status types that require refreshing
 const RefreshStatus = [
@@ -609,6 +610,7 @@ const CompareData = ({
             position: "relative",
           }}
         >
+          <CompositeEvalDialog />
           <AgGridReact
             ref={gridApiRef}
             columnDefs={columnDefs}

@@ -8,11 +8,14 @@ import React, {
   useState,
 } from "react";
 import { Helmet } from "react-helmet-async";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { InviteLinkCell } from "./invite-links";
 import UserHeaders from "./UserHeaders";
 import GridTable from "./GridTable";
 import { getUserQueryOptions } from "./getUserQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import {
   ProcessingStatusCell,
   ActionRender,
@@ -30,6 +33,7 @@ import BackButton from "src/sections/develop-detail/Common/BackButton";
 import { LEVELS } from "./constant";
 import { useUserManagementStore } from "./UserManagementStore";
 import { endpoints } from "src/utils/axios";
+import { gridSortModelToMemberListSort } from "./memberListGridQuery";
 
 const UserManagementV2 = ({ workspaceScope = false }) => {
   const { workspaceId: workspaceIdParam } = useParams();
@@ -47,11 +51,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedRole, setSelectedRole] = useState("");
   const { setUsersList } = useUserManagementStore();
-  workspaceId =
-    workspaceId ??
-    currentWorkspaceId ??
-    user?.default_workspace_id ??
-    user?.defaultWorkspaceId;
+  workspaceId = workspaceId ?? currentWorkspaceId ?? user?.default_workspace_id;
 
   // Use integer levels when available, fall back to string role check
   const canManageUsers =
@@ -62,6 +62,11 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
     role === "workspace_admin";
 
   const { allowed: canSendInvite } = useCanSendInvite(orgLevel, effectiveLevel);
+
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  // Gated on canManageUsers: the link embeds the accept token, so it is a
+  // shareable credential.
+  const useInviteLinks = modeConfirmed && isOSS && canManageUsers;
 
   const columnDefs = useMemo(
     () => [
@@ -75,6 +80,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
       {
         headerName: "Organisation Role",
         field: "org_role",
+        colId: "org_level",
         flex: 1,
         cellRenderer: OrgRoleCell,
       },
@@ -83,7 +89,8 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         ? [
             {
               headerName: "Workspace Role",
-              field: "wsRole",
+              field: "ws_role",
+              colId: "ws_level",
               flex: 1,
               cellRenderer: WorkspaceRoleCell,
             },
@@ -112,9 +119,25 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         headerName: "Start date",
         field: "created_at",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value ? format(new Date(params?.value), "dd/MM/yyyy") : "",
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            emptyText="No start date recorded"
+          />
+        ),
       },
+      ...(useInviteLinks
+        ? [
+            {
+              headerName: "Invite link",
+              field: "invite_link",
+              flex: 1.8,
+              sortable: false,
+              cellRenderer: InviteLinkCell,
+            },
+          ]
+        : []),
       ...(canManageUsers
         ? [
             {
@@ -128,7 +151,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
           ]
         : []),
     ],
-    [canManageUsers, workspaceScope],
+    [canManageUsers, workspaceScope, workspaceId, useInviteLinks],
   );
 
   // When workspaceScope is true, use workspace-specific member endpoint
@@ -149,10 +172,9 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
       getRows: async (params) => {
         const { request } = params;
         const pageNumber = Math.floor(request.startRow / 20);
-        const sort = request?.sortModel?.map(({ colId, sort }) => ({
-          columnId: colId,
-          type: sort === "asc" ? "ascending" : "descending",
-        }));
+        const sort = gridSortModelToMemberListSort(request?.sortModel, {
+          workspaceScope,
+        });
         const search = searchQuery || "";
 
         if (overlayTimeoutRef.current) {
@@ -165,10 +187,8 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
               pageNumber,
               sort,
               search: search,
-              filterStatus: selectedStatus
-                ? JSON.stringify([selectedStatus])
-                : [],
-              filterRole: selectedRole ? JSON.stringify([selectedRole]) : [],
+              filterStatus: selectedStatus ? [selectedStatus] : [],
+              filterRole: selectedRole ? [selectedRole] : [],
               workspaceId,
               endpoint: wsEndpoint,
             },

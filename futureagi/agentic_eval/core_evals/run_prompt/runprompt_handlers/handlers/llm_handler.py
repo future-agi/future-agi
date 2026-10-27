@@ -23,7 +23,11 @@ import structlog
 from asgiref.sync import sync_to_async
 
 from model_hub.utils.websocket_manager import WebSocketManager
-from agentic_eval.core_evals.run_prompt.error_handler import litellm_try_except
+from agentic_eval.core_evals.run_prompt.error_handler import (
+    ErrorContext,
+    handle_api_error,
+    litellm_try_except,
+)
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
@@ -694,8 +698,11 @@ class LLMHandler(BaseModelHandler):
                     f"Failed to send remaining buffer: {buffer_error}"
                 )
 
+        context = self._error_context()
+        concise_error = handle_api_error(error, self.logger, context)
+
         # Send error message
-        self._ws_send_error(ws_manager, str(error))
+        self._ws_send_error(ws_manager, concise_error)
 
         # Cache error
         try:
@@ -703,12 +710,12 @@ class LLMHandler(BaseModelHandler):
                 template_id=str(self.context.template_id),
                 version=self.context.version,
                 index=self.context.result_index,
-                response_data={"response": response_content, "error": str(error)},
+                response_data={"response": response_content, "error": concise_error},
             )
         except Exception as cache_error:
             self.logger.exception(f"Failed to cache error response: {cache_error}")
 
-        raise error
+        raise Exception(concise_error) from error
 
     async def _handle_streaming_error_async(
         self,
@@ -737,8 +744,11 @@ class LLMHandler(BaseModelHandler):
                     f"Failed to send remaining buffer: {buffer_error}"
                 )
 
+        context = self._error_context()
+        concise_error = handle_api_error(error, self.logger, context)
+
         # Send error message
-        await self._ws_send_error_async(ws_manager, str(error))
+        await self._ws_send_error_async(ws_manager, concise_error)
 
         # Cache error
         try:
@@ -746,12 +756,24 @@ class LLMHandler(BaseModelHandler):
                 template_id=str(self.context.template_id),
                 version=self.context.version,
                 index=self.context.result_index,
-                response_data={"response": response_content, "error": str(error)},
+                response_data={"response": response_content, "error": concise_error},
             )
         except Exception as cache_error:
             self.logger.exception(f"Failed to cache error response: {cache_error}")
 
-        raise error
+        raise Exception(concise_error) from error
+
+    def _error_context(self) -> ErrorContext:
+        return ErrorContext(
+            model=self.context.model,
+            temperature=self.context.temperature,
+            max_tokens=self.context.max_tokens,
+            message_count=len(self.context.messages) if self.context.messages else 0,
+            output_format=self.context.output_format,
+            organization_id=self.context.organization_id,
+            workspace_id=self.context.workspace_id,
+            template_id=self.context.template_id,
+        )
 
     def _build_stopped_response(
         self, response_content: str, chunk: Any, start_time: float

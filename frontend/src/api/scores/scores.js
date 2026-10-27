@@ -1,13 +1,51 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
+import { apiPath } from "src/api/contracts/api-surface";
+import { selectContractedList } from "src/api/contract-validation";
+import {
+  modelHubScoresBulkCreate,
+  modelHubScoresCreate,
+  modelHubScoresDelete,
+  modelHubScoresForSource,
+} from "src/generated/api-contracts/api";
+import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
+
+export const SCORE_ITEM_CONSUMED_FIELDS = [
+  "id",
+  "source_type",
+  "source_id",
+  "label_id",
+  "label_name",
+  "label_type",
+  "label_settings",
+  "value",
+  "score_source",
+  "notes",
+  "annotator_name",
+  "annotator_email",
+  "updated_at",
+  "queue_id",
+  "queue_item",
+];
+
+export const scoreEndpoints = {
+  list: apiPath("/model-hub/scores/"),
+  detail: (id) => apiPath("/model-hub/scores/{id}/", { id }),
+  bulk: apiPath("/model-hub/scores/bulk/"),
+  forSource: apiPath("/model-hub/scores/for-source/"),
+};
 
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
 export const scoreKeys = {
   all: ["scores"],
-  forSource: (sourceType, sourceId) => ["scores", sourceType, sourceId],
+  // The project goes last, so invalidating ["scores", type, id] also refreshes
+  // every project-pinned read of that source.
+  forSource: (sourceType, sourceId, projectId) =>
+    projectId
+      ? ["scores", sourceType, sourceId, projectId]
+      : ["scores", sourceType, sourceId],
 };
 
 // ---------------------------------------------------------------------------
@@ -16,15 +54,29 @@ export const scoreKeys = {
 
 /**
  * Fetch all scores for a given source (trace, span, session, etc.)
+ *
+ * The same trace / span id can exist in several projects; `projectId` pins
+ * the read to the copy the drawer shows.
  */
-export const useScoresForSource = (sourceType, sourceId, options = {}) => {
+export const useScoresForSource = (
+  sourceType,
+  sourceId,
+  { projectId, ...options } = {},
+) => {
   return useQuery({
-    queryKey: scoreKeys.forSource(sourceType, sourceId),
+    queryKey: scoreKeys.forSource(sourceType, sourceId, projectId),
     queryFn: () =>
-      axios.get("/model-hub/scores/for-source/", {
-        params: { source_type: sourceType, source_id: sourceId },
+      modelHubScoresForSource({
+        source_type: sourceType,
+        source_id: sourceId,
+        ...(projectId ? { project_id: projectId } : {}),
       }),
-    select: (d) => d.data?.result || d.data,
+    select: (d) =>
+      selectContractedList(d, {
+        schema: ModelHubScoresForSourceResponse,
+        requiredItemKeys: SCORE_ITEM_CONSUMED_FIELDS,
+        label: "scores/for-source",
+      }),
     enabled: !!sourceType && !!sourceId,
     staleTime: 1000 * 60,
     ...options,
@@ -34,15 +86,20 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
 /**
  * Fetch span-level notes for an observation_span source.
  * Returns the span_notes array from the for-source endpoint.
+ * `projectId` pins the span to the copy the drawer shows.
  */
-export const useSpanNotes = (spanId, options = {}) => {
+export const useSpanNotes = (spanId, { projectId, ...options } = {}) => {
   return useQuery({
-    queryKey: ["span-notes", spanId],
+    queryKey: projectId
+      ? ["span-notes", spanId, projectId]
+      : ["span-notes", spanId],
     queryFn: () =>
-      axios.get("/model-hub/scores/for-source/", {
-        params: { source_type: "observation_span", source_id: spanId },
+      modelHubScoresForSource({
+        source_type: "observation_span",
+        source_id: spanId,
+        ...(projectId ? { project_id: projectId } : {}),
       }),
-    select: (d) => d.data?.span_notes || [],
+    select: (d) => d?.data?.span_notes || d?.span_notes || [],
     enabled: !!spanId,
     staleTime: 1000 * 60,
     ...options,
@@ -58,18 +115,22 @@ export const useCreateScore = () => {
     mutationFn: ({
       sourceType,
       sourceId,
+      queueItemId,
       labelId,
       value,
       notes,
       scoreSource,
     }) =>
-      axios.post("/model-hub/scores/", {
+      modelHubScoresCreate({
         source_type: sourceType,
         source_id: sourceId,
         label_id: labelId,
         value,
         notes,
         score_source: scoreSource || "human",
+        // queue_item_id pins the score to a specific queue review context;
+        // see useBulkCreateScores for rationale.
+        ...(queueItemId ? { queue_item_id: queueItemId } : {}),
       }),
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({
@@ -81,7 +142,13 @@ export const useCreateScore = () => {
       });
     },
     onError: (error) => {
-      const msg = error?.result || error?.detail || "Failed to save score";
+      const body = error?.response?.data || {};
+      const msg =
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to save score";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -95,38 +162,98 @@ export const useCreateScore = () => {
 export const useBulkCreateScores = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ sourceType, sourceId, scores, notes, spanNotes, scoreSource }) => {
+    mutationFn: ({
+      sourceType,
+      sourceId,
+      queueItemId,
+      scores,
+      notes,
+      spanNotes,
+      includeSpanNotes = false,
+      spanNotesSourceId,
+      scoreSource,
+      projectId,
+    }) => {
       const payload = {
         source_type: sourceType,
         source_id: sourceId,
-        scores,
-        notes,
-        score_source: scoreSource || "human",
+        scores: scores.map((s) => ({
+          ...s,
+          score_source: s.score_source ?? scoreSource ?? "human",
+        })),
+        notes: notes || "",
       };
-      // Only include span_notes when the user has actually typed something.
-      // Omitting it entirely prevents the backend from treating an empty
-      // submission as an intentional delete of an existing SpanNote.
-      if (spanNotes) {
-        payload.span_notes = spanNotes;
+      // queue_item_id is the queue review context the caller wants the
+      // scores attributed to. Required for per-queue scoring (one score
+      // per (source, label, annotator, queue)) — otherwise the backend
+      // falls back to the source's default queue.
+      if (queueItemId) {
+        payload.queue_item_id = queueItemId;
       }
-      return axios.post("/model-hub/scores/bulk/", payload);
+      // The same trace / span id can exist in several projects; pin the write
+      // to the copy the drawer showed.
+      if (projectId) {
+        payload.project_id = projectId;
+      }
+      if (includeSpanNotes || spanNotes) {
+        payload.span_notes = spanNotes || "";
+        if (spanNotesSourceId) {
+          payload.span_notes_source_id = spanNotesSourceId;
+        }
+      }
+      return modelHubScoresBulkCreate(payload);
     },
     onSuccess: (data, variables) => {
-      enqueueSnackbar("Annotations saved", { variant: "success" });
+      // Backend returns { scores: [...saved], errors: [...failed] } per
+      // model_hub/views/scores.py:bulk_create. A 2xx response can hide
+      // partial failures (e.g., label not found, validation error on one
+      // label) — without inspecting `errors[]` the UI used to claim success
+      // even when some labels were silently dropped. Surface partial
+      // failures explicitly so the user can retry the failed ones.
+      const result = data?.data?.result || data?.result || data || {};
+      const errors = result.errors || [];
+      const savedCount = (result.scores || []).length;
+
+      if (errors.length > 0) {
+        enqueueSnackbar(
+          `Saved ${savedCount} annotation${savedCount === 1 ? "" : "s"}; ` +
+            `${errors.length} failed: ${errors.slice(0, 3).join("; ")}` +
+            (errors.length > 3 ? "…" : ""),
+          { variant: "warning", autoHideDuration: 8000 },
+        );
+      } else {
+        enqueueSnackbar("Annotations saved", { variant: "success" });
+      }
+
       queryClient.invalidateQueries({
         queryKey: scoreKeys.forSource(variables.sourceType, variables.sourceId),
       });
-      queryClient.invalidateQueries({
-        queryKey: ["span-notes", variables.sourceId],
-      });
+      const spanNotesSourceId =
+        variables.spanNotesSourceId ||
+        (variables.sourceType === "observation_span"
+          ? variables.sourceId
+          : null);
+      if (spanNotesSourceId) {
+        queryClient.invalidateQueries({
+          queryKey: ["span-notes", spanNotesSourceId],
+        });
+      }
       // Invalidate queue items for this specific source in case queue items got auto-completed
       queryClient.invalidateQueries({
         queryKey: ["annotation-queues", "for-source"],
       });
     },
     onError: (error) => {
+      // Axios attaches backend error JSON at error.response.data; the older
+      // pattern `error?.result || error?.detail` was always falling through
+      // to the generic message because those keys live one level deeper.
+      const body = error?.response?.data || {};
       const msg =
-        error?.result || error?.detail || "Failed to save annotations";
+        body.result ||
+        body.detail ||
+        body.message ||
+        error?.message ||
+        "Failed to save annotations";
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
       });
@@ -140,7 +267,7 @@ export const useBulkCreateScores = () => {
 export const useDeleteScore = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ scoreId }) => axios.delete(`/model-hub/scores/${scoreId}/`),
+    mutationFn: ({ scoreId }) => modelHubScoresDelete(scoreId),
     onSuccess: (data, variables) => {
       if (variables.sourceType && variables.sourceId) {
         queryClient.invalidateQueries({

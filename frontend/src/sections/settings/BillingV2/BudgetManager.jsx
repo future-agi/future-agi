@@ -314,9 +314,7 @@ export default function BudgetManager() {
               }
               placeholder="e.g., 5000"
               error={thresholdIsInvalid}
-              helperText={
-                thresholdIsInvalid ? "Enter a positive number" : " "
-              }
+              helperText={thresholdIsInvalid ? "Enter a positive number" : " "}
             />
             <FormControl fullWidth size="small">
               <InputLabel>Action</InputLabel>

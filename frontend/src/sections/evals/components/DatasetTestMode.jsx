@@ -14,7 +14,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { TreeView, TreeItem } from "@mui/lab";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -25,13 +25,19 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
+import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import { unwrapCellValue } from "./datasetCellValue";
+import { buildTree } from "./columnTree";
+import RequiredMark from "src/components/RequiredMark";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -143,7 +149,7 @@ function JsonEntries({ data, depth = 0 }) {
 
   const entries = Array.isArray(data)
     ? data.map((v, i) => [String(i), v])
-    : Object.entries(data);
+    : canonicalEntries(data);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>
@@ -280,186 +286,309 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth, isLast }) {
 
 // ---------------------------------------------------------------------------
 // ColumnTreeSelect — dropdown with tree view for column + nested path selection
+// (buildTree lives in ./columnTree so its logic stays unit-testable in isolation)
 // ---------------------------------------------------------------------------
-function buildTree(columnNames) {
-  const roots = [];
-  const nodeMap = {}; // path → node
 
-  const getOrCreate = (path, label, parentList) => {
-    if (nodeMap[path]) return nodeMap[path];
-    const node = { id: path, label, path, children: [] };
-    nodeMap[path] = node;
-    parentList.push(node);
-    return node;
-  };
-
-  columnNames.forEach((fullPath) => {
-    // Split into segments: "col.a.b" → ["col","a","b"], "col[0].x" → ["col","[0]","x"]
-    const segments = [];
-    let current = "";
-    for (let i = 0; i < fullPath.length; i++) {
-      const ch = fullPath[i];
-      if (ch === ".") {
-        if (current) segments.push(current);
-        current = "";
-      } else if (ch === "[") {
-        if (current) segments.push(current);
-        current = "[";
-      } else if (ch === "]") {
-        current += "]";
-        segments.push(current);
-        current = "";
-      } else {
-        current += ch;
-      }
-    }
-    if (current) segments.push(current);
-
-    if (segments.length === 1) {
-      getOrCreate(fullPath, segments[0], roots);
-    } else {
-      // Walk segments, creating intermediate nodes
-      let parentList = roots;
-      let builtPath = "";
-      for (let i = 0; i < segments.length; i++) {
-        const sep = i === 0 ? "" : segments[i].startsWith("[") ? "" : ".";
-        builtPath += sep + segments[i];
-        const node = getOrCreate(builtPath, segments[i], parentList);
-        parentList = node.children;
-      }
-    }
-  });
-  return roots;
-}
-
-function renderTreeNode(node, onSelect) {
+// Indented tree row. Parent rows carry a chevron to collapse/expand their
+// children (open by default) and show their direct-child count on the right.
+// Clicking the row selects the node's path (when it is a real column — leaves,
+// and prefixes that are themselves columns); the chevron only toggles.
+// `forceOpen` keeps rows expanded while a search is active so matches stay
+// visible regardless of the user's collapse state.
+function TreeRow({ node, onSelect, selectedPath, forceOpen = false }) {
   const hasKids = node.children.length > 0;
+  const selectable = node.isColumn ?? !hasKids;
+  const [open, setOpen] = useState(true);
+  const effectiveOpen = forceOpen || open;
+  const selected = !!selectedPath && selectedPath === node.path;
+  const toggle = (e) => {
+    e.stopPropagation();
+    setOpen((o) => !o);
+  };
   return (
-    <TreeItem
-      key={node.id}
-      nodeId={node.id}
-      label={
+    <>
+      <Box
+        onClick={() => (selectable ? onSelect(node.path) : setOpen((o) => !o))}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          pl: 0.75,
+          pr: 0.75,
+          py: 0.5,
+          cursor: "pointer",
+          borderRadius: "6px",
+          bgcolor: selected ? "action.selected" : "transparent",
+          "&:hover": {
+            bgcolor: selected ? "action.selected" : "action.hover",
+          },
+        }}
+      >
+        {hasKids ? (
+          <Iconify
+            icon={effectiveOpen ? "mdi:chevron-down" : "mdi:chevron-right"}
+            width={16}
+            onClick={toggle}
+            sx={{ color: "text.secondary", flexShrink: 0, cursor: "pointer" }}
+          />
+        ) : (
+          <Box sx={{ width: 16, flexShrink: 0 }} />
+        )}
         <Typography
+          noWrap
           sx={{
-            fontSize: "12px",
-            fontFamily: "monospace",
+            flex: 1,
+            minWidth: 0,
+            fontSize: "13px",
+            fontFamily: "Inter, sans-serif",
             fontWeight: hasKids ? 600 : 400,
-            color: hasKids ? "text.primary" : "text.secondary",
-            py: 0.15,
+            color: "text.primary",
           }}
-          onClick={(e) => { e.stopPropagation(); onSelect(node.path); }}
         >
           {node.label}
         </Typography>
-      }
-    >
-      {hasKids && node.children.map((child) => renderTreeNode(child, onSelect))}
-    </TreeItem>
+        {selected && (
+          <Iconify
+            icon="mdi:check"
+            width={15}
+            sx={{ color: "primary.main", flexShrink: 0 }}
+          />
+        )}
+        {hasKids && (
+          <Box
+            sx={{
+              flexShrink: 0,
+              minWidth: 20,
+              px: 0.75,
+              borderRadius: "10px",
+              bgcolor: "action.hover",
+              textAlign: "center",
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: "11px",
+                fontFamily: "Inter, sans-serif",
+                color: "text.secondary",
+                lineHeight: "18px",
+              }}
+            >
+              {node.children.length}
+            </Typography>
+          </Box>
+        )}
+      </Box>
+      {hasKids && effectiveOpen && (
+        <Box
+          sx={{ ml: "15px", borderLeft: "1px solid", borderColor: "divider" }}
+        >
+          {node.children.map((child) => (
+            <TreeRow
+              key={child.id}
+              node={child}
+              onSelect={onSelect}
+              selectedPath={selectedPath}
+              forceOpen={forceOpen}
+            />
+          ))}
+        </Box>
+      )}
+    </>
   );
 }
 
-function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+function ColumnTreeSelect({
+  columnNames,
+  value,
+  onChange,
+  isUnmapped,
+  disabled = false,
+  disabledTooltip = "",
+}) {
   const [open, setOpen] = useState(false);
-  const [typing, setTyping] = useState(false);
+  const [search, setSearch] = useState("");
   const anchorRef = useRef(null);
   const tree = useMemo(() => buildTree(columnNames), [columnNames]);
 
-  // Only filter when user is actively typing, not when re-opening with a selected value
+  // Filter by the dropdown search bar — substring match on the full path,
+  // keeping ancestors of any matching node so nested hits stay reachable.
   const filtered = useMemo(() => {
-    if (!typing || !value) return tree;
-    const q = value.toLowerCase();
+    const q = search.trim().toLowerCase();
+    if (!q) return tree;
     const filterNodes = (nodes) =>
-      nodes.map((node) => {
-        if (node.path.toLowerCase().startsWith(q)) return node;
-        const kids = filterNodes(node.children);
-        if (kids.length) return { ...node, children: kids };
-        return null;
-      }).filter(Boolean);
+      nodes
+        .map((node) => {
+          if (node.path.toLowerCase().includes(q)) return node;
+          const kids = filterNodes(node.children);
+          if (kids.length) return { ...node, children: kids };
+          return null;
+        })
+        .filter(Boolean);
     return filterNodes(tree);
-  }, [tree, value, typing]);
-
-  // Collect all node IDs for default expansion
-  const allIds = useMemo(() => {
-    const ids = [];
-    const walk = (nodes) => nodes.forEach((n) => { ids.push(n.id); walk(n.children); });
-    walk(filtered);
-    return ids;
-  }, [filtered]);
+  }, [tree, search]);
 
   const handleSelect = (path) => {
     onChange(path);
     setOpen(false);
-    setTyping(false);
+    setSearch("");
   };
 
-  return (
-    <Box sx={{ flex: 1 }}>
-      <TextField
-        ref={anchorRef}
-        size="small"
-        fullWidth
-        value={value}
-        placeholder="Select column"
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setTyping(true);
-          onChange(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        autoComplete="off"
-        inputProps={{
-          autoComplete: "off",
-          autoCorrect: "off",
-          spellCheck: false,
-        }}
-        InputProps={{
-          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
-          endAdornment: (
-            <InputAdornment position="end">
+  const textField = (
+    <TextField
+      ref={anchorRef}
+      size="small"
+      fullWidth
+      value={value}
+      placeholder={disabled ? "Loading columns..." : "Select column"}
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) setOpen(true);
+      }}
+      InputProps={{
+        readOnly: true,
+        sx: {
+          fontSize: "13px",
+          fontFamily: "Inter, sans-serif",
+          height: 30,
+          py: 0,
+          cursor: disabled ? "default" : "pointer",
+        },
+        endAdornment: (
+          <InputAdornment position="end">
+            {disabled ? (
+              <CircularProgress size={14} />
+            ) : (
               <Iconify
                 icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
                 width={16}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
-                onClick={() => { setOpen((p) => !p); setTyping(false); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen((p) => !p);
+                }}
               />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          ...(isUnmapped && {
-            "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
-          }),
-        }}
-      />
-      {open && filtered.length > 0 && (
+            )}
+          </InputAdornment>
+        ),
+      }}
+      sx={(theme) => ({
+        ...(isUnmapped && {
+          "& .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[500],
+            borderWidth: "1.5px",
+          },
+          "&:hover .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[600],
+          },
+        }),
+      })}
+    />
+  );
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      {disabled && disabledTooltip ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box>{textField}</Box>
+        </CustomTooltip>
+      ) : (
+        textField
+      )}
+      {!disabled && open && (
         <Popper
           open
           anchorEl={anchorRef.current}
           placement="bottom-start"
           style={{ zIndex: 1301, width: anchorRef.current?.offsetWidth || 240 }}
         >
-          <ClickAwayListener onClickAway={(e) => {
-            // Don't close if clicking the input field itself
-            if (anchorRef.current?.contains(e.target)) return;
-            setOpen(false);
-            setTyping(false);
-          }}>
+          <ClickAwayListener
+            onClickAway={(e) => {
+              // Don't close if clicking the input field itself
+              if (anchorRef.current?.contains(e.target)) return;
+              setOpen(false);
+              setSearch("");
+            }}
+          >
             <Paper
-              elevation={8}
-              sx={{ mt: 0.5, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
+              elevation={0}
+              sx={{
+                mt: 0.5,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: "divider",
+                boxShadow: (theme) => theme.customShadows.dropdown,
+              }}
             >
-              <Box sx={{ maxHeight: 260, overflow: "auto", py: 0.5 }}>
-                <TreeView
-                  defaultExpanded={allIds}
-                  defaultCollapseIcon={<Iconify icon="mdi:chevron-down" width={14} sx={{ color: "text.disabled" }} />}
-                  defaultExpandIcon={<Iconify icon="mdi:chevron-right" width={14} sx={{ color: "text.disabled" }} />}
-                  sx={{
-                    "& .MuiTreeItem-content": { py: 0.1, borderRadius: "4px" },
-                    "& .MuiTreeItem-content:hover": { bgcolor: "action.hover" },
+              <Box sx={{ p: 0.75 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  autoFocus
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search columns…"
+                  autoComplete="off"
+                  inputProps={{
+                    autoComplete: "off",
+                    autoCorrect: "off",
+                    spellCheck: false,
                   }}
-                >
-                  {filtered.map((node) => renderTreeNode(node, handleSelect))}
-                </TreeView>
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Iconify
+                          icon="eva:search-fill"
+                          width={16}
+                          sx={{ color: "text.disabled" }}
+                        />
+                      </InputAdornment>
+                    ),
+                    endAdornment: search ? (
+                      <InputAdornment position="end">
+                        <Iconify
+                          icon="mdi:close"
+                          width={15}
+                          sx={{ color: "text.disabled", cursor: "pointer" }}
+                          onClick={() => setSearch("")}
+                        />
+                      </InputAdornment>
+                    ) : null,
+                    sx: {
+                      fontSize: "13px",
+                      fontFamily: "Inter, sans-serif",
+                      height: 32,
+                      py: 0,
+                    },
+                  }}
+                />
+              </Box>
+              <Box sx={{ maxHeight: 260, overflow: "auto", pb: 0.5, px: 0.5 }}>
+                {filtered.length > 0 ? (
+                  filtered.map((node) => (
+                    <TreeRow
+                      key={node.id}
+                      node={node}
+                      onSelect={handleSelect}
+                      selectedPath={value}
+                      forceOpen={Boolean(search.trim())}
+                    />
+                  ))
+                ) : (
+                  <Typography
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ display: "block", px: 1, py: 1 }}
+                  >
+                    No matching columns
+                  </Typography>
+                )}
               </Box>
             </Paper>
           </ClickAwayListener>
@@ -474,7 +603,12 @@ function extractKeysFromValue(raw) {
   let parsed = null;
   if (raw && typeof raw === "object") parsed = raw;
   else if (typeof raw === "string" && raw.trim()) {
-    try { const p = JSON.parse(raw); if (p && typeof p === "object") parsed = p; } catch { /* not JSON */ }
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") parsed = p;
+    } catch {
+      /* not JSON */
+    }
   }
   if (!parsed) return [];
   const keys = [];
@@ -507,14 +641,24 @@ function resolveNestedValue(raw, jsonPath) {
   let parsed = null;
   if (raw && typeof raw === "object") parsed = raw;
   else if (typeof raw === "string") {
-    try { parsed = JSON.parse(raw); } catch { return raw; }
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return raw;
+    }
   }
   if (!parsed) return raw;
   const parts = jsonPath.split(/[.[\]]/).filter(Boolean);
   let cur = parsed;
   for (const p of parts) {
     if (cur == null) return undefined;
-    cur = /^\d+$/.test(p) ? (Array.isArray(cur) ? cur[parseInt(p, 10)] : undefined) : (typeof cur === "object" ? cur[p] : undefined);
+    cur = /^\d+$/.test(p)
+      ? Array.isArray(cur)
+        ? cur[parseInt(p, 10)]
+        : undefined
+      : typeof cur === "object"
+        ? cur[p]
+        : undefined;
   }
   return cur;
 }
@@ -577,6 +721,14 @@ const DatasetTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows. Here a
+    // row's path is the column name (cell.name), matching the mapping options.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
 
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
@@ -729,7 +881,7 @@ const DatasetTestMode = React.forwardRef(
         )
         .map((col) => {
           const cell = currentRow[col.id];
-          const value = cell?.cell_value ?? cell ?? "";
+          const value = unwrapCellValue(cell);
           // Don't pre-stringify objects/arrays — coercing them via
           // String(value) produces the literal text "[object Object]"
           // which then fails the downstream JSON.parse check, falls
@@ -814,7 +966,9 @@ const DatasetTestMode = React.forwardRef(
         // Collect sub-paths from backend schema + runtime cell values
         const schemaPaths = jsonSchemas?.[c.id]?.keys || [];
         const cell = currentRow?.[c.id];
-        const runtimePaths = cell ? extractKeysFromValue(cell?.cell_value ?? cell) : [];
+        const runtimePaths = cell
+          ? extractKeysFromValue(unwrapCellValue(cell))
+          : [];
         const allPaths = new Set([...schemaPaths, ...runtimePaths]);
         allPaths.forEach((path) => {
           // Bracket paths: "col[0]" not "col.[0]"
@@ -824,14 +978,25 @@ const DatasetTestMode = React.forwardRef(
       });
       if (!extraColumns?.length) return { columnNames: names, nameToId: n2id };
       const extras = (extraColumns || [])
-        .map((col) => (typeof col === "string" ? col : col.headerName || col.field || col.name || col.label || ""))
+        .map((col) =>
+          typeof col === "string"
+            ? col
+            : col.headerName || col.field || col.name || col.label || "",
+        )
         .filter(Boolean);
       const extraSet = new Set(extras);
       return {
         columnNames: [...extras, ...names.filter((n) => !extraSet.has(n))],
         nameToId: n2id,
       };
-    }, [columns, sourceColumns, extraColumns, isWorkbenchMode, jsonSchemas, currentRow]);
+    }, [
+      columns,
+      sourceColumns,
+      extraColumns,
+      isWorkbenchMode,
+      jsonSchemas,
+      currentRow,
+    ]);
 
     // Workbench mode: map display name → field identifier (e.g. "model_output" → "output_prompt")
     const sourceNameToField = useMemo(() => {
@@ -848,10 +1013,20 @@ const DatasetTestMode = React.forwardRef(
     }, [sourceColumns, isWorkbenchMode]);
 
     // Resolve UUID-based mapping values to display names (edit mode).
-    // Handles both plain UUIDs and "uuid.path" nested references.
+    // Handles plain UUIDs, "uuid.path" nested references, and workbench
+    // field identifiers (e.g. "input_prompt" → "model_input").
     const uuidResolutionDone = React.useRef(false);
     useEffect(() => {
-      if (!columns.length && !Object.keys(extraFieldToName).length) return;
+      const fieldToName = {};
+      Object.entries(sourceNameToField).forEach(([name, field]) => {
+        fieldToName[field] = name;
+      });
+      if (
+        !columns.length &&
+        !Object.keys(extraFieldToName).length &&
+        !Object.keys(fieldToName).length
+      )
+        return;
       if (uuidResolutionDone.current) return;
       const idToName = {};
       columns.forEach((c) => {
@@ -859,7 +1034,9 @@ const DatasetTestMode = React.forwardRef(
         idToName[c.id] = c.name;
         // Reverse-map nested IDs: "uuid.path" → "col.path"
         const paths = jsonSchemas?.[c.id]?.keys || [];
-        paths.forEach((p) => { idToName[`${c.id}.${p}`] = `${c.name}.${p}`; });
+        paths.forEach((p) => {
+          idToName[`${c.id}.${p}`] = `${c.name}.${p}`;
+        });
       });
       setMapping((prev) => {
         const next = { ...prev };
@@ -867,13 +1044,21 @@ const DatasetTestMode = React.forwardRef(
         Object.keys(next).forEach((variable) => {
           const val = next[variable];
           if (!val) return;
-          if (idToName[val]) { next[variable] = idToName[val]; changed = true; }
-          else if (extraFieldToName[val]) { next[variable] = extraFieldToName[val]; changed = true; }
+          if (idToName[val]) {
+            next[variable] = idToName[val];
+            changed = true;
+          } else if (extraFieldToName[val]) {
+            next[variable] = extraFieldToName[val];
+            changed = true;
+          } else if (fieldToName[val]) {
+            next[variable] = fieldToName[val];
+            changed = true;
+          }
         });
         if (changed) uuidResolutionDone.current = true;
         return changed ? next : prev;
       });
-    }, [columns, extraFieldToName, jsonSchemas]);
+    }, [columns, extraFieldToName, sourceNameToField, jsonSchemas]);
 
     // Prune stale mapping keys when variables list changes (instruction edits).
     useEffect(() => {
@@ -883,7 +1068,8 @@ const DatasetTestMode = React.forwardRef(
         const pruned = {};
         let changed = false;
         Object.keys(prev).forEach((k) => {
-          if (varSet.has(k)) pruned[k] = prev[k]; else changed = true;
+          if (varSet.has(k)) pruned[k] = prev[k];
+          else changed = true;
         });
         return changed ? pruned : prev;
       });
@@ -988,16 +1174,23 @@ const DatasetTestMode = React.forwardRef(
               const col = columns.find((c) => c.name === baseName);
               if (col) {
                 const cell = currentRow[col.id];
-                let cellValue = cell?.cell_value ?? cell ?? "";
+                let cellValue = unwrapCellValue(cell);
                 if (jsonPath) {
                   const resolved = resolveNestedValue(cellValue, jsonPath);
                   if (resolved !== undefined && resolved !== null) {
-                    cellValue = typeof resolved === "object" ? JSON.stringify(resolved) : String(resolved);
+                    cellValue =
+                      typeof resolved === "object"
+                        ? JSON.stringify(resolved)
+                        : String(resolved);
                   }
                 }
                 evalMapping[variable] = cellValue;
                 const dt = col.data_type || "text";
-                inputDataTypes[variable] = ["image", "images"].includes(dt) ? "image" : dt === "audio" ? "audio" : "text";
+                inputDataTypes[variable] = ["image", "images"].includes(dt)
+                  ? "image"
+                  : dt === "audio"
+                    ? "audio"
+                    : "text";
               }
             }
           }
@@ -1010,7 +1203,7 @@ const DatasetTestMode = React.forwardRef(
               )
               .forEach((col) => {
                 const cell = currentRow[col.id];
-                const val = cell?.cell_value ?? cell ?? "";
+                const val = unwrapCellValue(cell);
                 const valStr =
                   typeof val === "object" ? JSON.stringify(val) : String(val);
                 rowContext[col.name] = valStr;
@@ -1051,14 +1244,17 @@ const DatasetTestMode = React.forwardRef(
                   }),
                 },
               }
-            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-                mapping: evalMapping,
-                model,
-                config: compositeConfig,
-                error_localizer: errorLocalizerEnabled,
-                input_data_types: inputDataTypes,
-                row_context: rowContext,
-              })
+            : await axios.post(
+                endpoints.develop.eval.executeCompositeEval(tid),
+                {
+                  mapping: evalMapping,
+                  model,
+                  config: compositeConfig,
+                  error_localizer: errorLocalizerEnabled,
+                  input_data_types: inputDataTypes,
+                  row_context: rowContext,
+                },
+              )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -1074,13 +1270,21 @@ const DatasetTestMode = React.forwardRef(
                 // context toggles are enabled.
                 ...(() => {
                   const flags = {};
-                  if (contextOptions.includes("dataset_row")) flags.full_row = true;
-                  if (contextOptions.includes("full_row")) flags.full_row = true;
-                  if (contextOptions.includes("span_context")) flags.span_context = true;
-                  if (contextOptions.includes("trace_context")) flags.trace_context = true;
-                  if (contextOptions.includes("session_context")) flags.session_context = true;
-                  if (contextOptions.includes("call_context")) flags.call_context = true;
-                  return Object.keys(flags).length > 0 ? { data_injection: flags } : {};
+                  if (contextOptions.includes("dataset_row"))
+                    flags.full_row = true;
+                  if (contextOptions.includes("full_row"))
+                    flags.full_row = true;
+                  if (contextOptions.includes("span_context"))
+                    flags.span_context = true;
+                  if (contextOptions.includes("trace_context"))
+                    flags.trace_context = true;
+                  if (contextOptions.includes("session_context"))
+                    flags.session_context = true;
+                  if (contextOptions.includes("call_context"))
+                    flags.call_context = true;
+                  return Object.keys(flags).length > 0
+                    ? { data_injection: flags }
+                    : {};
                 })(),
               },
               input_data_types: inputDataTypes,
@@ -1105,16 +1309,15 @@ const DatasetTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1160,22 +1363,42 @@ const DatasetTestMode = React.forwardRef(
       } else {
         Object.entries(mapping).forEach(([variable, colName]) => {
           if (!colName) return;
-          if (extraNameToField[colName]) { m[variable] = extraNameToField[colName]; return; }
-          if (nameToId[colName]) { m[variable] = nameToId[colName]; return; }
+          if (extraNameToField[colName]) {
+            m[variable] = extraNameToField[colName];
+            return;
+          }
+          if (nameToId[colName]) {
+            m[variable] = nameToId[colName];
+            return;
+          }
           // freeSolo: "col.typed_path" → "uuid.typed_path"
           const dot = colName.indexOf(".");
           const bracket = colName.indexOf("[");
-          const split = dot > 0 && (bracket < 0 || dot < bracket) ? dot : bracket > 0 ? bracket : -1;
+          const split =
+            dot > 0 && (bracket < 0 || dot < bracket)
+              ? dot
+              : bracket > 0
+                ? bracket
+                : -1;
           if (split > 0) {
             const base = colName.substring(0, split);
             const baseId = nameToId[base];
-            if (baseId) { m[variable] = `${baseId}${colName.substring(split)}`; return; }
+            if (baseId) {
+              m[variable] = `${baseId}${colName.substring(split)}`;
+              return;
+            }
           }
           m[variable] = colName;
         });
       }
       return m;
-    }, [mapping, nameToId, isWorkbenchMode, sourceNameToField, extraNameToField]);
+    }, [
+      mapping,
+      nameToId,
+      isWorkbenchMode,
+      sourceNameToField,
+      extraNameToField,
+    ]);
     const isReady = (!!selectedDatasetId || isWorkbenchMode) && allMapped;
 
     useEffect(() => {
@@ -1201,12 +1424,20 @@ const DatasetTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Dataset selector — hidden when initialDatasetId or sourceColumns is provided */}
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Choose Dataset<span style={{ color: "#d32f2f" }}>*</span>
+              Choose Dataset
+              <RequiredMark />
             </Typography>
             <Autocomplete
               fullWidth
@@ -1221,6 +1452,8 @@ const DatasetTestMode = React.forwardRef(
               onChange={(_, newValue) => {
                 setSelectedDataset(newValue);
                 setSelectedDatasetId(newValue?.id || "");
+                setMapping({});
+                setColumns([]);
               }}
               onInputChange={(_, newInput, reason) => {
                 if (reason === "input") setDatasetSearch(newInput);
@@ -1340,7 +1573,7 @@ const DatasetTestMode = React.forwardRef(
               >
                 No rows in this dataset
               </Typography>
-              <Typography variant="caption" color="text.disabled">
+              <Typography variant="caption" color="text.secondary">
                 Add rows to the dataset before running a test
               </Typography>
             </Box>
@@ -1452,6 +1685,7 @@ const DatasetTestMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     {/* Column name */}
@@ -1529,6 +1763,7 @@ const DatasetTestMode = React.forwardRef(
                         </Typography>
                       )}
                     </Box>
+                    {renderRowMapAction(cell.name)}
                   </Box>
                 );
               })}
@@ -1536,7 +1771,7 @@ const DatasetTestMode = React.forwardRef(
               {filteredCells.length === 0 && (
                 <Typography
                   variant="caption"
-                  color="text.disabled"
+                  color="text.secondary"
                   sx={{ py: 2, textAlign: "center", display: "block" }}
                 >
                   No columns match your search
@@ -1563,10 +1798,7 @@ const DatasetTestMode = React.forwardRef(
                 fontWeight={600}
               >
                 Variable Mapping
-                <Box
-                  component="span"
-                  sx={{ color: "error.main", ml: 0.25 }}
-                >
+                <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
                   *
                 </Box>
               </Typography>
@@ -1578,8 +1810,7 @@ const DatasetTestMode = React.forwardRef(
                     label={`${unmapped} unmapped`}
                     size="small"
                     color="warning"
-                    variant="outlined"
-                    sx={{ fontSize: "11px", height: 20 }}
+                    sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
                   />
                 );
               })()}
@@ -1628,6 +1859,8 @@ const DatasetTestMode = React.forwardRef(
                       }))
                     }
                     isUnmapped={isUnmapped}
+                    disabled={!isWorkbenchMode && loadingData}
+                    disabledTooltip="Columns are being fetched"
                   />
                 </Box>
               );
@@ -1663,6 +1896,9 @@ const DatasetTestMode = React.forwardRef(
           </Box>
         )}
 
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
+
         {/* Result */}
         {result && !isRunning && (
           <EvalResultDisplay
@@ -1670,6 +1906,9 @@ const DatasetTestMode = React.forwardRef(
               ...result,
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
+                : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
                 : {}),
               ...(errorLocalizerState.details
                 ? {

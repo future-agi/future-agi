@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, {
   forwardRef,
@@ -14,9 +14,12 @@ import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
 import { getEvalsTaskColumnConfig } from "./common";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { preventHeaderSelection, objectCamelToSnake } from "src/utils/utils";
+import { preventHeaderSelection } from "src/utils/utils";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalTaskListPage } from "./task_list_read";
+import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 
 const EVALS_GRID_THEME_PARAMS = {
   headerColumnBorder: {
@@ -47,6 +50,7 @@ const EvalsGrid = forwardRef(
     const agTheme = useAgThemeWith(EVALS_GRID_THEME_PARAMS);
     const gridRef = useRef(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [readError, setReadError] = useState(null);
     const columnsInitializedRef = useRef(false);
 
     // Call once outside of render
@@ -150,25 +154,32 @@ const EvalsGrid = forwardRef(
 
       for (let p = 0; p < totalPages; p++) {
         try {
-          const { data } = await axios.get(endpoint, {
-            params: {
-              name: debouncedSearchQuery?.length ? debouncedSearchQuery : null,
-              page_number: p,
-              ...(observeId && { project_id: observeId }),
-              sort_params: JSON.stringify(
-                gridRef.current?.api
-                  ?.getColumnState()
-                  ?.filter((c) => c?.sort != null)
-                  ?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    direction: sort,
-                  })),
-              ),
-              filters: JSON.stringify(objectCamelToSnake(filters)),
-            },
-          });
+          const page = await readEvalTaskListPage(({ signal, timeout }) =>
+            axios.get(endpoint, {
+              signal,
+              timeout,
+              params: {
+                name: debouncedSearchQuery?.length
+                  ? debouncedSearchQuery
+                  : null,
+                page_number: p,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                ...(observeId && { project_id: observeId }),
+                sort_params: JSON.stringify(
+                  gridRef.current?.api
+                    ?.getColumnState()
+                    ?.filter((c) => c?.sort != null)
+                    ?.map(({ colId, sort }) => ({
+                      column_id: colId,
+                      direction: sort,
+                    })),
+                ),
+                filters: JSON.stringify(filters),
+              },
+            }),
+          );
 
-          const rows = data?.result?.table ?? [];
+          const rows = page.table;
 
           const transaction = {
             update: rows,
@@ -178,7 +189,7 @@ const EvalsGrid = forwardRef(
             gridRef?.current?.api?.applyServerSideTransaction(transaction);
           }
         } catch (e) {
-          logger.error("Failed to refresh eval tasks rows", e);
+          logger.warn("Failed to refresh eval tasks rows", e);
         }
       }
     };
@@ -199,23 +210,30 @@ const EvalsGrid = forwardRef(
           : endpoints.project.listEvalsWithProject();
 
         try {
-          const { data } = await axios.get(endpoint, {
-            params: {
-              name: debouncedSearchQuery?.length ? debouncedSearchQuery : null,
-              page_number: pageNumber,
-              page_size: pageSize,
-              ...(observeId && { project_id: observeId }),
-              sort_params: request?.sortModel?.map(({ colId, sort }) => ({
-                column_id: colId,
-                direction: sort,
-              })),
-              filters: JSON.stringify(objectCamelToSnake(filters)),
-            },
-          });
+          const page = await readEvalTaskListPage(({ signal, timeout }) =>
+            axios.get(endpoint, {
+              signal,
+              timeout,
+              params: {
+                name: debouncedSearchQuery?.length
+                  ? debouncedSearchQuery
+                  : null,
+                page_number: pageNumber,
+                page_size: pageSize,
+                ...(observeId && { project_id: observeId }),
+                sort_params: request?.sortModel?.map(({ colId, sort }) => ({
+                  column_id: colId,
+                  direction: sort,
+                })),
+                filters: JSON.stringify(filters),
+              },
+            }),
+          );
 
-          const rows = data?.result?.table;
+          const rows = page.table;
           const hasResults = rows.length > 0;
           setHasData(hasResults);
+          setReadError(null);
 
           if (debouncedSearchQuery === "") {
             if (hasActiveFilter) {
@@ -243,14 +261,12 @@ const EvalsGrid = forwardRef(
 
           params.success({
             rowData: rows,
-            rowCount: data?.result?.metadata?.total_rows,
+            rowCount: page.totalRows,
           });
-        } catch (error) {
+        } catch {
           params.fail();
-          setHasData(false);
-          if (debouncedSearchQuery === "") {
-            setSearchState("empty");
-          }
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
+          setSearchState("error");
         } finally {
           setIsLoading(false);
         }
@@ -419,6 +435,31 @@ const EvalsGrid = forwardRef(
           position: "relative",
         }}
       >
+        {readError && (
+          <Box
+            role="alert"
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              color: "warning.main",
+              bgcolor: "warning.lighter",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            {readError}
+            <Button
+              size="small"
+              onClick={() => {
+                setReadError(null);
+                gridRef.current?.api?.refreshServerSide({ purge: false });
+              }}
+            >
+              Retry
+            </Button>
+          </Box>
+        )}
         <Box
           className="ag-theme-alpine eval-task-ag-grid"
           style={{ height: "100%", overflowX: "auto" }}
@@ -435,8 +476,8 @@ const EvalsGrid = forwardRef(
             theme={agTheme}
             onColumnHeaderClicked={onColumnHeaderClicked}
             serverSideDatasource={dataSource}
-            paginationPageSize={10}
-            cacheBlockSize={10}
+            paginationPageSize={INTERACTIVE_TABLE_PAGE_SIZE}
+            cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
             defaultColDef={defaultColDef}
             suppressRowClickSelection={true}
             rowStyle={{ cursor: "pointer" }}

@@ -3,26 +3,11 @@ import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import PropTypes from "prop-types";
+import { palette } from "src/theme/palette";
 
-// Create a simple test theme
+
 const testTheme = createTheme({
-  palette: {
-    mode: "light",
-    primary: {
-      main: "#1976d2",
-    },
-    secondary: {
-      main: "#dc004e",
-    },
-    // Add custom properties that components might use
-    whiteScale: {
-      500: "divider",
-    },
-    black: {
-      500: "#666666",
-      1000: "#000000",
-    },
-  },
+  palette: palette("light"),
   spacing: (factor) => `${0.25 * factor}rem`,
 });
 

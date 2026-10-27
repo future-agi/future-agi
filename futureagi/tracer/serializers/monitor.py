@@ -1,8 +1,10 @@
-from rest_framework import serializers
+import json
 
 from accounts.serializers.user import UserSerializer
+from rest_framework import serializers
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
+    AlertTypeChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
     UserAlertMonitor,
@@ -10,8 +12,71 @@ from tracer.models.monitor import (
 )
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+    StrictInputSerializer,
+    filter_list_field,
+    filter_list_query_param_field,
+)
+from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+
+class UserAlertMonitorListQuerySerializer(serializers.Serializer):
+    page_number = serializers.IntegerField(
+        min_value=0, default=0, help_text="Zero-based page number."
+    )
+    page_size = serializers.IntegerField(min_value=1, max_value=100, default=30)
+    search_text = serializers.CharField(required=False, allow_blank=True)
+    project_id = serializers.ListField(child=serializers.UUIDField(), required=False)
+    status = serializers.ListField(
+        child=serializers.ChoiceField(choices=["triggered", "healthy"]), required=False
+    )
+    metric_type = serializers.ListField(child=serializers.CharField(), required=False)
+    sort_by = serializers.CharField(required=False)
+    sort_direction = serializers.ChoiceField(choices=["asc", "desc"], required=False)
+
+
+class UserAlertMonitorListColumnSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+
+
+class UserAlertMonitorTrendSerializer(serializers.Serializer):
+    timestamp = serializers.DateTimeField()
+    count = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    metric_type = serializers.CharField()
+    filters = serializers.JSONField(allow_null=True)
+    status = serializers.ChoiceField(choices=["triggered", "healthy"])
+    no_of_alerts = serializers.IntegerField(min_value=0)
+    last_triggered = serializers.DateTimeField(allow_null=True)
+    is_mute = serializers.BooleanField()
+    trends = UserAlertMonitorTrendSerializer(many=True)
+
+
+class UserAlertMonitorListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(min_value=0)
+    total_pages = serializers.IntegerField(min_value=0)
+
+
+class UserAlertMonitorListResultSerializer(serializers.Serializer):
+    column_config = UserAlertMonitorListColumnSerializer(many=True)
+    table = UserAlertMonitorListItemSerializer(many=True)
+    metadata = UserAlertMonitorListMetadataSerializer()
+
+
+class UserAlertMonitorListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = UserAlertMonitorListResultSerializer()
 
 
 class UserAlertMonitorSerializer(serializers.ModelSerializer):
@@ -24,18 +89,28 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
+        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
     def validate_notification_emails(self, value):
@@ -61,7 +136,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     f"An alert with the name '{name}' already exists in this project."
                 )
 
-    def _validate_metric_type(self, data):
+    def _validate_metric_type(self, data, choice_from_row=False):
+        """Returns True when a stored choice on a scoring eval should be
+        dropped rather than rejected (see `validate`)."""
         metric_type = data.get("metric_type")
         metric = data.get("metric")
         project = data.get("project")
@@ -81,11 +158,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     {"metric": f"Invalid metric format for '{metric}'."}
                 )
 
+            eval_template = custom_eval_config.eval_template
             choices = (
-                custom_eval_config.eval_template.choices
-                if custom_eval_config.eval_template
-                and custom_eval_config.eval_template.choices
-                else None
+                eval_template.choices if uses_choice_threshold(eval_template) else None
             )
             if choices:
                 if threshold_metric_value is None:
@@ -101,6 +176,8 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                         }
                     )
             elif threshold_metric_value is not None:
+                if choice_from_row:
+                    return True
                 raise serializers.ValidationError(
                     {
                         "threshold_metric_value": "This field must be empty for evals without predefined choices."
@@ -111,6 +188,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Metric and threshold_metric_value are not allowed for metric type {metric_type}"
                 )
+        return False
 
     def _validate_threshold_type(self, data):
         threshold_type = data.get("threshold_type")
@@ -173,12 +251,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                         }
                     )
             if span_attributes_filters:
-                if not isinstance(span_attributes_filters, list):
-                    raise serializers.ValidationError(
-                        {
-                            "span_attributes_filters": "span_attributes_filters must be a list of dictionaries."
-                        }
-                    )
+                filters["span_attributes_filters"] = filter_list_field().run_validation(
+                    span_attributes_filters
+                )
         return filters
 
     def validate(self, data):
@@ -207,12 +282,148 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
 
         self._validate_project_organization(project, organization)
         self._validate_unique_name(project, name)
-        self._validate_metric_type(full_data)
+        # A scoring-eval alert saved before scoring evals stopped taking a
+        # choice can still carry one. The client no longer sends it, so on an
+        # update it only reaches validation from the row: drop it instead of
+        # failing every unrelated edit. A choice the request sends is still
+        # validated.
+        choice_from_row = (
+            self.instance is not None and "threshold_metric_value" not in data
+        )
+        if self._validate_metric_type(full_data, choice_from_row=choice_from_row):
+            validated_data["threshold_metric_value"] = None
         self._validate_threshold_type(full_data)
-        if filters:
-            self.validate_filters(filters)
+        if "filters" in validated_data and filters:
+            validated_data["filters"] = self.validate_filters(filters)
 
         return validated_data
+
+
+class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    is_mute = serializers.BooleanField(required=False, default=True)
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+
+
+class UserAlertMonitorGraphPointSerializer(serializers.Serializer):
+    """One bucket from a saved or preview monitor graph."""
+
+    timestamp = serializers.CharField()
+    value = serializers.FloatField()
+
+
+class UserAlertMonitorAlertBarPointSerializer(serializers.Serializer):
+    """One threshold-status interval from a percentage-change graph."""
+
+    start_timestamp = serializers.CharField()
+    end_timestamp = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=("healthy", "warning", "critical", "insufficient_data")
+    )
+
+
+class UserAlertMonitorPercentageGraphResultSerializer(serializers.Serializer):
+    graph_data = UserAlertMonitorGraphPointSerializer(many=True)
+    alert_bar_data = UserAlertMonitorAlertBarPointSerializer(many=True)
+
+
+_MONITOR_GRAPH_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["timestamp", "value"],
+    "properties": {
+        "timestamp": {"type": "string"},
+        "value": {"type": "number"},
+    },
+    "additionalProperties": False,
+}
+_MONITOR_ALERT_BAR_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["start_timestamp", "end_timestamp", "status"],
+    "properties": {
+        "start_timestamp": {"type": "string"},
+        "end_timestamp": {"type": "string"},
+        "status": {
+            "type": "string",
+            "enum": ["healthy", "warning", "critical", "insufficient_data"],
+        },
+    },
+    "additionalProperties": False,
+}
+_STATIC_MONITOR_GRAPH_RESULT_SCHEMA = {
+    "type": "array",
+    "items": _MONITOR_GRAPH_POINT_SCHEMA,
+}
+_PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA = {
+    "type": "object",
+    "required": ["graph_data", "alert_bar_data"],
+    "properties": {
+        "graph_data": _STATIC_MONITOR_GRAPH_RESULT_SCHEMA,
+        "alert_bar_data": {
+            "type": "array",
+            "items": _MONITOR_ALERT_BAR_POINT_SCHEMA,
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+class UserAlertMonitorGraphResultField(serializers.JSONField):
+    """Validate both legacy monitor graph result shapes.
+
+    Swagger 2.0 has no native ``oneOf``. The standard schema documents the
+    structured percentage-change result, while ``x-one-of`` preserves the full
+    static-array/percentage-object union for contract-aware consumers.
+    """
+
+    class Meta:
+        swagger_schema_fields = {
+            **_PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA,
+            "description": (
+                "Static monitors return an array of graph points; percentage-change "
+                "monitors return graph_data and alert_bar_data arrays."
+            ),
+            "x-one-of": [
+                _STATIC_MONITOR_GRAPH_RESULT_SCHEMA,
+                _PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA,
+            ],
+        }
+
+    def to_internal_value(self, data):
+        if isinstance(data, list):
+            serializer = UserAlertMonitorGraphPointSerializer(data=data, many=True)
+        elif isinstance(data, dict):
+            serializer = UserAlertMonitorPercentageGraphResultSerializer(data=data)
+        else:
+            raise serializers.ValidationError(
+                "Expected static graph points or a percentage-change graph object."
+            )
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data
+
+    def to_representation(self, value):
+        if isinstance(value, list):
+            return UserAlertMonitorGraphPointSerializer(value, many=True).data
+        return UserAlertMonitorPercentageGraphResultSerializer(value).data
+
+
+class UserAlertMonitorGraphResponseSerializer(serializers.Serializer):
+    """GeneralMethods success envelope for monitor graph endpoints."""
+
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorGraphResultField()
 
 
 class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
@@ -221,6 +432,99 @@ class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitorLog
         exclude = ["deleted_at", "deleted", "alert", "updated_at"]
+
+
+class UserAlertMonitorLogWriteSerializer(serializers.ModelSerializer):
+    alert = serializers.PrimaryKeyRelatedField(queryset=UserAlertMonitor.objects.none())
+    resolved_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = UserAlertMonitorLog
+        fields = [
+            "id",
+            "alert",
+            "type",
+            "message",
+            "resolved",
+            "resolved_at",
+            "resolved_by",
+            "link",
+            "time_window_start",
+            "time_window_end",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "resolved_by"]
+
+
+class UserAlertMonitorLogWriteRequestSerializer(StrictInputSerializer):
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField(required=False, default=False)
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class UserAlertMonitorLogWriteResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField()
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    resolved_by = UserSerializer(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class UserAlertMonitorLogResolveRequestSerializer(StrictInputSerializer):
+    log_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorLogResolveResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.CharField()
+
+
+class UserAlertMonitorDuplicateSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(max_length=255)
+
+
+class UserAlertMonitorDuplicateResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    message = serializers.CharField()
+
+
+class UserAlertMonitorDuplicateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorDuplicateResultSerializer()
+
+
+class UserAlertMonitorMetricOptionSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    metric_type = serializers.CharField(read_only=True)
+    output_type = serializers.CharField(read_only=True, allow_blank=True)
+
+
+class UserAlertMonitorMetricOptionsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorMetricOptionSerializer(many=True, read_only=True)
 
 
 class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
@@ -235,14 +539,23 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
 
@@ -257,9 +570,153 @@ class MetricDetailSerializer(serializers.ModelSerializer):
         return obj.eval_template.config.get("output")
 
 
-class FetchGraphSerializer(serializers.Serializer):
+class FetchGraphMetricConfigField(serializers.Field):
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError(
+                    "req_data_config must be valid JSON."
+                ) from exc
+        if not isinstance(data, dict):
+            raise serializers.ValidationError("req_data_config must be an object.")
+        if "type" not in data:
+            raise serializers.ValidationError("req_data_config.type is required.")
+        if data["type"] not in ("EVAL", "SYSTEM_METRIC", "SYSTEM_METRICS"):
+            raise serializers.ValidationError(
+                "req_data_config.type must be EVAL, SYSTEM_METRIC, or SYSTEM_METRICS."
+            )
+        return data
+
+    def to_representation(self, value):
+        return value
+
+
+class FetchGraphSerializer(StrictInputSerializer):
     interval = serializers.CharField()
-    filters = serializers.ListField(child=serializers.JSONField())
-    property = serializers.CharField()
-    req_data_config = serializers.JSONField()
-    project_id = serializers.CharField()
+    filters = filter_list_query_param_field(required=False, default=list)
+    property = serializers.CharField(
+        required=False, allow_blank=True, default="average"
+    )
+    req_data_config = FetchGraphMetricConfigField()
+    project_id = serializers.UUIDField()
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Aggregate graph results are always exact."
+        ),
+    )
+    refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Recompute and atomically replace the last complete exact result.",
+    )
+
+
+_FETCH_GRAPH_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["timestamp", "value"],
+    "properties": {
+        "timestamp": {"type": "string"},
+        "value": {"type": "number"},
+        "primary_traffic": {"type": "number"},
+    },
+    "additionalProperties": True,
+}
+_FETCH_GRAPH_METADATA_PROPERTIES = {
+    "query_complete": {"type": "boolean"},
+    "query_status": {
+        "type": "string",
+        "enum": ["complete", "pending", "sampled", "degraded"],
+    },
+    "query_sampled": {"type": "boolean"},
+    "query_refreshing": {"type": "boolean"},
+    "query_exact": {"type": "boolean"},
+    "query_provenance": {"type": "string"},
+    "query_count": {"type": "integer"},
+    "query_elapsed_ms": {"type": "number"},
+    "query_rows_returned": {"type": "integer"},
+}
+_FETCH_GRAPH_METRIC_STATISTIC_SCHEMA = {
+    "type": "string",
+    "enum": list(OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+}
+_FETCH_GRAPH_SERIES_SCHEMA = {
+    "type": "object",
+    "required": ["data", "query_complete", "query_status", "query_sampled"],
+    "properties": {
+        "metric_name": {"type": "string"},
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        # System-metric series only; latency is always "mean".
+        "metric_statistic": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
+        "data": {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA},
+        **_FETCH_GRAPH_METADATA_PROPERTIES,
+    },
+}
+_FETCH_ALL_SYSTEM_METRICS_SCHEMA = {
+    "type": "object",
+    "required": [
+        "latency",
+        "tokens",
+        "cost",
+        "traffic",
+        "query_complete",
+        "query_status",
+        "query_sampled",
+    ],
+    "properties": {
+        **{
+            metric: {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA}
+            for metric in ("latency", "tokens", "cost", "traffic")
+        },
+        "system_metric_statistics": {
+            "type": "object",
+            "additionalProperties": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
+        },
+        **_FETCH_GRAPH_METADATA_PROPERTIES,
+    },
+    "additionalProperties": True,
+}
+_FETCH_EVAL_GRAPH_SERIES_SCHEMA = {
+    "type": "array",
+    "items": _FETCH_GRAPH_SERIES_SCHEMA,
+}
+
+
+class FetchGraphResultField(serializers.JSONField):
+    """Document the three legacy chart result branches without changing the wire."""
+
+    class Meta:
+        swagger_schema_fields = {
+            **_FETCH_GRAPH_SERIES_SCHEMA,
+            "description": (
+                "A single system-metric series, an all-system-metrics bundle, "
+                "or an array of evaluation series."
+            ),
+            "x-one-of": [
+                _FETCH_GRAPH_SERIES_SCHEMA,
+                _FETCH_ALL_SYSTEM_METRICS_SCHEMA,
+                _FETCH_EVAL_GRAPH_SERIES_SCHEMA,
+            ],
+        }
+
+    def to_internal_value(self, data):
+        if not isinstance(data, (dict, list)):
+            raise serializers.ValidationError(
+                "Expected a graph series, metrics bundle, or evaluation-series array."
+            )
+        return data
+
+    def to_representation(self, value):
+        return value
+
+
+class FetchGraphResponseSerializer(serializers.Serializer):
+    """GeneralMethods success envelope for the legacy charts graph union."""
+
+    status = serializers.BooleanField(default=True)
+    result = FetchGraphResultField()

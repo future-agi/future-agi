@@ -171,7 +171,7 @@ function AgentDefinitions() {
         ),
       },
       {
-        id: "contactNumber",
+        id: "contact_number",
         accessorKey: "contact_number",
         header: "Contact Number",
         size: 170,

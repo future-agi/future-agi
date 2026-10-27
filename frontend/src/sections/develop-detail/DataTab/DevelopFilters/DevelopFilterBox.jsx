@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * DevelopFilterBox — dataset row filter panel.
  *
@@ -12,9 +13,12 @@
 import {
   Autocomplete,
   Box,
+  Button,
+  Checkbox,
   Chip,
   InputAdornment,
   TextField,
+  Typography,
 } from "@mui/material";
 import { isEqual } from "lodash";
 import PropTypes from "prop-types";
@@ -60,106 +64,37 @@ const PANEL_TYPE_TO_STORE_TYPE = {
   array: "array",
 };
 
-// Store filterOp → panel operator (per field type)
-const opStoreToPanel = (storeOp, panelType) => {
-  if (panelType === "number") {
-    return (
-      {
-        equals: "equal_to",
-        not_equals: "not_equal_to",
-        greater_than: "greater_than",
-        less_than: "less_than",
-        greater_than_or_equal: "greater_than_or_equal",
-        less_than_or_equal: "less_than_or_equal",
-        between: "between",
-        not_in_between: "not_between",
-      }[storeOp] || "equal_to"
-    );
+const formatDateInputValue = (value) => {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 16);
   }
-  if (panelType === "date") {
-    return (
-      {
-        equals: "on",
-        less_than: "before",
-        greater_than: "after",
-        between: "between",
-        not_in_between: "not_between",
-      }[storeOp] || "on"
-    );
+  const stringValue = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stringValue)) {
+    return stringValue.slice(0, 16);
   }
-  if (panelType === "boolean") return "is";
-  if (panelType === "array") {
-    return (
-      {
-        contains: "contains",
-        not_contains: "not_contains",
-        is_null: "is_empty",
-        is_not_null: "is_not_empty",
-      }[storeOp] || "contains"
-    );
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
+    return `${stringValue}T00:00`;
   }
-  // string
-  return (
-    {
-      equals: "is",
-      not_equals: "is_not",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-      // Legacy op without a direct panel equivalent falls back to contains.
-      ends_with: "contains",
-    }[storeOp] || "is"
-  );
+  return stringValue;
 };
 
-// Panel operator → store filterOp
+const DEFAULT_OP_BY_PANEL_TYPE = {
+  number: "equals",
+  date: "equals",
+  boolean: "equals",
+  array: "contains",
+  string: "in",
+  text: "in",
+};
+
+// The shared TraceFilterPanel stores canonical backend operator values.
+const opStoreToPanel = (storeOp, panelType) => {
+  return storeOp || DEFAULT_OP_BY_PANEL_TYPE[panelType] || "equals";
+};
+
 const opPanelToStore = (panelOp, panelType) => {
-  if (panelType === "number") {
-    return (
-      {
-        equal_to: "equals",
-        not_equal_to: "not_equals",
-        greater_than: "greater_than",
-        less_than: "less_than",
-        greater_than_or_equal: "greater_than_or_equal",
-        less_than_or_equal: "less_than_or_equal",
-        between: "between",
-        not_between: "not_in_between",
-      }[panelOp] || "equals"
-    );
-  }
-  if (panelType === "date") {
-    return (
-      {
-        on: "equals",
-        before: "less_than",
-        after: "greater_than",
-        between: "between",
-        not_between: "not_in_between",
-      }[panelOp] || "equals"
-    );
-  }
-  if (panelType === "boolean") return "equals";
-  if (panelType === "array") {
-    return (
-      {
-        contains: "contains",
-        not_contains: "not_contains",
-        is_empty: "is_null",
-        is_not_empty: "is_not_null",
-      }[panelOp] || "contains"
-    );
-  }
-  // string
-  return (
-    {
-      is: "equals",
-      is_not: "not_equals",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-    }[panelOp] || "equals"
-  );
+  return panelOp || DEFAULT_OP_BY_PANEL_TYPE[panelType] || "equals";
 };
 
 // Store filterValue → panel value (mostly a pass-through; normalize number/date arrays)
@@ -168,14 +103,28 @@ const valueStoreToPanel = (val, panelType) => {
     return panelType === "number" || panelType === "date" ? "" : [];
   if (panelType === "boolean")
     return val === true || val === "true" ? "true" : "false";
+  if (panelType === "date") {
+    return Array.isArray(val)
+      ? val.map((item) => formatDateInputValue(item))
+      : formatDateInputValue(val);
+  }
   return val;
 };
 
-
 const isNullish = (v) => v === undefined || v === null;
-const valuePanelToStore = (val, panelType) => {
+const valuePanelToStore = (val, panelType, operator) => {
   if (panelType === "boolean") return val === "true" || val === true;
+  if (panelType === "date") {
+    if (Array.isArray(val)) {
+      return val.map((item) => (item ? new Date(item) : item));
+    }
+    return val ? new Date(val) : "";
+  }
   if (Array.isArray(val)) {
+    if (operator === "in" || operator === "not_in") {
+      const clean = val.filter((v) => !isNullish(v) && v !== "");
+      return clean.length ? clean : "";
+    }
     if (panelType === "array") {
       const clean = val.filter((v) => !isNullish(v) && v !== "");
       return clean.length ? clean : "";
@@ -186,10 +135,14 @@ const valuePanelToStore = (val, panelType) => {
     return val;
   }
   if (isNullish(val)) return "";
+  // in/not_in require a list value; wrap a single typed scalar so it still applies.
+  if (operator === "in" || operator === "not_in") {
+    return val === "" ? "" : [val];
+  }
   return val;
 };
 
-const storeFilterToPanel = (storeFilter, columnLookup) => {
+export const storeFilterToPanel = (storeFilter, columnLookup) => {
   const col = columnLookup[storeFilter.columnId];
   const panelType = col?.panelType || "string";
   const category =
@@ -198,6 +151,11 @@ const storeFilterToPanel = (storeFilter, columnLookup) => {
       : "dataset";
   return {
     field: storeFilter.columnId,
+    registryId:
+      storeFilter.registryId ||
+      storeFilter.propertyId ||
+      storeFilter.property_id ||
+      col?.registryId,
     fieldCategory: category,
     fieldType: panelType,
     operator: opStoreToPanel(storeFilter.filterConfig?.filterOp, panelType),
@@ -218,6 +176,10 @@ export const unwrapScalarValue = (value, fieldType, operator) => {
     return value;
   }
   if (fieldType === "array") return value;
+  if (operator === "in" || operator === "not_in") {
+    const clean = value.filter((item) => !isNullish(item) && item !== "");
+    return clean.length ? clean : "";
+  }
   if (operator === "between" || operator === "not_between") {
     return value.every(isNullish) ? "" : value;
   }
@@ -225,9 +187,23 @@ export const unwrapScalarValue = (value, fieldType, operator) => {
   return isNullish(first) ? "" : first;
 };
 
+const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
+
+function normalizePickerValues(values) {
+  const rawValues = Array.isArray(values) ? values : values ? [values] : [];
+  const cleanValues = rawValues
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(cleanValues));
+}
+
 export const panelFilterToStore = (panelFilter) => {
   const storeType = PANEL_TYPE_TO_STORE_TYPE[panelFilter.fieldType] || "text";
-  const rawValue = valuePanelToStore(panelFilter.value, panelFilter.fieldType);
+  const rawValue = valuePanelToStore(
+    panelFilter.value,
+    panelFilter.fieldType,
+    panelFilter.operator,
+  );
   const filterValue = unwrapScalarValue(
     rawValue,
     panelFilter.fieldType,
@@ -236,6 +212,7 @@ export const panelFilterToStore = (panelFilter) => {
   return {
     id: getRandomId(),
     columnId: panelFilter.field,
+    ...(panelFilter.registryId && { registryId: panelFilter.registryId }),
     filterConfig: {
       filterType: storeType,
       filterOp: opPanelToStore(panelFilter.operator, panelFilter.fieldType),
@@ -255,118 +232,248 @@ export const panelFilterToStore = (panelFilter) => {
 // serialized `["English","French"]` blob), so the dropdown lines up
 // with what the LLM/user actually reason about. freeSolo so users can
 // still type a substring that doesn't appear in the suggestion set.
-const DatasetColumnValuePicker = ({
+export const DatasetColumnValuePicker = ({
   fieldType,
   value,
   onChange,
   property,
   projectId, // TraceFilterPanel passes the scope id through this prop; for
   // datasets it's the dataset UUID (see DevelopFilterBox).
+  freeSoloValues = false,
 }) => {
   const columnId = property?.id;
-  const { data: suggestions = [], isLoading } = useDatasetColumnValues({
+  const {
+    data: suggestions = [],
+    isLoading,
+    isError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useDatasetColumnValues({
     datasetId: projectId,
     columnId,
     enabled: Boolean(projectId && columnId),
   });
+  const [inputValue, setInputValue] = useState("");
+  const loadMoreControl = hasNextPage ? (
+    <Button
+      size="small"
+      variant="text"
+      disabled={isFetchingNextPage}
+      onClick={() => fetchNextPage()}
+      sx={{ alignSelf: "flex-start", minWidth: 0, px: 0.5, mt: 0.25 }}
+    >
+      {isFetchingNextPage ? "Loading more values…" : "Load more values"}
+    </Button>
+  ) : null;
 
-  if (fieldType === "array") {
-    const arrVal = Array.isArray(value) ? value : value ? [value] : [];
+  if (fieldType === "array" || freeSoloValues) {
+    const arrVal = normalizePickerValues(value);
+    const suggestionValues = normalizePickerValues(suggestions);
+    const customInputValue = inputValue.trim();
+    const showCustomOption = Boolean(
+      freeSoloValues &&
+        customInputValue &&
+        !suggestionValues.some(
+          (suggestion) =>
+            suggestion.toLowerCase() === customInputValue.toLowerCase(),
+        ),
+    );
+    const optionsWithCustom = showCustomOption
+      ? [...suggestionValues, customInputValue]
+      : suggestionValues;
+    const commitInputValue = (rawInput) => {
+      const typedValues = String(rawInput || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (!typedValues.length) return false;
+      onChange(Array.from(new Set([...arrVal, ...typedValues])));
+      setInputValue("");
+      return true;
+    };
+
     return (
-      <Autocomplete
-        multiple
-        freeSolo
-        size="small"
-        options={suggestions}
-        value={arrVal}
-        onChange={(_, newVal) => {
-          const clean = (newVal || [])
-            .map((v) => (typeof v === "string" ? v.trim() : ""))
-            .filter(Boolean);
-          onChange(Array.from(new Set(clean)));
-        }}
-        loading={isLoading}
-        sx={{ flex: 1, minWidth: 160, maxWidth: 320 }}
-        renderTags={(tagValue, getTagProps) =>
-          tagValue.map((option, index) => (
-            <Chip
-              size="small"
-              label={option}
-              {...getTagProps({ index })}
-              key={option}
-              deleteIcon={<Iconify icon="mdi:close" width={10} />}
-              sx={{
-                height: 20,
-                fontSize: 10,
-                maxWidth: 100,
-                "& .MuiChip-label": { px: 0.5 },
+      <Box sx={{ flex: 1, minWidth: 160, maxWidth: 320 }}>
+        <Autocomplete
+          multiple
+          freeSolo
+          size="small"
+          disableCloseOnSelect
+          options={optionsWithCustom}
+          value={arrVal}
+          inputValue={inputValue}
+          onInputChange={(_, newInputValue, reason) => {
+            if (reason === "reset") return;
+            if (newInputValue.includes(",")) {
+              commitInputValue(newInputValue);
+              return;
+            }
+            setInputValue(newInputValue);
+          }}
+          onChange={(_, newVal) => {
+            onChange(normalizePickerValues(newVal));
+          }}
+          loading={isLoading}
+          noOptionsText={
+            isError
+              ? "Suggestions unavailable. Enter an exact value."
+              : freeSoloValues
+                ? FREE_TEXT_NO_OPTIONS_TEXT
+                : undefined
+          }
+          getOptionLabel={(option) => String(option ?? "")}
+          isOptionEqualToValue={(option, selectedValue) =>
+            String(option ?? "") === String(selectedValue ?? "")
+          }
+          sx={{ width: "100%" }}
+          renderOption={(props, option, { selected }) => {
+            const optionValue = String(option ?? "");
+            const isCustomOption =
+              showCustomOption &&
+              optionValue.toLowerCase() === customInputValue.toLowerCase();
+            return (
+              <Box
+                component="li"
+                {...props}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                }}
+              >
+                <Checkbox size="small" checked={selected} sx={{ p: 0 }} />
+                {isCustomOption ? (
+                  <Typography sx={{ fontSize: 12 }}>
+                    + Specify: <strong>{customInputValue}</strong>
+                  </Typography>
+                ) : (
+                  <Typography noWrap sx={{ fontSize: 12 }}>
+                    {optionValue}
+                  </Typography>
+                )}
+              </Box>
+            );
+          }}
+          renderTags={(tagValue, getTagProps) =>
+            tagValue.map((option, index) => (
+              <Chip
+                size="small"
+                label={option}
+                {...getTagProps({ index })}
+                key={option}
+                deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                sx={{
+                  height: 20,
+                  fontSize: 10,
+                  maxWidth: 100,
+                  "& .MuiChip-label": { px: 0.5 },
+                }}
+              />
+            ))
+          }
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              placeholder={arrVal.length ? "" : "Select values..."}
+              error={isError}
+              helperText={
+                isError
+                  ? "Suggestions unavailable; typed values still work."
+                  : freeSoloValues
+                    ? "Select one or more values (multi-select)"
+                    : ""
+              }
+              onKeyDown={(event) => {
+                if (
+                  (event.key === "Enter" || event.key === ",") &&
+                  inputValue.trim()
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  commitInputValue(inputValue);
+                }
+              }}
+              onBlur={() => commitInputValue(inputValue)}
+              InputProps={{
+                ...params.InputProps,
+                sx: { fontSize: 12, minHeight: 28, py: 0 },
               }}
             />
-          ))
-        }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            placeholder={arrVal.length ? "" : "Type or pick"}
-            InputProps={{
-              ...params.InputProps,
-              sx: { fontSize: 12, minHeight: 28, py: 0 },
-            }}
-          />
-        )}
-      />
+          )}
+        />
+        {loadMoreControl}
+      </Box>
     );
   }
 
   // string / fallback — single text value with suggestion dropdown.
   const strVal = Array.isArray(value) ? value[0] || "" : value || "";
   return (
-    <Autocomplete
-      freeSolo
-      size="small"
-      options={suggestions}
-      value={strVal}
-      // onInputChange fires for both typing and option-pick so a user who
-      // types a novel substring still gets it flushed to the store.
-      onInputChange={(_, newVal) => onChange(newVal || "")}
-      loading={isLoading}
-      sx={{ flex: 1, minWidth: 140, maxWidth: 240 }}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          placeholder="Value"
-          InputProps={{
-            ...params.InputProps,
-            sx: { fontSize: 12, height: 28 },
-            startAdornment: (
-              <InputAdornment position="start" sx={{ mr: 0.5 }}>
-                <Iconify
-                  icon="mdi:pencil-outline"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-              </InputAdornment>
-            ),
-          }}
-        />
-      )}
-    />
+    <Box sx={{ flex: 1, minWidth: 140, maxWidth: 240 }}>
+      <Autocomplete
+        freeSolo
+        size="small"
+        options={suggestions}
+        value={strVal}
+        // onInputChange fires for both typing and option-pick so a user who
+        // types a novel substring still gets it flushed to the store.
+        onInputChange={(_, newVal) => onChange(newVal || "")}
+        loading={isLoading}
+        noOptionsText={
+          isError ? "Suggestions unavailable. Enter an exact value." : undefined
+        }
+        sx={{ width: "100%" }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            placeholder="Value"
+            error={isError}
+            helperText={
+              isError ? "Suggestions unavailable; typed values still work." : ""
+            }
+            InputProps={{
+              ...params.InputProps,
+              sx: { fontSize: 12, height: 28 },
+              startAdornment: (
+                <InputAdornment position="start" sx={{ mr: 0.5 }}>
+                  <Iconify
+                    icon="mdi:pencil-outline"
+                    width={12}
+                    sx={{ color: "text.disabled" }}
+                  />
+                </InputAdornment>
+              ),
+            }}
+          />
+        )}
+      />
+      {loadMoreControl}
+    </Box>
   );
 };
 
-const buildProperties = (allColumns) => {
+export const buildProperties = (allColumns) => {
   if (!Array.isArray(allColumns)) return [];
   return allColumns
     .map((column) => {
       const colData = column?.col;
-      const dataType = colData?.data_type ?? colData?.dataType;
+      const dataType = colData?.data_type;
       if (!ALLOWED_DATA_TYPES.has(dataType)) return null;
       const panelType = DATA_TYPE_TO_PANEL_TYPE[dataType] || "string";
       const originType = colData?.origin_type;
       const isEval =
         originType === "evaluation" || originType === "evaluation_reason";
+      // Dataset-column registry identity is the immutable column UUID. AG Grid
+      // currently uses the same UUID as `field`, but prefer the catalog's
+      // canonical `col.id` so a display/accessor alias can never leak into
+      // property lookup, persisted filter state, or filter_values requests.
+      const columnId = colData?.id || column.field;
       return {
-        id: column.field || colData?.id,
+        id: columnId,
+        registryId: `dataset_column:${columnId}`,
         name: column.headerName || colData?.name || colData?.id,
         type: panelType,
         category: isEval ? "evaluation" : "dataset",
@@ -377,7 +484,7 @@ const buildProperties = (allColumns) => {
     .filter(Boolean);
 };
 
-const CATEGORIES = [
+export const DEVELOP_FILTER_CATEGORIES = [
   { key: "all", label: "All", icon: "mdi:view-grid-outline" },
   { key: "dataset", label: "Dataset", icon: "mdi:table" },
   { key: "evaluation", label: "Evals", icon: "mdi:check-circle-outline" },
@@ -413,7 +520,7 @@ const DevelopFilterBox = () => {
     if (Array.isArray(allColumns)) {
       for (const column of allColumns) {
         const colData = column?.col;
-        const id = column.field || colData?.id;
+        const id = colData?.id || column.field;
         if (!id) continue;
         m[id] = column.headerName || colData?.name || colData?.id;
       }
@@ -531,6 +638,7 @@ const DevelopFilterBox = () => {
         onRemoveFilter={handleRemoveChip}
         onClearAll={handleClearChips}
         onAddFilter={() => setDevelopFilterOpen(true)}
+        onChipClick={() => setDevelopFilterOpen(true)}
       />
       <TraceFilterPanel
         anchorEl={anchorEl}
@@ -549,7 +657,7 @@ const DevelopFilterBox = () => {
         source="dataset"
         showAi
         showQueryTab
-        categories={CATEGORIES}
+        categories={DEVELOP_FILTER_CATEGORIES}
         panelWidth={560}
       />
     </>
@@ -567,6 +675,7 @@ DatasetColumnValuePicker.propTypes = {
     name: PropTypes.string,
   }),
   projectId: PropTypes.string,
+  freeSoloValues: PropTypes.bool,
 };
 
 export default DevelopFilterBox;

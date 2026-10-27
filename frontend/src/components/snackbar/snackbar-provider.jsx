@@ -11,7 +11,8 @@ import IconButton from "@mui/material/IconButton";
 
 import Iconify from "../iconify";
 import { useSettingsContext } from "../settings";
-import { StyledIcon, StyledNotistack, SNACKBAR_AUTO_HIDE_MS } from "./styles";
+import { StyledIcon, SNACKBAR_AUTO_HIDE_MS } from "./styles";
+import ClampedContent from "./ClampedContent";
 
 // ----------------------------------------------------------------------
 
@@ -55,11 +56,11 @@ export default function SnackbarProvider({ children, ...other }) {
         ),
       }}
       Components={{
-        default: StyledNotistack,
-        info: StyledNotistack,
-        success: StyledNotistack,
-        warning: StyledNotistack,
-        error: StyledNotistack,
+        default: ClampedContent,
+        info: ClampedContent,
+        success: ClampedContent,
+        warning: ClampedContent,
+        error: ClampedContent,
       }}
       action={(snackbarId) => (
         <IconButton

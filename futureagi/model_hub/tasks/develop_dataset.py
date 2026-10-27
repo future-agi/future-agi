@@ -51,11 +51,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.storage import (
     delete_compare_folder,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
@@ -364,10 +360,7 @@ def create_synthetic_dataset(
         if not request_uuid:
             request_uuid = task_manager.start_task(str(dataset_id))
 
-        try:
-            from ee.usage.models.usage import APICallTypeChoices
-        except ImportError:
-            APICallTypeChoices = None
+        from tfc.constants.api_calls import APICallTypeChoices
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -377,11 +370,12 @@ def create_synthetic_dataset(
         except ImportError:
             check_usage = None
 
-        _usage_check = check_usage(
-            str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
-        )
-        if not _usage_check.allowed:
-            raise ValueError(_usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None and BillingEventType is not None:
+            _usage_check = check_usage(
+                str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
+            )
+            if not _usage_check.allowed:
+                raise ValueError(_usage_check.reason or "Usage limit exceeded")
 
         agent = SyntheticDataAgent(dataset_id=dataset_id, request_uuid=request_uuid)
 
@@ -446,7 +440,7 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += count_text_tokens(str(value))
+                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -513,21 +507,22 @@ def create_synthetic_dataset(
                 "input_tokens": int(tik_total_tokens),
             }
 
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization,
-                api_call_type,
-                config=api_call_config,
-                source="synthetic_dataset",
-                workspace=dataset.workspace,
-            )
-
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
+            if log_and_deduct_cost_for_api_request is not None:
+                api_call_log_row = log_and_deduct_cost_for_api_request(
+                    organization,
+                    api_call_type,
+                    config=api_call_config,
+                    source="synthetic_dataset",
+                    workspace=dataset.workspace,
                 )
 
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+                if not api_call_log_row:
+                    raise ValueError(
+                        "API call not allowed : Error validating the api call."
+                    )
+
+                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                    raise ValueError("API call not allowed : ", api_call_log_row.status)
 
             # Dual-write: emit usage event for new billing system (cost-based)
             try:
@@ -543,13 +538,20 @@ def create_synthetic_dataset(
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import llm_usage_properties
+                except ImportError:
+                    llm_usage_properties = lambda obj: {}
 
                 actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
                 if not actual_cost and hasattr(agent, "llm"):
                     actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                credits = 0
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-                emit(
+                if emit is not None and UsageEvent is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(organization.id),
                         event_type=api_call_type,
@@ -558,6 +560,7 @@ def create_synthetic_dataset(
                             "source": "synthetic_dataset",
                             "source_id": str(dataset.id),
                             "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(agent),
                         },
                     )
                 )
@@ -573,6 +576,19 @@ def create_synthetic_dataset(
         except Exception as inner_e:
             logger.error(f"Error updating dataset status: {str(inner_e)}")
         raise e
+
+
+def _file_metadata_with_error(metadata, error):
+    """Return a file's metadata with ``error`` set, as the JSON string the files view reads."""
+    meta = metadata or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return json.dumps({**meta, "error": error[:10000]})
 
 
 def remove_from_kb(deleted_files, kb_file_id, org_id):
@@ -674,7 +690,7 @@ def ingest_files_to_s3(files, kb_id, org):
     try:
         ingest_futures = []
         docs = []
-        error_files = []
+        file_errors = {}
         latest_error = None
         kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
         kb_file.status = StatusType.PROCESSING.value
@@ -712,7 +728,7 @@ def ingest_files_to_s3(files, kb_id, org):
                     result = future.result()
                     if result and "file_id" in result:
                         if result.get("error"):
-                            error_files.append(result["file_id"])
+                            file_errors[str(result["file_id"])] = result["error"]
                             latest_error = result["error"]
                         else:
                             docs.append(result["file_id"])
@@ -727,9 +743,13 @@ def ingest_files_to_s3(files, kb_id, org):
 
         if docs:
             Files.objects.filter(id__in=docs).update(status=StatusType.COMPLETED.value)
-        if error_files:
-            Files.objects.filter(id__in=error_files).update(
-                status=StatusType.FAILED.value
+        # Keep each file's own error so the files table can show why it failed.
+        for failed_file in Files.objects.filter(id__in=list(file_errors)):
+            Files.objects.filter(id=failed_file.id).update(
+                status=StatusType.FAILED.value,
+                metadata=_file_metadata_with_error(
+                    failed_file.metadata, file_errors[str(failed_file.id)]
+                ),
             )
 
         kb_file.refresh_from_db()
@@ -828,10 +848,10 @@ def remove_kb_files(files, org, kb_id):
                 try:
                     file_instance = Files.objects.filter(id=res["file_id"]).first()
                     if file_instance:
-                        meta = json.loads(file_instance.metadata)
                         if res.get("error", None):
-                            meta.update({"error": res["error"]})
-                        file_instance.metadata = json.dumps(meta)
+                            file_instance.metadata = _file_metadata_with_error(
+                                file_instance.metadata, res["error"]
+                            )
                         file_instance.status = res["status"]
                         file_instance.deleted = (
                             True

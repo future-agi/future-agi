@@ -17,7 +17,7 @@ export const slides = [
     title: "Evaluations",
     description:
       "Add evals to measure bias, toxicity, accuracy, and response quality—helping you benchmark and improve your agents' performance",
-    imageUrl: "/assets/img_evals_auth.svg",
+    imageUrl: "/assets/img_evals_auth.png",
     darkImageUrl: "/assets/img_evals_auth_dark.png",
   },
 ];

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, Chip, CircularProgress, Typography } from "@mui/material";
+import { Alert, Box, Chip, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { AgGridReact } from "ag-grid-react";
 import { useSyncLogs } from "src/api/integrations";
 import { fDateTime } from "src/utils/format-time";
@@ -74,16 +75,7 @@ export default function IntegrationSyncHistory({ connectionId }) {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          height: 400,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ height: 400 }} />
     );
   }
 

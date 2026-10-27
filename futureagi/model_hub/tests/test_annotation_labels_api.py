@@ -13,6 +13,14 @@ import uuid
 import pytest
 from rest_framework import status
 
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.models.workspace import WorkspaceMembership
+from conftest import WorkspaceAwareAPIClient
+from model_hub.models.develop_annotations import AnnotationsLabels
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
+
 BASE_URL = "/model-hub/annotations-labels/"
 
 
@@ -202,6 +210,21 @@ class TestCreateLabel:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
 
+    def test_create_returns_created_label_object(self, auth_client):
+        """Create responds with the serialized label under ``result``."""
+        resp = create_label(
+            auth_client,
+            name="Echoed Label",
+            type="categorical",
+            settings=make_categorical_settings(),
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data["result"]
+        assert result["name"] == "Echoed Label"
+        assert result["type"] == "categorical"
+        assert result["id"]
+
     def test_create_numeric_label(self, auth_client):
         """TC-9: Create numeric label with min/max/step."""
         resp = create_label(
@@ -213,6 +236,30 @@ class TestCreateLabel:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
 
+    @pytest.mark.parametrize(
+        ("settings", "message"),
+        [
+            (make_numeric_settings(min=-1), "min cannot be negative"),
+            (make_numeric_settings(max=-1), "max cannot be negative"),
+            (make_numeric_settings(step_size=0), "step_size must be greater than 0"),
+        ],
+    )
+    def test_create_numeric_label_rejects_negative_bounds_and_zero_step(
+        self,
+        auth_client,
+        settings,
+        message,
+    ):
+        resp = create_label(
+            auth_client,
+            name=f"Invalid Numeric {uuid.uuid4()}",
+            type="numeric",
+            settings=settings,
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert message in str(resp.data)
+
     def test_create_text_label(self, auth_client):
         """TC-10: Create text label with placeholder."""
         resp = create_label(
@@ -223,6 +270,36 @@ class TestCreateLabel:
         )
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
+
+    def test_create_text_label_rejects_invalid_length_range(self, auth_client):
+        resp = create_label(
+            auth_client,
+            name=f"Invalid Text {uuid.uuid4()}",
+            type="text",
+            settings=make_text_settings(min_length=10, max_length=10),
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "min_length must be less than max_length" in str(resp.data)
+
+    def test_create_categorical_label_rejects_duplicate_option_names(
+        self,
+        auth_client,
+    ):
+        resp = create_label(
+            auth_client,
+            name=f"Duplicate Options {uuid.uuid4()}",
+            type="categorical",
+            settings=make_categorical_settings(
+                options=[
+                    {"label": "Pass"},
+                    {"label": "pass"},
+                ],
+            ),
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Categorical option labels must be unique" in str(resp.data)
 
     def test_create_star_label(self, auth_client):
         """TC-11: Create star label."""
@@ -335,6 +412,24 @@ class TestArchiveAndRestore:
         ids = [r["id"] for r in resp.data["results"]]
         assert str(label_id) not in [str(i) for i in ids]
 
+    def test_archived_filter_lists_only_archived_labels(self, auth_client):
+        """Archived labels are discoverable for restore without mixing active labels."""
+        label_id = self._create_and_get_id(auth_client)
+        auth_client.delete(detail_url(label_id))
+        create_label(auth_client, name="Still Active")
+        active_list_resp = auth_client.get(BASE_URL, {"search": "Still Active"})
+        active_id = active_list_resp.data["results"][0]["id"]
+
+        resp = auth_client.get(BASE_URL, {"archived": "true"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        results = resp.data["results"]
+        ids = [str(r["id"]) for r in results]
+        assert str(label_id) in ids
+        assert str(active_id) not in ids
+        archived_label = next(r for r in results if str(r["id"]) == str(label_id))
+        assert archived_label["archived"] is True
+
     def test_restore_archived_label(self, auth_client):
         """TC-20: Restore a soft-deleted label."""
         label_id = self._create_and_get_id(auth_client)
@@ -359,6 +454,128 @@ class TestArchiveAndRestore:
         # Don't archive — try to restore directly
         resp = auth_client.post(restore_url(label_id))
         assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.fixture
+def membership_only_user(db, organization, workspace):
+    """A member whose org access comes only from ``OrganizationMembership``.
+
+    ``User.organization`` is the legacy nullable FK. Members provisioned through
+    RBAC never get it populated — they reach their organization through an
+    active membership row instead.
+    """
+    user = User.objects.create_user(
+        email=f"membership-only-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Membership Only User",
+        organization=None,
+        organization_role=None,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=workspace,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=True,
+        organization_membership=org_membership,
+    )
+    # ``assign_workspace_organization_post_save`` backfills a blank organization
+    # from the thread-local context, which the ``user`` fixture sets. Null the FK
+    # through the queryset so no signal fires — this user must reach its org
+    # through the membership alone.
+    User.objects.filter(pk=user.pk).update(organization=None)
+    user.refresh_from_db()
+    return user
+
+
+@pytest.fixture
+def membership_only_client(membership_only_user, workspace):
+    """Workspace-scoped client, so ``request.organization`` is populated."""
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=membership_only_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.fixture
+def membership_only_client_without_workspace(membership_only_user):
+    """No workspace header, so the view must fall back to active membership."""
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=membership_only_user)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.mark.django_db
+class TestRestoreOrganizationScoping:
+    """Restore must scope by the resolved org, not ``user.organization``.
+
+    ``restore`` used to filter on ``request.user.organization``. That FK is NULL
+    for membership-only users, so the lookup became ``organization_id IS NULL``;
+    ``AnnotationsLabels.organization`` is non-nullable, so every restore 404'd
+    even though the label was listable. The rest of this module passes either
+    way because its fixtures set the legacy FK — these two do not.
+    """
+
+    @staticmethod
+    def _create_and_archive(client, name):
+        create_resp = create_label(client, name=name)
+        assert create_resp.status_code == status.HTTP_200_OK, create_resp.data
+        label_id = create_resp.data["result"]["id"]
+
+        delete_resp = client.delete(detail_url(label_id))
+        assert delete_resp.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        ), delete_resp.data
+        return label_id
+
+    def test_restore_for_member_without_legacy_user_organization(
+        self, membership_only_client, membership_only_user
+    ):
+        """Org comes from the request, not the null ``user.organization`` FK."""
+        # Canary: if a fixture ever backfills the FK this stops covering the
+        # regression, so fail loudly rather than pass vacuously.
+        assert membership_only_user.organization_id is None
+
+        name = "Membership Only Restorable"
+        label_id = self._create_and_archive(membership_only_client, name)
+
+        resp = membership_only_client.post(restore_url(label_id))
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["status"] is True
+        assert resp.data["result"]["archived"] is False
+
+        list_resp = membership_only_client.get(BASE_URL, {"search": name})
+        assert [str(row["id"]) for row in list_resp.data["results"]] == [str(label_id)]
+
+    def test_restore_falls_back_to_active_membership(
+        self, membership_only_client_without_workspace, membership_only_user
+    ):
+        """No workspace header: the org resolves from the active membership."""
+        assert membership_only_user.organization_id is None
+
+        client = membership_only_client_without_workspace
+        label_id = self._create_and_archive(client, "Membership Fallback Restorable")
+
+        resp = client.post(restore_url(label_id))
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["status"] is True
+        assert resp.data["result"]["archived"] is False
+
+        restored = AnnotationsLabels.all_objects.get(pk=label_id)
+        assert restored.deleted is False
+        assert restored.deleted_at is None
 
 
 # ---------------------------------------------------------------------------

@@ -48,11 +48,9 @@ export const DeleteItem = ({
         queryClient.invalidateQueries({
           queryKey: ["prompt-folders"],
         });
-        if (folder === "all") {
-          queryClient.invalidateQueries({
-            queryKey: ["folder-items", folder],
-          });
-        }
+        queryClient.invalidateQueries({
+          queryKey: ["folder-items"],
+        });
       }
     },
   });
@@ -85,7 +83,7 @@ export const DeleteItem = ({
       }}
       onSubmit={handleDelete}
       isLoading={isDeleting}
-      isValid={id}
+      isValid={Boolean(id)}
     >
       <Box
         sx={{

@@ -8,6 +8,8 @@ import axiosInstance, { endpoints } from "src/utils/axios";
 const FILTER_KEY_MAP = {
   gatewayId: "gateway_id",
   statusCode: "status_code",
+  statusCodeMin: "min_status_code",
+  statusCodeMax: "max_status_code",
   isError: "is_error",
   cacheHit: "cache_hit",
   guardrailTriggered: "guardrail_triggered",

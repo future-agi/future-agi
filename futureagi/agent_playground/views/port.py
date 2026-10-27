@@ -1,12 +1,15 @@
 import structlog
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.port import Port
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.port import PortReadSerializer, UpdatePortSerializer
 from agent_playground.services.dataset_bridge import sync_dataset_columns
 from agent_playground.utils.graph import get_graph_and_version, require_draft
@@ -15,7 +18,12 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="partial_update", decorator=agent_playground_errors)
 class PortCrudViewSet(ModelViewSet):
     """Granular CRUD for ports within a graph version."""
 

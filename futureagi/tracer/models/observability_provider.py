@@ -14,6 +14,8 @@ class ProviderChoices(models.TextChoices):
     RETELL = "retell", "Retell"
     LIVEKIT = "livekit", "LiveKit"
     OTHERS = "others", "Others"
+    BLAND = "bland", "Bland.ai"
+    TWILIO = "twilio", "Twilio"
 
 
 class ObservabilityProvider(BaseModel):
@@ -42,6 +44,7 @@ class ObservabilityProvider(BaseModel):
     )
     last_fetched_at = models.DateTimeField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True, null=True)
+    poll_state = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "tracer_observability_provider"

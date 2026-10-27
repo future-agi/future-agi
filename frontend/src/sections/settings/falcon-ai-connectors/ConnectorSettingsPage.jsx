@@ -4,7 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
+import { LoadingScreen } from "src/components/loading-screen";
 import Alert from "@mui/material/Alert";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -12,22 +12,32 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Switch from "@mui/material/Switch";
+import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  toolActionErrorMessage,
+} from "src/sections/falcon-ai/components/connectorTools";
+import { useConnectorToolPermissions } from "src/sections/falcon-ai/hooks/useConnectorToolPermissions";
 import {
   fetchConnectors,
+  useConnector,
   createConnector,
   updateConnector,
   deleteConnector,
   testConnector,
   discoverConnectorTools,
   authenticateConnector,
-  updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import { buildConnectorSavePayload } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,10 +75,19 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
+  const {
+    data: selectedConnector,
+    refetch: refetchSelectedConnector,
+    isLoading: isConnectorLoading,
+  } = useConnector(selectedId, {
+    enabled: Boolean(selectedId) && !isNew,
+  });
 
-  const loadConnectors = useCallback(async () => {
+  const loadConnectors = useCallback(async ({ showSpinner = true } = {}) => {
     try {
-      setLoading(true);
+      if (showSpinner) {
+        setLoading(true);
+      }
       const data = await fetchConnectors();
       const results = data.results || data || [];
       setConnectors(Array.isArray(results) ? results : []);
@@ -76,9 +95,35 @@ export default function ConnectorSettingsPage() {
     } catch {
       setError("Failed to load connectors.");
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
   }, []);
+
+  const refreshSelected = useCallback(
+    async (id) => {
+      if (!id) {
+        await loadConnectors({ showSpinner: false });
+        return;
+      }
+      try {
+        if (id === selectedId) {
+          const { data: detail } = await refetchSelectedConnector();
+          if (detail?.id) {
+            setConnectors((prev) =>
+              prev.map((c) => (c.id === detail.id ? { ...c, ...detail } : c)),
+            );
+            return;
+          }
+        }
+        await loadConnectors({ showSpinner: false });
+      } catch {
+        await loadConnectors({ showSpinner: false });
+      }
+    },
+    [loadConnectors, refetchSelectedConnector, selectedId],
+  );
 
   useEffect(() => {
     loadConnectors();
@@ -96,13 +141,18 @@ export default function ConnectorSettingsPage() {
           /* */
         }
       }
-      await loadConnectors();
+      await refreshSelected(selectedId);
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [loadConnectors, selectedId]);
+  }, [loadConnectors, refreshSelected, selectedId]);
 
-  const selected = connectors.find((c) => c.id === selectedId) || null;
+  const selectedFromList = connectors.find((c) => c.id === selectedId) || null;
+  const selected =
+    selectedConnector?.id != null &&
+    String(selectedConnector.id) === String(selectedId)
+      ? { ...(selectedFromList || {}), ...selectedConnector }
+      : selectedFromList;
   const filtered = connectors.filter(
     (c) => !search || c.name?.toLowerCase().includes(search.toLowerCase()),
   );
@@ -119,8 +169,11 @@ export default function ConnectorSettingsPage() {
     setIsEditing(true);
   };
 
-  const handleSaved = () => {
-    loadConnectors();
+  const handleSaved = async () => {
+    await loadConnectors();
+    if (selectedId && !isNew) {
+      await refetchSelectedConnector();
+    }
     setIsEditing(false);
     setIsNew(false);
   };
@@ -139,11 +192,7 @@ export default function ConnectorSettingsPage() {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   return (
@@ -178,6 +227,7 @@ export default function ConnectorSettingsPage() {
           </Typography>
         </Box>
         <Button
+          type="button"
           variant="contained"
           startIcon={<Iconify icon="mdi:plus" width={18} />}
           onClick={handleNew}
@@ -322,9 +372,10 @@ export default function ConnectorSettingsPage() {
           ) : selected ? (
             <ConnectorDetail
               connector={selected}
+              loading={isConnectorLoading}
               onEdit={() => setIsEditing(true)}
               onDelete={() => handleDelete(selected.id)}
-              onRefresh={loadConnectors}
+              onRefresh={() => refreshSelected(selected.id)}
             />
           ) : (
             <Box
@@ -361,6 +412,7 @@ export default function ConnectorSettingsPage() {
               </Typography>
               {connectors.length === 0 && (
                 <Button
+                  type="button"
                   variant="outlined"
                   startIcon={<Iconify icon="mdi:plus" width={16} />}
                   onClick={handleNew}
@@ -380,16 +432,33 @@ export default function ConnectorSettingsPage() {
 // ---------------------------------------------------------------------------
 // Connector Detail (read-only)
 // ---------------------------------------------------------------------------
-function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
+function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const statusInfo = getStatusInfo(connector);
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [reauthing, setReauthing] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  // Ordering, the last-tool guard, optimistic display and rollback are shared
+  // with the Customize pane. The switch reads through the react-query cache
+  // this writes to, so no local copy of the record is needed here.
+  const {
+    toolError,
+    pendingNames,
+    handleToolToggle: toggleTool,
+  } = useConnectorToolPermissions({
+    connector,
+    onApply: () => {},
+    onDrained: onRefresh,
+  });
 
   const tools = connector.discovered_tools || [];
-  const enabledTools = connector.enabled_tools || [];
+  const enabledTools = connector.enabled_tool_names || [];
+
+  useEffect(() => {
+    setFeedback(null);
+  }, [connector.id]);
 
   const isToolEnabled = (toolName) => {
     if (enabledTools.length === 0 && tools.length > 0) return true; // all enabled by default
@@ -397,60 +466,102 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
   };
 
   const handleTest = async () => {
+    setFeedback(null);
     setTesting(true);
     try {
-      await testConnector(connector.id);
-      onRefresh();
-    } catch {
-      /* */
+      const result = await testConnector(connector.id);
+      if (result?.status === false || result?.result?.success === false) {
+        setFeedback({
+          severity: "error",
+          message:
+            result?.error || result?.result?.error || "Connection test failed.",
+        });
+      } else {
+        setFeedback({
+          severity: "success",
+          message:
+            result?.message || result?.detail || "Connection test succeeded.",
+        });
+      }
+      await onRefresh();
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        message: toolActionErrorMessage(error, "Connection test failed."),
+      });
     } finally {
       setTesting(false);
     }
   };
 
   const handleDiscover = async () => {
+    setFeedback(null);
     setDiscovering(true);
     try {
-      await discoverConnectorTools(connector.id);
-      onRefresh();
-    } catch {
-      /* */
+      const result = await discoverConnectorTools(connector.id);
+      if (result?.status === false) {
+        setFeedback({
+          severity: "error",
+          message: result?.error || "Tool discovery failed.",
+        });
+      } else {
+        const discoveredCount =
+          result?.discovered_count ??
+          (Array.isArray(result?.result?.discovered_tools)
+            ? result.result.discovered_tools.length
+            : null);
+        setFeedback({
+          severity: "success",
+          message:
+            discoveredCount == null
+              ? "Tool discovery completed."
+              : `Discovered ${discoveredCount} tool${discoveredCount === 1 ? "" : "s"}.`,
+        });
+      }
+      await onRefresh();
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        message: toolActionErrorMessage(error, "Tool discovery failed."),
+      });
     } finally {
       setDiscovering(false);
     }
   };
 
   const handleReauth = async () => {
+    setFeedback(null);
     setReauthing(true);
     try {
       const result = await authenticateConnector(connector.id);
-      const authUrl = result?.authorization_url;
+      const authUrl =
+        result?.authorizationUrl ||
+        result?.authorization_url ||
+        result?.auth_url ||
+        result?.oauth_url ||
+        result?.result?.authorizationUrl ||
+        result?.result?.authorization_url;
       if (authUrl) {
         window.open(authUrl, "falcon_oauth", "width=600,height=700,popup=yes");
       } else {
-        onRefresh();
+        setFeedback({
+          severity: "success",
+          message:
+            result?.message || result?.detail || "Authentication updated.",
+        });
+        await onRefresh();
       }
-    } catch {
-      /* */
+    } catch (error) {
+      setFeedback({
+        severity: "error",
+        message: toolActionErrorMessage(error, "Authentication failed."),
+      });
     } finally {
       setReauthing(false);
     }
   };
 
-  const handleToolToggle = async (toolName) => {
-    let updated;
-    if (isToolEnabled(toolName)) {
-      updated = enabledTools.filter((t) => t !== toolName);
-    } else {
-      updated = [...enabledTools, toolName];
-    }
-    try {
-      await updateConnectorTools(connector.id, updated);
-      onRefresh();
-    } catch {
-      /* */
-    }
-  };
+  const handleToolToggle = (toolName) => toggleTool(connector.id, toolName);
 
   return (
     <Box
@@ -578,9 +689,22 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         </Alert>
       )}
 
+      {feedback && (
+        <Alert severity={feedback.severity} sx={{ mb: 2, fontSize: 12 }}>
+          {feedback.message}
+        </Alert>
+      )}
+
+      {toolError && (
+        <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
+          {toolError}
+        </Alert>
+      )}
+
       {/* Actions */}
       <Box sx={{ display: "flex", gap: 1, mb: 3, flexWrap: "wrap" }}>
         <Button
+          type="button"
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="mdi:pencil-outline" width={14} />}
@@ -591,6 +715,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         </Button>
         {connector.auth_type === "oauth" && (
           <Button
+            type="button"
             size="small"
             variant="outlined"
             startIcon={<Iconify icon="mdi:refresh" width={14} />}
@@ -602,6 +727,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           </Button>
         )}
         <Button
+          type="button"
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="mdi:magnify" width={14} />}
@@ -612,6 +738,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           {discovering ? "Discovering..." : "Discover Tools"}
         </Button>
         <Button
+          type="button"
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="mdi:connection" width={14} />}
@@ -622,6 +749,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
           {testing ? "Testing..." : "Test Connection"}
         </Button>
         <Button
+          type="button"
           size="small"
           variant="outlined"
           color="error"
@@ -652,7 +780,14 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         )}
       </Typography>
 
-      {tools.length === 0 ? (
+      {loading ? (
+        <ToolsSkeleton
+          title={null}
+          subtitle={null}
+          groupHeader={false}
+          trailing="switch"
+        />
+      ) : tools.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 4 }}>
           <Iconify
             icon="mdi:tools"
@@ -703,11 +838,29 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
                     </Typography>
                   )}
                 </Box>
-                <Switch
-                  size="small"
-                  checked={enabled}
-                  onChange={() => handleToolToggle(name)}
-                />
+                {/* The guard refuses this click; say so before it. */}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  {pendingNames.includes(name) && (
+                    <CircularProgress
+                      size={14}
+                      role="status"
+                      aria-label="Saving"
+                    />
+                  )}
+                  <CustomTooltip
+                    show={isOnlyEnabledTool(connector, name)}
+                    arrow
+                    size="small"
+                    placement="left"
+                    title={LAST_ENABLED_TOOL_HINT}
+                  >
+                    <Switch
+                      size="small"
+                      checked={enabled}
+                      onChange={() => handleToolToggle(name)}
+                    />
+                  </CustomTooltip>
+                </Box>
               </Box>
             );
           })}
@@ -718,6 +871,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 }
 
 ConnectorDetail.propTypes = {
+  loading: PropTypes.bool,
   connector: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     name: PropTypes.string,
@@ -729,7 +883,7 @@ ConnectorDetail.propTypes = {
     is_active: PropTypes.bool,
     last_error: PropTypes.string,
     discovered_tools: PropTypes.array,
-    enabled_tools: PropTypes.array,
+    enabled_tool_names: PropTypes.array,
   }).isRequired,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
@@ -780,10 +934,13 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
     setSaving(true);
     setError(null);
     try {
+      const payload = buildConnectorSavePayload(form, {
+        preserveEmptySecret: isEdit,
+      });
       if (isEdit) {
-        await updateConnector(connector.id, form);
+        await updateConnector(connector.id, payload);
       } else {
-        await createConnector(form);
+        await createConnector(payload);
       }
       onSaved();
     } catch (err) {
@@ -967,6 +1124,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
 
       <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
         <Button
+          type="button"
           variant="contained"
           size="small"
           onClick={handleSave}
@@ -981,6 +1139,7 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
           {saving ? "Saving..." : isEdit ? "Save" : "Create"}
         </Button>
         <Button
+          type="button"
           variant="outlined"
           size="small"
           onClick={onCancel}

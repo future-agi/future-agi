@@ -63,7 +63,7 @@ export default function AddedEvaluations({
         <Collapse in={!collapsed}>
           <Typography
             typography={"s2_1"}
-            color={"text.disabled"}
+            color={"text.secondary"}
             sx={{
               mr: 5,
               maxWidth: "97%",

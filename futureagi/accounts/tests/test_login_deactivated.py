@@ -26,6 +26,7 @@ class TestDeactivatedUserLogin:
         data = response.json()
         assert data["result"]["error"] == "Account deactivated"
         assert "deactivated" in data["result"]["message"].lower()
+        assert data["result"]["error_code"] == "LOGIN_ACCOUNT_DEACTIVATED"
 
     def test_deactivated_user_does_not_increment_failed_attempts(
         self, api_client, user
@@ -75,6 +76,7 @@ class TestActiveUserLogin:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         assert data["result"]["error"] == "Invalid credentials"
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_nonexistent_email(self, api_client, db):
         """Non-existent email gets 'Invalid credentials'."""
@@ -86,6 +88,7 @@ class TestActiveUserLogin:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         assert data["result"]["error"] == "Invalid credentials"
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
 
 @pytest.mark.integration
@@ -109,4 +112,5 @@ class TestCatchAllHandler:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         assert data["result"]["error"] == "Login failed"
+        assert data["result"]["error_code"] == "LOGIN_UNEXPECTED_ERROR"
         assert "remaining_attempts" in data["result"]

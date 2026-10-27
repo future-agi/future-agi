@@ -5,7 +5,7 @@ Type definitions and dataclasses for model_hub
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -106,17 +106,7 @@ class EvalCreateRequest(BaseModel):
         extra = "forbid"
 
     name: str = Field(min_length=0, max_length=255, default="")
-    # Accept camelCase `isDraft` as an alias. The frontend's response
-    # interceptor installs enumerable camelCase twins on every response
-    # object; if a caller spreads response-derived state into a request
-    # body without also setting `is_draft`, the twin `isDraft` is what
-    # arrives here. Treating the two names as equivalent keeps the draft
-    # intent intact and stops the "Instructions are required" 400 from
-    # firing at mount time (TH-4076).
-    is_draft: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("is_draft", "isDraft"),
-    )
+    is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
     instructions: str = Field(default="", max_length=100000)
     model: str = Field(default="turing_large", max_length=255)
@@ -144,8 +134,12 @@ class EvalCreateRequest(BaseModel):
         None  # {variables_only, dataset_row, trace_context, ...}
     )
     summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom_instructions: str}
+        None  # {type: short|long|concise|custom, custom: str}
     )
+    # Error Localization — mirrors EvalUpdateRequest. Without this here the
+    # FE's create payload (which always includes the toggle value) is
+    # rejected by `extra="forbid"`.
+    error_localizer_enabled: bool = False
     # Template format — determines how variables are extracted
     template_format: Literal["mustache", "jinja"] = "mustache"
 
@@ -244,6 +238,32 @@ class EvalUpdateResponse(BaseModel):
     updated: bool = True
 
 
+class PlaygroundEvalResponse(BaseModel):
+    """Response schema for POST /model-hub/eval-playground/ and related
+    single-run evaluation endpoints.
+
+    `output` shape is derived from the template's output_type + choice_scores:
+      - Pass/Fail                            -> "Passed" | "Failed"                    (str)
+      - score alone                          -> 0.7                                    (float)
+      - choices single, no choice_scores     -> "Good"                                 (str)
+      - choices multi, no choice_scores      -> ["A", "B"]                             (list)
+      - score + choice_scores                -> {"score": 0.7, "choice": "Good"}       (dict)
+      - choices + choice_scores single-pick  -> {"score": 0.7, "choice": "Good"}       (dict)
+      - choices + choice_scores multi-choice -> {"score": 0.5, "choices": ["A", "B"]}  (dict)
+
+    `log_id` is None when APICallLog is not written for this run.
+    `ground_truth_examples` is omitted when GT is not configured on the template."""
+
+    output: str | float | list | dict | None = None
+    reason: Optional[str] = None
+    model: Optional[str] = None
+    metadata: Any = None
+    output_type: Optional[str] = None
+    log_id: Optional[str] = None
+    ground_truth_examples: Optional[list] = None
+    warnings: Optional[list] = None
+
+
 # =============================================================================
 # Eval Versioning Types (Phase 5)
 # =============================================================================
@@ -259,7 +279,19 @@ class EvalVersionItem(BaseModel):
     model: str = ""
     config_snapshot: dict = Field(default_factory=dict)
     created_by_name: str = ""
+    created_by_email: str = ""
     created_at: str = ""
+    # Column-level snapshot fields (mirror _VERSION_SNAPSHOT_FIELDS).
+    prompt_messages: list = Field(default_factory=list)
+    output_type_normalized: str | None = None
+    pass_threshold: float | None = None
+    choice_scores: dict | None = None
+    error_localizer_enabled: bool = False
+    eval_tags: list = Field(default_factory=list)
+    # Derived from config_snapshot for FE label rendering.
+    choices: list = Field(default_factory=list)
+    choices_map: dict = Field(default_factory=dict)
+    multi_choice: bool = False
 
 
 class EvalVersionListResponse(BaseModel):
@@ -305,6 +337,7 @@ class CompositeChildItem(BaseModel):
     pinned_version_id: str | None = None
     pinned_version_number: int | None = None
     weight: float = 1.0
+    config: dict[str, Any] = Field(default_factory=dict)
     # Populated from the child template's config so the EvalPicker can
     # show a single combined mapping panel for composites. Empty for
     # children with no declared required variables.
@@ -321,6 +354,8 @@ class CompositeCreateRequest(BaseModel):
     aggregation_enabled: bool = True
     aggregation_function: str = "weighted_avg"
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     # Empty string means legacy / unset: no homogeneity enforcement.
     # Frontend always sends a real axis.
     composite_child_axis: str = ""
@@ -371,6 +406,8 @@ class CompositeUpdateRequest(BaseModel):
         default=None, min_length=1, max_length=50
     )
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     composite_child_axis: str | None = None
 
 
@@ -401,6 +438,7 @@ class CompositeAdhocExecuteRequest(BaseModel):
     aggregation_function: str = "weighted_avg"
     composite_child_axis: str = ""
     child_weights: dict[str, float] | None = None
+    child_configs: dict[str, dict[str, Any]] | None = None
     pass_threshold: float = 0.5
 
     mapping: dict[str, Any]
@@ -455,6 +493,9 @@ class CompositeExecuteResponse(BaseModel):
 # =============================================================================
 
 
+MappingValue = str | list[str]
+
+
 class GroundTruthUploadRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/ground-truth/upload/ (JSON body)"""
 
@@ -463,8 +504,8 @@ class GroundTruthUploadRequest(BaseModel):
     file_name: str = ""
     columns: list[str]
     data: list[dict]
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
 
 
 class GroundTruthItem(BaseModel):
@@ -476,12 +517,38 @@ class GroundTruthItem(BaseModel):
     file_name: str = ""
     columns: list[str]
     row_count: int
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
     embedding_status: str = "pending"
     embedded_row_count: int = 0
     storage_type: str = "db"
     created_at: str = ""
+    embeddings_stale: bool = False
+    is_active: bool = False
+    enabled: bool = True
+    max_examples: int = 3
+    similarity_threshold: float = 0.7
+
+
+class GroundTruthRuntimeConfig(BaseModel):
+    """Per-tenant runtime knobs that drive GT retrieval at eval time."""
+
+    enabled: bool
+    ground_truth_id: str
+    max_examples: int
+    similarity_threshold: float
+
+
+class GroundTruthSetupResult(BaseModel):
+    """Shape returned by GroundTruthService.update_setup."""
+
+    id: str
+    template_id: str
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
+    embedding_status: str
+    embeddings_stale: bool = False
+    config: GroundTruthRuntimeConfig
 
 
 class GroundTruthListResponse(BaseModel):
@@ -500,18 +567,6 @@ class GroundTruthUploadResponse(BaseModel):
     row_count: int
     columns: list[str]
     embedding_status: str = "pending"
-
-
-class VariableMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/mapping/"""
-
-    variable_mapping: dict[str, str]
-
-
-class RoleMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/"""
-
-    role_mapping: dict[str, str]
 
 
 class GroundTruthDataResponse(BaseModel):
@@ -534,24 +589,7 @@ class GroundTruthStatusResponse(BaseModel):
     embedded_row_count: int
     total_rows: int
     progress_percent: float
-
-
-class GroundTruthConfigRequest(BaseModel):
-    """Request for PUT /model-hub/eval-templates/{id}/ground-truth-config/"""
-
-    enabled: bool = True
-    ground_truth_id: str | None = None
-    mode: str = "auto"  # auto | manual | disabled
-    max_examples: int = Field(default=3, ge=1, le=10)
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    injection_format: str = "structured"  # structured | conversational | xml
-
-
-class GroundTruthSearchRequest(BaseModel):
-    """Request for POST /model-hub/ground-truth/{id}/search/"""
-
-    query: str = Field(min_length=1)
-    max_results: int = Field(default=3, ge=1, le=20)
+    embeddings_stale: bool = False
 
 
 # =============================================================================

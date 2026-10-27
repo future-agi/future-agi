@@ -2,35 +2,54 @@ import json
 import time
 import traceback
 import uuid
+from decimal import Decimal
 
 import structlog
-from django.db import close_old_connections
-
 from accounts.models.organization import Organization
+from django.db import close_old_connections
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    from model_hub.types import PlaygroundEvalResponse
+
+    payload = PlaygroundEvalResponse(
+        output=value,
+        reason=response.get("reason"),
+        model=response.get("model"),
+        metadata=response.get("metadata"),
+        output_type=template.config.get("output"),
+        log_id=(str(api_call_log_row.log_id) if api_call_log_row is not None else None),
+        ground_truth_examples=response.get("ground_truth_examples"),
+        warnings=response.get("warnings") or None,
+    ).model_dump()
+    if payload.get("warnings") is None:
+        payload.pop("warnings", None)
+    if payload.get("ground_truth_examples") is None:
+        payload.pop("ground_truth_examples", None)
+    return payload
 
 
 def run_eval_func(
@@ -44,10 +63,32 @@ def run_eval_func(
 ):
     api_call_log_row = None
     try:
-        # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
+        # Agent-type evals need the ee/ AgentEvaluator. Gate via the
+        # capability service: self-hosted runs them on any user-keyed model
+        # (turing/protect model choice is licensed separately by the turing
+        # gates), so only a capability denial — or genuinely absent ee code
+        # before the service is configured — blocks here.
         if getattr(template, "eval_type", "") == "agent":
-            from tfc.ee_loader import _is_oss_mode
-            if _is_oss_mode():
+            try:
+                from tfc.capabilities import service as capability_service
+
+                if capability_service.is_configured():
+                    decision = capability_service.check(
+                        "agentic_eval",
+                        org_id=str(org.id) if org is not None else None,
+                    )
+                    denied = not decision.allowed
+                else:
+                    from tfc.ee_loader import has_ee
+
+                    denied = not has_ee("ee.evals")
+            except Exception:
+                # A permission check must fail closed. Do not fall back to
+                # has_ee() (True on every build shipping ee/) — that would
+                # silently allow. Deny and log with the stack trace.
+                logger.exception("agentic_eval_capability_check_failed")
+                denied = True
+            if denied:
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
                     "Use LLM-as-a-Judge or Code evaluations instead."
@@ -216,6 +257,23 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
+        # Stamp which eval version produced this result so the Usage tab can
+        # show it per row. Callers that already resolved a version (e.g. a
+        # pinned composite child) pass it in; otherwise the template default.
+        tracked_version = kwargs.get("resolved_version")
+        if not tracked_version:
+            try:
+                tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    exc_info=True,
+                )
+        if tracked_version:
+            source_config["version_id"] = str(tracked_version.id)
+            source_config["version_number"] = tracked_version.version_number
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -224,7 +282,7 @@ def run_eval_func(
         _is_code_eval = getattr(template, "eval_type", "") == "code"
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
-            if _is_code_eval
+            if _is_code_eval and BillingEventType is not None
             else _get_api_call_type(model)
         )
 
@@ -241,7 +299,10 @@ def run_eval_func(
         if check_usage is not None:
             usage_check = check_usage(str(org.id), api_call_type)
             if not usage_check.allowed:
-                raise UsageLimitExceeded(usage_check)
+                if UsageLimitExceeded is not None:
+                    raise UsageLimitExceeded(usage_check)
+                else:
+                    raise ValueError(str(usage_check))
 
         if log_and_deduct_cost_for_api_request is not None:
             api_call_log_row = log_and_deduct_cost_for_api_request(
@@ -254,7 +315,9 @@ def run_eval_func(
             )
 
             if not api_call_log_row:
-                raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
@@ -285,33 +348,28 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        # Inject ground truth config if enabled on the template
-        gt_config_in_template = (
-            template.config.get("ground_truth") if template.config else None
+        GroundTruthService.inject_context(
+            _run_kwargs,
+            template,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
         )
-        if gt_config_in_template and gt_config_in_template.get("enabled"):
-            from model_hub.utils.ground_truth_retrieval import load_ground_truth_config
-
-            gt_config = load_ground_truth_config(template)
-            if gt_config:
-                # Enrich with embedding_status from the GT model
-                try:
-                    from model_hub.models.evals_metric import EvalGroundTruth
-
-                    gt_obj = EvalGroundTruth.objects.filter(
-                        id=gt_config["ground_truth_id"], deleted=False
-                    ).first()
-                    if gt_obj:
-                        gt_config["embedding_status"] = gt_obj.embedding_status
-                except Exception:
-                    pass
-                _run_kwargs["ground_truth_config"] = gt_config
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:
             from evaluations.engine.preprocessing import preprocess_inputs
 
             _run_kwargs = preprocess_inputs(template.name, _run_kwargs)
+
+        # Apply the shared empty-input rules so the playground (and
+        # every other caller of run_eval_func — composite children,
+        # protect, simulation) behaves the same way as the dataset path.
+        # The validator also normalizes kwargs for custom evals so the
+        # underlying engine doesn't raise "Missing required key" when
+        # the caller omits unmapped variables.
+        from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+        partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -333,7 +391,15 @@ def run_eval_func(
                 else config.get("output", "choices")
             ),
         }
-        # logger.info(f"response*******: {response}")
+        if partial_input_warning:
+            response["warnings"] = [partial_input_warning]
+
+        response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=template,
+            eval_inputs=_run_kwargs,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
+        )
 
         metadata = response.get("metadata")
         # Format the result based on output type
@@ -347,18 +413,26 @@ def run_eval_func(
                 metadata = {}
 
         if api_call_log_row is None:
-            return response
+            return _canonical_playground_output(value, response, template, None)
         config_dict = json.loads(api_call_log_row.config)
+        output_payload = {"output": value, "reason": response["reason"]}
+        # Mirror the dataset path: propagate partial-input warnings into
+        # the API call log so the eval usage view (which reads APICallLog)
+        # can surface them alongside the eval's output.
+        if response.get("warnings"):
+            output_payload["warnings"] = response["warnings"]
         config_dict.update(
             {
-                "output": {"output": value, "reason": response["reason"]},
+                "output": output_payload,
                 "input": response["data"],
             }
         )
         api_call_log_row.input_token_count = (
             metadata.get("usage", {}).get("prompt_tokens") or 0 if metadata else 0
         )
-        api_call_log_row.config = json.dumps(config_dict)
+        # default=str so trace/span values mapped into inputs (Decimal from
+        # clickhouse-driver, datetime, UUID) don't blow up the usage logger.
+        api_call_log_row.config = json.dumps(config_dict, default=str)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
 
@@ -376,61 +450,101 @@ def run_eval_func(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+                token_usage_properties = lambda token_usage: {}
 
-            billing_config = BillingConfig.get()
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
             eval_cost = getattr(eval_instance, "cost", {})
             llm_cost = eval_cost.get("total_cost", 0)
-            per_run_fee = billing_config.get_eval_per_run_fee()
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
             actual_cost = llm_cost + per_run_fee
+            _token_usage = getattr(eval_instance, "token_usage", {})
 
-            # Fallback cost for comparison logging
+            # Fallback cost for comparison logging and composite eval billing.
+            # Composite children can return token usage with a zero `cost`;
+            # in that case, charge model token pricing plus the per-run fee.
             _fallback_cost = 0
+            _pricing_source = ""
             try:
                 from agentic_eval.core_evals.fi_utils.token_count_helper import (
                     calculate_total_cost,
                 )
 
-                _token_usage = getattr(eval_instance, "token_usage", {})
-                _fallback = calculate_total_cost(model or "unknown", _token_usage)
+                pricing_model = (
+                    model
+                    or getattr(template, "model", None)
+                    or ModelChoices.TURING_LARGE.value
+                )
+                _fallback = calculate_total_cost(pricing_model, _token_usage)
                 _fallback_cost = _fallback.get("total_cost", 0)
+                _pricing_source = _fallback.get("pricing_source", "")
             except Exception:
                 pass
+
+            is_composite_source = source in {
+                "composite_eval",
+                "composite_eval_adhoc",
+                "composite_eval_dataset",
+                "tracer_composite",
+            }
+            cost_properties = {}
+            if is_composite_source and not llm_cost and _fallback_cost:
+                actual_cost = Decimal(str(_fallback_cost)) + Decimal(str(per_run_fee))
+                cost_properties = {
+                    "llm_cost_usd": str(_fallback_cost),
+                    "reported_llm_cost_usd": str(llm_cost),
+                    "llm_cost_source": "token_pricing",
+                    "pricing_source": _pricing_source,
+                }
 
             logger.info(
                 "eval_cost_breakdown",
                 template=template.name,
                 model=model,
-                llm_cost=llm_cost,
+                llm_cost=cost_properties.get("llm_cost_usd", llm_cost),
                 per_run_fee=per_run_fee,
                 actual_cost=actual_cost,
                 fallback_calculated_cost=_fallback_cost,
+                llm_cost_source=cost_properties.get("llm_cost_source"),
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = billing_config.calculate_ai_credits(actual_cost)
-
-            emit(
-                UsageEvent(
-                    org_id=str(org.id),
-                    event_type=api_call_type,
-                    amount=credits,
-                    properties={
-                        "source": source,
-                        "source_id": str(template.id),
-                        "raw_cost_usd": str(actual_cost),
-                    },
-                )
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
             )
+
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
+
+                emit(
+                    UsageEvent(
+                        org_id=str(org.id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": source,
+                            "source_id": str(template.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **cost_properties,
+                            **token_usage_properties(_token_usage),
+                        },
+                    )
+                )
         except Exception:
             pass  # Metering failure must not break the action
 
-        output = {}
-        output["output"] = value
-        output["reason"] = response.get("reason")
-        output["model"] = response.get("model")
-        output["metadata"] = response.get("metadata")
-        output["output_type"] = template.config.get("output")
-        output["log_id"] = str(api_call_log_row.log_id)
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (
@@ -438,7 +552,11 @@ def run_eval_func(
             )
 
             logger.info(
-                f"sending to error localizer: {api_call_log_row.log_id}, {value}, {param_values}, {response.get('reason')}"
+                "error_localizer_dispatch",
+                log_id=api_call_log_row.log_id,
+                value=value,
+                params=param_values,
+                reason=response.get("reason"),
             )
             trigger_error_localization_for_playground(
                 eval_template=template,
@@ -446,6 +564,7 @@ def run_eval_func(
                 value=value,
                 mapping=mappings,
                 eval_explanation=response.get("reason"),
+                eval_config=config,
             )
 
         return output
@@ -462,7 +581,7 @@ def run_eval_func(
                         "required_keys": list(mappings.keys()),
                     }
                 )
-                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.config = json.dumps(current_config, default=str)
                 api_call_log_row.save()
         except Exception as exc:
             logger.exception(f"Error updating api call log row status: {str(exc)}")
@@ -485,12 +604,16 @@ def process_eval_for_single_row(
     source,
     dataset_id,
     model=ModelChoices.TURING_LARGE.value,
+    runtime_config=None,
 ):
     try:
         close_old_connections()
         runner.eval_template = eval_template
         eval_instance = runner._create_eval_instance(
-            config=data_config, eval_class=eval_class, model=model
+            config=data_config,
+            eval_class=eval_class,
+            model=model,
+            runtime_config=runtime_config,
         )
 
         # Extract base column IDs from mappings (handle JSON paths like uuid.field)
@@ -509,24 +632,41 @@ def process_eval_for_single_row(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
 
+        api_call_config = {
+            "preview": True,
+            "dataset_id": str(dataset_id),
+            "row_id": str(row.id),
+            "required_keys": required_field,
+        }
+        if isinstance(runtime_config, dict) and runtime_config.get("params"):
+            api_call_config["params"] = runtime_config.get("params")
+
         api_call_log_row = runner._handle_api_call(
             row,
             mappings,
-            config={
-                "preview": True,
-                "dataset_id": str(dataset_id),
-                "row_id": str(row.id),
-                "required_keys": required_field,
-            },
+            config=api_call_config,
             eval_template=eval_template,
             org=get_current_organization() or user.organization,
             preview=True,
             req_map={"required_field": required_field, "mapping": mapping},
         )
 
-        eval_result = eval_instance.run(
-            **runner.map_fields(required_field, mapping, eval_template)
+        eval_inputs = runner.map_fields(
+            required_field,
+            mapping,
+            eval_template,
+            config=(
+                runtime_config if isinstance(runtime_config, dict) else data_config
+            ),
         )
+        if (
+            getattr(eval_template, "eval_type", "") == "code"
+            and isinstance(runtime_config, dict)
+            and isinstance(runtime_config.get("params"), dict)
+        ):
+            eval_inputs.update(runtime_config["params"])
+
+        eval_result = eval_instance.run(**eval_inputs)
 
         response = {
             "data": eval_result.eval_results[0].get("data"),
@@ -572,7 +712,7 @@ def process_eval_for_single_row(
             data_type = col_map.get(str(base_col_id)) if base_col_id else None
             input_types[key] = data_type if data_type in ["image", "audio"] else "text"
         config_dict.update({"input_data_types": input_types})
-        api_call_log_row.config = json.dumps(config_dict)
+        api_call_log_row.config = json.dumps(config_dict, default=str)
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save()
 
@@ -586,6 +726,13 @@ def process_eval_for_single_row(
         output["output_type"] = eval_template.config.get("output")
         output["runtime"] = response.get("runtime")
 
+        output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=eval_template,
+            eval_inputs=eval_inputs,
+            organization_id=runner.organization_id,
+            workspace_id=runner.workspace_id,
+        )
+
         # if source == DatasetSourceChoices.SDK.value:
         #     response["output_type"] = eval_template.config.get("output")
         #     response["eval_output"] = value
@@ -597,7 +744,7 @@ def process_eval_for_single_row(
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             current_config = json.loads(api_call_log_row.config)
             current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
+            api_call_log_row.config = json.dumps(current_config, default=str)
             api_call_log_row.save()
         except Exception:
             pass

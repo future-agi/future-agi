@@ -5,15 +5,12 @@ import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import DatasetCompareEvalSummary from "./DatasetCompareEvalSummary";
 import DatasetComparePromptSummary from "./DatasetComparePromptSummary";
-import DatasetCompareAnnotationSummary from "./DatasetCompareAnnotationSummary";
 import EvalsCard from "./EvalsCard/EvalsCard";
 import PromptCard from "./PromptCard";
-import AnnotationCard from "./AnnotationCard";
 
 const tabOptions = [
   { label: "Evals", value: "evals", disabled: false },
   { label: "Prompt", value: "prompt", disabled: false },
-  { label: "Annotation", value: "annotation", disabled: false },
 ];
 
 const CompareDatasetEvalsCards = (props) => {
@@ -104,13 +101,6 @@ const CompareDatasetEvalsCards = (props) => {
               datasetId={datasetId}
               datasetIndex={selectedIndex}
             />
-          )}
-        </ShowComponent>
-        <ShowComponent condition={currentTab === "annotation"}>
-          {isCompare ? (
-            <DatasetCompareAnnotationSummary />
-          ) : (
-            <AnnotationCard datasetId={datasetId} setCurrentTab={() => {}} />
           )}
         </ShowComponent>
       </Box>

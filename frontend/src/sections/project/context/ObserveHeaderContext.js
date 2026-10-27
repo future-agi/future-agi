@@ -20,10 +20,6 @@ export const ObserveHeaderContext = createContext({
   // Pass null to unregister.
   registerGetViewConfig: () => {},
   getViewConfig: () => null,
-  // Returns the current tab_type ("traces" | "spans") so save-view UIs know
-  // what to persist as the view's tab_type. Registered by LLMTracingView.
-  registerGetTabType: () => {},
-  getTabType: () => "traces",
 });
 
 export const useObserveHeader = () => {

@@ -11,11 +11,20 @@ Pattern:
 """
 
 # Config (no temporalio)
-from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
+from tfc.temporal.schedules.config import ScheduleConfig
+from tfc.temporal.schedules.deployment_telemetry import (
+    DEPLOYMENT_TELEMETRY_SCHEDULES,
+)
+from tfc.temporal.schedules.enterprise_heartbeat import (
+    ENTERPRISE_HEARTBEAT_SCHEDULES,
+)
 from tfc.temporal.schedules.integrations import INTEGRATION_SCHEDULES
+from tfc.temporal.schedules.marketplace import MARKETPLACE_SCHEDULES
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
+from tfc.temporal.schedules.outbox_cdc import OUTBOX_CDC_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
+from tfc.temporal.schedules.saml import SAML_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 
@@ -26,11 +35,17 @@ ALL_SCHEDULES = [
     *SIMULATE_SCHEDULES,
     *INTEGRATION_SCHEDULES,
     *BILLING_SCHEDULES,
+    *MARKETPLACE_SCHEDULES,
     *RETENTION_SCHEDULES,
+    *DEPLOYMENT_TELEMETRY_SCHEDULES,
+    *ENTERPRISE_HEARTBEAT_SCHEDULES,
+    # Empty unless FI_CDC_MODE=outbox (the standalone install).
+    *OUTBOX_CDC_SCHEDULES,
+    *SAML_SCHEDULES,
 ]
 
 # Manager functions
-from tfc.temporal.schedules.manager import (  # Async functions (a_ prefix); Sync wrappers
+from tfc.temporal.schedules.manager import (  # noqa: E402  # Async + sync wrappers
     a_create_or_update_schedule,
     a_create_schedule,
     a_delete_schedule,
@@ -65,8 +80,11 @@ __all__ = [
     "SIMULATE_SCHEDULES",
     "INTEGRATION_SCHEDULES",
     "BILLING_SCHEDULES",
+    "MARKETPLACE_SCHEDULES",
     "RETENTION_SCHEDULES",
+    "DEPLOYMENT_TELEMETRY_SCHEDULES",
     "ALL_SCHEDULES",
+    "SAML_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",
     "a_create_schedule",

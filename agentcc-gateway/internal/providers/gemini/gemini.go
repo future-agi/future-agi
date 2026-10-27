@@ -14,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gauth"
 )
 
@@ -49,6 +50,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
@@ -68,15 +70,22 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		apiKey:   cfg.APIKey,
 		vertexAI: vertexAI,
 		httpClient: &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
+			Transport:     transport,
+			Timeout:       timeout,
+			CheckRedirect: keepCredentialInOrigin,
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
 		headers:   cfg.Headers,
 	}
 
-	if vertexAI && cfg.CredentialsFile != "" {
-		tp, err := gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+	if vertexAI && (cfg.CredentialsFile != "" || cfg.ServiceAccountJSON != "") {
+		var tp *gauth.TokenProvider
+		var err error
+		if cfg.ServiceAccountJSON != "" {
+			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform)
+		} else {
+			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
 		}
@@ -88,11 +97,74 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 func (p *Provider) bearerToken() string {
 	if p.tokenProvider != nil {
 		return p.tokenProvider.Token()
 	}
 	return p.apiKey
+}
+
+// sentToken is the access token a request carried, so a rejection invalidates only that token.
+func sentToken(req *http.Request) string {
+	return strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+}
+
+// maxRedirects is what net/http's own default policy allows.
+const maxRedirects = 10
+
+// keepCredentialInOrigin decides what happens to this provider's credential
+// when the upstream redirects.
+//
+// Go carries a custom header through every redirect and only strips the ones
+// it knows, Authorization and Cookie among them. Putting the key in
+// x-goog-api-key therefore made it follow a redirect anywhere the upstream
+// pointed, including to plaintext. A downgrade is refused outright; a move
+// away from the configured origin keeps going without the credential, so the
+// request fails on authentication rather than handing the key to whoever
+// answered.
+//
+// Every hop is judged against via[0], the origin the operator configured and
+// trusted with the key — not against the hop before it. Go rebuilds each
+// redirected request from the original, so a header dropped on one hop comes
+// back on the next: comparing neighbours let A -> B -> B restore the
+// credential at B, because the second hop looked like it stayed put.
+func keepCredentialInOrigin(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	origin := via[0].URL
+	if origin.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing a redirect from https to %s: it would send the provider credential in plaintext", req.URL.Scheme)
+	}
+	if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+		req.Header.Del("x-goog-api-key")
+		req.Header.Del("Authorization")
+	}
+	return nil
+}
+
+// setAPIKey puts this provider's credential on the request.
+//
+// The key goes in a header, never in the URL. A failed call surfaces as a
+// *url.Error carrying the whole URL, and that error reaches the client's 502
+// body and the request log — so a key in the query string is a key published
+// to anyone who can read either. The native pass-through path has always used
+// this header; everything else used to append ?key= and leak it.
+func (p *Provider) setAPIKey(req *http.Request) {
+	if p.vertexAI {
+		if tok := p.bearerToken(); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		return
+	}
+	if p.apiKey != "" {
+		req.Header.Set("x-goog-api-key", p.apiKey)
+	}
 }
 
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
@@ -110,6 +182,10 @@ func (p *Provider) releaseSemaphore() {
 
 // ChatCompletion sends a non-streaming request to Gemini.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	if err := RejectUnsupportedTools(req.Tools); err != nil {
+		return nil, err
+	}
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
 	}
@@ -123,9 +199,6 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	url := buildURL(p.baseURL, model, false)
-	if !p.vertexAI && p.apiKey != "" {
-		url += "?key=" + p.apiKey
-	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -133,18 +206,14 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.vertexAI {
-		if tok := p.bearerToken(); tok != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+tok)
-		}
-	}
+	p.setAPIKey(httpReq)
 	for k, v := range p.headers {
 		httpReq.Header.Set(k, v)
 	}
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("gemini: request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: request failed: %v", err))
@@ -153,10 +222,13 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+			p.tokenProvider.Invalidate(sentToken(httpReq))
+		}
 		return nil, parseGeminiError(resp.StatusCode, respBody)
 	}
 
@@ -177,6 +249,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer close(chunks)
 		defer close(errs)
 
+		if err := RejectUnsupportedTools(req.Tools); err != nil {
+			errs <- err
+			return
+		}
+
 		if err := p.acquireSemaphore(ctx); err != nil {
 			errs <- models.ErrGatewayTimeout("gemini: concurrency limit reached")
 			return
@@ -192,12 +269,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		}
 
 		url := buildURL(p.baseURL, model, true)
-		if !p.vertexAI && p.apiKey != "" {
-			// streamGenerateContent already has ?alt=sse, append key.
-			url += "&key=" + p.apiKey
-		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		upstreamCtx, cancelUpstream := context.WithCancel(ctx)
+		defer cancelUpstream()
+		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
 			return
@@ -205,18 +280,14 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
-		if p.vertexAI {
-			if tok := p.bearerToken(); tok != "" {
-				httpReq.Header.Set("Authorization", "Bearer "+tok)
-			}
-		}
+		p.setAPIKey(httpReq)
 		for k, v := range p.headers {
 			httpReq.Header.Set(k, v)
 		}
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("gemini: request timed out")
 				return
 			}
@@ -226,6 +297,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+				p.tokenProvider.Invalidate(sentToken(httpReq))
+			}
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
 				errs <- models.ErrUpstreamProvider(resp.StatusCode,
@@ -260,9 +334,23 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			}
 
 			if chunk != nil && len(chunk.Choices) > 0 {
+				finished := false
+				for _, choice := range chunk.Choices {
+					if choice.FinishReason != nil && *choice.FinishReason != "" {
+						finished = true
+						break
+					}
+				}
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
+					return
+				}
+				// Gemini may keep the HTTP stream open after its terminal candidate.
+				// Close our stream as soon as the finish reason arrives so callers
+				// receive their final message event without waiting for EOF.
+				if finished {
+					cancelUpstream()
 					return
 				}
 			}
@@ -270,7 +358,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: stream read error: %v", err))
+				errs <- common.ReadError(err, 0, "gemini: stream read")
 			}
 		}
 	}()
@@ -321,7 +409,7 @@ func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqB
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("gemini: streaming request timed out")
 		}
 		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: streaming request failed: %v", err))
@@ -355,7 +443,7 @@ func (p *Provider) doGenAIRequest(ctx context.Context, model string, action stri
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("gemini: native request timed out")
 		}
 		return nil, 502, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: native request failed: %v", err))
@@ -364,7 +452,7 @@ func (p *Provider) doGenAIRequest(ctx context.Context, model string, action stri
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading native response: %v", err))
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "gemini: reading native response")
 	}
 
 	return respBody, resp.StatusCode, nil

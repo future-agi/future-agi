@@ -4,6 +4,7 @@ import { Box, Button, CircularProgress, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import ImagineTab from "src/components/imagine/ImagineTab";
@@ -22,7 +23,9 @@ import {
 
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
+import { LEFT_PANEL_TAB_SHAPE } from "./constants";
 import VoiceRightPanel from "./VoiceRightPanel";
+import { shareResourceFor } from "./shareResource";
 
 const VOICE_IMAGINE_PROMPTS = [
   { label: "Summarize this call", icon: "mdi:text-box-outline" },
@@ -69,11 +72,17 @@ const VoiceDetailDrawerV2 = ({
   // the VoiceDrawerHeader (close/nav/fullscreen bar) — and just render
   // the call body so it fits the host's layout.
   embedded = false,
-  hideAnnotationTab=false
+  hiddenActionIds = [],
+  hidePathTabs = false,
+  leftPanelTabs,
+  hideAnnotationTab = false,
+  showFixWithFalcon = true,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const projectId = observeId || data?.project_id;
+  const shareResource = shareResourceFor(data);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
@@ -84,13 +93,20 @@ const VoiceDetailDrawerV2 = ({
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
   const [drawerWidth, setDrawerWidth] = useState(60);
+  const handleClose = useCallback(() => {
+    removeEvalFocus();
+    onClose();
+  }, [onClose, removeEvalFocus]);
 
   // ── Saved views (Imagine tabs) ────────────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
 
-  const customViews = savedViewsData?.custom_views || [];
+  const customViews = useMemo(
+    () => savedViewsData?.custom_views || [],
+    [savedViewsData?.custom_views],
+  );
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("voice");
 
@@ -274,9 +290,9 @@ const VoiceDetailDrawerV2 = ({
         position: "relative",
         display: "flex",
         flexDirection: "column",
-        width: isFullscreen ? "100vw" : `${drawerWidth}vw`,
-        height: "100vh",
-        minHeight: "100vh",
+        width: embedded ? "100%" : isFullscreen ? "100vw" : `${drawerWidth}vw`,
+        height: embedded ? "100%" : "100vh",
+        minHeight: embedded ? 0 : "100vh",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
@@ -284,7 +300,7 @@ const VoiceDetailDrawerV2 = ({
       {/* Left-edge resize handle — drag to resize the drawer. Mirrors the
           exact interaction pattern of TraceDetailDrawerV2. Hidden in
           fullscreen since there's nothing to resize into. */}
-      {!isFullscreen && !initialFullscreen && (
+      {!embedded && !isFullscreen && !initialFullscreen && (
         <Box
           onMouseDown={(e) => {
             e.preventDefault();
@@ -324,7 +340,7 @@ const VoiceDetailDrawerV2 = ({
       {!embedded && (
         <VoiceDrawerHeader
           callId={data?.provider_call_id || data?.id || data?.trace_id}
-          onClose={onClose}
+          onClose={handleClose}
           onPrev={onPrev}
           onNext={onNext}
           hasPrev={hasPrev}
@@ -336,9 +352,7 @@ const VoiceDetailDrawerV2 = ({
           }
           isFullscreen={isFullscreen}
           onOpenNewTab={
-            initialFullscreen ||
-            !projectId ||
-            !(data?.trace_id || data?.id)
+            initialFullscreen || !projectId || !(data?.trace_id || data?.id)
               ? undefined
               : () => {
                   // Prefer the canonical trace id so the full page takes
@@ -449,7 +463,12 @@ const VoiceDetailDrawerV2 = ({
                 borderColor: "divider",
               }}
             >
-              <VoiceLeftPanel data={data} scenarioId={scenarioId} />
+              <VoiceLeftPanel
+                data={data}
+                scenarioId={scenarioId}
+                hidePathTabs={hidePathTabs}
+                extraTabs={leftPanelTabs}
+              />
             </Box>
 
             {/* Resizable divider */}
@@ -499,27 +518,24 @@ const VoiceDetailDrawerV2 = ({
                 data={data}
                 onCompareBaseline={onCompareBaseline}
                 onAction={handleVoiceAction}
+                hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
+                showFixWithFalcon={showFixWithFalcon}
+                initialEvalFocus={evalFocus === true}
               />
             </Box>
           </>
         )}
       </Box>
 
-      {/* Share dialog — voice calls share via trace_id, same backend as
-          the trace drawer. The fallback URL points at the voice full-page
-          route so authenticated recipients land directly on the voice UI. */}
-      {(data?.trace_id || data?.id) && (
+      {/* Share dialog — Observe voice calls share their trace; simulation
+          calls share their CallExecution. */}
+      {shareResource && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={data?.trace_id || data?.id}
-          fallbackShareUrl={
-            projectId && (data?.trace_id || data?.id)
-              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${data?.trace_id || data?.id}`
-              : undefined
-          }
+          resourceType={shareResource.resourceType}
+          resourceId={shareResource.resourceId}
         />
       )}
 
@@ -554,9 +570,7 @@ const VoiceDetailDrawerV2 = ({
         anchorEl={queueAnchorEl}
         onClose={() => setQueueAnchorEl(null)}
         sourceType={data?.trace_id ? "trace" : "call_execution"}
-        sourceIds={
-          data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []
-        }
+        sourceIds={data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []}
         itemName={data?.customer_name || "Voice call"}
       />
 
@@ -622,7 +636,11 @@ VoiceDetailDrawerV2.propTypes = {
   isLoading: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
+  hidePathTabs: PropTypes.bool,
+  leftPanelTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 export default VoiceDetailDrawerV2;

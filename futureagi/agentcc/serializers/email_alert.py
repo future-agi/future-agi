@@ -2,8 +2,8 @@ import logging
 
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.email_alert import AgentccEmailAlert
+from integrations.services.credentials import CredentialManager
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,14 @@ class AgentccEmailAlertWriteSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if provider_config is not None:
-            instance.encrypted_config = CredentialManager.encrypt(provider_config)
+            current_config = {}
+            if instance.encrypted_config:
+                current_config = CredentialManager.decrypt(
+                    bytes(instance.encrypted_config)
+                )
+            instance.encrypted_config = CredentialManager.encrypt(
+                {**current_config, **provider_config}
+            )
         instance.save()
         return instance
 

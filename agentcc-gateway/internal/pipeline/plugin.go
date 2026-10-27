@@ -60,6 +60,16 @@ type Plugin interface {
 // Plugins that only read from RequestContext (logging, metrics, audit, alerting)
 // should implement this. Plugins that write shared state (cost→credits chain)
 // must NOT implement this.
+//
+// "Only read" is literal and it is load-bearing. A plugin in this group MUST
+// treat rc as immutable for the whole of ProcessResponse: no SetMetadata, no
+// RecordTiming, no AddError, no writes to any rc field. Its peers read
+// rc.Metadata and rc.Timings directly, including whole-map range loops, so a
+// single write from any of them is a concurrent map read/write — a Go runtime
+// fatal that kills the process, not a panic anything can recover. Taking
+// rc.mu does not make a write safe here, because the readers hold nothing.
+// The engine writes nothing during this window either; anything a plugin needs
+// to record belongs on its own output, not on rc.
 type PostParallel interface {
 	// IsPostParallel returns true if ProcessResponse is safe to run concurrently.
 	IsPostParallel() bool

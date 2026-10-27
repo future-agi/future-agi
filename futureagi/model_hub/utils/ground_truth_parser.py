@@ -51,10 +51,10 @@ def _parse_csv(file_obj) -> tuple[list[str], list[dict]]:
     if not columns:
         raise ValueError("CSV file has no headers.")
 
-    columns = [c.strip() for c in columns]
+    columns = [c.lstrip("\ufeff").strip() for c in columns]
     data = []
     for row in reader:
-        cleaned = {k.strip(): v for k, v in row.items() if k}
+        cleaned = {k.lstrip("\ufeff").strip(): v for k, v in row.items() if k}
         data.append(cleaned)
 
     if not data:

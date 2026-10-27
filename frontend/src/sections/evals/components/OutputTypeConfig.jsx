@@ -16,6 +16,8 @@ import {
 import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import RequiredMark from "src/components/RequiredMark";
 
 const OutputTypeConfig = ({
   outputType,
@@ -85,7 +87,8 @@ const OutputTypeConfig = ({
       {/* Output Type Selection */}
       <Box>
         <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-          Output Type<span style={{ color: "#d32f2f" }}>*</span>
+          Output Type
+          <RequiredMark />
         </Typography>
         <Typography
           variant="caption"
@@ -94,38 +97,79 @@ const OutputTypeConfig = ({
         >
           Select your preferred evaluation output format.
         </Typography>
-        <RadioGroup
-          row
-          value={outputType}
-          onChange={(e) => {
-            const val = e.target.value;
-            onOutputTypeChange(val);
-            // Auto-add a default row if switching to scoring/deterministic with no choices
-            if (
-              (val === "percentage" || val === "deterministic") &&
-              Object.keys(choiceScores || {}).length === 0
-            ) {
-              onChoiceScoresChange({ "Choice 1": 0.5 });
-            }
-          }}
-          sx={{px:0.25}}
+        {radioDisabled && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.75,
+              mb: 1,
+            }}
+          >
+            <Iconify
+              icon="solar:info-circle-bold"
+              width={14}
+              height={14}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Output type is fixed for this evaluation and can&apos;t be
+              changed.
+            </Typography>
+          </Box>
+        )}
+        <CustomTooltip
+          size="small"
+          type="black"
+          show={radioDisabled}
+          title="Output type is fixed for this evaluation and can't be changed."
+          arrow
+          placement="top"
         >
-          <FormControlLabel
-            value="pass_fail"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Pass/fail"
-          />
-          <FormControlLabel
-            value="percentage"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Scoring"
-          />
-          <FormControlLabel
-            value="deterministic"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Choices"
-          />
-        </RadioGroup>
+          <Box
+            component="span"
+            sx={{
+              display: "inline-block",
+              cursor: radioDisabled ? "not-allowed" : "default",
+            }}
+          >
+            <RadioGroup
+              row
+              value={outputType}
+              onChange={(e) => {
+                const val = e.target.value;
+                onOutputTypeChange(val);
+                // Auto-add a default row if switching to scoring/deterministic with no choices
+                if (
+                  (val === "percentage" || val === "deterministic") &&
+                  Object.keys(choiceScores || {}).length === 0
+                ) {
+                  onChoiceScoresChange({ "Choice 1": 0.5 });
+                }
+              }}
+              sx={{
+                px: 0.25,
+                ...(radioDisabled && { pointerEvents: "none" }),
+              }}
+            >
+              <FormControlLabel
+                value="pass_fail"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Pass/fail"
+              />
+              <FormControlLabel
+                value="percentage"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Scoring"
+              />
+              <FormControlLabel
+                value="deterministic"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Choices"
+              />
+            </RadioGroup>
+          </Box>
+        </CustomTooltip>
       </Box>
 
       {/* ══════ Scoring mode ══════ */}
@@ -245,14 +289,13 @@ const OutputTypeConfig = ({
             <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 1 }}>
               <Typography variant="caption">0</Typography>
               <Slider
-                value={passThreshold * 100}
+                value={Math.round(passThreshold * 100)}
                 onChange={(_, val) => onPassThresholdChange(val / 100)}
                 min={0}
                 max={100}
                 size="small"
                 valueLabelDisplay="auto"
                 valueLabelFormat={(v) => `${Math.round(v)}%`}
-                disabled={disabled}
               />
               <Typography variant="caption">100%</Typography>
             </Box>
@@ -429,7 +472,7 @@ const OutputTypeConfig = ({
                   Allow multiple choices (LLM can select more than one)
                 </Typography>
               }
-              sx={{ mt: 0.5, px:0.25 }}
+              sx={{ mt: 0.5, px: 0.25 }}
             />
           </Box>
         </Box>

@@ -22,6 +22,7 @@ const EmptyExecutionsState = () => {
     mutationFn: async () => {
       return axios.post(
         endpoints.promptSimulation.execute(promptTemplateId, simulation?.id),
+        {},
       );
     },
     onSuccess: () => {
