@@ -10,6 +10,9 @@ import pytest
 
 from tracer.selectors import trace_filter_reads
 from tracer.services.clickhouse.list_cursor import ListCursor
+from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+    ObserveTraceListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
@@ -167,7 +170,7 @@ def test_public_trace_cursor_passes_discovery_only_for_qualified_safe_boundaries
             read_deadline=deadline,
         )
     assert captured["root_time_discovery"] is enabled
-    assert type(captured["builder"]) is TraceListQueryBuilderV2
+    assert type(captured["builder"]) is ObserveTraceListQueryBuilderV2
     assert captured["analytics"] is analytics
     assert captured["builder"].project_id == (
         None if case == "org_user_detail" else PROJECT

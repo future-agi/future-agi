@@ -138,6 +138,7 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
     update_eval_config,
@@ -6583,116 +6584,6 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             )
 
 
-def _clear_call_execution_data(call_execution):
-    """Clear all call execution data for rerun"""
-
-    # Create snapshot of current state before clearing
-    CallExecutionSnapshot.objects.create(
-        call_execution=call_execution,
-        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
-        service_provider_call_id=call_execution.service_provider_call_id,
-        status=call_execution.status,
-        started_at=call_execution.started_at,
-        completed_at=call_execution.completed_at,
-        ended_at=call_execution.ended_at,
-        duration_seconds=call_execution.duration_seconds,
-        recording_url=call_execution.recording_url,
-        stereo_recording_url=call_execution.stereo_recording_url,
-        cost_cents=call_execution.cost_cents,
-        stt_cost_cents=call_execution.stt_cost_cents,
-        llm_cost_cents=call_execution.llm_cost_cents,
-        tts_cost_cents=call_execution.tts_cost_cents,
-        vapi_cost_cents=call_execution.vapi_cost_cents,
-        call_summary=call_execution.call_summary,
-        ended_reason=call_execution.ended_reason,
-        overall_score=call_execution.overall_score,
-        response_time_ms=call_execution.response_time_ms,
-        assistant_id=call_execution.assistant_id,
-        customer_number=call_execution.customer_number,
-        call_type=call_execution.call_type,
-        analysis_data=call_execution.analysis_data,
-        evaluation_data=call_execution.evaluation_data,
-        message_count=call_execution.message_count,
-        transcript_available=call_execution.transcript_available,
-        recording_available=call_execution.recording_available,
-        eval_outputs=call_execution.eval_outputs,
-        tool_outputs=call_execution.tool_outputs,
-        provider_call_data=call_execution.provider_call_data,
-        monitor_call_data=call_execution.monitor_call_data,
-        avg_agent_latency_ms=call_execution.avg_agent_latency_ms,
-        user_interruption_count=call_execution.user_interruption_count,
-        user_interruption_rate=call_execution.user_interruption_rate,
-        user_wpm=call_execution.user_wpm,
-        bot_wpm=call_execution.bot_wpm,
-        talk_ratio=call_execution.talk_ratio,
-        ai_interruption_count=call_execution.ai_interruption_count,
-        ai_interruption_rate=call_execution.ai_interruption_rate,
-        avg_stop_time_after_interruption_ms=call_execution.avg_stop_time_after_interruption_ms,
-        conversation_metrics_data=call_execution.conversation_metrics_data,
-        transcripts=list(
-            call_execution.transcripts.values(
-                "speaker_role",
-                "content",
-                "start_time_ms",
-                "end_time_ms",
-                "confidence_score",
-            )
-        ),
-    )
-
-    # Clear existing transcripts
-    call_execution.transcripts.all().delete()
-
-    call_execution.service_provider_call_id = None
-    call_execution.monitor_call_data = None
-    call_execution.status = CallExecution.CallStatus.PENDING
-    call_execution.started_at = None
-    call_execution.completed_at = None
-    call_execution.ended_at = None
-    call_execution.duration_seconds = None
-    call_execution.recording_url = None
-    call_execution.stereo_recording_url = None
-    call_execution.cost_cents = None
-    call_execution.stt_cost_cents = None
-    call_execution.llm_cost_cents = None
-    call_execution.tts_cost_cents = None
-    call_execution.vapi_cost_cents = None
-    call_execution.call_summary = None
-    call_execution.ended_reason = None
-    call_execution.overall_score = None
-    call_execution.response_time_ms = None
-    call_execution.assistant_id = None
-    call_execution.customer_number = None
-    call_execution.call_type = None
-    call_execution.analysis_data = None
-    call_execution.evaluation_data = None
-    call_execution.message_count = None
-    call_execution.transcript_available = False
-    call_execution.recording_available = False
-    call_execution.eval_outputs = {}
-    call_execution.tool_outputs = {}
-    call_execution.provider_call_data = {}
-    call_execution.avg_agent_latency_ms = None
-    call_execution.user_interruption_count = None
-    call_execution.user_interruption_rate = None
-    call_execution.user_wpm = None
-    call_execution.bot_wpm = None
-    call_execution.talk_ratio = None
-    call_execution.ai_interruption_count = None
-    call_execution.ai_interruption_rate = None
-    call_execution.avg_stop_time_after_interruption_ms = None
-    call_execution.conversation_metrics_data = None
-    # Keep the dataset row linkage: the results grid resolves each call's
-    # Scenario Information cells via row_id. Everything else (the ALK
-    # alk_batch_claimed claim, eval flags) is intentionally dropped so /batch
-    # re-adopts the row.
-    _preserved_row_id = (call_execution.call_metadata or {}).get("row_id")
-    call_execution.call_metadata = (
-        {"row_id": _preserved_row_id} if _preserved_row_id else {}
-    )
-    call_execution.save()
-
-
 def _save_eval_snapshot(call_execution):
     """Save a snapshot of evaluation data only (for eval_only reruns)"""
 
@@ -6824,7 +6715,7 @@ def _rerun_call_executions(call_executions, rerun_type):
                 )
 
             else:  # call_and_eval
-                _clear_call_execution_data(call_execution)
+                clear_call_for_rerun(call_execution)
                 _create_rerun_call_execution(call_execution)
 
                 has_pending_calls = True
@@ -7003,7 +6894,9 @@ class CallExecutionRerunView(APIView):
             202: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
+            409: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
+            503: ErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -7128,9 +7021,33 @@ class CallExecutionRerunView(APIView):
             # intentionally retained for native/connect-only/Vapi/Retell runs.
             if rerun_type == "call_and_eval" and repository_job_id:
                 if not select_all or call_execution_ids:
-                    return self._gm.bad_request(
-                        "Repository harness reruns currently require select_all=true so the "
-                        "saved scenario suite and isolated environment remain aligned."
+                    # Chosen calls re-run inside this run; only a whole-suite
+                    # select_all still restarts the saved environment as a new run.
+                    from simulate.services.hosted_harness import (
+                        HostedHarnessError,
+                        rerun_calls_in_run,
+                    )
+
+                    rerun_ids = [call.id for call in call_executions]
+                    try:
+                        rerun_calls_in_run(test_execution, rerun_ids)
+                    except HostedHarnessError as exc:
+                        return Response(exc.as_dict(), status=exc.status_code)
+                    return Response(
+                        {
+                            "message": "Selected calls are re-running in this run",
+                            "test_execution_id": str(test_execution.id),
+                            "rerun_type": rerun_type,
+                            "total_processed": len(rerun_ids),
+                            "successful_reruns": [
+                                str(call_id) for call_id in rerun_ids
+                            ],
+                            "failed_reruns": [],
+                            "success_count": len(rerun_ids),
+                            "failure_count": 0,
+                            "dispatch_error": None,
+                        },
+                        status=status.HTTP_202_ACCEPTED,
                     )
                 try:
                     queued = _dispatch_repository_harness_rerun(
@@ -7219,7 +7136,7 @@ class CallExecutionRerunView(APIView):
                         # would find nothing to adopt (400 → "failed, no
                         # transcript"). That reset is fine for the native path.
                         if is_hosted:
-                            _clear_call_execution_data(call_execution)
+                            clear_call_for_rerun(call_execution)
                         else:
                             self._clear_call_execution_data(call_execution)
                             # Native path only: prepare_call reads
@@ -7897,7 +7814,7 @@ class TestExecutionRerunView(APIView):
                     successful_reruns, failed_reruns = [], []
                     for call_execution in call_executions:
                         try:
-                            _clear_call_execution_data(call_execution)
+                            clear_call_for_rerun(call_execution)
                             successful_reruns.append(str(call_execution.id))
                         except Exception as e:
                             failed_reruns.append(

@@ -1445,7 +1445,7 @@ class TestResultIngest:
         from simulate.services.alk_simulate_ingestion import (
             create_alk_sim_call_execution_batch,
         )
-        from simulate.views.run_test import _clear_call_execution_data
+        from simulate.services.call_rerun import clear_call_for_rerun
 
         te_id, call_ids = _start_and_batch(auth_client, run_test)
         call = CallExecution.objects.get(id=call_ids[0])
@@ -1454,7 +1454,7 @@ class TestResultIngest:
         call.status = CallExecution.CallStatus.COMPLETED
         call.save(update_fields=["status"])
 
-        _clear_call_execution_data(call)
+        clear_call_for_rerun(call)
 
         call.refresh_from_db()
         assert call.status == CallExecution.CallStatus.PENDING
