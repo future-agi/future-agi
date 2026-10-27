@@ -666,9 +666,9 @@ def _secret_line_parts(secret_value: str) -> list[str]:
     return [secret_part for secret_part in secret_parts if secret_part]
 
 
-def _masked_cut_end(text: str, secret_values: Iterable[str]) -> str:
-    """``text`` with its end masked where it is the start of a value: a cut text may
-    end inside one, which then matches nothing."""
+def _cut_value_start(text: str, secret_values: Iterable[str]) -> int:
+    """Where ``text``'s end starts a value, or its length: a cut text may end inside
+    one, which then matches nothing."""
     secret_start = len(text)
     for secret_value in secret_values:
         secret_head = secret_value[:SHORT_SECRET_MIN]
@@ -676,19 +676,21 @@ def _masked_cut_end(text: str, secret_values: Iterable[str]) -> str:
             continue
         at = text.find(secret_head, max(0, len(text) - len(secret_value)))
         while 0 <= at < secret_start:
-            if secret_value.startswith(text[at:]):
+            if text.startswith(secret_value[: len(text) - at], at):
                 secret_start = at
                 break
             at = text.find(secret_head, at + 1)
-    if secret_start == len(text):
-        return text
-    return text[:secret_start] + "[REDACTED]"
+    return secret_start
 
 
 def _redact_texts(
     texts: list[str], secret_values: Iterable[str], *, cut: Iterable[bool] = ()
 ) -> list[str]:
-    from simulate.services.hosted_harness_diagnostics import _redact, _secret_fragments
+    from simulate.services.hosted_harness_diagnostics import (
+        _normalize_log_text,
+        _redact,
+        _secret_fragments,
+    )
 
     # Locals holding values are named for the error tracker's scrubber (``secret``).
     secret_values = list(secret_values)
@@ -727,12 +729,17 @@ def _redact_texts(
     cut = list(cut)
     redacted = []
     for index, text in enumerate(texts):
+        secret_end = ""
+        if index < len(cut) and cut[index]:
+            # Before masking, which may rewrite part of the cut value's start.
+            text = _normalize_log_text(text)
+            at = _cut_value_start(text, [*secret_fragments, *secret_short])
+            if at < len(text):
+                text, secret_end = text[:at], "[REDACTED]"
         text = _redact(text, secret_fragments)
         for secret_pattern in secret_patterns:
             text = secret_pattern.sub("[REDACTED]", text)
-        if index < len(cut) and cut[index]:
-            text = _masked_cut_end(text, [*secret_fragments, *secret_short])
-        redacted.append(text)
+        redacted.append(text + secret_end)
     return redacted
 
 

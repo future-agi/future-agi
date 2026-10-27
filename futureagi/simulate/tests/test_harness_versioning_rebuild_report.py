@@ -136,6 +136,55 @@ def test_a_value_cut_short_by_alk_is_masked_where_masking_pulls_it_in(secret_tex
     assert "[REDAC" in message
 
 
+POSTGRES = "postgresql://svcadmin:Hx83jdPq20sLm@prod-db.internal:5432/app"
+
+
+def _shrinking_pad(length):
+    # Masked to "token=[REDACTED] ", pulling what follows into the cap.
+    return "token=" + "x" * (length - 7) + " "
+
+
+@pytest.mark.parametrize(
+    ("values", "secret_text"),
+    [
+        (
+            ["AKIAIOSFODNN7EXAMPLE secret=wJalrXUtnFEMIK7MDENGbPxRfiCY"],
+            lambda: _shrinking_pad(ALK_CUT - 40)
+            + "AKIAIOSFODNN7EXAMPLE secret=wJalrXUtnFEMIK7MDENGbPxRfiCY",
+        ),
+        (
+            [POSTGRES + "?token=Q1w2E3r4T5y6U7i8"],
+            lambda: _shrinking_pad(ALK_CUT - len(POSTGRES) - 24 + 6)
+            + POSTGRES
+            + "?token=Q1w2E3r4T5y6U7i8",
+        ),
+        (
+            [POSTGRES, "Hx83jdPq20sLm"],
+            lambda: _shrinking_pad(ALK_CUT - 40) + POSTGRES,
+        ),
+    ],
+    ids=["assignment-inside", "query-token-inside", "nested-value"],
+)
+def test_a_cut_value_partly_masked_inside_is_still_masked(values, secret_text):
+    cut = secret_text()[:ALK_CUT]
+    nudge = SimpleNamespace(
+        trigger_agent_version_id="a1",
+        base_agent_version_id=None,
+        base_environment_version=None,
+        draft_snapshot={},
+    )
+    with patch.object(nudges, "_agent_secrets", return_value={"K": set(values)}):
+        report = rebuild._report(
+            SimpleNamespace(id="env", agent_version_id=None),
+            nudge,
+            {"checks": {"problems": [{"message": cut}]}},
+        )
+
+    message = report["problems"][0]["message"]
+    for leaked in ("AKIAIOSF", "svcadmin", "prod-db", "Hx83jdPq"):
+        assert leaked not in message
+
+
 def test_a_value_the_report_cuts_short_is_masked():
     # A stored value longer than accepted today, straddling the notes' own cut.
     value = ("FAKE-CREDENTIAL-" + "0123456789abcdef" * 6_000)[:90_000]
